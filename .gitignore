@@ -26,3 +26,8 @@ dist/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# ───── 内部文档 / 设计稿 / PRD（不公开到仓库） ─────
+docs/
+问津/
+问津 PRD v1 1.md
