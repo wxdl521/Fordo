@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.ssr-check.cjs
+.e2e-check.cjs
+.e2e-zoom.cjs
+.e2e/
+*.log
+.idea/
+.vscode/
+.DS_Store

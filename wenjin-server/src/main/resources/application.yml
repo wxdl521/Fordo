@@ -1,0 +1,45 @@
+server:
+  port: 8080                      # 后端服务端口，前端开发时通过 Vite proxy 转发到此
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+spring:
+  application:
+    name: wenjin-server
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # 数据库名 wenjin，请先用 schema.sql 建库建表（见根目录 README）
+    url: jdbc:mysql://localhost:3306/wenjin?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USER:root}     # 可用环境变量 DB_USER 覆盖
+    password: ${DB_PASSWORD:root} # 可用环境变量 DB_PASSWORD 覆盖
+  # 不让应用自动执行 DDL：schema.sql 由开发者手动执行一次，避免每次启动清库（详见 README）
+  sql:
+    init:
+      mode: never
+
+# MyBatis-Plus 配置
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true          # 数据库下划线 <-> Java 驼峰自动映射
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl  # 开发期打印 SQL，便于排查
+  global-config:
+    db-config:
+      id-type: auto                              # 主键自增，与 node_code 业务编码分离
+      logic-delete-field: null
+
+# 演示用固定身份（本阶段不做登录与权限）
+wenjin:
+  demo:
+    teacher-id: 1                                # 写死的演示教师，导入图谱时作为课程创建者
+  ai:                                            # AI 出题/标注（OpenAI 兼容，默认 DeepSeek）
+    enabled: ${WENJIN_AI_ENABLED:true}
+    base-url: ${WENJIN_AI_BASE_URL:https://api.deepseek.com}
+    api-key: ${WENJIN_AI_API_KEY:}
+    model: ${WENJIN_AI_MODEL:deepseek-chat}
+    temperature: 0.4
+
+logging:
+  level:
+    com.wenjin: debug

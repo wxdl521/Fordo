@@ -1,0 +1,11 @@
+target/
+.compile.log
+.pkg.out
+.pkg.err
+.test.out
+.test.err
+*.log
+.idea/
+*.iml
+.vscode/
+.DS_Store

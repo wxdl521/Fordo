@@ -1,0 +1,749 @@
+{
+  "course": {
+    "code": "52015CC4B4",
+    "name": "软件工程",
+    "graph_version": "v0.3-teacher-reviewed"
+  },
+  "nodes": [
+    {
+      "id": "KT01",
+      "name": "软件工程基本概念、原理、发展历史、软件生命周期",
+      "chapter": "软件工程概述",
+      "difficulty": 3,
+      "is_key": false,
+      "bloom": "理解",
+      "description": "软件工程的定义与基本原理、发展历史，软件生命周期各阶段的划分与任务。",
+      "note": ""
+    },
+    {
+      "id": "KT02",
+      "name": "软件开发过程模型-传统模型",
+      "chapter": "软件工程概述",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "理解",
+      "description": "瀑布、增量、原型等传统过程模型的流程、特点与适用场景。",
+      "note": ""
+    },
+    {
+      "id": "KT03",
+      "name": "软件开发过程模型-现代模型",
+      "chapter": "软件工程概述",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "理解",
+      "description": "敏捷、统一过程等现代过程模型的理念与实践方式。",
+      "note": ""
+    },
+    {
+      "id": "KT04",
+      "name": "软件需求基本概念、任务目标",
+      "chapter": "需求确定",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "理解",
+      "description": "需求的分类（功能/非功能）、需求工程的任务与目标。",
+      "note": ""
+    },
+    {
+      "id": "KT05",
+      "name": "分析构建业务流程",
+      "chapter": "需求确定",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "运用",
+      "description": "通过调研理解业务，识别并构建业务流程模型。",
+      "note": ""
+    },
+    {
+      "id": "KT06",
+      "name": "软件项目管理-团队组织管理",
+      "chapter": "软件项目管理",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "理解",
+      "description": "项目团队的组织结构、角色分工与协作规范。",
+      "note": ""
+    },
+    {
+      "id": "KT07",
+      "name": "需求模型的构建-用例模型",
+      "chapter": "需求确定",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "以用例技术描述系统功能需求，构建用例模型。",
+      "note": "课程核心，占8学时"
+    },
+    {
+      "id": "KT10",
+      "name": "系统分析-领域模型",
+      "chapter": "系统分析",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "从业务中识别核心概念，构建领域模型。",
+      "note": ""
+    },
+    {
+      "id": "KT13",
+      "name": "系统设计-软件设计相关概念",
+      "chapter": "系统设计",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "理解",
+      "description": "软件设计的基本概念、任务与设计阶段划分。",
+      "note": ""
+    },
+    {
+      "id": "KT14",
+      "name": "系统设计-通用设计原则",
+      "chapter": "系统设计",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "理解",
+      "description": "模块化、高内聚低耦合、信息隐藏等通用设计原则。",
+      "note": ""
+    },
+    {
+      "id": "KT15",
+      "name": "系统设计-架构设计",
+      "chapter": "系统设计",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "软件体系结构设计方法，根据约束完成架构方案。",
+      "note": ""
+    },
+    {
+      "id": "KT16",
+      "name": "系统设计-软件交互设计",
+      "chapter": "系统设计",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "软件交互方案与用户界面层面的设计。",
+      "note": "老师确认保留：交互设计以墨刀画图开展教学"
+    },
+    {
+      "id": "KT17",
+      "name": "系统设计-数据设计",
+      "chapter": "系统设计",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "持久化建模与数据库结构设计。",
+      "note": ""
+    },
+    {
+      "id": "KT18",
+      "name": "对象设计-面向对象设计基本原则",
+      "chapter": "对象设计",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "面向对象设计的基本原则与设计模式应用。",
+      "note": ""
+    },
+    {
+      "id": "KT19",
+      "name": "对象设计-软件设计类的构建",
+      "chapter": "对象设计",
+      "difficulty": 2,
+      "is_key": true,
+      "bloom": "运用",
+      "description": "依据领域模型与设计原则构建软件设计类。",
+      "note": ""
+    },
+    {
+      "id": "KT20",
+      "name": "对象设计-将类的设计转换为代码",
+      "chapter": "对象设计",
+      "difficulty": 2,
+      "is_key": true,
+      "bloom": "运用",
+      "description": "将类设计映射为代码骨架的方法。",
+      "note": ""
+    },
+    {
+      "id": "KT22",
+      "name": "软件测试基本概念、基本原理及测试过程",
+      "chapter": "软件测试",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "理解",
+      "description": "软件测试的基本概念、原理与测试过程各阶段。",
+      "note": ""
+    },
+    {
+      "id": "KT23",
+      "name": "软件测试-黑盒测试方法",
+      "chapter": "软件测试",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "运用",
+      "description": "黑盒测试的常用方法与测试用例设计。",
+      "note": ""
+    },
+    {
+      "id": "KT24",
+      "name": "软件部署及维护",
+      "chapter": "部署与维护",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "运用",
+      "description": "软件部署、交付的目的与方式，维护的基本原则。",
+      "note": ""
+    },
+    {
+      "id": "KT25",
+      "name": "软件项目管理-软件质量管理",
+      "chapter": "软件项目管理",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "理解",
+      "description": "软件质量保障的过程与管理方法。",
+      "note": ""
+    },
+    {
+      "id": "KT27",
+      "name": "软件工具的使用-UML建模工具的使用",
+      "chapter": "需求确定",
+      "difficulty": 3,
+      "is_key": false,
+      "bloom": "运用",
+      "description": "UML建模工具（StarUML）的使用方法。",
+      "note": ""
+    },
+    {
+      "id": "KT28",
+      "name": "软件工具的使用-数据库建模工具的使用",
+      "chapter": "系统设计",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "运用",
+      "description": "数据库ER图绘制（Processon）的使用方法。",
+      "note": ""
+    },
+    {
+      "id": "KT29",
+      "name": "软件工具的使用-原型设计工具的使用",
+      "chapter": "需求确定",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "运用",
+      "description": "原型设计工具（墨刀）的使用方法。",
+      "note": "学时表中第3、5单元均出现，归入首次讲授单元"
+    },
+    {
+      "id": "KT02-1",
+      "name": "瀑布模型、原型模型",
+      "chapter": "软件工程概述",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "理解",
+      "description": "瀑布模型的阶段划分、特点与局限。原型模型的思想及适用场景",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT02-2",
+      "name": "螺旋模型",
+      "chapter": "软件工程概述",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "理解",
+      "description": "螺旋模型的思想及适用场景。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT03-1",
+      "name": "敏捷开发与Scrum",
+      "chapter": "软件工程概述",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "理解",
+      "description": "敏捷宣言、Scrum框架的角色/工件/会议。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT03-2",
+      "name": "统一过程（RUP/UP）",
+      "chapter": "软件工程概述",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "理解",
+      "description": "统一过程的四个阶段与迭代思想。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT05-1",
+      "name": "业务流程识别与梳理",
+      "chapter": "需求确定",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "运用",
+      "description": "从调研材料中识别业务环节与参与角色。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT05-2",
+      "name": "业务流程图/活动图绘制",
+      "chapter": "需求确定",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "运用",
+      "description": "用活动图或流程图规范表达业务流程。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT07-1",
+      "name": "参与者与系统边界识别",
+      "chapter": "需求确定",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "识别系统参与者，确定系统边界。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT07-2",
+      "name": "用例图绘制",
+      "chapter": "需求确定",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "用例的识别、组织与用例图绘制。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT07-3",
+      "name": "用例描述编写",
+      "chapter": "需求确定",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "事件流、前置/后置条件等用例文档编写。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT07-4",
+      "name": "WBS分解",
+      "chapter": "需求确定",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "运用",
+      "description": "WBS 即工作分解结构，以可交付成果为导向，把项目整体逐层拆解成更小、更容易管控的细分工作包",
+      "note": "老师新增：WBS分解（48学时版并入需求确定单元）"
+    },
+    {
+      "id": "KT10-1",
+      "name": "业务实体识别",
+      "chapter": "系统分析",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "从用例与业务中提取候选业务实体。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT10-2",
+      "name": "领域类图绘制",
+      "chapter": "系统分析",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "实体属性与关系建模，绘制领域类图。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT12-1",
+      "name": "顺序图构建",
+      "chapter": "系统分析",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "理解",
+      "description": "对象交互的时序表达与顺序图绘制。",
+      "note": "原KT12子点；KT12删简后独立保留于系统分析"
+    },
+    {
+      "id": "KT15-1",
+      "name": "分层架构",
+      "chapter": "系统设计",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "典型分层架构的层次职责与依赖规则。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT15-2",
+      "name": "架构风格与选型",
+      "chapter": "系统设计",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "常见架构风格对比与基于约束的选型。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT18-1",
+      "name": "面向对象设计原则（SOLID）",
+      "chapter": "对象设计",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "单一职责、开闭等面向对象设计原则。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT18-2",
+      "name": "常用设计模式",
+      "chapter": "对象设计",
+      "difficulty": 4,
+      "is_key": true,
+      "bloom": "分析",
+      "description": "典型设计模式的意图与适用场景。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT23-1",
+      "name": "等价类划分法",
+      "chapter": "软件测试",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "运用",
+      "description": "等价类划分的规则与用例设计。",
+      "note": "AI细分"
+    },
+    {
+      "id": "KT23-2",
+      "name": "边界值分析法",
+      "chapter": "软件测试",
+      "difficulty": 3,
+      "is_key": true,
+      "bloom": "运用",
+      "description": "边界值选取规则与用例设计。",
+      "note": "AI细分"
+    }
+  ],
+  "edges": [
+    {
+      "source": "KT01",
+      "target": "KT02",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT02",
+      "target": "KT03",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT01",
+      "target": "KT04",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT01",
+      "target": "KT06",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT04",
+      "target": "KT05",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT05",
+      "target": "KT07",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT07",
+      "target": "KT10",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT13",
+      "target": "KT14",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT14",
+      "target": "KT15",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT15",
+      "target": "KT16",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT15",
+      "target": "KT17",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT10",
+      "target": "KT17",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT14",
+      "target": "KT18",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT18",
+      "target": "KT19",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT10",
+      "target": "KT19",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT19",
+      "target": "KT20",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT20",
+      "target": "KT22",
+      "type": "前置",
+      "note": "待复核：测试概念对实现的依赖强度"
+    },
+    {
+      "source": "KT22",
+      "target": "KT23",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT23",
+      "target": "KT24",
+      "type": "前置",
+      "note": "待复核：部署是否强依赖测试方法"
+    },
+    {
+      "source": "KT02-1",
+      "target": "KT02-2",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT07-1",
+      "target": "KT07-2",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT07-2",
+      "target": "KT07-3",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT10-1",
+      "target": "KT10-2",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT18-1",
+      "target": "KT18-2",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT23-1",
+      "target": "KT23-2",
+      "type": "前置",
+      "note": ""
+    },
+    {
+      "source": "KT02",
+      "target": "KT02-1",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT02",
+      "target": "KT02-2",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT03",
+      "target": "KT03-1",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT03",
+      "target": "KT03-2",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT05",
+      "target": "KT05-1",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT05",
+      "target": "KT05-2",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT07",
+      "target": "KT07-1",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT07",
+      "target": "KT07-2",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT07",
+      "target": "KT07-3",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT10",
+      "target": "KT10-1",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT10",
+      "target": "KT10-2",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT15",
+      "target": "KT15-1",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT15",
+      "target": "KT15-2",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT18",
+      "target": "KT18-1",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT18",
+      "target": "KT18-2",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT23",
+      "target": "KT23-1",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT23",
+      "target": "KT23-2",
+      "type": "包含",
+      "note": ""
+    },
+    {
+      "source": "KT27",
+      "target": "KT07",
+      "type": "相关",
+      "note": "UML工具支撑用例建模"
+    },
+    {
+      "source": "KT27",
+      "target": "KT10",
+      "type": "相关",
+      "note": "UML工具支撑领域建模"
+    },
+    {
+      "source": "KT27",
+      "target": "KT19",
+      "type": "相关",
+      "note": "UML工具支撑类图设计"
+    },
+    {
+      "source": "KT28",
+      "target": "KT17",
+      "type": "相关",
+      "note": "数据库建模工具支撑数据设计"
+    },
+    {
+      "source": "KT22",
+      "target": "KT25",
+      "type": "相关",
+      "note": "质量管理涵盖测试管理"
+    },
+    {
+      "source": "KT06",
+      "target": "KT25",
+      "type": "前置",
+      "note": "对齐新增：KT09删简后质量管理改挂团队组织管理，待老师确认"
+    },
+    {
+      "source": "KT10",
+      "target": "KT13",
+      "type": "前置",
+      "note": "对齐新增：KT11/KT12删简后分析到设计的衔接边"
+    },
+    {
+      "source": "KT10",
+      "target": "KT12-1",
+      "type": "前置",
+      "note": "对齐新增：领域模型为顺序图建模基础"
+    },
+    {
+      "source": "KT07",
+      "target": "KT07-4",
+      "type": "包含",
+      "note": "对齐新增：老师新增节点挂接"
+    },
+    {
+      "source": "KT27",
+      "target": "KT12-1",
+      "type": "相关",
+      "note": "对齐替换：原KT27-KT12"
+    },
+    {
+      "source": "KT29",
+      "target": "KT16",
+      "type": "相关",
+      "note": "对齐替换：原KT29-KT08；墨刀画图归交互设计教学"
+    }
+  ]
+}

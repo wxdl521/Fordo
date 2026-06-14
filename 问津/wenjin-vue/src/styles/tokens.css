@@ -1,0 +1,187 @@
+/* ════════════════════════════════════════════════════════════
+   问津 · 双主题设计令牌
+   骨架现代（8px 间距、统一圆角、描边代阴影），点缀东方（朱砂 + 思源宋体）
+   主题通过 <html data-theme="paper|ink"> 切换，所有组件复用 CSS 变量
+   ════════════════════════════════════════════════════════════ */
+
+/* 浅色「暖纸」（默认，日常学习） */
+:root,
+:root[data-theme='paper'] {
+  --page: #efe9dd;
+  --bg: #f7f3ec;
+  --card: #fffdf8;
+  --card2: #f2ede2;
+  --line: #e5decf;
+  --ink: #2a2520;
+  --mut: #6f6759;
+  --acc: #b4422e;
+  --accSoft: rgba(180, 66, 46, 0.1);
+  --ok: #3d7a5e;
+  --okSoft: rgba(61, 122, 94, 0.1);
+  --warn: #c8862a;
+  --warnSoft: rgba(200, 134, 42, 0.12);
+  --dim: #c9c2b4;
+}
+
+/* 深色「墨夜」（图谱主视图主推，演示主力） */
+:root[data-theme='ink'] {
+  --page: #0d0e11;
+  --bg: #121317;
+  --card: #1b1d23;
+  --card2: #23252c;
+  --line: #2a2d35;
+  --ink: #e8e3d8;
+  --mut: #9a948a;
+  --acc: #d85e45;
+  --accSoft: rgba(216, 94, 69, 0.14);
+  --ok: #57a87e;
+  --okSoft: rgba(87, 168, 126, 0.14);
+  --warn: #e0a33e;
+  --warnSoft: rgba(224, 163, 62, 0.14);
+  --dim: #4a4d55;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'PingFang SC', 'HarmonyOS Sans', 'Microsoft YaHei', sans-serif;
+  transition: background-color 0.35s, color 0.35s;
+}
+
+#app {
+  height: 100%;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--mut);
+  opacity: 0.7;
+}
+
+a {
+  color: inherit;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+[data-hidebar]::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── 关键帧 ── */
+@keyframes wjFadeUp {
+  from { transform: translateY(12px); }
+  to { transform: none; }
+}
+@keyframes wjPulse {
+  0% { box-shadow: 0 0 0 0 var(--accSoft); }
+  70% { box-shadow: 0 0 0 9px rgba(0, 0, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+}
+@keyframes wjDrawerIn {
+  from { transform: translateX(28px); }
+  to { transform: none; }
+}
+@keyframes wjDash {
+  to { stroke-dashoffset: -28; }
+}
+@keyframes wjmSheetIn {
+  from { transform: translateY(48px); opacity: 0.5; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes wjmFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes wjmPulse {
+  0% { box-shadow: 0 0 0 0 rgba(216, 94, 69, 0.4); }
+  70% { box-shadow: 0 0 0 8px rgba(216, 94, 69, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(216, 94, 69, 0); }
+}
+@keyframes wjmRise {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+/* ── 复用交互工具类（inline style 无法表达的 hover/active 状态）── */
+.wj-navlink {
+  font-size: 13px;
+  color: var(--mut);
+  text-decoration: none;
+  padding: 7px 12px;
+  border-radius: 8px;
+  white-space: nowrap;
+  flex: none;
+  transition: background-color 0.18s, color 0.18s;
+}
+.wj-navlink:hover {
+  background: var(--card2);
+  color: var(--ink);
+}
+.wj-hover-card2 {
+  transition: background-color 0.18s, color 0.18s, border-color 0.18s;
+}
+.wj-hover-card2:hover {
+  background: var(--card2);
+  color: var(--ink);
+}
+.wj-hover-acc {
+  transition: border-color 0.18s, color 0.18s;
+}
+.wj-hover-acc:hover {
+  border-color: var(--acc);
+  color: var(--acc);
+}
+.wj-btn-acc {
+  transition: transform 0.15s ease, filter 0.2s;
+}
+.wj-btn-acc:hover {
+  filter: brightness(1.08);
+}
+.wj-btn-acc:active {
+  transform: scale(0.97);
+}
+.wj-press:active {
+  transform: scale(0.98);
+}
+.wj-underline:hover {
+  color: var(--ink) !important;
+}
+
+/* ── 路由切换过渡 ── */
+.page-fade-enter-active,
+.page-fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+.page-fade-enter-from,
+.page-fade-leave-to {
+  opacity: 0;
+}

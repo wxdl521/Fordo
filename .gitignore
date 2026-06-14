@@ -1,0 +1,28 @@
+# ───── Java / Maven ─────
+target/
+*.class
+*.jar
+!**/.mvn/wrapper/maven-wrapper.jar
+.mvn/.gradle/
+
+# ───── Node / 前端 ─────
+node_modules/
+dist/
+.vite/
+*.local
+
+# ───── 日志 / 临时测试输出 ─────
+*.log
+.t*.out
+.t*.err
+.rev*.out
+.rev*.err
+.test.out
+.test.err
+
+# ───── IDE / 系统 ─────
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db

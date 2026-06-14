@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="paper">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>问津 · 免构建预览</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./src/styles/tokens.css" />
+  <style>
+    #__boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      font-family: 'Noto Serif SC', serif; letter-spacing: 4px; color: #6f6759; background: #f7f3ec; z-index: 9999; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="__boot">问 津 · 载入中…</div>
+
+  <script src="https://unpkg.com/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/vue-router@4.3.0/dist/vue-router.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vue3-sfc-loader@0.9.5/dist/vue3-sfc-loader.js"></script>
+  <script>
+    // 免构建预览：用 vue3-sfc-loader 在浏览器里直接加载 .vue / .js 源码。
+    // 这只是预览/自检手段；正式运行请用 npm run dev（见 README）。
+    const { loadModule } = window['vue3-sfc-loader'];
+
+    const moduleCache = {
+      vue: Vue,
+      'vue-router': VueRouter
+    };
+
+    async function tryFetch(url) {
+      try {
+        const r = await fetch(url);
+        if (r.ok) return r;
+      } catch (e) {}
+      return null;
+    }
+
+    const options = {
+      moduleCache,
+      async getFile(url) {
+        // 解析无扩展名导入（composables / utils / router 均为 .js）
+        const seg = url.slice(url.lastIndexOf('/') + 1);
+        const hasExt = seg.indexOf('.') !== -1;
+        let res = hasExt ? await tryFetch(url) : null;
+        let finalUrl = url;
+        if (!res) {
+          for (const cand of [url + '.js', url + '/index.js', url + '.vue']) {
+            const r = await tryFetch(cand);
+            if (r) { res = r; finalUrl = cand; break; }
+          }
+        }
+        if (!res) throw Object.assign(new Error('404 ' + url), { name: 'Error' });
+        const content = await res.text();
+        // 类型只能取自最后一段的扩展名，否则会把开头的 "./" 当成扩展名。
+        // 关键：本加载器把 .js 当 CommonJS（脚本）解析，需标成 .mjs 才按 ES 模块处理。
+        const fseg = finalUrl.slice(finalUrl.lastIndexOf('/') + 1);
+        let type = fseg.indexOf('.') !== -1 ? fseg.slice(fseg.lastIndexOf('.')) : '.mjs';
+        if (type === '.js') type = '.mjs';
+        return { getContentData: () => content, type };
+      },
+      addStyle(textContent) {
+        const style = document.createElement('style');
+        style.textContent = textContent;
+        document.head.appendChild(style);
+      }
+    };
+
+    // 路由表（与 src/router/index.js 保持一致）。预览里用 .vue 组件直接构建，
+    // 避免把 .js 作为顶层 loadModule 入口（loader 会按脚本而非模块解析它）。
+    const ROUTES = [
+      ['/', 'login', 'Login', '登录 / 课程选择'],
+      ['/map', 'map', 'ColorMap', '染色地图'],
+      ['/diagnostic', 'diagnostic', 'Diagnostic', '入口诊断'],
+      ['/result', 'result', 'DiagnosticResult', '诊断结果'],
+      ['/path', 'path', 'LearningPath', '学习路径'],
+      ['/knowledge', 'knowledge', 'KnowledgePoint', '知识点详情'],
+      ['/companion', 'companion', 'Companion', 'AI 学习伴侣'],
+      ['/growth', 'growth', 'Growth', '成长档案'],
+      ['/mobile', 'mobile', 'MobileMap', '移动端地图'],
+      ['/teacher/graph', 'teacher-graph', 'TeacherGraphReview', '图谱审核工作台'],
+      ['/teacher/questions', 'teacher-questions', 'TeacherQuestionPool', '题目审核池'],
+      ['/teacher/dashboard', 'teacher-dashboard', 'TeacherDashboard', '学情看板']
+    ];
+
+    (async () => {
+      try {
+        const App = await loadModule('./src/App.vue', options);
+        const routes = [];
+        for (const [path, name, file, title] of ROUTES) {
+          const component = await loadModule('./src/views/' + file + '.vue', options);
+          routes.push({ path, name, component, meta: { title } });
+        }
+        const router = VueRouter.createRouter({
+          history: VueRouter.createWebHashHistory(),
+          routes,
+          scrollBehavior() { return { top: 0 }; }
+        });
+
+        // 初始化主题（等价于 main.js 的 initTheme）
+        let saved = 'paper';
+        try { saved = localStorage.getItem('wj_theme') || 'paper'; } catch (e) {}
+        document.documentElement.setAttribute('data-theme', saved);
+
+        const app = Vue.createApp(App);
+        app.use(router);
+        await router.isReady();
+        app.mount('#app');
+        const boot = document.getElementById('__boot');
+        if (boot) boot.remove();
+      } catch (err) {
+        console.error(err);
+        const boot = document.getElementById('__boot');
+        if (boot) {
+          boot.style.flexDirection = 'column';
+          boot.style.padding = '24px';
+          boot.style.textAlign = 'center';
+          boot.innerHTML = '<div>预览加载失败</div><div style="font-size:12px;letter-spacing:0;margin-top:12px;max-width:600px;color:#b4422e">' + (err && err.message ? err.message : err) + '</div>';
+        }
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+/* ════════════════════════════════════════════════════════════
+   问津 · 第一阶段「功能版」设计令牌（占位）
+   仅做干净的功能样式；正式视觉设计稿后续替换这份变量与配色。
+   掌握度三态：--mastered / --weak / --unlearned
+   ════════════════════════════════════════════════════════════ */
+:root {
+  --bg: #1a1d24;          /* 页面背景 */
+  --panel: #232732;       /* 面板/抽屉背景 */
+  --panel-2: #2c313d;     /* 次级面板 */
+  --line: #3a4150;        /* 描边/分隔线 */
+  --text: #e8eaed;        /* 主文字 */
+  --text-mut: #9aa1ad;    /* 次要文字 */
+  --accent: #d8674a;      /* 强调色（当前选中、主操作） */
+
+  /* 掌握度三态 */
+  --mastered: #57a87e;    /* 已掌握（绿） */
+  --weak: #e0a33e;        /* 薄弱（琥珀） */
+  --unlearned: #6b7280;   /* 未学（灰）—— 本阶段全部节点用此色 */
+
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'PingFang SC', 'HarmonyOS Sans', 'Microsoft YaHei', system-ui, sans-serif;
+}
+
+button, select, input {
+  font-family: inherit;
+  color: var(--text);
+}

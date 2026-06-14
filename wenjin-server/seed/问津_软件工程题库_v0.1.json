@@ -1,0 +1,331 @@
+{
+  "courseCode": "52015CC4B4",
+  "description": "问津阶段二入口诊断种子题库（25 题，单选，已映射 node_code，导入为 status=已通过）。题面取自前端设计稿 Diagnostic.vue。",
+  "questions": [
+    {
+      "stem": "瀑布模型最显著的特点是什么？",
+      "nodeCode": "KT02-1",
+      "chapter": "软件工程概述",
+      "difficulty": 2,
+      "options": [
+        {"key": "A", "text": "各阶段顺序进行，前一阶段完成后才进入下一阶段", "correct": true},
+        {"key": "B", "text": "每次迭代都交付可运行的软件增量", "correct": false},
+        {"key": "C", "text": "通过快速原型不断澄清需求", "correct": false},
+        {"key": "D", "text": "开发与运维一体化、持续交付", "correct": false}
+      ],
+      "analysis": "瀑布模型强调阶段顺序与文档驱动，前一阶段完成后才进入下一阶段。"
+    },
+    {
+      "stem": "客户需求不清晰且变化频繁的项目，更适合采用哪种过程模型？",
+      "nodeCode": "KT03-1",
+      "chapter": "软件工程概述",
+      "difficulty": 2,
+      "options": [
+        {"key": "A", "text": "瀑布模型", "correct": false},
+        {"key": "B", "text": "敏捷开发", "correct": true},
+        {"key": "C", "text": "V 模型", "correct": false},
+        {"key": "D", "text": "大爆炸式开发", "correct": false}
+      ],
+      "analysis": "需求多变时敏捷开发通过短迭代持续响应变化，优于重计划的瀑布/V 模型。"
+    },
+    {
+      "stem": "增量模型与原型模型的本质区别在于：",
+      "nodeCode": "KT02",
+      "chapter": "软件工程概述",
+      "difficulty": 3,
+      "options": [
+        {"key": "A", "text": "增量交付的每个版本都是可运行的正式产品的一部分", "correct": true},
+        {"key": "B", "text": "增量模型不需要需求分析", "correct": false},
+        {"key": "C", "text": "原型模型只能用于界面设计", "correct": false},
+        {"key": "D", "text": "两者没有区别", "correct": false}
+      ],
+      "analysis": "增量的每次交付是正式产品的一部分；原型常用于澄清需求、可被抛弃。"
+    },
+    {
+      "stem": "「系统响应时间不超过 2 秒」属于哪类需求？",
+      "nodeCode": "KT04",
+      "chapter": "需求确定",
+      "difficulty": 2,
+      "options": [
+        {"key": "A", "text": "非功能需求", "correct": true},
+        {"key": "B", "text": "功能需求", "correct": false},
+        {"key": "C", "text": "业务需求", "correct": false},
+        {"key": "D", "text": "用户需求", "correct": false}
+      ],
+      "analysis": "性能/响应时间属于非功能需求（质量属性）。"
+    },
+    {
+      "stem": "绘制业务流程图时，泳道（Swimlane）的作用是：",
+      "nodeCode": "KT05-2",
+      "chapter": "需求确定",
+      "difficulty": 2,
+      "options": [
+        {"key": "A", "text": "区分不同角色或部门的职责范围", "correct": true},
+        {"key": "B", "text": "表示流程的时间顺序", "correct": false},
+        {"key": "C", "text": "标注数据的存储位置", "correct": false},
+        {"key": "D", "text": "划分系统的模块边界", "correct": false}
+      ],
+      "analysis": "泳道用于按角色/部门划分活动的职责归属。"
+    },
+    {
+      "stem": "活动图中的菱形节点表示：",
+      "nodeCode": "KT05-2",
+      "chapter": "需求确定",
+      "difficulty": 2,
+      "options": [
+        {"key": "A", "text": "判断/分支", "correct": true},
+        {"key": "B", "text": "并发开始", "correct": false},
+        {"key": "C", "text": "活动终止", "correct": false},
+        {"key": "D", "text": "对象状态", "correct": false}
+      ],
+      "analysis": "菱形为判定节点（分支/合并）。"
+    },
+    {
+      "stem": "识别用例参与者（Actor）时，下列哪项不应作为参与者？",
+      "nodeCode": "KT07-1",
+      "chapter": "需求确定",
+      "difficulty": 3,
+      "options": [
+        {"key": "A", "text": "系统内部的一个功能模块", "correct": true},
+        {"key": "B", "text": "使用系统的注册用户", "correct": false},
+        {"key": "C", "text": "与系统交互的外部支付平台", "correct": false},
+        {"key": "D", "text": "定时触发任务的时钟", "correct": false}
+      ],
+      "analysis": "参与者是系统外部实体；系统内部模块不是参与者。"
+    },
+    {
+      "stem": "确定系统边界的主要目的是：",
+      "nodeCode": "KT07-1",
+      "chapter": "需求确定",
+      "difficulty": 3,
+      "options": [
+        {"key": "A", "text": "明确哪些功能由系统负责、哪些由外部完成", "correct": true},
+        {"key": "B", "text": "划分开发团队的分工", "correct": false},
+        {"key": "C", "text": "确定数据库的表结构", "correct": false},
+        {"key": "D", "text": "估算项目成本", "correct": false}
+      ],
+      "analysis": "系统边界界定系统职责范围与内外划分。"
+    },
+    {
+      "stem": "用例之间的 «include» 关系表示：",
+      "nodeCode": "KT07-2",
+      "chapter": "需求确定",
+      "difficulty": 3,
+      "options": [
+        {"key": "A", "text": "一个用例的执行必然包含另一个用例的行为", "correct": true},
+        {"key": "B", "text": "一个用例在特定条件下扩展另一个用例", "correct": false},
+        {"key": "C", "text": "两个用例由同一参与者发起", "correct": false},
+        {"key": "D", "text": "两个用例共享同一界面", "correct": false}
+      ],
+      "analysis": "«include» 表示必然包含的公共行为；条件性扩展用 «extend»。"
+    },
+    {
+      "stem": "用例描述中的「基本事件流」指的是：",
+      "nodeCode": "KT07-3",
+      "chapter": "需求确定",
+      "difficulty": 3,
+      "options": [
+        {"key": "A", "text": "最常见、最理想情况下的交互步骤序列", "correct": true},
+        {"key": "B", "text": "所有异常情况的处理步骤", "correct": false},
+        {"key": "C", "text": "系统启动时的初始化流程", "correct": false},
+        {"key": "D", "text": "用例之间的调用顺序", "correct": false}
+      ],
+      "analysis": "基本流是主成功场景；异常用备选流描述。"
+    },
+    {
+      "stem": "用名词分析法从需求文本中提取候选实体时，应优先保留：",
+      "nodeCode": "KT10-1",
+      "chapter": "系统分析",
+      "difficulty": 3,
+      "options": [
+        {"key": "A", "text": "在业务中有持久状态和职责的名词", "correct": true},
+        {"key": "B", "text": "所有出现过的名词", "correct": false},
+        {"key": "C", "text": "只有界面上显示的名词", "correct": false},
+        {"key": "D", "text": "动词对应的名词化形式", "correct": false}
+      ],
+      "analysis": "候选实体应是有持久状态与职责的业务概念。"
+    },
+    {
+      "stem": "CRC 卡片中的 R（Responsibility）指的是：",
+      "nodeCode": "KT10-1",
+      "chapter": "系统分析",
+      "difficulty": 2,
+      "options": [
+        {"key": "A", "text": "类承担的职责", "correct": true},
+        {"key": "B", "text": "类的访问权限", "correct": false},
+        {"key": "C", "text": "类的存储位置", "correct": false},
+        {"key": "D", "text": "类的版本记录", "correct": false}
+      ],
+      "analysis": "CRC = Class-Responsibility-Collaborator，R 即职责。"
+    },
+    {
+      "stem": "领域类图中「一个订单包含多个订单项」应表示为：",
+      "nodeCode": "KT10-2",
+      "chapter": "系统分析",
+      "difficulty": 3,
+      "options": [
+        {"key": "A", "text": "Order 与 OrderItem 之间 1 对多的组合关系", "correct": true},
+        {"key": "B", "text": "Order 继承 OrderItem", "correct": false},
+        {"key": "C", "text": "OrderItem 依赖 Order 的接口", "correct": false},
+        {"key": "D", "text": "Order 与 OrderItem 互为关联类", "correct": false}
+      ],
+      "analysis": "订单项随订单存亡，属 1 对多组合（强生命周期依赖）。"
+    },
+    {
+      "stem": "聚合与组合的关键区别是：",
+      "nodeCode": "KT10-2",
+      "chapter": "系统分析",
+      "difficulty": 3,
+      "options": [
+        {"key": "A", "text": "组合中部分的生命周期依附于整体，聚合则不然", "correct": true},
+        {"key": "B", "text": "聚合的连线用实心菱形表示", "correct": false},
+        {"key": "C", "text": "组合只能用于抽象类", "correct": false},
+        {"key": "D", "text": "两者只是画法不同，语义相同", "correct": false}
+      ],
+      "analysis": "组合是强拥有（同生共死，实心菱形）；聚合是弱拥有（空心菱形）。"
+    },
+    {
+      "stem": "顺序图主要用于描述：",
+      "nodeCode": "KT12-1",
+      "chapter": "系统分析",
+      "difficulty": 2,
+      "options": [
+        {"key": "A", "text": "对象之间按时间顺序的消息交互", "correct": true},
+        {"key": "B", "text": "类的静态结构", "correct": false},
+        {"key": "C", "text": "系统的部署拓扑", "correct": false},
+        {"key": "D", "text": "数据的存储格式", "correct": false}
+      ],
+      "analysis": "顺序图刻画对象间随时间推进的消息交互。"
+    },
+    {
+      "stem": "状态图最适合建模哪类对象？",
+      "nodeCode": "KT12-1",
+      "chapter": "系统分析",
+      "difficulty": 3,
+      "options": [
+        {"key": "A", "text": "行为随状态显著变化的对象（如订单、审批单）", "correct": true},
+        {"key": "B", "text": "只有属性没有行为的数据对象", "correct": false},
+        {"key": "C", "text": "工具类与辅助函数", "correct": false},
+        {"key": "D", "text": "用户界面布局", "correct": false}
+      ],
+      "analysis": "状态图适合行为依状态变化的对象（订单、审批单等）。"
+    },
+    {
+      "stem": "分层架构（如表示层/业务层/数据层）的核心原则是：",
+      "nodeCode": "KT15-1",
+      "chapter": "系统设计",
+      "difficulty": 3,
+      "options": [
+        {"key": "A", "text": "上层依赖下层，下层不感知上层", "correct": true},
+        {"key": "B", "text": "任意两层可以互相调用", "correct": false},
+        {"key": "C", "text": "层数越多性能越好", "correct": false},
+        {"key": "D", "text": "每层必须部署在不同服务器", "correct": false}
+      ],
+      "analysis": "分层架构单向依赖：上层依赖下层，下层不反向感知上层。"
+    },
+    {
+      "stem": "「高内聚、低耦合」中，高内聚指的是：",
+      "nodeCode": "KT14",
+      "chapter": "系统设计",
+      "difficulty": 2,
+      "options": [
+        {"key": "A", "text": "模块内部各元素紧密围绕同一职责", "correct": true},
+        {"key": "B", "text": "模块之间共享尽可能多的全局变量", "correct": false},
+        {"key": "C", "text": "一个模块实现尽可能多的功能", "correct": false},
+        {"key": "D", "text": "模块之间调用层级深", "correct": false}
+      ],
+      "analysis": "高内聚＝模块内部元素围绕单一职责紧密协作。"
+    },
+    {
+      "stem": "下列哪种做法会增加模块间耦合？",
+      "nodeCode": "KT14",
+      "chapter": "系统设计",
+      "difficulty": 3,
+      "options": [
+        {"key": "A", "text": "模块间直接读写彼此的内部数据", "correct": true},
+        {"key": "B", "text": "通过明确定义的接口通信", "correct": false},
+        {"key": "C", "text": "用参数传递代替全局变量", "correct": false},
+        {"key": "D", "text": "隐藏模块内部实现细节", "correct": false}
+      ],
+      "analysis": "直接读写彼此内部数据是内容耦合，耦合度最高。"
+    },
+    {
+      "stem": "编码规范的首要目的是：",
+      "nodeCode": "KT20",
+      "chapter": "对象设计",
+      "difficulty": 1,
+      "options": [
+        {"key": "A", "text": "提高代码的可读性与可维护性", "correct": true},
+        {"key": "B", "text": "让程序运行得更快", "correct": false},
+        {"key": "C", "text": "减少代码行数", "correct": false},
+        {"key": "D", "text": "方便代码加密", "correct": false}
+      ],
+      "analysis": "编码规范主要服务于可读性与可维护性。"
+    },
+    {
+      "stem": "黑盒测试与白盒测试的区别在于：",
+      "nodeCode": "KT23",
+      "chapter": "软件测试",
+      "difficulty": 2,
+      "options": [
+        {"key": "A", "text": "是否依据程序内部结构设计测试用例", "correct": true},
+        {"key": "B", "text": "是否需要运行程序", "correct": false},
+        {"key": "C", "text": "是否由开发人员执行", "correct": false},
+        {"key": "D", "text": "是否使用自动化工具", "correct": false}
+      ],
+      "analysis": "白盒依据内部结构，黑盒只看输入输出。"
+    },
+    {
+      "stem": "对输入「1–100 的整数」做等价类划分，合理的划分是：",
+      "nodeCode": "KT23-1",
+      "chapter": "软件测试",
+      "difficulty": 3,
+      "options": [
+        {"key": "A", "text": "有效类：1–100；无效类：小于 1、大于 100、非整数", "correct": true},
+        {"key": "B", "text": "有效类：所有整数；无效类：所有小数", "correct": false},
+        {"key": "C", "text": "每个整数单独一类", "correct": false},
+        {"key": "D", "text": "只需测试 50 一个值", "correct": false}
+      ],
+      "analysis": "按规格划分有效/无效等价类，覆盖越界与非整数无效情形。"
+    },
+    {
+      "stem": "边界值分析建议优先测试的输入是：",
+      "nodeCode": "KT23-2",
+      "chapter": "软件测试",
+      "difficulty": 2,
+      "options": [
+        {"key": "A", "text": "0、1、100、101 这类边界及其邻近值", "correct": true},
+        {"key": "B", "text": "50 等中间值", "correct": false},
+        {"key": "C", "text": "随机抽取的任意值", "correct": false},
+        {"key": "D", "text": "用户最常输入的值", "correct": false}
+      ],
+      "analysis": "缺陷多聚集在边界，优先测边界与其邻近值。"
+    },
+    {
+      "stem": "单元测试与集成测试的关系是：",
+      "nodeCode": "KT22",
+      "chapter": "软件测试",
+      "difficulty": 2,
+      "options": [
+        {"key": "A", "text": "先验证单个模块正确，再验证模块协作正确", "correct": true},
+        {"key": "B", "text": "集成测试通过后才做单元测试", "correct": false},
+        {"key": "C", "text": "两者测试内容完全相同", "correct": false},
+        {"key": "D", "text": "做了集成测试就无需单元测试", "correct": false}
+      ],
+      "analysis": "先单元后集成：先保证模块自身，再验证模块间协作。"
+    },
+    {
+      "stem": "上线后为适应新的操作系统版本而修改软件，属于哪类维护？",
+      "nodeCode": "KT24",
+      "chapter": "部署与维护",
+      "difficulty": 2,
+      "options": [
+        {"key": "A", "text": "适应性维护", "correct": true},
+        {"key": "B", "text": "纠错性维护", "correct": false},
+        {"key": "C", "text": "完善性维护", "correct": false},
+        {"key": "D", "text": "预防性维护", "correct": false}
+      ],
+      "analysis": "为适应运行环境变化（OS/硬件）而改属适应性维护。"
+    }
+  ]
+}
