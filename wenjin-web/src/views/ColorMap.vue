@@ -63,7 +63,10 @@
             </div>
             <div class="row">
               <span class="k">掌握度</span>
-              <span class="v"><span class="tag mastery">{{ masteryLabel(current.mastery) }}</span></span>
+              <span class="v">
+                <span class="mdot" :style="{ background: masteryVar(current.mastery) }"></span>
+                <span class="tag mastery">{{ masteryText(current) }}</span>
+              </span>
             </div>
             <div class="row col">
               <span class="k">描述</span>
@@ -77,7 +80,7 @@
                   :key="p.nodeCode"
                   class="prereq-btn"
                   @click="focus(p.nodeCode)"
-                >{{ p.name }}</button>
+                ><span class="pdot" :style="{ background: masteryVar(p.mastery) }"></span>{{ p.name }}</button>
               </div>
               <p v-else class="desc muted">无（这是一个入门/根知识点）</p>
             </div>
@@ -95,6 +98,8 @@ import { useGraphStore } from '../store/graph'
 
 // 本阶段不做登录，演示课程写死为 courseId=1（schema.sql 已种入 code=52015CC4B4 的课程）
 const DEMO_COURSE_ID = 1
+// 演示学生写死为 studentId=2（schema.sql 已种入 id=2 的演示学生账户，role=2 学生）
+const DEMO_STUDENT_ID = 2
 
 const store = useGraphStore()
 const chartEl = ref(null)
@@ -118,6 +123,15 @@ function masteryLabel(m) {
 }
 function masteryColor(m) {
   return m === 'mastered' ? C.mastered : m === 'weak' ? C.weak : C.unlearned
+}
+// 掌握度三态 → CSS 变量色（与图节点配色同源，模板里直接用，避免依赖 C 的读取时序）
+function masteryVar(m) {
+  return m === 'mastered' ? 'var(--mastered)' : m === 'weak' ? 'var(--weak)' : 'var(--unlearned)'
+}
+// 抽屉掌握度文案：有分值时显示「薄弱 · 62」，否则仅级别
+function masteryText(node) {
+  const label = masteryLabel(node.mastery)
+  return node.masteryScore == null ? label : `${label} · ${Math.round(node.masteryScore)}`
 }
 
 // 读取占位主题配色
@@ -263,7 +277,7 @@ function closeDrawer() {
 }
 
 async function reload() {
-  await store.load(DEMO_COURSE_ID)
+  await store.load(DEMO_COURSE_ID, DEMO_STUDENT_ID)
 }
 
 function onResize() {
@@ -279,7 +293,7 @@ watch(
 
 onMounted(async () => {
   readColors()
-  await store.load(DEMO_COURSE_ID)
+  await store.load(DEMO_COURSE_ID, DEMO_STUDENT_ID)
   window.addEventListener('resize', onResize)
   // 仅开发期暴露给端到端（Playwright）测试用；import.meta.env.DEV 守卫，生产构建会被剔除
   if (import.meta.env.DEV) {
@@ -389,7 +403,13 @@ onBeforeUnmount(() => {
 .prereq { display: flex; flex-wrap: wrap; gap: 8px; }
 .prereq-btn {
   background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
-  padding: 5px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; text-align: left;
+  padding: 5px 10px; border-radius: 8px; font-size: 12px; cursor: pointer;
+  display: inline-flex; align-items: center;
 }
 .prereq-btn:hover { border-color: var(--accent); color: var(--accent); }
+.mdot, .pdot {
+  width: 9px; height: 9px; border-radius: 50%;
+  display: inline-block; vertical-align: middle; margin-right: 6px;
+  flex-shrink: 0;
+}
 </style>
