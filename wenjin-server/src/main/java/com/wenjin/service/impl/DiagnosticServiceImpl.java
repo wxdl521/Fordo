@@ -5,10 +5,15 @@ import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.dto.PaperQuestionVO;
 import com.wenjin.dto.PaperVO;
+import com.wenjin.dto.QuestionGradeVO;
+import com.wenjin.dto.SubmitRequest;
+import com.wenjin.dto.SubmitResult;
+import com.wenjin.entity.AnswerRecord;
 import com.wenjin.entity.KgNode;
 import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
+import com.wenjin.mapper.AnswerRecordMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
@@ -17,7 +22,9 @@ import com.wenjin.service.DiagnosticService;
 import com.wenjin.support.QuestionStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -27,7 +34,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * 入口诊断服务实现（T6：PRD 6.1 分层抽样组卷）。
+ * 入口诊断服务实现（T6：PRD 6.1 分层抽样组卷；T7：交卷判分）。
  * <p>
  * 核心流程：
  *   1. 取课程全部 APPROVED 题；
@@ -43,11 +50,16 @@ public class DiagnosticServiceImpl implements DiagnosticService {
     private static final int WEIGHT_MAIN = 1;
     /** chapter 缺失时的兜底值 */
     private static final String CHAPTER_UNKNOWN = "未分类";
+    /** answer_record.is_correct 正确标记值 */
+    private static final int IS_CORRECT = 1;
+    /** answer_record.is_correct 错误标记值 */
+    private static final int IS_WRONG = 0;
 
     private final QuestionMapper questionMapper;
     private final QuestionOptionMapper questionOptionMapper;
     private final QuestionNodeMapper questionNodeMapper;
     private final KgNodeMapper kgNodeMapper;
+    private final AnswerRecordMapper answerRecordMapper;
 
     /** 试卷目标题数，可通过配置覆盖；未配置时默认 25。 */
     @Value("${wenjin.diagnostic.paper-size:25}")
@@ -56,11 +68,13 @@ public class DiagnosticServiceImpl implements DiagnosticService {
     public DiagnosticServiceImpl(QuestionMapper questionMapper,
                                  QuestionOptionMapper questionOptionMapper,
                                  QuestionNodeMapper questionNodeMapper,
-                                 KgNodeMapper kgNodeMapper) {
+                                 KgNodeMapper kgNodeMapper,
+                                 AnswerRecordMapper answerRecordMapper) {
         this.questionMapper = questionMapper;
         this.questionOptionMapper = questionOptionMapper;
         this.questionNodeMapper = questionNodeMapper;
         this.kgNodeMapper = kgNodeMapper;
+        this.answerRecordMapper = answerRecordMapper;
     }
 
     @Override
@@ -255,5 +269,75 @@ public class DiagnosticServiceImpl implements DiagnosticService {
         paper.setQuestions(questionVOs);
         paper.setTotal(questionVOs.size());
         return paper;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public SubmitResult submit(SubmitRequest req) {
+        // ── 0. 防卫：空请求直接返回零分结果 ─────────────────────────────
+        if (req == null || req.getAnswers() == null || req.getAnswers().isEmpty()) {
+            SubmitResult emptyResult = new SubmitResult();
+            emptyResult.setTotal(0);
+            emptyResult.setCorrectCount(0);
+            emptyResult.setGrades(List.of());
+            return emptyResult;
+        }
+
+        List<SubmitRequest.Answer> answers = req.getAnswers();
+
+        // ── 1. 批量查询正确答案（一次 IN 查询，避免 N+1） ───────────────
+        List<Long> questionIds = answers.stream()
+                .map(SubmitRequest.Answer::getQuestionId)
+                .collect(Collectors.toList());
+
+        List<QuestionOption> correctOptions = questionOptionMapper.selectList(
+                new LambdaQueryWrapper<QuestionOption>()
+                        .in(QuestionOption::getQuestionId, questionIds)
+                        .eq(QuestionOption::getIsCorrect, IS_CORRECT));
+
+        // questionId → 正确选项标识（多条时取首条）
+        Map<Long, String> correctKeyByQuestion = new HashMap<>();
+        for (QuestionOption opt : correctOptions) {
+            correctKeyByQuestion.putIfAbsent(opt.getQuestionId(), opt.getOptionKey());
+        }
+
+        // ── 2. 逐题判分 + 写入 answer_record ─────────────────────────────
+        List<QuestionGradeVO> grades = new ArrayList<>(answers.size());
+        int correctCount = 0;
+
+        for (SubmitRequest.Answer answer : answers) {
+            Long questionId = answer.getQuestionId();
+            String chosen = answer.getOptionKey();
+            String correctKey = correctKeyByQuestion.get(questionId);
+            boolean isCorrect = correctKey != null && correctKey.equals(chosen);
+
+            // 落库：每道题一条答题记录
+            AnswerRecord record = new AnswerRecord();
+            record.setStudentId(req.getStudentId());
+            record.setCourseId(req.getCourseId());
+            record.setQuestionId(questionId);
+            record.setStudentAnswer(chosen);
+            record.setIsCorrect(isCorrect ? IS_CORRECT : IS_WRONG);
+            record.setAnsweredAt(LocalDateTime.now());
+            answerRecordMapper.insert(record);
+
+            // 构造逐题 VO
+            QuestionGradeVO grade = new QuestionGradeVO();
+            grade.setQuestionId(questionId);
+            grade.setCorrect(isCorrect);
+            grade.setCorrectKey(correctKey);
+            grades.add(grade);
+
+            if (isCorrect) {
+                correctCount++;
+            }
+        }
+
+        // ── 3. 组装并返回汇总结果 ─────────────────────────────────────────
+        SubmitResult result = new SubmitResult();
+        result.setTotal(answers.size());
+        result.setCorrectCount(correctCount);
+        result.setGrades(grades);
+        return result;
     }
 }

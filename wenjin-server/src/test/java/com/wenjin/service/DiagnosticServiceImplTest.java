@@ -3,10 +3,15 @@ package com.wenjin.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.dto.PaperQuestionVO;
 import com.wenjin.dto.PaperVO;
+import com.wenjin.dto.QuestionGradeVO;
+import com.wenjin.dto.SubmitRequest;
+import com.wenjin.dto.SubmitResult;
+import com.wenjin.entity.AnswerRecord;
 import com.wenjin.entity.KgNode;
 import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
+import com.wenjin.mapper.AnswerRecordMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
@@ -17,6 +22,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -28,6 +34,8 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -42,6 +50,7 @@ class DiagnosticServiceImplTest {
     @Mock QuestionOptionMapper questionOptionMapper;
     @Mock QuestionNodeMapper questionNodeMapper;
     @Mock KgNodeMapper kgNodeMapper;
+    @Mock AnswerRecordMapper answerRecordMapper;
 
     private static final Long COURSE_ID = 1L;
 
@@ -103,7 +112,8 @@ class DiagnosticServiceImplTest {
 
     private DiagnosticServiceImpl impl() {
         DiagnosticServiceImpl impl = new DiagnosticServiceImpl(
-                questionMapper, questionOptionMapper, questionNodeMapper, kgNodeMapper);
+                questionMapper, questionOptionMapper, questionNodeMapper, kgNodeMapper,
+                answerRecordMapper);
         ReflectionTestUtils.setField(impl, "paperSize", 25);
         return impl;
     }
@@ -353,7 +363,8 @@ class DiagnosticServiceImplTest {
                 .thenAnswer(inv -> optionsForAll(questions));
 
         DiagnosticServiceImpl svc = new DiagnosticServiceImpl(
-                questionMapper, questionOptionMapper, questionNodeMapper, kgNodeMapper);
+                questionMapper, questionOptionMapper, questionNodeMapper, kgNodeMapper,
+                answerRecordMapper);
         ReflectionTestUtils.setField(svc, "paperSize", 25);
 
         PaperVO paper = svc.composePaper(COURSE_ID);
@@ -379,5 +390,121 @@ class DiagnosticServiceImplTest {
                 .filter(q -> "章A".equals(q.getChapter()))
                 .count();
         assertThat(countA).isEqualTo(1);
+    }
+
+    // ───────────────────── 用例 F：T7 交卷判分 ─────────────────────
+
+    @Test
+    @DisplayName("F 交卷判分：Q1选A(正确)、Q2选C(错误) → correctCount=1，insert 2次，isCorrect/studentAnswer 正确落库")
+    void submitGradesAndInsertsAnswerRecords() {
+        // 构造两道题的正确选项
+        QuestionOption opt101 = new QuestionOption();
+        opt101.setId(1L);
+        opt101.setQuestionId(101L);
+        opt101.setOptionKey("A");
+        opt101.setOptionText("选项A");
+        opt101.setIsCorrect(1);
+
+        QuestionOption opt102 = new QuestionOption();
+        opt102.setId(2L);
+        opt102.setQuestionId(102L);
+        opt102.setOptionKey("B");
+        opt102.setOptionText("选项B");
+        opt102.setIsCorrect(1);
+
+        // stub：批量查询正确选项
+        when(questionOptionMapper.selectList(any())).thenReturn(List.of(opt101, opt102));
+
+        // 构造提交请求
+        SubmitRequest req = new SubmitRequest();
+        req.setStudentId(10L);
+        req.setCourseId(1L);
+
+        SubmitRequest.Answer a1 = new SubmitRequest.Answer();
+        a1.setQuestionId(101L);
+        a1.setOptionKey("A");   // 正确
+
+        SubmitRequest.Answer a2 = new SubmitRequest.Answer();
+        a2.setQuestionId(102L);
+        a2.setOptionKey("C");   // 错误
+
+        req.setAnswers(List.of(a1, a2));
+
+        SubmitResult result = impl().submit(req);
+
+        // ── 断言：汇总得分 ───────────────────────────────────────────
+        assertThat(result.getTotal()).isEqualTo(2);
+        assertThat(result.getCorrectCount()).isEqualTo(1);
+
+        // ── 断言：逐题 grade ─────────────────────────────────────────
+        List<QuestionGradeVO> grades = result.getGrades();
+        assertThat(grades).hasSize(2);
+
+        QuestionGradeVO g1 = grades.get(0);
+        assertThat(g1.getQuestionId()).isEqualTo(101L);
+        assertThat(g1.isCorrect()).isTrue();
+        assertThat(g1.getCorrectKey()).isEqualTo("A");
+
+        QuestionGradeVO g2 = grades.get(1);
+        assertThat(g2.getQuestionId()).isEqualTo(102L);
+        assertThat(g2.isCorrect()).isFalse();
+        assertThat(g2.getCorrectKey()).isEqualTo("B");
+
+        // ── 断言：answerRecordMapper.insert 被调用 2 次，内容正确 ────
+        ArgumentCaptor<AnswerRecord> captor = ArgumentCaptor.forClass(AnswerRecord.class);
+        verify(answerRecordMapper, times(2)).insert(captor.capture());
+
+        List<AnswerRecord> captured = captor.getAllValues();
+
+        AnswerRecord r1 = captured.get(0);
+        assertThat(r1.getStudentId()).isEqualTo(10L);
+        assertThat(r1.getCourseId()).isEqualTo(1L);
+        assertThat(r1.getQuestionId()).isEqualTo(101L);
+        assertThat(r1.getStudentAnswer()).isEqualTo("A");
+        assertThat(r1.getIsCorrect()).isEqualTo(1);
+        assertThat(r1.getAnsweredAt()).isNotNull();
+
+        AnswerRecord r2 = captured.get(1);
+        assertThat(r2.getQuestionId()).isEqualTo(102L);
+        assertThat(r2.getStudentAnswer()).isEqualTo("C");
+        assertThat(r2.getIsCorrect()).isEqualTo(0);
+        assertThat(r2.getAnsweredAt()).isNotNull();
+    }
+
+    // ──────────── 用例 G：该题无正确选项记录 → 判错且 correctKey=null ────────────
+
+    @Test
+    @DisplayName("G 题库无正确选项：判为错误，grade.correctKey=null，仍落库 isCorrect=0")
+    void submitGradesWrongWhenNoCorrectOption() {
+        // stub：批量查询正确选项返回空（该题在题库无 isCorrect=1 记录）
+        when(questionOptionMapper.selectList(any())).thenReturn(List.of());
+
+        SubmitRequest req = new SubmitRequest();
+        req.setStudentId(10L);
+        req.setCourseId(1L);
+
+        SubmitRequest.Answer a1 = new SubmitRequest.Answer();
+        a1.setQuestionId(201L);
+        a1.setOptionKey("A");
+        req.setAnswers(List.of(a1));
+
+        SubmitResult result = impl().submit(req);
+
+        // 无正确选项 → 判错、不计分
+        assertThat(result.getTotal()).isEqualTo(1);
+        assertThat(result.getCorrectCount()).isZero();
+
+        QuestionGradeVO g = result.getGrades().get(0);
+        assertThat(g.getQuestionId()).isEqualTo(201L);
+        assertThat(g.isCorrect()).isFalse();
+        assertThat(g.getCorrectKey()).isNull();
+
+        // 仍落一条答题记录：studentAnswer 记录所选、isCorrect=0
+        ArgumentCaptor<AnswerRecord> captor = ArgumentCaptor.forClass(AnswerRecord.class);
+        verify(answerRecordMapper, times(1)).insert(captor.capture());
+        AnswerRecord r = captor.getValue();
+        assertThat(r.getQuestionId()).isEqualTo(201L);
+        assertThat(r.getStudentAnswer()).isEqualTo("A");
+        assertThat(r.getIsCorrect()).isEqualTo(0);
     }
 }
