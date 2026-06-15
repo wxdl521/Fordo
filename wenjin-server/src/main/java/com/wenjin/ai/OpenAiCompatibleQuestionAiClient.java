@@ -76,13 +76,38 @@ public class OpenAiCompatibleQuestionAiClient implements QuestionAiClient {
         }
     }
 
+    @Override
+    public String explainLearningStep(String nodeName, String roleLabel, String targetName) {
+        String prompt = buildExplainPrompt(nodeName, roleLabel, targetName);
+        String content = call(prompt);
+        try {
+            JsonNode root = MAPPER.readTree(stripJsonFence(content));
+            JsonNode reason = root.path("reason");
+            if (reason.isMissingNode() || reason.isNull() || !StringUtils.hasText(reason.asText())) {
+                throw new BusinessException(ResultCode.AI_ERROR, "AI服务调用失败：返回缺少 reason");
+            }
+            return reason.asText().trim();
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(ResultCode.AI_ERROR, "AI服务调用失败：说明解析失败 " + e.getMessage());
+        }
+    }
+
+    /** 学习路径说明 Prompt：返回 {"reason":"..."}。 */
+    static String buildExplainPrompt(String nodeName, String roleLabel, String targetName) {
+        return "你是软件工程学习导师。用一句不超过40字的中文，说明为什么现在该学「" + nodeName
+                + "」（其角色：" + roleLabel + "；学习目标：突破「" + targetName + "」）。"
+                + "只返回 JSON：{\"reason\":\"...\"}";
+    }
+
     // ============================ 网络调用 ============================
 
     /**
      * 调用 OpenAI 兼容的 chat/completions，取出 choices[0].message.content。
      * 失败（缺 apiKey / 网络异常 / 结构异常）统一抛 {@link ResultCode#AI_ERROR}。
      */
-    private String call(String prompt) {
+    String call(String prompt) {
         if (!properties.isEnabled()) {
             throw new BusinessException(ResultCode.AI_ERROR, "AI 功能已禁用（wenjin.ai.enabled=false）");
         }

@@ -32,4 +32,14 @@ public interface QuestionAiClient {
      */
     AiAnnotation annotate(String stem, java.util.List<String[]> options,
             java.util.List<String[]> whitelist);
+
+    /**
+     * 为学习路径某步生成一句「为什么学这个」说明（≤40 字）。失败/禁用抛 BusinessException。
+     *
+     * @param nodeName   该步知识点名称
+     * @param roleLabel  角色（根因/卡点/前置）
+     * @param targetName 路径目标（卡点）名称
+     * @return 一句中文说明
+     */
+    String explainLearningStep(String nodeName, String roleLabel, String targetName);
 }
