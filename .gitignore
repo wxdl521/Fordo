@@ -19,6 +19,8 @@ dist/
 .rev*.err
 .test.out
 .test.err
+.build.out
+.build.err
 
 # ───── IDE / 系统 ─────
 .idea/
