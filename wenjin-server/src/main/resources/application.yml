@@ -40,6 +40,8 @@ wenjin:
     api-key: ${WENJIN_AI_API_KEY:}
     model: ${WENJIN_AI_MODEL:deepseek-chat}
     temperature: 0.4
+  diagnostic:                                    # 入口诊断组卷（T6）
+    paper-size: 25                               # 诊断试卷目标题数（分层抽样上限）
 
 logging:
   level:
