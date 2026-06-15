@@ -1,6 +1,7 @@
 package com.wenjin.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wenjin.dto.GradedAnswer;
 import com.wenjin.dto.PaperQuestionVO;
 import com.wenjin.dto.PaperVO;
 import com.wenjin.dto.QuestionGradeVO;
@@ -34,6 +35,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -51,6 +53,7 @@ class DiagnosticServiceImplTest {
     @Mock QuestionNodeMapper questionNodeMapper;
     @Mock KgNodeMapper kgNodeMapper;
     @Mock AnswerRecordMapper answerRecordMapper;
+    @Mock MasteryService masteryService;
 
     private static final Long COURSE_ID = 1L;
 
@@ -113,7 +116,7 @@ class DiagnosticServiceImplTest {
     private DiagnosticServiceImpl impl() {
         DiagnosticServiceImpl impl = new DiagnosticServiceImpl(
                 questionMapper, questionOptionMapper, questionNodeMapper, kgNodeMapper,
-                answerRecordMapper);
+                answerRecordMapper, masteryService);
         ReflectionTestUtils.setField(impl, "paperSize", 25);
         return impl;
     }
@@ -364,7 +367,7 @@ class DiagnosticServiceImplTest {
 
         DiagnosticServiceImpl svc = new DiagnosticServiceImpl(
                 questionMapper, questionOptionMapper, questionNodeMapper, kgNodeMapper,
-                answerRecordMapper);
+                answerRecordMapper, masteryService);
         ReflectionTestUtils.setField(svc, "paperSize", 25);
 
         PaperVO paper = svc.composePaper(COURSE_ID);
@@ -506,5 +509,54 @@ class DiagnosticServiceImplTest {
         assertThat(r.getQuestionId()).isEqualTo(201L);
         assertThat(r.getStudentAnswer()).isEqualTo("A");
         assertThat(r.getIsCorrect()).isEqualTo(0);
+    }
+
+    // ──────────── 用例 H：交卷后触发掌握度更新（applyAnswers） ────────────
+
+    @Test
+    @DisplayName("H 交卷判分后调 masteryService.applyAnswers：入参为逐题 GradedAnswer(questionId+correct)")
+    void submitTriggersMasteryUpdate() {
+        QuestionOption opt101 = new QuestionOption();
+        opt101.setId(1L);
+        opt101.setQuestionId(101L);
+        opt101.setOptionKey("A");
+        opt101.setOptionText("选项A");
+        opt101.setIsCorrect(1);
+
+        QuestionOption opt102 = new QuestionOption();
+        opt102.setId(2L);
+        opt102.setQuestionId(102L);
+        opt102.setOptionKey("B");
+        opt102.setOptionText("选项B");
+        opt102.setIsCorrect(1);
+
+        when(questionOptionMapper.selectList(any())).thenReturn(List.of(opt101, opt102));
+
+        SubmitRequest req = new SubmitRequest();
+        req.setStudentId(2L);
+        req.setCourseId(1L);
+
+        SubmitRequest.Answer a1 = new SubmitRequest.Answer();
+        a1.setQuestionId(101L);
+        a1.setOptionKey("A");   // 正确
+
+        SubmitRequest.Answer a2 = new SubmitRequest.Answer();
+        a2.setQuestionId(102L);
+        a2.setOptionKey("C");   // 错误
+
+        req.setAnswers(List.of(a1, a2));
+
+        impl().submit(req);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<GradedAnswer>> captor = ArgumentCaptor.forClass(List.class);
+        verify(masteryService, times(1)).applyAnswers(eq(2L), eq(1L), captor.capture());
+
+        List<GradedAnswer> graded = captor.getValue();
+        assertThat(graded).hasSize(2);
+        assertThat(graded.get(0).getQuestionId()).isEqualTo(101L);
+        assertThat(graded.get(0).isCorrect()).isTrue();
+        assertThat(graded.get(1).getQuestionId()).isEqualTo(102L);
+        assertThat(graded.get(1).isCorrect()).isFalse();
     }
 }

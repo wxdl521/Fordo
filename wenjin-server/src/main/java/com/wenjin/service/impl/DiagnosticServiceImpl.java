@@ -3,6 +3,7 @@ package com.wenjin.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.dto.GradedAnswer;
 import com.wenjin.dto.PaperQuestionVO;
 import com.wenjin.dto.PaperVO;
 import com.wenjin.dto.QuestionGradeVO;
@@ -19,6 +20,7 @@ import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
 import com.wenjin.service.DiagnosticService;
+import com.wenjin.service.MasteryService;
 import com.wenjin.support.QuestionStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -60,6 +62,7 @@ public class DiagnosticServiceImpl implements DiagnosticService {
     private final QuestionNodeMapper questionNodeMapper;
     private final KgNodeMapper kgNodeMapper;
     private final AnswerRecordMapper answerRecordMapper;
+    private final MasteryService masteryService;
 
     /** 试卷目标题数，可通过配置覆盖；未配置时默认 25。 */
     @Value("${wenjin.diagnostic.paper-size:25}")
@@ -69,12 +72,14 @@ public class DiagnosticServiceImpl implements DiagnosticService {
                                  QuestionOptionMapper questionOptionMapper,
                                  QuestionNodeMapper questionNodeMapper,
                                  KgNodeMapper kgNodeMapper,
-                                 AnswerRecordMapper answerRecordMapper) {
+                                 AnswerRecordMapper answerRecordMapper,
+                                 MasteryService masteryService) {
         this.questionMapper = questionMapper;
         this.questionOptionMapper = questionOptionMapper;
         this.questionNodeMapper = questionNodeMapper;
         this.kgNodeMapper = kgNodeMapper;
         this.answerRecordMapper = answerRecordMapper;
+        this.masteryService = masteryService;
     }
 
     @Override
@@ -303,6 +308,7 @@ public class DiagnosticServiceImpl implements DiagnosticService {
 
         // ── 2. 逐题判分 + 写入 answer_record ─────────────────────────────
         List<QuestionGradeVO> grades = new ArrayList<>(answers.size());
+        List<GradedAnswer> gradedAnswers = new ArrayList<>(answers.size());
         int correctCount = 0;
 
         for (SubmitRequest.Answer answer : answers) {
@@ -328,10 +334,16 @@ public class DiagnosticServiceImpl implements DiagnosticService {
             grade.setCorrectKey(correctKey);
             grades.add(grade);
 
+            // 收集掌握度计算输入
+            gradedAnswers.add(new GradedAnswer(questionId, isCorrect));
+
             if (isCorrect) {
                 correctCount++;
             }
         }
+
+        // ── 2b. 同一事务内更新掌握度（阶段三在此挂上；阶段二刻意未碰 student_mastery） ──
+        masteryService.applyAnswers(req.getStudentId(), req.getCourseId(), gradedAnswers);
 
         // ── 3. 组装并返回汇总结果 ─────────────────────────────────────────
         SubmitResult result = new SubmitResult();
