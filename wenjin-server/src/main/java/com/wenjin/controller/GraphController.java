@@ -6,6 +6,7 @@ import com.wenjin.service.GraphService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -22,11 +23,12 @@ public class GraphController {
     }
 
     /**
-     * 查询某课程的全部节点与边（节点掌握度本阶段统一 unlearned）。
-     * GET /api/graph/{courseId}
+     * 查询某课程的全部节点与边；带 studentId 时按学情染色，否则统一 unlearned。
+     * GET /api/graph/{courseId}?studentId=
      */
     @GetMapping("/{courseId}")
-    public Result<GraphDataVO> getGraph(@PathVariable("courseId") Long courseId) {
-        return Result.ok(graphService.getGraph(courseId));
+    public Result<GraphDataVO> getGraph(@PathVariable("courseId") Long courseId,
+                                        @RequestParam(value = "studentId", required = false) Long studentId) {
+        return Result.ok(graphService.getGraph(courseId, studentId));
     }
 }

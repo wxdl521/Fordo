@@ -10,9 +10,11 @@ import com.wenjin.dto.GraphValidateResult;
 import com.wenjin.entity.Course;
 import com.wenjin.entity.KgEdge;
 import com.wenjin.entity.KgNode;
+import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
+import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.GraphService;
 import com.wenjin.support.RelationType;
 import org.slf4j.Logger;
@@ -22,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -38,21 +41,26 @@ public class GraphServiceImpl implements GraphService {
 
     private static final Logger log = LoggerFactory.getLogger(GraphServiceImpl.class);
 
-    /** 本阶段掌握度统一占位值（学情功能后续阶段接入） */
+    /** 掌握度三态级别串：已掌握 / 薄弱 / 未学（无 studentId 或无掌握行时统一作未学） */
+    private static final String MASTERY_MASTERED = "mastered";
+    private static final String MASTERY_WEAK = "weak";
     private static final String MASTERY_UNLEARNED = "unlearned";
 
     private final CourseMapper courseMapper;
     private final KgNodeMapper nodeMapper;
     private final KgEdgeMapper edgeMapper;
+    private final StudentMasteryMapper studentMasteryMapper;
 
     /** 演示教师ID（新建课程时作为创建者） */
     @Value("${wenjin.demo.teacher-id:1}")
     private Long demoTeacherId;
 
-    public GraphServiceImpl(CourseMapper courseMapper, KgNodeMapper nodeMapper, KgEdgeMapper edgeMapper) {
+    public GraphServiceImpl(CourseMapper courseMapper, KgNodeMapper nodeMapper,
+                            KgEdgeMapper edgeMapper, StudentMasteryMapper studentMasteryMapper) {
         this.courseMapper = courseMapper;
         this.nodeMapper = nodeMapper;
         this.edgeMapper = edgeMapper;
+        this.studentMasteryMapper = studentMasteryMapper;
     }
 
     // ───────────────────────────── 导入 ─────────────────────────────
@@ -266,6 +274,11 @@ public class GraphServiceImpl implements GraphService {
 
     @Override
     public GraphDataVO getGraph(Long courseId) {
+        return getGraph(courseId, null);
+    }
+
+    @Override
+    public GraphDataVO getGraph(Long courseId, Long studentId) {
         Course course = courseMapper.selectById(courseId);
         if (course == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "课程不存在：courseId=" + courseId);
@@ -280,6 +293,18 @@ public class GraphServiceImpl implements GraphService {
         Map<Long, String> idToCode = new HashMap<>();
         for (KgNode n : nodes) {
             idToCode.put(n.getId(), n.getNodeCode());
+        }
+
+        // 有 studentId 时查掌握度，建 nodeId -> 掌握行
+        Map<Long, StudentMastery> masteryByNode = new HashMap<>();
+        if (studentId != null) {
+            List<StudentMastery> rows = studentMasteryMapper.selectList(
+                    new LambdaQueryWrapper<StudentMastery>()
+                            .eq(StudentMastery::getStudentId, studentId)
+                            .eq(StudentMastery::getCourseId, courseId));
+            for (StudentMastery sm : rows) {
+                masteryByNode.put(sm.getNodeId(), sm);
+            }
         }
 
         GraphDataVO vo = new GraphDataVO();
@@ -299,7 +324,16 @@ public class GraphServiceImpl implements GraphService {
             nv.setDifficulty(n.getDifficulty());
             nv.setIsKey(n.getIsKey() != null && n.getIsKey() == 1);
             nv.setDescription(n.getDescription());
-            nv.setMastery(MASTERY_UNLEARNED); // 本阶段统一未学
+
+            StudentMastery sm = masteryByNode.get(n.getId());
+            if (sm != null) {
+                BigDecimal score = sm.getMasteryScore();
+                nv.setMastery(levelToMastery(sm.getMasteryLevel()));
+                nv.setMasteryScore(score != null ? score.doubleValue() : null);
+            } else {
+                nv.setMastery(MASTERY_UNLEARNED);
+                nv.setMasteryScore(null);
+            }
             nodeVOs.add(nv);
         }
         vo.setNodes(nodeVOs);
@@ -315,5 +349,13 @@ public class GraphServiceImpl implements GraphService {
         vo.setEdges(edgeVOs);
 
         return vo;
+    }
+
+    /** 掌握等级 TINYINT → 前端三态串：2=已掌握 / 1=薄弱 / 0 及空值或未知=未学。 */
+    private String levelToMastery(Integer level) {
+        if (level == null) {
+            return MASTERY_UNLEARNED;
+        }
+        return level == 2 ? MASTERY_MASTERED : level == 1 ? MASTERY_WEAK : MASTERY_UNLEARNED;
     }
 }

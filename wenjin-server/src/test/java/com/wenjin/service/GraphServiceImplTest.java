@@ -9,9 +9,11 @@ import com.wenjin.dto.GraphValidateResult;
 import com.wenjin.entity.Course;
 import com.wenjin.entity.KgEdge;
 import com.wenjin.entity.KgNode;
+import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
+import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.impl.GraphServiceImpl;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -20,6 +22,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -28,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -40,9 +44,10 @@ class GraphServiceImplTest {
     @Mock CourseMapper courseMapper;
     @Mock KgNodeMapper nodeMapper;
     @Mock KgEdgeMapper edgeMapper;
+    @Mock StudentMasteryMapper studentMasteryMapper;
 
     private GraphServiceImpl service() {
-        return new GraphServiceImpl(courseMapper, nodeMapper, edgeMapper);
+        return new GraphServiceImpl(courseMapper, nodeMapper, edgeMapper, studentMasteryMapper);
     }
 
     // ───────── 校验类（校验先于落库，无需 stub mapper） ─────────
@@ -252,6 +257,47 @@ class GraphServiceImplTest {
         assertThat(e.getSource()).isEqualTo("KT01");
         assertThat(e.getTarget()).isEqualTo("KT02");
         assertThat(e.getType()).isEqualTo("前置");
+    }
+
+    @Test
+    @DisplayName("带 studentId：有掌握行的节点填真实级别+分值，无行的节点回退 unlearned/null")
+    void getGraphWithStudentFillsMastery() {
+        when(courseMapper.selectById(1L)).thenReturn(course(1L, "C1", "课程一"));
+        KgNode n1 = kgNode(10L, "KT01", "用例", true, 4);
+        KgNode n2 = kgNode(11L, "KT02", "类图", false, 2);
+        when(nodeMapper.selectList(any())).thenReturn(List.of(n1, n2));
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
+
+        StudentMastery sm = new StudentMastery();
+        sm.setNodeId(10L);
+        sm.setMasteryScore(new BigDecimal("80.00"));
+        sm.setMasteryLevel(2);
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(sm));
+
+        GraphDataVO vo = service().getGraph(1L, 2L);
+
+        GraphDataVO.NodeVO first = vo.getNodes().get(0);   // KT01 有掌握行
+        assertThat(first.getNodeCode()).isEqualTo("KT01");
+        assertThat(first.getMastery()).isEqualTo("mastered");
+        assertThat(first.getMasteryScore()).isEqualTo(80.0);
+
+        GraphDataVO.NodeVO second = vo.getNodes().get(1);  // KT02 无掌握行
+        assertThat(second.getMastery()).isEqualTo("unlearned");
+        assertThat(second.getMasteryScore()).isNull();
+    }
+
+    @Test
+    @DisplayName("不带 studentId：节点全 unlearned、分值 null，不查 student_mastery")
+    void getGraphWithoutStudentAllUnlearned() {
+        when(courseMapper.selectById(1L)).thenReturn(course(1L, "C1", "课程一"));
+        when(nodeMapper.selectList(any())).thenReturn(List.of(kgNode(10L, "KT01", "用例", true, 4)));
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
+
+        GraphDataVO vo = service().getGraph(1L, null);
+
+        assertThat(vo.getNodes()).allMatch(nv -> "unlearned".equals(nv.getMastery()));
+        assertThat(vo.getNodes().get(0).getMasteryScore()).isNull();
+        verifyNoInteractions(studentMasteryMapper);
     }
 
     @Test

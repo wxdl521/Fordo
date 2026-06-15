@@ -21,7 +21,7 @@ public class GraphDataVO {
         private String name;
     }
 
-    /** 节点（带掌握度三态占位，本阶段统一 unlearned） */
+    /** 节点（含掌握度三态与分值；带 studentId 时按真实学情填充，否则统一 unlearned） */
     @Data
     public static class NodeVO {
         /** 业务编码，作为前端图节点的唯一 id */
@@ -32,8 +32,10 @@ public class GraphDataVO {
         /** 是否重点 */
         private Boolean isKey;
         private String description;
-        /** 掌握度三态：mastered / weak / unlearned（学情功能后续接入，当前固定 unlearned） */
+        /** 掌握度三态：mastered / weak / unlearned；带 studentId 时按真实学情填充，否则统一 unlearned */
         private String mastery;
+        /** 掌握度分值（0–100，按 studentId 查得；无学生上下文或无掌握行时为 null） */
+        private Double masteryScore;
     }
 
     /** 边（source/target 用节点业务编码，type 为中文标签） */

@@ -26,4 +26,13 @@ public interface GraphService {
      * @return 图谱数据（节点掌握度本阶段统一返回 unlearned）
      */
     GraphDataVO getGraph(Long courseId);
+
+    /**
+     * 查询某课程的全部节点与边，并按学生填充真实掌握度。
+     *
+     * @param courseId  课程主键
+     * @param studentId 学生主键；为 null 时节点掌握度统一返回 unlearned（向后兼容）
+     * @return 图谱数据（节点含 mastery 级别串与 masteryScore 分值）
+     */
+    GraphDataVO getGraph(Long courseId, Long studentId);
 }
