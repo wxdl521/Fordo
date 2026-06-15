@@ -1,9 +1,11 @@
 package com.wenjin.controller;
 
 import com.wenjin.common.Result;
+import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.PaperVO;
 import com.wenjin.dto.SubmitRequest;
 import com.wenjin.dto.SubmitResult;
+import com.wenjin.service.DiagnosticResultService;
 import com.wenjin.service.DiagnosticService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,9 +22,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class DiagnosticController {
 
     private final DiagnosticService diagnosticService;
+    private final DiagnosticResultService diagnosticResultService;
 
-    public DiagnosticController(DiagnosticService diagnosticService) {
+    public DiagnosticController(DiagnosticService diagnosticService,
+                               DiagnosticResultService diagnosticResultService) {
         this.diagnosticService = diagnosticService;
+        this.diagnosticResultService = diagnosticResultService;
     }
 
     /**
@@ -41,5 +46,15 @@ public class DiagnosticController {
     @PostMapping("/submit")
     public Result<SubmitResult> submit(@RequestBody SubmitRequest req) {
         return Result.ok(diagnosticService.submit(req));
+    }
+
+    /**
+     * 诊断回溯结果（自动选最下游薄弱点为卡点）。
+     * GET /api/diagnostic/result?studentId=&courseId=
+     */
+    @GetMapping("/result")
+    public Result<DiagnosticResultVO> result(@RequestParam("studentId") Long studentId,
+                                             @RequestParam("courseId") Long courseId) {
+        return Result.ok(diagnosticResultService.getResult(studentId, courseId));
     }
 }
