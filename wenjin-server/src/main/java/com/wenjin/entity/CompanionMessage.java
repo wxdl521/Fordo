@@ -24,5 +24,6 @@ public class CompanionMessage {
     /** 消息正文 */
     private String content;
 
+    /** 创建时间 */
     private LocalDateTime createdAt;
 }

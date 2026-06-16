@@ -20,8 +20,8 @@ CREATE TABLE `companion_message` (
     `id`              BIGINT   NOT NULL AUTO_INCREMENT COMMENT '消息ID',
     `conversation_id` BIGINT   NOT NULL                COMMENT '所属会话（逻辑外键→companion_conversation.id）',
     `role`            TINYINT  NOT NULL                COMMENT '角色：1=user, 2=ai',
-    `content`         TEXT                             COMMENT '消息正文',
+    `content`         TEXT     NOT NULL                COMMENT '消息正文',
     `created_at`      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (`id`),
-    KEY `idx_conversation` (`conversation_id`)
+    KEY `idx_conversation_time` (`conversation_id`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='伴侣会话消息';

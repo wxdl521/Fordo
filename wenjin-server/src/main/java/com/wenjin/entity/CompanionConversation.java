@@ -27,7 +27,9 @@ public class CompanionConversation {
     /** 发起时的图谱节点上下文 node_code（可空） */
     private String nodeCode;
 
+    /** 创建时间 */
     private LocalDateTime createdAt;
 
+    /** 更新时间 */
     private LocalDateTime updatedAt;
 }
