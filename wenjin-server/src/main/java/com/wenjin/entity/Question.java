@@ -41,6 +41,9 @@ public class Question {
     /** 审核状态：0=待审核, 1=已通过, 2=已驳回【阶段二补充】 */
     private Integer status;
 
+    /** AI 置信度 0–100，NULL=既有生效题【阶段六补充】 */
+    private Integer confidence;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

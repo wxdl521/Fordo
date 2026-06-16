@@ -31,6 +31,9 @@ public class KgEdge {
     /** 关系备注 */
     private String relationNote;
 
+    /** AI 置信度 0–100，NULL=既有生效边【阶段六补充】 */
+    private Integer confidence;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;
