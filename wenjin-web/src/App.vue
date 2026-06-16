@@ -5,6 +5,8 @@
       <router-link to="/result" class="nav-link">诊断结果</router-link>
       <router-link to="/path" class="nav-link">学习路径</router-link>
       <router-link to="/map" class="nav-link">染色地图</router-link>
+      <router-link to="/companion" class="nav-link">伴侣</router-link>
+      <router-link to="/growth" class="nav-link">成长</router-link>
       <router-link to="/admin" class="nav-link">管理</router-link>
     </nav>
     <div class="app-content">

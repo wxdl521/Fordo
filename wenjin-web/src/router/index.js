@@ -6,6 +6,9 @@ const ColorMap = () => import('../views/ColorMap.vue')
 const Admin = () => import('../views/Admin.vue')
 const DiagnosticResult = () => import('../views/DiagnosticResult.vue')
 const LearningPath = () => import('../views/LearningPath.vue')
+const Companion = () => import('../views/Companion.vue')
+const KnowledgePoint = () => import('../views/KnowledgePoint.vue')
+const Growth = () => import('../views/Growth.vue')
 
 const routes = [
   { path: '/', redirect: '/diagnostic' },
@@ -13,6 +16,9 @@ const routes = [
   { path: '/diagnostic', component: Diagnostic },
   { path: '/result', component: DiagnosticResult },
   { path: '/path', component: LearningPath },
+  { path: '/companion', component: Companion },
+  { path: '/knowledge', component: KnowledgePoint },
+  { path: '/growth', component: Growth },
   { path: '/admin', component: Admin }
 ]
 
