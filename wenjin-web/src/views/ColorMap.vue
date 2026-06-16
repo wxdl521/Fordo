@@ -84,6 +84,14 @@
               </div>
               <p v-else class="desc muted">无（这是一个入门/根知识点）</p>
             </div>
+            <div class="drawer-actions">
+              <button class="btn-companion" @click="askCompanion">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+                向伴侣提问
+              </button>
+            </div>
           </div>
         </template>
       </aside>
@@ -93,6 +101,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { useGraphStore } from '../store/graph'
 
@@ -102,6 +111,7 @@ const DEMO_COURSE_ID = 1
 const DEMO_STUDENT_ID = 2
 
 const store = useGraphStore()
+const router = useRouter()
 const chartEl = ref(null)
 const selectedChapter = ref('')
 const selectedNodeCode = ref('')
@@ -276,6 +286,10 @@ function closeDrawer() {
   if (chart) chart.dispatchAction({ type: 'downplay', seriesIndex: 0 })
 }
 
+function askCompanion() {
+  router.push(`/companion?nodeCode=${selectedNodeCode.value}`)
+}
+
 async function reload() {
   await store.load(DEMO_COURSE_ID, DEMO_STUDENT_ID)
 }
@@ -412,4 +426,16 @@ onBeforeUnmount(() => {
   display: inline-block; vertical-align: middle; margin-right: 6px;
   flex-shrink: 0;
 }
+
+.drawer-actions {
+  margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line);
+}
+.btn-companion {
+  width: 100%; height: 40px; background: var(--accent); border: none;
+  border-radius: 8px; color: #fff; font-size: 13px; font-weight: 500;
+  cursor: pointer; font-family: inherit; display: flex; align-items: center;
+  justify-content: center; gap: 8px; transition: opacity 0.2s;
+}
+.btn-companion:hover { opacity: 0.9; }
+.btn-companion svg { flex-shrink: 0; }
 </style>
