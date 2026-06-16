@@ -384,4 +384,33 @@ class GraphServiceImplTest {
         e.setRelationType(type);
         return e;
     }
+
+    @Test
+    @DisplayName("getGraph 过滤待复核边（学生侧不可见）")
+    void getGraphExcludesPendingEdges() {
+        // Given
+        Course course = course(1L, "C1", "课程一");
+        when(courseMapper.selectById(1L)).thenReturn(course);
+
+        KgNode n1 = kgNode(1L, "N1", "节点1", true, 3);
+        KgNode n2 = kgNode(2L, "N2", "节点2", false, 2);
+        when(nodeMapper.selectList(any())).thenReturn(List.of(n1, n2));
+
+        KgEdge e1 = kgEdge(1L, 2L, 1);
+        e1.setRelationNote("『待复核』AI推荐边");
+
+        KgEdge e2 = kgEdge(2L, 1L, 3);
+        e2.setRelationNote("正常边描述");
+
+        when(edgeMapper.selectList(any())).thenReturn(List.of(e1, e2));
+
+        // When
+        GraphDataVO result = service().getGraph(1L, null);
+
+        // Then
+        assertThat(result.getEdges()).hasSize(1);
+        assertThat(result.getEdges().get(0).getSource()).isEqualTo("N2");
+        assertThat(result.getEdges().get(0).getTarget()).isEqualTo("N1");
+        assertThat(result.getEdges().get(0).getType()).isEqualTo("相关");
+    }
 }

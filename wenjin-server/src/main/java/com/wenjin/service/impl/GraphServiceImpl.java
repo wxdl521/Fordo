@@ -17,6 +17,7 @@ import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.GraphService;
 import com.wenjin.support.RelationType;
+import com.wenjin.support.ReviewMarker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -340,6 +341,7 @@ public class GraphServiceImpl implements GraphService {
 
         List<GraphDataVO.EdgeVO> edgeVOs = new ArrayList<>(edges.size());
         for (KgEdge e : edges) {
+            if (ReviewMarker.isPending(e.getRelationNote())) continue;
             GraphDataVO.EdgeVO ev = new GraphDataVO.EdgeVO();
             ev.setSource(idToCode.get(e.getFromNodeId()));
             ev.setTarget(idToCode.get(e.getToNodeId()));
