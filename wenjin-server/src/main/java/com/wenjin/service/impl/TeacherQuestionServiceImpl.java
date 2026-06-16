@@ -1,0 +1,291 @@
+package com.wenjin.service.impl;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.wenjin.dto.QuestionReviewRequest;
+import com.wenjin.dto.TeacherQuestionPageVO;
+import com.wenjin.dto.TeacherQuestionVO;
+import com.wenjin.entity.KgNode;
+import com.wenjin.entity.Question;
+import com.wenjin.entity.QuestionNode;
+import com.wenjin.entity.QuestionOption;
+import com.wenjin.support.QuestionStatus;
+import com.wenjin.mapper.KgNodeMapper;
+import com.wenjin.mapper.QuestionMapper;
+import com.wenjin.mapper.QuestionNodeMapper;
+import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.service.TeacherQuestionService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+public class TeacherQuestionServiceImpl implements TeacherQuestionService {
+
+    private static final int MAIN_POINT_WEIGHT = 1;
+
+    private final QuestionMapper questionMapper;
+    private final QuestionOptionMapper questionOptionMapper;
+    private final QuestionNodeMapper questionNodeMapper;
+    private final KgNodeMapper nodeMapper;
+
+    @Override
+    public TeacherQuestionPageVO list(Long courseId, Integer status, String nodeCode, String conf, int page, int size) {
+        if (courseId == null || courseId <= 0) {
+            throw new IllegalArgumentException("courseId 无效: " + courseId);
+        }
+
+        // C4: Validate pagination parameters
+        if (page < 1) page = 1;
+        if (size < 1 || size > 100) size = 20;  // Limit max 100
+
+        // I8: Validate status parameter
+        if (status != null && (status < 0 || status > 2)) {
+            throw new IllegalArgumentException("status 无效（0=待审/1=通过/2=驳回）: " + status);
+        }
+
+        LambdaQueryWrapper<Question> w = new LambdaQueryWrapper<>();
+        w.eq(Question::getCourseId, courseId);
+
+        if (status != null) {
+            w.eq(Question::getStatus, status);
+        }
+
+        // Node filter: if nodeCode specified, find questions where it's the main point
+        Set<Long> nodeFilterQids = new HashSet<>();
+        if (nodeCode != null && !nodeCode.trim().isEmpty()) {
+            KgNode kn = nodeMapper.selectOne(
+                    new LambdaQueryWrapper<KgNode>()
+                            .eq(KgNode::getCourseId, courseId)
+                            .eq(KgNode::getNodeCode, nodeCode)
+            );
+
+            if (kn != null) {
+                List<QuestionNode> qns = questionNodeMapper.selectList(
+                        new LambdaQueryWrapper<QuestionNode>()
+                                .eq(QuestionNode::getNodeId, kn.getId())
+                                .eq(QuestionNode::getWeight, MAIN_POINT_WEIGHT)
+                );
+                for (QuestionNode qn : qns) {
+                    nodeFilterQids.add(qn.getQuestionId());
+                }
+            }
+
+            if (nodeFilterQids.isEmpty()) {
+                return emptyPage(page, size, courseId);
+            }
+
+            w.in(Question::getId, nodeFilterQids);
+        }
+
+        // Confidence filter
+        if (conf != null && !conf.trim().isEmpty()) {
+            applyConf(w, conf);
+        }
+
+        List<Question> all = questionMapper.selectList(w);
+
+        // Sort by confidence desc
+        // C2: TODO: 生产环境改用数据库层面的 ORDER BY confidence DESC LIMIT offset, size
+        all.sort(Comparator.comparing(Question::getConfidence, Comparator.reverseOrder()));
+
+        // Memory pagination
+        int from = Math.min((page - 1) * size, all.size());
+        int to = Math.min(from + size, all.size());
+        List<Question> pageList = all.subList(from, to);
+
+        // C1: Batch load to avoid N+1 queries
+        List<TeacherQuestionVO> items;
+        if (pageList.isEmpty()) {
+            items = Collections.emptyList();
+        } else {
+            items = batchToVO(pageList);
+        }
+
+        // C3: Reuse 'all' list for counts instead of re-querying
+        TeacherQuestionPageVO.Counts counts = computeCounts(all);
+
+        TeacherQuestionPageVO result = new TeacherQuestionPageVO();
+        result.setTotal((long) all.size());
+        result.setPage(page);
+        result.setSize(size);
+        result.setItems(items);
+        result.setCounts(counts);
+
+        return result;
+    }
+
+    @Override
+    public int review(Long courseId, QuestionReviewRequest req) {
+        if (courseId == null || courseId <= 0) {
+            throw new IllegalArgumentException("courseId 无效: " + courseId);
+        }
+        if (req == null) {
+            throw new IllegalArgumentException("request 不能为空");
+        }
+        if (req.getIds() == null || req.getIds().isEmpty()) {
+            throw new IllegalArgumentException("ids 不能为空");
+        }
+        if (req.getAction() == null || req.getAction().trim().isEmpty()) {
+            throw new IllegalArgumentException("action 不能为空");
+        }
+
+        int target;
+        switch (req.getAction().toLowerCase()) {
+            case "pass":
+                target = QuestionStatus.APPROVED;
+                break;
+            case "reject":
+                target = QuestionStatus.REJECTED;
+                break;
+            default:
+                throw new IllegalArgumentException("action 无效: " + req.getAction() + " (必须是 pass 或 reject)");
+        }
+
+        // Use UpdateWrapper with string column name to avoid Lambda.set() reflection issue in unit tests
+        UpdateWrapper<Question> uw = new UpdateWrapper<>();
+        uw.set("status", target)
+                .eq("course_id", courseId)
+                .in("id", req.getIds());
+
+        return questionMapper.update(null, uw);
+    }
+
+    private void applyConf(LambdaQueryWrapper<Question> w, String conf) {
+        switch (conf.toLowerCase()) {
+            case "ge85":
+                w.ge(Question::getConfidence, 85);
+                break;
+            case "mid":
+                w.ge(Question::getConfidence, 70).lt(Question::getConfidence, 85);
+                break;
+            case "lt70":
+                w.lt(Question::getConfidence, 70);
+                break;
+            default:
+                // I6: Throw exception for invalid conf values
+                throw new IllegalArgumentException("conf 参数无效，仅支持: ge85/mid/lt70，当前值: " + conf);
+        }
+    }
+
+    /**
+     * C1: Batch load options, question_nodes, and kg_nodes to avoid N+1 queries.
+     * Instead of querying 2-3 times per question, we:
+     * 1. Query all options for all questions once
+     * 2. Query all question_nodes for all questions once
+     * 3. Query all kg_nodes for collected nodeIds once
+     * 4. Build maps and use them in toVO
+     */
+    private List<TeacherQuestionVO> batchToVO(List<Question> questions) {
+        List<Long> qids = questions.stream().map(Question::getId).collect(Collectors.toList());
+
+        // Batch load options
+        Map<Long, List<QuestionOption>> optionsMap = new HashMap<>();
+        List<QuestionOption> allOptions = questionOptionMapper.selectList(
+                new LambdaQueryWrapper<QuestionOption>()
+                        .in(QuestionOption::getQuestionId, qids)
+                        .orderByAsc(QuestionOption::getQuestionId)
+                        .orderByAsc(QuestionOption::getOptionKey)
+        );
+        for (QuestionOption opt : allOptions) {
+            optionsMap.computeIfAbsent(opt.getQuestionId(), k -> new ArrayList<>()).add(opt);
+        }
+
+        // Batch load question_nodes (main points only)
+        Map<Long, List<QuestionNode>> qnMap = new HashMap<>();
+        List<QuestionNode> allQns = questionNodeMapper.selectList(
+                new LambdaQueryWrapper<QuestionNode>()
+                        .in(QuestionNode::getQuestionId, qids)
+                        .eq(QuestionNode::getWeight, MAIN_POINT_WEIGHT)
+        );
+        for (QuestionNode qn : allQns) {
+            qnMap.computeIfAbsent(qn.getQuestionId(), k -> new ArrayList<>()).add(qn);
+        }
+
+        // Batch load kg_nodes
+        Set<Long> nodeIds = allQns.stream().map(QuestionNode::getNodeId).collect(Collectors.toSet());
+        Map<Long, KgNode> nodeMap = new HashMap<>();
+        if (!nodeIds.isEmpty()) {
+            List<KgNode> nodes = nodeMapper.selectList(
+                    new LambdaQueryWrapper<KgNode>().in(KgNode::getId, nodeIds)
+            );
+            for (KgNode n : nodes) {
+                nodeMap.put(n.getId(), n);
+            }
+        }
+
+        // Convert to VOs using cached data
+        return questions.stream()
+                .map(q -> toVO(q, optionsMap.getOrDefault(q.getId(), Collections.emptyList()),
+                        qnMap.getOrDefault(q.getId(), Collections.emptyList()), nodeMap))
+                .collect(Collectors.toList());
+    }
+
+    private TeacherQuestionVO toVO(Question q, List<QuestionOption> options,
+                                    List<QuestionNode> qns, Map<Long, KgNode> nodeMap) {
+        TeacherQuestionVO vo = new TeacherQuestionVO();
+        vo.setId(q.getId());
+        vo.setStem(q.getStem());
+        vo.setType(q.getType());
+        vo.setDifficulty(q.getDifficulty());
+        vo.setConfidence(q.getConfidence());
+        vo.setStatus(q.getStatus());
+        vo.setSource(q.getSource());
+        vo.setCreatedAt(q.getCreatedAt());
+
+        // Use pre-loaded options
+        vo.setOptions(options.stream()
+                .map(opt -> {
+                    TeacherQuestionVO.OptionVO optVO = new TeacherQuestionVO.OptionVO();
+                    optVO.setKey(opt.getOptionKey());
+                    optVO.setText(opt.getOptionText());
+                    optVO.setCorrect(opt.getIsCorrect() != null && opt.getIsCorrect() == 1);
+                    optVO.setPointNodeCode(opt.getPointNodeCode());
+                    return optVO;
+                })
+                .collect(Collectors.toList()));
+
+        // Use pre-loaded main node
+        if (!qns.isEmpty()) {
+            Long nodeId = qns.get(0).getNodeId();
+            KgNode node = nodeMap.get(nodeId);
+            if (node != null) {
+                vo.setMainNodeCode(node.getNodeCode());
+                vo.setMainNodeName(node.getName());
+            }
+        }
+
+        return vo;
+    }
+
+    /**
+     * C3: Compute counts from the already-loaded list instead of re-querying database.
+     */
+    private TeacherQuestionPageVO.Counts computeCounts(List<Question> all) {
+        TeacherQuestionPageVO.Counts counts = new TeacherQuestionPageVO.Counts();
+        counts.setPending(all.stream().filter(q -> q.getStatus() == QuestionStatus.PENDING).count());
+        counts.setPassed(all.stream().filter(q -> q.getStatus() == QuestionStatus.APPROVED).count());
+        counts.setRejected(all.stream().filter(q -> q.getStatus() == QuestionStatus.REJECTED).count());
+        return counts;
+    }
+
+    private TeacherQuestionPageVO emptyPage(int page, int size, Long courseId) {
+        TeacherQuestionPageVO result = new TeacherQuestionPageVO();
+        result.setTotal(0L);
+        result.setPage(page);
+        result.setSize(size);
+        result.setItems(Collections.emptyList());
+
+        // Still calculate counts for the whole course
+        LambdaQueryWrapper<Question> w = new LambdaQueryWrapper<>();
+        w.eq(Question::getCourseId, courseId);
+        List<Question> all = questionMapper.selectList(w);
+
+        result.setCounts(computeCounts(all));
+
+        return result;
+    }
+}
