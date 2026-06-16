@@ -80,7 +80,20 @@ public class OpenAiCompatibleCompanionAiClient implements CompanionAiClient {
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body)
                     .exchange((request, response) -> {
-                        // 读取原始 SSE 流
+                        // 检查 HTTP 状态码
+                        if (!response.getStatusCode().is2xxSuccessful()) {
+                            String errorBody = "";
+                            try (InputStream is = response.getBody();
+                                 BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                                errorBody = reader.lines().reduce("", (a, b) -> a + b);
+                            } catch (Exception readErr) {
+                                // 吞掉读错误体的异常，保留原状态码
+                            }
+                            throw new BusinessException(ResultCode.AI_ERROR,
+                                    "AI服务返回错误：HTTP " + response.getStatusCode().value() + " " + errorBody);
+                        }
+
+                        // 读取原始 SSE 流，确保异常时资源清理
                         try (InputStream is = response.getBody();
                              BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
                             String line;
@@ -90,9 +103,14 @@ public class OpenAiCompatibleCompanionAiClient implements CompanionAiClient {
                                     onToken.accept(token);
                                 }
                             }
+                        } catch (Exception streamErr) {
+                            // 确保流异常时资源已清理（try-with-resources 保证）
+                            throw new BusinessException(ResultCode.AI_ERROR, "AI服务流处理失败：" + streamErr.getMessage());
                         }
                         return null;
                     });
+        } catch (BusinessException be) {
+            throw be;
         } catch (Exception e) {
             throw new BusinessException(ResultCode.AI_ERROR, "AI服务调用失败：" + e.getMessage());
         }
@@ -148,7 +166,9 @@ public class OpenAiCompatibleCompanionAiClient implements CompanionAiClient {
             // content 存在，返回其字符串值（可能是空串 ""）
             return contentNode.asText();
         } catch (Exception e) {
-            // JSON 解析失败，跳过该行
+            // JSON 解析失败，记录调试信息后跳过该行
+            org.slf4j.LoggerFactory.getLogger(OpenAiCompatibleCompanionAiClient.class)
+                    .debug("SSE 行解析失败（已跳过）: {}", data, e);
             return null;
         }
     }

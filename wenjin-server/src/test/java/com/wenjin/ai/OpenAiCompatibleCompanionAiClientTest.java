@@ -27,9 +27,44 @@ class OpenAiCompatibleCompanionAiClientTest {
     }
 
     @Test
-    @DisplayName("首块常见的空 content（role 块）返回 null，不误吐")
+    @DisplayName("首块 role+空content 返回空串")
     void parseRoleChunk() {
         String line = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}";
         assertThat(OpenAiCompatibleCompanionAiClient.parseDeltaContent(line)).isEmpty();
     }
+
+    @Test
+    @DisplayName("畸形 JSON 返回 null")
+    void parseMalformedJson() {
+        assertThat(OpenAiCompatibleCompanionAiClient.parseDeltaContent("data: {\"choices\":[{\"delta\":"))
+                .isNull();
+        assertThat(OpenAiCompatibleCompanionAiClient.parseDeltaContent("data: not-json-at-all"))
+                .isNull();
+        assertThat(OpenAiCompatibleCompanionAiClient.parseDeltaContent("data: {\"choices\":\"not-array\"}"))
+                .isNull();
+    }
+
+    @Test
+    @DisplayName("空 choices 数组返回 null")
+    void parseEmptyChoices() {
+        String line = "data: {\"choices\":[]}";
+        assertThat(OpenAiCompatibleCompanionAiClient.parseDeltaContent(line)).isNull();
+    }
+
+    @Test
+    @DisplayName("区分 null / missing / empty string content")
+    void parseContentVariants() {
+        // content 为 null（JSON null）
+        String nullContent = "data: {\"choices\":[{\"delta\":{\"content\":null}}]}";
+        assertThat(OpenAiCompatibleCompanionAiClient.parseDeltaContent(nullContent)).isNull();
+
+        // content 字段不存在（missing）
+        String missingContent = "data: {\"choices\":[{\"delta\":{}}]}";
+        assertThat(OpenAiCompatibleCompanionAiClient.parseDeltaContent(missingContent)).isNull();
+
+        // content 为空串 ""（已在 parseRoleChunk 测过，这里再验证单独场景）
+        String emptyContent = "data: {\"choices\":[{\"delta\":{\"content\":\"\"}}]}";
+        assertThat(OpenAiCompatibleCompanionAiClient.parseDeltaContent(emptyContent)).isEmpty();
+    }
+
 }
