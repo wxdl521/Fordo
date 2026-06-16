@@ -17,3 +17,13 @@ export function fetchPaper(courseId) {
 export function submitPaper(payload) {
   return http.post('/diagnostic/submit', payload)
 }
+
+/**
+ * 获取诊断回溯结果
+ * @param {number} studentId
+ * @param {number} courseId
+ * @returns {Promise<DiagnosticResultVO>}
+ */
+export function fetchResult(studentId, courseId) {
+  return http.get('/diagnostic/result', { params: { studentId, courseId } })
+}

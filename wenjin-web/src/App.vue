@@ -2,6 +2,8 @@
   <div class="app-shell">
     <nav class="app-nav">
       <router-link to="/diagnostic" class="nav-link">诊断</router-link>
+      <router-link to="/result" class="nav-link">诊断结果</router-link>
+      <router-link to="/path" class="nav-link">学习路径</router-link>
       <router-link to="/map" class="nav-link">染色地图</router-link>
       <router-link to="/admin" class="nav-link">管理</router-link>
     </nav>
@@ -13,7 +15,8 @@
 
 <script setup>
 // App.vue — thin shell: nav bar + router outlet.
-// Routes: / → /diagnostic, /map → ColorMap, /diagnostic → Diagnostic, /admin → Admin
+// Routes: / → /diagnostic, /diagnostic → Diagnostic, /result → DiagnosticResult,
+//         /path → LearningPath, /map → ColorMap, /admin → Admin
 </script>
 
 <style scoped>

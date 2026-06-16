@@ -124,7 +124,8 @@
       </div>
 
       <div class="diag-done-actions">
-        <router-link to="/map" class="diag-btn-acc diag-btn-link">查看染色地图</router-link>
+        <router-link to="/result" class="diag-btn-acc diag-btn-link">查看诊断结果</router-link>
+        <router-link to="/map" class="diag-btn-restart-link">查看染色地图</router-link>
         <button class="diag-btn-restart" @click="restart">重新作答</button>
       </div>
     </div>
@@ -792,4 +793,10 @@ onBeforeUnmount(() => {
 .diag-btn-restart:hover {
   color: var(--ink);
 }
+
+.diag-btn-restart-link {
+  background: transparent; border: none; color: var(--mut);
+  font-size: 12.5px; text-decoration: underline; text-underline-offset: 3px;
+}
+.diag-btn-restart-link:hover { color: var(--ink); }
 </style>
