@@ -1,8 +1,8 @@
 USE `wenjin`;
 
 -- ── 1) 加 confidence 列（幂等：列已存在则忽略报错，可手动跳过）──
-ALTER TABLE `kg_edge`  ADD COLUMN `confidence` TINYINT DEFAULT NULL COMMENT 'AI 置信度 0–100【阶段六】';
-ALTER TABLE `question` ADD COLUMN `confidence` TINYINT DEFAULT NULL COMMENT 'AI 置信度 0–100【阶段六】';
+ALTER TABLE `kg_edge`  ADD COLUMN `confidence` TINYINT DEFAULT NULL COMMENT 'AI 置信度 0–100，NULL=既有生效边【阶段六补充】' AFTER `relation_note`;
+ALTER TABLE `question` ADD COLUMN `confidence` TINYINT DEFAULT NULL COMMENT 'AI 置信度 0–100，NULL=既有生效题【阶段六补充】' AFTER `status`;
 
 -- ── 2) 待复核候选边（relation_note 以「待复核：」开头，带 confidence）──
 -- 先按特征清掉旧的待复核边，保证可重复执行
