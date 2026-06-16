@@ -226,10 +226,12 @@ public class GrowthServiceImpl implements GrowthService {
             }
         }
 
-        // 转换为面板列表
-        return chapterGroups.entrySet().stream()
+        // 转换为面板列表并按章节名排序
+        List<GrowthVO.ChapterPanel> panels = chapterGroups.entrySet().stream()
             .map(e -> new GrowthVO.ChapterPanel(e.getKey(), e.getValue()))
             .collect(Collectors.toList());
+        panels.sort(Comparator.comparing(GrowthVO.ChapterPanel::getChapter));
+        return panels;
     }
 
     /**
