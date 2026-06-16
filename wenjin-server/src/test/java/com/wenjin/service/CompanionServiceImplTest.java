@@ -230,13 +230,14 @@ class CompanionServiceImplTest {
         mastery2.setMasteryScore(new BigDecimal("38.0"));
         when(masteryMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(mastery1, mastery2));
 
-        // Mock：节点名查询（薄弱点）
+        // Mock：节点名查询（薄弱点批量查询）
         KgNode weakNode1 = new KgNode();
+        weakNode1.setId(12L);
         weakNode1.setName("函数图像");
         KgNode weakNode2 = new KgNode();
+        weakNode2.setId(15L);
         weakNode2.setName("配方法");
-        when(nodeMapper.selectById(12L)).thenReturn(weakNode1);
-        when(nodeMapper.selectById(15L)).thenReturn(weakNode2);
+        when(nodeMapper.selectBatchIds(Arrays.asList(12L, 15L))).thenReturn(Arrays.asList(weakNode1, weakNode2));
 
         // Mock：学习路径查询
         LearningPathVO pathVO = new LearningPathVO();

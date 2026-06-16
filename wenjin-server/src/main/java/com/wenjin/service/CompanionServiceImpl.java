@@ -2,6 +2,8 @@ package com.wenjin.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.ai.CompanionAiClient;
+import com.wenjin.common.BusinessException;
+import com.wenjin.common.ResultCode;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
@@ -20,7 +22,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -30,6 +34,9 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class CompanionServiceImpl implements CompanionService {
+
+    private static final int ROLE_USER = 1;
+    private static final int ROLE_AI = 2;
 
     private final CompanionConversationMapper conversationMapper;
     private final CompanionMessageMapper messageMapper;
@@ -41,6 +48,17 @@ public class CompanionServiceImpl implements CompanionService {
     @Override
     @Transactional
     public Long startTurn(CompanionChatRequest req) {
+        // 输入验证
+        if (req.getStudentId() == null) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "studentId 不能为空");
+        }
+        if (req.getCourseId() == null) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "courseId 不能为空");
+        }
+        if (req.getMessage() == null || req.getMessage().trim().isEmpty()) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "消息内容不能为空");
+        }
+
         Long conversationId = req.getConversationId();
 
         // 1. 创建或复用会话
@@ -58,6 +76,9 @@ public class CompanionServiceImpl implements CompanionService {
         } else {
             // 后续对话：更新会话时间
             CompanionConversation conversation = conversationMapper.selectById(conversationId);
+            if (conversation == null) {
+                throw new BusinessException(ResultCode.NOT_FOUND, "会话不存在: " + conversationId);
+            }
             conversation.setUpdatedAt(LocalDateTime.now());
             conversationMapper.updateById(conversation);
         }
@@ -65,7 +86,7 @@ public class CompanionServiceImpl implements CompanionService {
         // 2. 保存用户消息
         CompanionMessage userMessage = new CompanionMessage();
         userMessage.setConversationId(conversationId);
-        userMessage.setRole(1);  // user
+        userMessage.setRole(ROLE_USER);
         userMessage.setContent(req.getMessage());
         userMessage.setCreatedAt(LocalDateTime.now());
         messageMapper.insert(userMessage);
@@ -74,10 +95,12 @@ public class CompanionServiceImpl implements CompanionService {
     }
 
     @Override
-    @Transactional
     public void streamReply(Long conversationId, Consumer<String> onToken) {
         // 1. 加载会话上下文
         CompanionConversation conversation = conversationMapper.selectById(conversationId);
+        if (conversation == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "会话不存在: " + conversationId);
+        }
 
         // 2. 加载历史消息
         List<CompanionMessage> history = messageMapper.selectList(
@@ -85,6 +108,10 @@ public class CompanionServiceImpl implements CompanionService {
                 .eq(CompanionMessage::getConversationId, conversationId)
                 .orderByAsc(CompanionMessage::getCreatedAt)
         );
+
+        if (history.isEmpty()) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "会话无历史消息");
+        }
 
         // 3. 构建系统提示
         String systemPrompt = buildSystemPromptForStudent(
@@ -97,7 +124,7 @@ public class CompanionServiceImpl implements CompanionService {
         List<CompanionAiClient.ChatMsg> historyMsgs = new ArrayList<>();
         for (int i = 0; i < history.size() - 1; i++) {
             CompanionMessage msg = history.get(i);
-            String role = msg.getRole() == 1 ? "user" : "assistant";
+            String role = msg.getRole() == ROLE_USER ? "user" : "assistant";
             historyMsgs.add(new CompanionAiClient.ChatMsg(role, msg.getContent()));
         }
 
@@ -111,11 +138,16 @@ public class CompanionServiceImpl implements CompanionService {
             onToken.accept(token);
         });
 
-        // 7. 保存 AI 回复
+        // 7. 保存 AI 回复（单独事务）
+        saveAiMessage(conversationId, fullReply.toString());
+    }
+
+    @Transactional
+    private void saveAiMessage(Long conversationId, String content) {
         CompanionMessage aiMessage = new CompanionMessage();
         aiMessage.setConversationId(conversationId);
-        aiMessage.setRole(2);  // ai
-        aiMessage.setContent(fullReply.toString());
+        aiMessage.setRole(ROLE_AI);
+        aiMessage.setContent(content);
         aiMessage.setCreatedAt(LocalDateTime.now());
         messageMapper.insert(aiMessage);
     }
@@ -149,7 +181,7 @@ public class CompanionServiceImpl implements CompanionService {
 
         return messages.stream().map(msg -> {
             CompanionMessageVO vo = new CompanionMessageVO();
-            vo.setRole(msg.getRole() == 1 ? "user" : "ai");
+            vo.setRole(msg.getRole() == ROLE_USER ? "user" : "ai");
             vo.setContent(msg.getContent());
             vo.setCreatedAt(msg.getCreatedAt());
             return vo;
@@ -190,22 +222,45 @@ public class CompanionServiceImpl implements CompanionService {
             .map(KgNode::getName)
             .collect(Collectors.toList());
 
-        // 2. 薄弱点：掌握等级 < 2 的节点
+        // 2. 薄弱点：掌握等级 < 2 的节点（批量加载避免 N+1）
         List<StudentMastery> weakMasteries = masteryMapper.selectList(
             new LambdaQueryWrapper<StudentMastery>()
                 .eq(StudentMastery::getStudentId, studentId)
                 .eq(StudentMastery::getCourseId, courseId)
                 .lt(StudentMastery::getMasteryLevel, 2)
         );
+
+        // 批量加载节点
+        List<Long> nodeIds = weakMasteries.stream()
+            .map(StudentMastery::getNodeId)
+            .collect(Collectors.toList());
+        Map<Long, KgNode> nodeMap = new HashMap<>();
+        if (!nodeIds.isEmpty()) {
+            List<KgNode> nodes = nodeMapper.selectBatchIds(nodeIds);
+            for (KgNode node : nodes) {
+                nodeMap.put(node.getId(), node);
+            }
+        }
+
         List<String> weakPoints = weakMasteries.stream()
             .map(m -> {
-                KgNode node = nodeMapper.selectById(m.getNodeId());
+                KgNode node = nodeMap.get(m.getNodeId());
+                if (node == null) {
+                    return null;
+                }
                 return node.getName() + "（掌握度 " + m.getMasteryScore().intValue() + "）";
             })
+            .filter(s -> s != null)
             .collect(Collectors.toList());
 
-        // 3. 学习路径
-        LearningPathVO path = pathService.getCurrent(studentId, courseId);
+        // 3. 学习路径（错误不中断对话）
+        LearningPathVO path = null;
+        try {
+            path = pathService.getCurrent(studentId, courseId);
+        } catch (Exception e) {
+            // 路径不存在或查询失败，继续对话
+        }
+
         LearningPathVO.NodeRef targetNode = path != null ? path.getTargetNode() : null;
         LearningPathVO.StepVO currentStep = null;
         if (path != null && path.getSteps() != null) {
