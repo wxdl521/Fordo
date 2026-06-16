@@ -5,6 +5,9 @@ import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
 import com.wenjin.service.CompanionService;
+import jakarta.annotation.PreDestroy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * AI 学习伴侣接口（PRD 9.2）：SSE 流式对话 + 会话查询。
@@ -27,11 +31,28 @@ import java.util.concurrent.Executors;
 @RequestMapping("/api/companion")
 public class CompanionController {
 
+    private static final Logger log = LoggerFactory.getLogger(CompanionController.class);
+
     private final CompanionService companionService;
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
     public CompanionController(CompanionService companionService) {
         this.companionService = companionService;
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
+                log.warn("Executor did not terminate in time, forcing shutdown");
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            log.error("Executor shutdown interrupted", e);
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
@@ -61,6 +82,7 @@ public class CompanionController {
                                 .name("token")
                                 .data(Map.of("t", token)));
                     } catch (Exception e) {
+                        log.error("Failed to send token via SSE", e);
                         throw new RuntimeException("Failed to send token", e);
                     }
                 });
@@ -77,8 +99,8 @@ public class CompanionController {
                     emitter.send(SseEmitter.event()
                             .name("error")
                             .data(Map.of("message", e.getMessage() != null ? e.getMessage() : "Unknown error")));
-                } catch (Exception ignored) {
-                    // If sending error event fails, just complete with error
+                } catch (Exception sendError) {
+                    log.error("Failed to send error event via SSE", sendError);
                 }
                 emitter.completeWithError(e);
             }
