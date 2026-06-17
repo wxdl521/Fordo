@@ -18,6 +18,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -26,13 +28,20 @@ class UserServiceImplTest {
     @Mock
     private SysUserMapper userMapper;
 
+    @Mock
+    private CourseService courseService;
+
     @InjectMocks
     private UserServiceImpl service;
 
     @Test
-    void register_success() {
+    void register_studentAutoEnrolls() {
         when(userMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
-        when(userMapper.insert(any(SysUser.class))).thenReturn(1);
+        when(userMapper.insert(any(SysUser.class))).thenAnswer(invocation -> {
+            SysUser u = invocation.getArgument(0);
+            u.setId(10L); // simulate auto-increment
+            return 1;
+        });
 
         RegisterRequest req = new RegisterRequest();
         req.setUsername("newuser");
@@ -51,6 +60,28 @@ class UserServiceImplTest {
         verify(userMapper).insert(captor.capture());
         assertThat(captor.getValue().getUsername()).isEqualTo("newuser");
         assertThat(captor.getValue().getPassword()).isEqualTo("pass123");
+
+        // 学生注册应自动选课
+        verify(courseService).autoEnrollAll(10L);
+    }
+
+    @Test
+    void register_teacherNoAutoEnroll() {
+        when(userMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
+        when(userMapper.insert(any(SysUser.class))).thenReturn(1);
+
+        RegisterRequest req = new RegisterRequest();
+        req.setUsername("newteacher");
+        req.setPassword("pass123");
+        req.setRealName("新教师");
+        req.setRole(1);
+
+        UserVO vo = service.register(req);
+
+        assertThat(vo.getRole()).isEqualTo(1);
+
+        // 教师注册不应自动选课
+        verify(courseService, never()).autoEnrollAll(anyLong());
     }
 
     @Test
