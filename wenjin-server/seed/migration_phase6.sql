@@ -4,23 +4,27 @@ USE `wenjin`;
 ALTER TABLE `kg_edge`  ADD COLUMN `confidence` TINYINT DEFAULT NULL COMMENT 'AI 置信度 0–100，NULL=既有生效边【阶段六补充】' AFTER `relation_note`;
 ALTER TABLE `question` ADD COLUMN `confidence` TINYINT DEFAULT NULL COMMENT 'AI 置信度 0–100，NULL=既有生效题【阶段六补充】' AFTER `status`;
 
--- ── 2) 待复核候选边（relation_note 以「待复核：」开头，带 confidence）──
+-- ── 1.5) 给现有数据设置默认 confidence（避免排序 NPE）──
+UPDATE `kg_edge` SET `confidence`=85 WHERE `course_id`=1 AND `confidence` IS NULL AND `relation_note` NOT LIKE '%待复核%';
+UPDATE `question` SET `confidence`=80 WHERE `course_id`=1 AND `confidence` IS NULL;
+
+-- ── 2) 待复核候选边（relation_note 以『待复核』开头，带 confidence）──
 -- 先按特征清掉旧的待复核边，保证可重复执行
-DELETE FROM `kg_edge` WHERE `course_id`=1 AND `relation_note` LIKE '待复核%';
+DELETE FROM `kg_edge` WHERE `course_id`=1 AND `relation_note` LIKE '%待复核%';
 
 -- 工具：用 node_code 取本课程节点 id
 -- 以下每条边 from/to 用 (SELECT id FROM kg_node WHERE course_id=1 AND node_code='KTxx')
 INSERT INTO `kg_edge` (`course_id`,`from_node_id`,`to_node_id`,`relation_type`,`relation_note`,`confidence`)
 SELECT 1, f.id, t.id, x.rtype, x.note, x.conf FROM (
-  SELECT 'KT05' fc,'KT10' tc,1 rtype,'待复核：领域类的候选实体多来自业务流程中的名词与数据对象，教材 6.2 节有直接对应。' note,93 conf UNION ALL
-  SELECT 'KT04','KT07',1,'待复核：功能需求的表述方式直接决定用例的粒度与系统边界划定。',89 UNION ALL
-  SELECT 'KT13','KT18',1,'待复核：面向对象设计原则建立在抽象、封装等通用设计概念之上。',86 UNION ALL
-  SELECT 'KT18-2','KT19',1,'待复核：设计类的协作结构大量复用典型模式，先识模式再构建类。',81 UNION ALL
-  SELECT 'KT17','KT20',1,'待复核：持久化字段与映射约束影响类到代码的转换细节。',74 UNION ALL
-  SELECT 'KT22','KT24',1,'待复核：上线前的回归与验收测试是部署的准入条件，证据来自大纲第 12 章。',69 UNION ALL
-  SELECT 'KT15-1','KT17',1,'待复核：数据访问层的职责划分依赖分层架构的依赖规则。',66 UNION ALL
-  SELECT 'KT03','KT06',3,'待复核：敏捷过程与团队组织方式互相影响，证据强度一般。',58 UNION ALL
-  SELECT 'KT29','KT05',3,'待复核：原型工具可辅助业务流程梳理，仅在案例脚注中出现，证据较弱。',51
+  SELECT 'KT05' fc,'KT10' tc,1 rtype,'『待复核』：领域类的候选实体多来自业务流程中的名词与数据对象，教材 6.2 节有直接对应。' note,93 conf UNION ALL
+  SELECT 'KT04','KT07',1,'『待复核』：功能需求的表述方式直接决定用例的粒度与系统边界划定。',89 UNION ALL
+  SELECT 'KT13','KT18',1,'『待复核』：面向对象设计原则建立在抽象、封装等通用设计概念之上。',86 UNION ALL
+  SELECT 'KT18-2','KT19',1,'『待复核』：设计类的协作结构大量复用典型模式，先识模式再构建类。',81 UNION ALL
+  SELECT 'KT17','KT20',1,'『待复核』：持久化字段与映射约束影响类到代码的转换细节。',74 UNION ALL
+  SELECT 'KT22','KT24',1,'『待复核』：上线前的回归与验收测试是部署的准入条件，证据来自大纲第 12 章。',69 UNION ALL
+  SELECT 'KT15-1','KT17',1,'『待复核』：数据访问层的职责划分依赖分层架构的依赖规则。',66 UNION ALL
+  SELECT 'KT03','KT06',3,'『待复核』：敏捷过程与团队组织方式互相影响，证据强度一般。',58 UNION ALL
+  SELECT 'KT29','KT05',3,'『待复核』：原型工具可辅助业务流程梳理，仅在案例脚注中出现，证据较弱。',51
 ) x
 JOIN `kg_node` f ON f.course_id=1 AND f.node_code=x.fc
 JOIN `kg_node` t ON t.course_id=1 AND t.node_code=x.tc;
