@@ -1,39 +1,222 @@
 /* ════════════════════════════════════════════════════════════
-   问津 · 第一阶段「功能版」设计令牌（占位）
-   仅做干净的功能样式；正式视觉设计稿后续替换这份变量与配色。
-   掌握度三态：--mastered / --weak / --unlearned
+   问津 · 双主题设计令牌
+   骨架现代（8px 间距、统一圆角、描边代阴影），点缀东方（朱砂 + 思源宋体）
+   主题通过 <html data-theme="paper|ink"> 切换，所有组件复用 CSS 变量
    ════════════════════════════════════════════════════════════ */
-:root {
-  --bg: #1a1d24;          /* 页面背景 */
-  --panel: #232732;       /* 面板/抽屉背景 */
-  --panel-2: #2c313d;     /* 次级面板 */
-  --line: #3a4150;        /* 描边/分隔线 */
-  --text: #e8eaed;        /* 主文字 */
-  --text-mut: #9aa1ad;    /* 次要文字 */
-  --accent: #d8674a;      /* 强调色（当前选中、主操作） */
+
+/* ── 旧变量名别名映射 ──
+   --text   → --ink      --text-mut → --mut
+   --panel  → --bg       --panel-2  → --card2
+   --accent → --acc
+   兼容阶段一~五已上线组件，后续逐步迁移到新变量名。 */
+
+/* 浅色「暖纸」（默认，日常学习） */
+:root,
+:root[data-theme='paper'] {
+  --page: #efe9dd;
+  --bg: #f7f3ec;
+  --card: #fffdf8;
+  --card2: #f2ede2;
+  --line: #e5decf;
+  --ink: #2a2520;
+  --mut: #6f6759;
+  --acc: #b4422e;
+  --accSoft: rgba(180, 66, 46, 0.1);
+  --ok: #3d7a5e;
+  --okSoft: rgba(61, 122, 94, 0.1);
+  --warn: #c8862a;
+  --warnSoft: rgba(200, 134, 42, 0.12);
+  --dim: #c9c2b4;
+
+  /* 旧变量名别名 */
+  --text: var(--ink);
+  --text-mut: var(--mut);
+  --panel: var(--bg);
+  --panel-2: var(--card2);
+  --accent: var(--acc);
 
   /* 掌握度三态 */
-  --mastered: #57a87e;    /* 已掌握（绿） */
-  --weak: #e0a33e;        /* 薄弱（琥珀） */
-  --unlearned: #6b7280;   /* 未学（灰）—— 本阶段全部节点用此色 */
+  --mastered: #3d7a5e;   /* 已掌握（绿） */
+  --weak: #c8862a;       /* 薄弱（琥珀） */
+  --unlearned: #9aa1ad;  /* 未学（灰） */
 
   --radius: 10px;
 }
 
-* { box-sizing: border-box; }
+/* 深色「墨夜」（图谱主视图主推，演示主力） */
+:root[data-theme='ink'] {
+  --page: #0d0e11;
+  --bg: #121317;
+  --card: #1b1d23;
+  --card2: #23252c;
+  --line: #2a2d35;
+  --ink: #e8e3d8;
+  --mut: #9a948a;
+  --acc: #d85e45;
+  --accSoft: rgba(216, 94, 69, 0.14);
+  --ok: #57a87e;
+  --okSoft: rgba(87, 168, 126, 0.14);
+  --warn: #e0a33e;
+  --warnSoft: rgba(224, 163, 62, 0.14);
+  --dim: #4a4d55;
 
-html, body, #app {
-  height: 100%;
+  /* 旧变量名别名 */
+  --text: var(--ink);
+  --text-mut: var(--mut);
+  --panel: var(--bg);
+  --panel-2: var(--card2);
+  --accent: var(--acc);
+
+  /* 掌握度三态 */
+  --mastered: #57a87e;   /* 已掌握（绿） */
+  --weak: #e0a33e;       /* 薄弱（琥珀） */
+  --unlearned: #6b7280;  /* 未学（灰） */
+
+  --radius: 10px;
+}
+
+/* ── 全局重置 ── */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
   margin: 0;
+  padding: 0;
+  height: 100%;
 }
 
 body {
   background: var(--bg);
-  color: var(--text);
-  font-family: 'PingFang SC', 'HarmonyOS Sans', 'Microsoft YaHei', system-ui, sans-serif;
+  color: var(--ink);
+  font-family: 'PingFang SC', 'HarmonyOS Sans', 'Microsoft YaHei', sans-serif;
+  transition: background-color 0.35s, color 0.35s;
 }
 
-button, select, input {
+#app {
+  height: 100%;
+}
+
+button,
+input,
+textarea,
+select {
   font-family: inherit;
-  color: var(--text);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--mut);
+  opacity: 0.7;
+}
+
+a {
+  color: inherit;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+[data-hidebar]::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── 关键帧 ── */
+@keyframes wjFadeUp {
+  from { transform: translateY(12px); }
+  to { transform: none; }
+}
+@keyframes wjPulse {
+  0% { box-shadow: 0 0 0 0 var(--accSoft); }
+  70% { box-shadow: 0 0 0 9px rgba(0, 0, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+}
+@keyframes wjDrawerIn {
+  from { transform: translateX(28px); }
+  to { transform: none; }
+}
+@keyframes wjDash {
+  to { stroke-dashoffset: -28; }
+}
+@keyframes wjmSheetIn {
+  from { transform: translateY(48px); opacity: 0.5; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes wjmFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes wjmPulse {
+  0% { box-shadow: 0 0 0 0 rgba(216, 94, 69, 0.4); }
+  70% { box-shadow: 0 0 0 8px rgba(216, 94, 69, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(216, 94, 69, 0); }
+}
+@keyframes wjmRise {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+/* ── 复用交互工具类（inline style 无法表达的 hover/active 状态）── */
+.wj-navlink {
+  font-size: 13px;
+  color: var(--mut);
+  text-decoration: none;
+  padding: 7px 12px;
+  border-radius: 8px;
+  white-space: nowrap;
+  flex: none;
+  transition: background-color 0.18s, color 0.18s;
+}
+.wj-navlink:hover {
+  background: var(--card2);
+  color: var(--ink);
+}
+.wj-hover-card2 {
+  transition: background-color 0.18s, color 0.18s, border-color 0.18s;
+}
+.wj-hover-card2:hover {
+  background: var(--card2);
+  color: var(--ink);
+}
+.wj-hover-acc {
+  transition: border-color 0.18s, color 0.18s;
+}
+.wj-hover-acc:hover {
+  border-color: var(--acc);
+  color: var(--acc);
+}
+.wj-btn-acc {
+  transition: transform 0.15s ease, filter 0.2s;
+}
+.wj-btn-acc:hover {
+  filter: brightness(1.08);
+}
+.wj-btn-acc:active {
+  transform: scale(0.97);
+}
+.wj-press:active {
+  transform: scale(0.98);
+}
+.wj-underline:hover {
+  color: var(--ink) !important;
+}
+
+/* ── 路由切换过渡 ── */
+.page-fade-enter-active,
+.page-fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+.page-fade-enter-from,
+.page-fade-leave-to {
+  opacity: 0;
 }
