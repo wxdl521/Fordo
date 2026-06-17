@@ -41,7 +41,15 @@
 
     <!-- 画布 -->
     <div :style="{ flex: 1, position: 'relative', overflow: 'hidden' }">
-      <svg v-if="layout" viewBox="0 0 1480 740" preserveAspectRatio="xMidYMid meet" :style="{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', transform: mapIn ? 'scale(1)' : 'scale(0.96)', transformOrigin: '50% 50%', transition: 'transform 1.2s cubic-bezier(0.22,1,0.36,1)' }">
+
+      <!-- 未登录提示 -->
+      <div v-if="!currentUser" :style="{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', color: 'var(--mut)', zIndex: 5 }">
+        <div :style="{ fontFamily: serif, fontSize: '20px', fontWeight: 600, letterSpacing: '2px', color: 'var(--ink)' }">请先登录</div>
+        <div :style="{ fontSize: '13px' }">登录后即可查看你的知识图谱与学情染色</div>
+        <button @click="router.push('/login')" class="wj-btn-acc" :style="{ height: '40px', padding: '0 28px', background: 'var(--acc)', border: 'none', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, cursor: 'pointer' }">去登录</button>
+      </div>
+
+      <svg v-else-if="layout" viewBox="0 0 1480 740" preserveAspectRatio="xMidYMid meet" :style="{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', transform: mapIn ? 'scale(1)' : 'scale(0.96)', transformOrigin: '50% 50%', transition: 'transform 1.2s cubic-bezier(0.22,1,0.36,1)' }">
 
         <!-- 星空 -->
         <template v-if="theme === 'ink'">
@@ -174,25 +182,47 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import NavLink from '../components/NavLink.vue'
 import { useTheme } from '../composables/useTheme.js'
 import { useViewport } from '../composables/useViewport.js'
-import { useGraphData } from '../composables/useGraphData.js'
+import { useGraphData, resetGraphData } from '../composables/useGraphData.js'
 import { computeLayout, shortName, radiusOf } from '../utils/graphLayout.js'
 
 const serif = "'Noto Serif SC', serif"
 const { theme } = useTheme()
 const { width } = useViewport()
 const route = useRoute()
+const router = useRouter()
 
-// 本阶段不做登录，演示课程写死为 courseId=1（schema.sql 已种入 code=52015CC4B4 的课程）
-const DEMO_COURSE_ID = 1
-// 演示学生写死为 studentId=2（schema.sql 已种入 id=2 的演示学生账户，role=2 学生）
-const DEMO_STUDENT_ID = 2
+// ── 从 localStorage 读取当前登录用户 ──
+function readUser() {
+  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
+}
+const currentUser = ref(readUser())
+const courseId = computed(() => {
+  const q = Number(route.query.courseId)
+  return q > 0 ? q : 1
+})
 
-const { data } = useGraphData(DEMO_COURSE_ID, DEMO_STUDENT_ID)
+// 用户信息变化时重置单例并重新加载
+const { data } = useGraphData(courseId.value, currentUser.value?.id)
+
+// 监听 storage 事件（其他标签页登录/退出时同步）
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'wj_user') {
+      const newUser = readUser()
+      if (newUser?.id !== currentUser.value?.id) {
+        currentUser.value = newUser
+        resetGraphData()
+        // 重新加载页面数据
+        window.location.reload()
+      }
+    }
+  })
+}
 
 const CHAPTERS = ['全部章节', '软件工程概述', '需求确定', '软件项目管理', '系统分析', '系统设计', '对象设计', '软件测试', '部署与维护']
 

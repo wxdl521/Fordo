@@ -27,6 +27,12 @@ function mapEdge(e) {
 const data = ref(null)
 let loading = null
 
+/** 重置单例（用户切换时调用） */
+export function resetGraphData() {
+  data.value = null
+  loading = null
+}
+
 /**
  * 加载图谱数据（单例，首次调用发请求，后续复用）。
  * @param {number} courseId
