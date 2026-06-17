@@ -29,16 +29,52 @@
           <label :style="{ fontSize: '12px', color: 'var(--mut)', marginBottom: '7px' }">学号</label>
           <input v-model="sid" placeholder="如 2023302481" class="wj-input" :style="inputStyle" />
           <label :style="{ fontSize: '12px', color: 'var(--mut)', marginBottom: '7px' }">密码</label>
-          <input v-model="pwd" type="password" placeholder="••••••••" class="wj-input" :style="{ ...inputStyle, marginBottom: '24px' }" @keydown.enter="step = 'course'" />
-          <button @click="step = 'course'" class="wj-btn-acc" :style="{ height: '46px', background: 'var(--acc)', border: 'none', borderRadius: '10px', color: '#FFFDF8', fontSize: '14.5px', fontWeight: 500, cursor: 'pointer', marginBottom: '16px' }">登 录</button>
-          <button @click="step = 'course'" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px', alignSelf: 'center' }">使用演示账号进入</button>
+          <input v-model="pwd" type="password" placeholder="••••••••" class="wj-input" :style="{ ...inputStyle, marginBottom: '24px' }" @keydown.enter="handleLogin" />
+          <button @click="handleLogin" class="wj-btn-acc" :style="{ height: '46px', background: 'var(--acc)', border: 'none', borderRadius: '10px', color: '#FFFDF8', fontSize: '14.5px', fontWeight: 500, cursor: 'pointer', marginBottom: '16px' }">登 录</button>
+          <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px', marginBottom: '12px' }">
+            <button @click="handleDemoLogin" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' }">使用演示账号进入</button>
+            <span :style="{ width: '1px', height: '12px', background: 'var(--line)' }"></span>
+            <button @click="step = 'register'; loginError = ''" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' }">没有账号？注册</button>
+          </div>
+          <div v-if="loginError" :style="{ fontSize: '12.5px', color: '#e74c3c', textAlign: 'center', marginTop: '4px' }">{{ loginError }}</div>
+        </div>
+      </div>
+
+      <!-- 注册 -->
+      <div v-else-if="step === 'register'" :style="{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', animation: 'wjFadeUp 0.45s ease both' }">
+        <div :style="{ width: '100%', maxWidth: '340px', display: 'flex', flexDirection: 'column' }">
+          <div v-show="width < 880" :style="{ fontFamily: serif, fontSize: '24px', fontWeight: 600, letterSpacing: '4px', marginBottom: '8px' }">问津</div>
+          <div :style="{ fontFamily: serif, fontSize: '21px', fontWeight: 600, marginBottom: '6px' }">注册账号</div>
+          <div :style="{ fontSize: '13px', color: 'var(--mut)', marginBottom: '24px' }">创建账号，开始你的学习旅程。</div>
+
+          <label :style="{ fontSize: '12px', color: 'var(--mut)', marginBottom: '7px' }">用户名</label>
+          <input v-model="regUsername" placeholder="请输入用户名" class="wj-input" :style="inputStyle" />
+
+          <label :style="{ fontSize: '12px', color: 'var(--mut)', marginBottom: '7px' }">密码</label>
+          <input v-model="regPassword" type="password" placeholder="请输入密码" class="wj-input" :style="inputStyle" />
+
+          <label :style="{ fontSize: '12px', color: 'var(--mut)', marginBottom: '7px' }">确认密码</label>
+          <input v-model="regConfirm" type="password" placeholder="请再次输入密码" class="wj-input" :style="inputStyle" />
+
+          <label :style="{ fontSize: '12px', color: 'var(--mut)', marginBottom: '7px' }">真实姓名</label>
+          <input v-model="regRealName" placeholder="请输入真实姓名" class="wj-input" :style="inputStyle" />
+
+          <label :style="{ fontSize: '12px', color: 'var(--mut)', marginBottom: '7px' }">角色</label>
+          <div :style="{ display: 'flex', gap: '10px', marginBottom: '20px' }">
+            <button @click="regRole = 2" :style="regRole === 2 ? roleBtnActive : roleBtnInactive" class="wj-role-btn">学生</button>
+            <button @click="regRole = 1" :style="regRole === 1 ? roleBtnActive : roleBtnInactive" class="wj-role-btn">教师</button>
+          </div>
+
+          <button @click="handleRegister" class="wj-btn-acc" :style="{ height: '46px', background: 'var(--acc)', border: 'none', borderRadius: '10px', color: '#FFFDF8', fontSize: '14.5px', fontWeight: 500, cursor: 'pointer', marginBottom: '16px' }">注 册</button>
+          <button @click="step = 'login'; regError = ''" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px', alignSelf: 'center' }">已有账号？登录</button>
+          <div v-if="regError" :style="{ fontSize: '12.5px', color: '#e74c3c', textAlign: 'center', marginTop: '10px' }">{{ regError }}</div>
         </div>
       </div>
 
       <!-- 课程选择 -->
       <div v-else :style="{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', animation: 'wjFadeUp 0.45s ease both' }">
         <div :style="{ width: '100%', maxWidth: '460px', display: 'flex', flexDirection: 'column' }">
-          <div :style="{ fontFamily: serif, fontSize: '22px', fontWeight: 600, marginBottom: '6px' }">你好，林晚舟</div>
+          <div :style="{ fontFamily: serif, fontSize: '22px', fontWeight: 600, marginBottom: '6px' }">你好，{{ displayName }}</div>
           <div :style="{ fontSize: '13px', color: 'var(--mut)', marginBottom: '26px' }">选择一门课程进入。</div>
 
           <div class="wj-course-card" :style="courseCard">
@@ -68,7 +104,7 @@
           </div>
 
           <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px' }">
-            <button @click="step = 'login'; pwd = ''" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' }">退出登录</button>
+            <button @click="handleLogout" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' }">退出登录</button>
             <span :style="{ width: '1px', height: '12px', background: 'var(--line)' }"></span>
             <router-link to="/teacher/graph" class="wj-underline" :style="{ color: 'var(--mut)', fontSize: '12.5px', textDecoration: 'underline', textUnderlineOffset: '3px' }">我是教师 · 进入教师端</router-link>
           </div>
@@ -79,15 +115,36 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import { useViewport } from '../composables/useViewport.js'
+import { login as apiLogin, register as apiRegister } from '../api/user.js'
 
 const serif = "'Noto Serif SC', serif"
 const { width } = useViewport()
+
 const step = ref('login')
 const sid = ref('')
 const pwd = ref('')
+const loginError = ref('')
+
+// 注册表单
+const regUsername = ref('')
+const regPassword = ref('')
+const regConfirm = ref('')
+const regRealName = ref('')
+const regRole = ref(2)
+const regError = ref('')
+
+// 登录后存储的用户信息
+const currentUser = ref(null)
+
+const displayName = computed(() => {
+  if (currentUser.value && currentUser.value.realName) {
+    return currentUser.value.realName
+  }
+  return '同学'
+})
 
 const inputStyle = {
   height: '44px',
@@ -112,6 +169,89 @@ const courseCard = {
   marginBottom: '14px',
   transition: 'background-color 0.35s, border-color 0.2s, transform 0.25s ease, box-shadow 0.25s ease'
 }
+
+const roleBtnBase = {
+  flex: 1,
+  height: '40px',
+  borderRadius: '10px',
+  fontSize: '14px',
+  fontWeight: 500,
+  cursor: 'pointer',
+  transition: 'all 0.18s'
+}
+const roleBtnActive = {
+  ...roleBtnBase,
+  background: 'var(--acc)',
+  border: '1px solid var(--acc)',
+  color: '#FFFDF8'
+}
+const roleBtnInactive = {
+  ...roleBtnBase,
+  background: 'transparent',
+  border: '1px solid var(--line)',
+  color: 'var(--mut)'
+}
+
+async function handleLogin() {
+  loginError.value = ''
+  if (!sid.value || !pwd.value) {
+    loginError.value = '请输入用户名和密码'
+    return
+  }
+  try {
+    const user = await apiLogin({ username: sid.value, password: pwd.value })
+    currentUser.value = user
+    localStorage.setItem('wj_user', JSON.stringify(user))
+    step.value = 'course'
+  } catch (e) {
+    loginError.value = e.message || '登录失败'
+  }
+}
+
+function handleDemoLogin() {
+  apiLogin({ username: 'demo_student', password: 'demo' })
+    .then(user => {
+      currentUser.value = user
+      localStorage.setItem('wj_user', JSON.stringify(user))
+      step.value = 'course'
+    })
+    .catch(e => {
+      loginError.value = e.message || '演示登录失败'
+    })
+}
+
+async function handleRegister() {
+  regError.value = ''
+  if (!regUsername.value || !regPassword.value || !regConfirm.value || !regRealName.value) {
+    regError.value = '请填写所有字段'
+    return
+  }
+  if (regPassword.value !== regConfirm.value) {
+    regError.value = '两次密码输入不一致'
+    return
+  }
+  try {
+    const user = await apiRegister({
+      username: regUsername.value,
+      password: regPassword.value,
+      realName: regRealName.value,
+      role: regRole.value
+    })
+    currentUser.value = user
+    localStorage.setItem('wj_user', JSON.stringify(user))
+    step.value = 'course'
+  } catch (e) {
+    regError.value = e.message || '注册失败'
+  }
+}
+
+function handleLogout() {
+  currentUser.value = null
+  localStorage.removeItem('wj_user')
+  sid.value = ''
+  pwd.value = ''
+  step.value = 'login'
+}
 </script>
 
 <style scoped>
@@ -122,5 +262,8 @@ const courseCard = {
   transform: translateY(-2px);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.07);
   border-color: var(--mut);
+}
+.wj-role-btn:hover {
+  opacity: 0.85;
 }
 </style>
