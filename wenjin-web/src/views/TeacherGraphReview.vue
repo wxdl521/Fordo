@@ -7,6 +7,7 @@
         <span :style="courseStyle">软件工程</span>
       </div>
       <nav :style="navStyle">
+        <button @click="showImportModal = true" :style="importBtnHeaderStyle">导入图谱</button>
         <router-link to="/teacher/questions" :style="linkStyle">题目审核池</router-link>
         <router-link to="/teacher/dashboard" :style="linkStyle">学情看板</router-link>
       </nav>
@@ -171,6 +172,72 @@
         </div>
       </div>
     </div>
+
+    <!-- 导入图谱弹窗 -->
+    <div v-if="showImportModal" :style="modalOverlayStyle" @click.self="closeImportModal">
+      <div :style="importModalStyle">
+        <div :style="modalHeadStyle">
+          <h3 :style="{ margin: 0, fontSize: '15px' }">导入知识图谱</h3>
+          <button @click="closeImportModal" :style="closeBtnStyle">×</button>
+        </div>
+        <div :style="modalBodyStyle">
+          <!-- 上传区域 -->
+          <div
+            v-if="!importResult && !importError"
+            :style="dropZoneStyle(isDragging)"
+            @dragover.prevent="isDragging = true"
+            @dragleave.prevent="isDragging = false"
+            @drop.prevent="onFileDrop"
+            @click="fileInput && fileInput.click()"
+          >
+            <input ref="fileInput" type="file" accept=".json,.xlsx,.xls" :style="{ display: 'none' }" @change="onFileSelect" />
+            <div :style="{ fontSize: '28px', marginBottom: '10px', opacity: 0.6 }">+</div>
+            <div :style="{ fontSize: '14px', color: 'var(--text)', marginBottom: '8px' }">
+              {{ importFile ? importFile.name : '拖拽文件到此处，或点击选择' }}
+            </div>
+            <div :style="{ fontSize: '12px', color: 'var(--text-mut)' }">支持 .json / .xlsx / .xls 格式</div>
+          </div>
+
+          <!-- 上传进度 -->
+          <div v-if="importUploading" :style="{ marginTop: '16px' }">
+            <div :style="{ fontSize: '13px', color: 'var(--text-mut)', marginBottom: '8px' }">
+              {{ importFile?.name?.endsWith('.json') ? '正在导入…' : '正在上传并 AI 清洗，请稍候…' }}
+            </div>
+            <div :style="importProgressWrapStyle">
+              <div :style="importProgressBarStyle(importProgress)"></div>
+            </div>
+            <div :style="{ fontSize: '12px', color: 'var(--text-mut)', marginTop: '6px', textAlign: 'right' }">{{ importProgress }}%</div>
+          </div>
+
+          <!-- 导入结果 -->
+          <div v-if="importResult" :style="importResultStyle">
+            <div :style="{ fontSize: '15px', fontWeight: 600, color: 'var(--mastered)', marginBottom: '14px' }">导入成功</div>
+            <div :style="resultRowStyle">
+              <span :style="resultLabelStyle">新增节点</span>
+              <span :style="resultValueStyle">{{ importResult.nodeCount ?? '-' }}</span>
+            </div>
+            <div :style="resultRowStyle">
+              <span :style="resultLabelStyle">新增边</span>
+              <span :style="resultValueStyle">{{ importResult.edgeCount ?? '-' }}</span>
+            </div>
+            <div v-if="importResult.message" :style="{ fontSize: '12.5px', color: 'var(--text-mut)', marginTop: '10px', lineHeight: 1.6 }">
+              {{ importResult.message }}
+            </div>
+          </div>
+
+          <!-- 错误信息 -->
+          <div v-if="importError" :style="importErrorBoxStyle">
+            <div :style="{ fontSize: '14px', fontWeight: 500, color: 'var(--accent)', marginBottom: '8px' }">导入失败</div>
+            <div :style="{ fontSize: '13px', color: 'var(--text-mut)', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }">{{ importError }}</div>
+          </div>
+        </div>
+        <div :style="modalFooterStyle">
+          <button v-if="!importUploading" @click="closeImportModal" :style="cancelBtnStyle">
+            {{ importResult || importError ? '关闭' : '取消' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -186,6 +253,7 @@ import {
   updateNode,
   deleteNode
 } from '../api/teacher.js'
+import { importGraphJson, importGraphExcel } from '../api/admin.js'
 
 const COURSE_ID = 1
 
@@ -197,6 +265,16 @@ const error = ref(null)
 const showNodeForm = ref(false)
 const showEditForm = ref(false)
 const processed = ref(0)
+
+// ── 导入状态 ──
+const showImportModal = ref(false)
+const importFile = ref(null)
+const isDragging = ref(false)
+const importUploading = ref(false)
+const importProgress = ref(0)
+const importResult = ref(null)
+const importError = ref(null)
+const fileInput = ref(null)
 
 let chart = null
 let C = {}
@@ -445,6 +523,69 @@ async function confirmDelete() {
   }
 }
 
+// ── 导入 ──
+function closeImportModal() {
+  if (importUploading.value) return
+  showImportModal.value = false
+  importFile.value = null
+  importResult.value = null
+  importError.value = null
+  importProgress.value = 0
+  isDragging.value = false
+}
+
+function onFileDrop(e) {
+  isDragging.value = false
+  const file = e.dataTransfer.files[0]
+  if (file) doImport(file)
+}
+
+function onFileSelect(e) {
+  const file = e.target.files[0]
+  if (file) doImport(file)
+  e.target.value = ''
+}
+
+async function doImport(file) {
+  const name = file.name.toLowerCase()
+  const isJson = name.endsWith('.json')
+  const isExcel = name.endsWith('.xlsx') || name.endsWith('.xls')
+  if (!isJson && !isExcel) {
+    importError.value = '不支持的文件格式，请上传 .json / .xlsx / .xls 文件'
+    return
+  }
+
+  importFile.value = file
+  importUploading.value = true
+  importProgress.value = 0
+  importResult.value = null
+  importError.value = null
+
+  const courseCode = '52015CC4B4'
+
+  try {
+    let res
+    if (isJson) {
+      const text = await file.text()
+      const data = JSON.parse(text)
+      importProgress.value = 50
+      res = await importGraphJson(courseCode, data)
+    } else {
+      res = await importGraphExcel(courseCode, file, (e) => {
+        if (e.total) importProgress.value = Math.round((e.loaded / e.total) * 100)
+      })
+    }
+    importProgress.value = 100
+    importResult.value = res || {}
+    await reload()
+  } catch (e) {
+    console.error('导入失败', e)
+    importError.value = e.message || '导入失败，请检查文件格式和内容'
+  } finally {
+    importUploading.value = false
+  }
+}
+
 function onResize() {
   if (chart) chart.resize()
 }
@@ -459,6 +600,7 @@ onMounted(async () => {
       reload,
       accept: acceptEdge,
       reject: rejectEdge,
+      openImport: () => { showImportModal.value = true },
       state: () => ({ pending: pending.value, edges: graph.value?.edges })
     }
   }
@@ -823,5 +965,91 @@ const cancelBtnStyle = {
   color: 'var(--text-mut)',
   fontSize: '13px',
   cursor: 'pointer'
+}
+
+const importBtnHeaderStyle = {
+  fontSize: '13px',
+  color: 'var(--accent)',
+  background: 'transparent',
+  border: '1px solid var(--accent)',
+  borderRadius: '8px',
+  padding: '6px 14px',
+  cursor: 'pointer',
+  transition: 'opacity 0.2s',
+  fontWeight: 500
+}
+
+const importModalStyle = {
+  width: '520px',
+  maxHeight: '80vh',
+  background: 'var(--panel)',
+  border: '1px solid var(--line)',
+  borderRadius: '12px',
+  display: 'flex',
+  flexDirection: 'column'
+}
+
+function dropZoneStyle(dragging) {
+  return {
+    border: `2px dashed ${dragging ? 'var(--accent)' : 'var(--line)'}`,
+    borderRadius: '12px',
+    padding: '40px 20px',
+    textAlign: 'center',
+    cursor: 'pointer',
+    background: dragging ? 'rgba(100, 160, 255, 0.06)' : 'var(--panel-2)',
+    transition: 'border-color 0.2s, background 0.2s'
+  }
+}
+
+const importProgressWrapStyle = {
+  width: '100%',
+  height: '6px',
+  background: 'var(--panel-2)',
+  borderRadius: '99px',
+  overflow: 'hidden'
+}
+
+function importProgressBarStyle(pct) {
+  return {
+    height: '100%',
+    width: pct + '%',
+    background: 'var(--accent)',
+    borderRadius: '99px',
+    transition: 'width 0.3s'
+  }
+}
+
+const importResultStyle = {
+  marginTop: '16px',
+  padding: '18px 20px',
+  background: 'rgba(76, 175, 80, 0.08)',
+  border: '1px solid rgba(76, 175, 80, 0.3)',
+  borderRadius: '10px'
+}
+
+const resultRowStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  padding: '6px 0'
+}
+
+const resultLabelStyle = {
+  fontSize: '13px',
+  color: 'var(--text-mut)'
+}
+
+const resultValueStyle = {
+  fontSize: '15px',
+  fontWeight: 600,
+  color: 'var(--text)'
+}
+
+const importErrorBoxStyle = {
+  marginTop: '16px',
+  padding: '18px 20px',
+  background: 'rgba(224, 100, 100, 0.08)',
+  border: '1px solid rgba(224, 100, 100, 0.3)',
+  borderRadius: '10px'
 }
 </script>
