@@ -55,14 +55,15 @@
 
         <!-- 边 -->
         <template v-for="(e, i) in edgeList" :key="'e' + i">
-          <line v-if="e.glow" :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2" :stroke="pal.cur" stroke-width="12" opacity="0.2" stroke-linecap="round">
+          <line v-if="e.glow" :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2" :stroke="pal.cur" stroke-width="12" opacity="0.2" stroke-linecap="round" pointer-events="none">
             <animate attributeName="opacity" values="0.1;0.32;0.1" dur="2.2s" repeatCount="indefinite" />
           </line>
-          <line :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2" :stroke="e.stroke" :stroke-width="e.width" :opacity="e.op" :stroke-dasharray="e.dash" :style="{ transition: 'opacity 0.25s, stroke 0.25s', animation: e.anim }" />
+          <line :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2" :stroke="e.stroke" :stroke-width="e.width" :opacity="e.op" :stroke-dasharray="e.dash" pointer-events="none" :style="{ transition: 'opacity 0.25s, stroke 0.25s', animation: e.anim }" />
         </template>
 
         <!-- 节点 -->
         <g v-for="n in nodeList" :key="n.id" :opacity="n.op" :style="{ cursor: 'pointer', transition: 'opacity 0.25s' }" @mouseenter="hoverId = n.id" @mouseleave="hoverId = null" @click="selectedId = n.id">
+          <circle :cx="n.x" :cy="n.y" :r="Math.max(n.r * 2, 18)" fill="transparent" />
           <template v-if="n.status !== 'dim'">
             <circle :cx="n.x" :cy="n.y" :r="n.r * 1.95" :fill="n.c" opacity="0.08" />
             <circle :cx="n.x" :cy="n.y" :r="n.r * 1.35" :fill="n.c" opacity="0.18" />
@@ -70,7 +71,7 @@
           <circle v-if="n.rootGlow" :cx="n.x" :cy="n.y" :r="n.r * 2.8" :fill="n.c" opacity="0.1">
             <animate attributeName="opacity" values="0.06;0.18;0.06" dur="2.2s" repeatCount="indefinite" />
           </circle>
-          <circle :cx="n.x" :cy="n.y" :r="n.r" :fill="n.status === 'dim' ? 'none' : n.c" :stroke="n.status === 'dim' ? n.c : 'none'" :stroke-width="n.status === 'dim' ? 1.4 : 0" />
+          <circle :cx="n.x" :cy="n.y" :r="n.r" :fill="n.status === 'dim' ? 'none' : n.c" :stroke="n.status === 'dim' ? n.c : 'none'" :stroke-width="n.status === 'dim' ? 2 : 0" />
           <template v-if="n.isCurrent">
             <rect :x="n.x - (n.r * 2 + 13) / 2" :y="n.y - (n.r * 2 + 13) / 2" :width="n.r * 2 + 13" :height="n.r * 2 + 13" rx="5" fill="none" :stroke="pal.cur" stroke-width="1.5" />
             <circle :cx="n.x" :cy="n.y" :r="n.r + 5" fill="none" :stroke="pal.cur" stroke-width="1.5">
