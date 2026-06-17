@@ -77,30 +77,38 @@
           <div :style="{ fontFamily: serif, fontSize: '22px', fontWeight: 600, marginBottom: '6px' }">你好，{{ displayName }}</div>
           <div :style="{ fontSize: '13px', color: 'var(--mut)', marginBottom: '26px' }">选择一门课程进入。</div>
 
-          <div class="wj-course-card" :style="courseCard">
-            <div :style="{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', flexWrap: 'wrap' }">
-              <span :style="{ fontFamily: serif, fontSize: '17px', fontWeight: 600 }">软件工程</span>
-              <span :style="{ fontSize: '11.5px', color: 'var(--ok)', background: 'var(--okSoft)', borderRadius: '999px', padding: '3px 10px' }">进行中</span>
-              <span :style="{ marginLeft: 'auto', fontSize: '12px', color: 'var(--mut)' }">2026 春 · 王立群</span>
-            </div>
-            <div :style="{ fontSize: '12.5px', color: 'var(--mut)', marginBottom: '14px' }">已掌握 22 / 42 个节点 · 待修薄弱点 5 个</div>
-            <div :style="{ height: '5px', background: 'var(--card2)', borderRadius: '99px', overflow: 'hidden', marginBottom: '16px' }">
-              <div :style="{ height: '100%', width: '65%', background: 'var(--ok)', borderRadius: '99px' }"></div>
-            </div>
-            <div :style="{ display: 'flex', alignItems: 'center', gap: '12px' }">
-              <router-link to="/map" class="wj-btn-acc" :style="{ height: '40px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', padding: '0 24px', background: 'var(--acc)', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, textDecoration: 'none' }">进入课程</router-link>
-              <router-link to="/growth" class="wj-underline" :style="{ fontSize: '12.5px', color: 'var(--mut)', textDecoration: 'underline', textUnderlineOffset: '3px' }">成长档案</router-link>
-            </div>
-          </div>
+          <div v-if="courseLoading" :style="{ textAlign: 'center', color: 'var(--mut)', fontSize: '13px', padding: '40px 0' }">加载中...</div>
 
-          <div class="wj-course-card" :style="{ ...courseCard, marginBottom: '22px' }">
-            <div :style="{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', flexWrap: 'wrap' }">
-              <span :style="{ fontFamily: serif, fontSize: '17px', fontWeight: 600 }">数据库系统原理</span>
-              <span :style="{ fontSize: '11.5px', color: 'var(--mut)', border: '1px solid var(--line)', borderRadius: '999px', padding: '3px 10px' }">未诊断</span>
-              <span :style="{ marginLeft: 'auto', fontSize: '12px', color: 'var(--mut)' }">2026 春 · 陈每文</span>
+          <template v-else-if="courses.length > 0">
+            <div
+              v-for="(c, idx) in courses"
+              :key="c.courseId"
+              class="wj-course-card"
+              :style="{ ...courseCard, marginBottom: idx === courses.length - 1 ? '22px' : '14px' }"
+            >
+              <div :style="{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', flexWrap: 'wrap' }">
+                <span :style="{ fontFamily: serif, fontSize: '17px', fontWeight: 600 }">{{ c.name }}</span>
+                <span v-if="c.masteredCount > 0 || c.weakCount > 0" :style="{ fontSize: '11.5px', color: 'var(--ok)', background: 'var(--okSoft)', borderRadius: '999px', padding: '3px 10px' }">进行中</span>
+                <span v-else :style="{ fontSize: '11.5px', color: 'var(--mut)', border: '1px solid var(--line)', borderRadius: '999px', padding: '3px 10px' }">未诊断</span>
+              </div>
+              <div v-if="c.masteredCount > 0 || c.weakCount > 0" :style="{ fontSize: '12.5px', color: 'var(--mut)', marginBottom: '14px' }">
+                已掌握 {{ c.masteredCount }} / {{ c.masteredCount + c.weakCount + c.unlearnedCount }} 个节点 · 待修薄弱点 {{ c.weakCount }} 个
+              </div>
+              <div v-else :style="{ fontSize: '12.5px', color: 'var(--mut)', marginBottom: '16px' }">先做一次入口诊断（约 25 题 · 15 分钟），问津才能为你点亮这张地图。</div>
+              <div v-if="c.masteredCount > 0 || c.weakCount > 0" :style="{ height: '5px', background: 'var(--card2)', borderRadius: '99px', overflow: 'hidden', marginBottom: '16px' }">
+                <div :style="{ height: '100%', width: masteryPercent(c) + '%', background: 'var(--ok)', borderRadius: '99px' }"></div>
+              </div>
+              <div :style="{ display: 'flex', alignItems: 'center', gap: '12px' }">
+                <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" to="/map" class="wj-btn-acc" :style="{ height: '40px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', padding: '0 24px', background: 'var(--acc)', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, textDecoration: 'none' }">进入课程</router-link>
+                <router-link v-else to="/diagnostic" class="wj-hover-card2" :style="{ height: '40px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', padding: '0 20px', border: '1px solid var(--line)', borderRadius: '9px', color: 'var(--ink)', fontSize: '13px', textDecoration: 'none' }">开始入口诊断</router-link>
+                <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" to="/growth" class="wj-underline" :style="{ fontSize: '12.5px', color: 'var(--mut)', textDecoration: 'underline', textUnderlineOffset: '3px' }">成长档案</router-link>
+              </div>
             </div>
-            <div :style="{ fontSize: '12.5px', color: 'var(--mut)', marginBottom: '16px' }">先做一次入口诊断（约 25 题 · 15 分钟），问津才能为你点亮这张地图。</div>
-            <router-link to="/diagnostic" class="wj-hover-card2" :style="{ height: '40px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', padding: '0 20px', border: '1px solid var(--line)', borderRadius: '9px', color: 'var(--ink)', fontSize: '13px', textDecoration: 'none' }">开始入口诊断</router-link>
+          </template>
+
+          <div v-else :style="{ textAlign: 'center', padding: '48px 0' }">
+            <div :style="{ fontSize: '14px', color: 'var(--mut)', marginBottom: '8px' }">暂无课程</div>
+            <div :style="{ fontSize: '12.5px', color: 'var(--mut)' }">请联系教师为你分配课程。</div>
           </div>
 
           <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px' }">
@@ -115,10 +123,11 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import { useViewport } from '../composables/useViewport.js'
 import { login as apiLogin, register as apiRegister } from '../api/user.js'
+import { getMyCourses, getAvailableCourses, enroll as apiEnroll } from '../api/course.js'
 
 const serif = "'Noto Serif SC', serif"
 const { width } = useViewport()
@@ -138,6 +147,8 @@ const regError = ref('')
 
 // 登录后存储的用户信息
 const currentUser = ref(null)
+const courses = ref([])
+const courseLoading = ref(false)
 
 const displayName = computed(() => {
   if (currentUser.value && currentUser.value.realName) {
@@ -145,6 +156,12 @@ const displayName = computed(() => {
   }
   return '同学'
 })
+
+function masteryPercent(c) {
+  const total = c.masteredCount + c.weakCount + c.unlearnedCount
+  if (total === 0) return 0
+  return Math.round((c.masteredCount / total) * 100)
+}
 
 const inputStyle = {
   height: '44px',
@@ -203,6 +220,7 @@ async function handleLogin() {
     currentUser.value = user
     localStorage.setItem('wj_user', JSON.stringify(user))
     step.value = 'course'
+    loadCourses()
   } catch (e) {
     loginError.value = e.message || '登录失败'
   }
@@ -214,6 +232,7 @@ function handleDemoLogin() {
       currentUser.value = user
       localStorage.setItem('wj_user', JSON.stringify(user))
       step.value = 'course'
+      loadCourses()
     })
     .catch(e => {
       loginError.value = e.message || '演示登录失败'
@@ -239,7 +258,15 @@ async function handleRegister() {
     })
     currentUser.value = user
     localStorage.setItem('wj_user', JSON.stringify(user))
+    // 注册成功后自动选课：取所有可用课程并逐个选课
+    try {
+      const available = await getAvailableCourses()
+      for (const c of available) {
+        await apiEnroll(user.id, c.id)
+      }
+    } catch { /* 选课失败不影响进入 */ }
     step.value = 'course'
+    loadCourses()
   } catch (e) {
     regError.value = e.message || '注册失败'
   }
@@ -247,11 +274,35 @@ async function handleRegister() {
 
 function handleLogout() {
   currentUser.value = null
+  courses.value = []
   localStorage.removeItem('wj_user')
   sid.value = ''
   pwd.value = ''
   step.value = 'login'
 }
+
+async function loadCourses() {
+  if (!currentUser.value) return
+  courseLoading.value = true
+  try {
+    courses.value = await getMyCourses(currentUser.value.id)
+  } catch {
+    courses.value = []
+  } finally {
+    courseLoading.value = false
+  }
+}
+
+onMounted(() => {
+  const saved = localStorage.getItem('wj_user')
+  if (saved) {
+    try {
+      currentUser.value = JSON.parse(saved)
+      step.value = 'course'
+      loadCourses()
+    } catch { /* ignore */ }
+  }
+})
 </script>
 
 <style scoped>
