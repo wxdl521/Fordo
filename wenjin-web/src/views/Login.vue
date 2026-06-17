@@ -99,7 +99,7 @@
                 <div :style="{ height: '100%', width: masteryPercent(c) + '%', background: 'var(--ok)', borderRadius: '99px' }"></div>
               </div>
               <div :style="{ display: 'flex', alignItems: 'center', gap: '12px' }">
-                <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" to="/map" class="wj-btn-acc" :style="{ height: '40px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', padding: '0 24px', background: 'var(--acc)', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, textDecoration: 'none' }">进入课程</router-link>
+                <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" :to="{ path: '/map', query: { courseId: c.courseId } }" class="wj-btn-acc" :style="{ height: '40px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', padding: '0 24px', background: 'var(--acc)', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, textDecoration: 'none' }">进入课程</router-link>
                 <router-link v-else to="/diagnostic" class="wj-hover-card2" :style="{ height: '40px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', padding: '0 20px', border: '1px solid var(--line)', borderRadius: '9px', color: 'var(--ink)', fontSize: '13px', textDecoration: 'none' }">开始入口诊断</router-link>
                 <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" to="/growth" class="wj-underline" :style="{ fontSize: '12.5px', color: 'var(--mut)', textDecoration: 'underline', textUnderlineOffset: '3px' }">成长档案</router-link>
               </div>
@@ -127,7 +127,7 @@ import { ref, computed, onMounted } from 'vue'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import { useViewport } from '../composables/useViewport.js'
 import { login as apiLogin, register as apiRegister } from '../api/user.js'
-import { getMyCourses, getAvailableCourses, enroll as apiEnroll } from '../api/course.js'
+import { getMyCourses } from '../api/course.js'
 
 const serif = "'Noto Serif SC', serif"
 const { width } = useViewport()
@@ -258,13 +258,6 @@ async function handleRegister() {
     })
     currentUser.value = user
     localStorage.setItem('wj_user', JSON.stringify(user))
-    // 注册成功后自动选课：取所有可用课程并逐个选课
-    try {
-      const available = await getAvailableCourses()
-      for (const c of available) {
-        await apiEnroll(user.id, c.id)
-      }
-    } catch { /* 选课失败不影响进入 */ }
     step.value = 'course'
     loadCourses()
   } catch (e) {

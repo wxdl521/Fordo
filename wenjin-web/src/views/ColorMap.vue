@@ -46,7 +46,7 @@
       <div v-if="!currentUser" :style="{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', color: 'var(--mut)', zIndex: 5 }">
         <div :style="{ fontFamily: serif, fontSize: '20px', fontWeight: 600, letterSpacing: '2px', color: 'var(--ink)' }">请先登录</div>
         <div :style="{ fontSize: '13px' }">登录后即可查看你的知识图谱与学情染色</div>
-        <button @click="router.push('/login')" class="wj-btn-acc" :style="{ height: '40px', padding: '0 28px', background: 'var(--acc)', border: 'none', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, cursor: 'pointer' }">去登录</button>
+        <button @click="router.push('/')" class="wj-btn-acc" :style="{ height: '40px', padding: '0 28px', background: 'var(--acc)', border: 'none', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, cursor: 'pointer' }">去登录</button>
       </div>
 
       <svg v-else-if="layout" viewBox="0 0 1480 740" preserveAspectRatio="xMidYMid meet" :style="{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', transform: mapIn ? 'scale(1)' : 'scale(0.96)', transformOrigin: '50% 50%', transition: 'transform 1.2s cubic-bezier(0.22,1,0.36,1)' }">
