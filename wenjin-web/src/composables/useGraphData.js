@@ -13,7 +13,9 @@ function mapNode(n) {
     difficulty: n.difficulty ?? 0,
     is_key: !!n.isKey,
     bloom: n.bloom || '',   // 后端暂无 bloom 字段，留空占位
-    description: n.description || ''
+    description: n.description || '',
+    mastery: n.mastery || 'unlearned',
+    masteryScore: n.masteryScore != null ? Math.round(n.masteryScore) : null
   }
 }
 

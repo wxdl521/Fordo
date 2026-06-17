@@ -1,441 +1,564 @@
 <template>
-  <div class="map-page">
-    <!-- 顶栏：标题 + 章节筛选 + 图例 -->
-    <header class="topbar">
-      <div class="title">
-        <strong>问津 · 染色地图</strong>
-        <span v-if="store.course" class="course">{{ store.course.name }}</span>
-        <span class="count" v-if="store.nodes.length">{{ store.nodes.length }} 节点 / {{ store.edges.length }} 边</span>
-      </div>
+  <div :style="{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)', color: 'var(--ink)', overflow: 'hidden', transition: 'background-color 0.35s, color 0.35s' }">
 
-      <div class="filter">
-        <label>章节筛选</label>
-        <select v-model="selectedChapter" @change="applyVisualState">
-          <option value="">全部章节</option>
-          <option v-for="c in store.chapters" :key="c" :value="c">{{ c }}</option>
+    <!-- 顶栏 -->
+    <div :style="{ height: '60px', flex: 'none', display: 'flex', alignItems: 'center', gap: '14px', padding: '0 20px', borderBottom: '1px solid var(--line)', transition: 'border-color 0.35s' }">
+      <span :style="{ fontFamily: serif, fontSize: '22px', fontWeight: 600, letterSpacing: '3px', whiteSpace: 'nowrap', flex: 'none' }">问津</span>
+      <div :style="{ width: '1px', height: '18px', background: 'var(--line)', flex: 'none' }"></div>
+      <span v-show="width >= 560" :style="{ fontSize: '14px', fontWeight: 500, whiteSpace: 'nowrap', flex: 'none' }">软件工程 · 染色地图</span>
+
+      <div :style="{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px' }">
+        <NavLink v-show="width >= 1230" to="/path">学习路径</NavLink>
+        <NavLink v-show="width >= 1230" to="/growth">成长档案</NavLink>
+
+        <!-- 搜索 -->
+        <div v-show="width >= 720" :style="{ position: 'relative' }">
+          <input v-model="query" placeholder="搜索知识点…" class="wj-search" :style="{ width: '190px', height: '34px', boxSizing: 'border-box', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '8px', padding: '0 12px', color: 'var(--ink)', fontSize: '13px', outline: 'none', transition: 'background-color 0.35s, border-color 0.35s' }" />
+          <div v-if="results.length" :style="{ position: 'absolute', top: '40px', left: 0, width: '280px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '10px', padding: '6px', zIndex: 40, boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }">
+            <div v-for="r in results" :key="r.id" @click="pickNode(r.id)" class="wj-hover-card2" :style="{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', borderRadius: '6px', cursor: 'pointer' }">
+              <span :style="{ width: '7px', height: '7px', borderRadius: '50%', background: r.color, flex: 'none' }"></span>
+              <span :style="{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }">{{ r.name }}</span>
+              <span :style="{ fontSize: '11px', color: 'var(--mut)', marginLeft: 'auto', flex: 'none' }">{{ r.chapter }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 章节筛选 -->
+        <select v-show="width >= 900" v-model="chapterFilter" :style="{ height: '34px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '8px', padding: '0 8px', color: 'var(--ink)', fontSize: '12.5px', outline: 'none', cursor: 'pointer', transition: 'background-color 0.35s, border-color 0.35s' }">
+          <option v-for="c in CHAPTERS" :key="c" :value="c">{{ c }}</option>
         </select>
+
+        <!-- 薄弱根因回溯 -->
+        <button @click="toggleRoot" class="wj-hover-acc" :style="rootCause
+          ? { height: '34px', padding: '0 14px', background: 'var(--accSoft)', border: '1px solid var(--acc)', borderRadius: '8px', color: 'var(--acc)', fontSize: '12.5px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px', fontWeight: 500, whiteSpace: 'nowrap', flex: 'none' }
+          : { height: '34px', padding: '0 14px', background: 'transparent', border: '1px solid var(--line)', borderRadius: '8px', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px', whiteSpace: 'nowrap', flex: 'none' }">
+          <span :style="{ width: '6px', height: '6px', borderRadius: '50%', background: rootCause ? 'var(--acc)' : 'var(--mut)', opacity: rootCause ? 1 : 0.5 }"></span>{{ width < 1080 ? '回溯' : '薄弱根因回溯' }}
+        </button>
+
+        <ThemeToggle />
       </div>
+    </div>
 
-      <div class="legend">
-        <span class="lg"><i class="dot" :style="{ background: 'var(--unlearned)' }"></i>未学</span>
-        <span class="lg"><i class="dot" :style="{ background: 'var(--weak)' }"></i>薄弱</span>
-        <span class="lg"><i class="dot" :style="{ background: 'var(--mastered)' }"></i>已掌握</span>
-        <span class="sep"></span>
-        <span class="lg"><i class="dot big"></i>重点</span>
-        <span class="lg"><i class="dot small"></i>普通</span>
-        <span class="sep"></span>
-        <span class="lg"><i class="ln solid"></i>前置</span>
-        <span class="lg"><i class="ln dashed"></i>包含</span>
-        <span class="lg"><i class="ln faint"></i>相关</span>
-      </div>
-    </header>
+    <!-- 画布 -->
+    <div :style="{ flex: 1, position: 'relative', overflow: 'hidden' }">
+      <svg v-if="layout" viewBox="0 0 1480 740" preserveAspectRatio="xMidYMid meet" :style="{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', transform: mapIn ? 'scale(1)' : 'scale(0.96)', transformOrigin: '50% 50%', transition: 'transform 1.2s cubic-bezier(0.22,1,0.36,1)' }">
 
-    <!-- 图谱画布 -->
-    <div class="canvas-wrap">
-      <div ref="chartEl" class="chart"></div>
-
-      <div v-if="store.loading" class="overlay">加载中…</div>
-      <div v-else-if="store.error" class="overlay err">
-        加载失败：{{ store.error }}
-        <button class="retry" @click="reload">重试</button>
-      </div>
-
-      <!-- 节点详情抽屉 -->
-      <aside class="drawer" :class="{ open: drawerOpen }">
-        <template v-if="current">
-          <div class="drawer-head">
-            <h3>{{ current.name }}</h3>
-            <button class="close" @click="closeDrawer">×</button>
-          </div>
-          <div class="drawer-body">
-            <div class="row">
-              <span class="k">编码</span><span class="v code">{{ current.nodeCode }}</span>
-            </div>
-            <div class="row">
-              <span class="k">章节</span><span class="v">{{ current.chapter || '—' }}</span>
-            </div>
-            <div class="row">
-              <span class="k">难度</span><span class="v">{{ current.difficulty ?? '—' }} / 5</span>
-            </div>
-            <div class="row">
-              <span class="k">重点</span>
-              <span class="v"><span class="tag" :class="{ on: current.isKey }">{{ current.isKey ? '是' : '否' }}</span></span>
-            </div>
-            <div class="row">
-              <span class="k">掌握度</span>
-              <span class="v">
-                <span class="mdot" :style="{ background: masteryVar(current.mastery) }"></span>
-                <span class="tag mastery">{{ masteryText(current) }}</span>
-              </span>
-            </div>
-            <div class="row col">
-              <span class="k">描述</span>
-              <p class="desc">{{ current.description || '（暂无描述）' }}</p>
-            </div>
-            <div class="row col">
-              <span class="k">前置知识点</span>
-              <div class="prereq" v-if="prerequisites.length">
-                <button
-                  v-for="p in prerequisites"
-                  :key="p.nodeCode"
-                  class="prereq-btn"
-                  @click="focus(p.nodeCode)"
-                ><span class="pdot" :style="{ background: masteryVar(p.mastery) }"></span>{{ p.name }}</button>
-              </div>
-              <p v-else class="desc muted">无（这是一个入门/根知识点）</p>
-            </div>
-            <div class="drawer-actions">
-              <button class="btn-companion" @click="askCompanion">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                </svg>
-                向伴侣提问
-              </button>
-            </div>
-          </div>
+        <!-- 星空 -->
+        <template v-if="theme === 'ink'">
+          <circle v-for="(s, i) in layout.stars" :key="'st' + i" :cx="s.x" :cy="s.y" :r="s.r" :fill="pal.star" :opacity="s.o * 0.5">
+            <animate v-if="i % 6 === 0" attributeName="opacity" :values="(s.o * 0.5) + ';' + Math.min(0.55, s.o * 1.6) + ';' + (s.o * 0.5)" :dur="(3.5 + (i % 9) * 0.7) + 's'" repeatCount="indefinite" />
+          </circle>
         </template>
-      </aside>
+
+        <!-- 章节名 -->
+        <text v-for="ch in chapterLabels" :key="'ch' + ch.name" :x="ch.x" :y="ch.y" text-anchor="middle" :fill="pal.chap" :opacity="ch.op" font-size="21" letter-spacing="7" :font-family="serif" font-weight="500" :style="{ transition: 'opacity 0.3s', pointerEvents: 'none' }">{{ ch.name }}</text>
+
+        <!-- 边 -->
+        <template v-for="(e, i) in edgeList" :key="'e' + i">
+          <line v-if="e.glow" :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2" :stroke="pal.cur" stroke-width="12" opacity="0.2" stroke-linecap="round">
+            <animate attributeName="opacity" values="0.1;0.32;0.1" dur="2.2s" repeatCount="indefinite" />
+          </line>
+          <line :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2" :stroke="e.stroke" :stroke-width="e.width" :opacity="e.op" :stroke-dasharray="e.dash" :style="{ transition: 'opacity 0.25s, stroke 0.25s', animation: e.anim }" />
+        </template>
+
+        <!-- 节点 -->
+        <g v-for="n in nodeList" :key="n.id" :opacity="n.op" :style="{ cursor: 'pointer', transition: 'opacity 0.25s' }" @mouseenter="hoverId = n.id" @mouseleave="hoverId = null" @click="selectedId = n.id">
+          <template v-if="n.status !== 'dim'">
+            <circle :cx="n.x" :cy="n.y" :r="n.r * 1.95" :fill="n.c" opacity="0.08" />
+            <circle :cx="n.x" :cy="n.y" :r="n.r * 1.35" :fill="n.c" opacity="0.18" />
+          </template>
+          <circle v-if="n.rootGlow" :cx="n.x" :cy="n.y" :r="n.r * 2.8" :fill="n.c" opacity="0.1">
+            <animate attributeName="opacity" values="0.06;0.18;0.06" dur="2.2s" repeatCount="indefinite" />
+          </circle>
+          <circle :cx="n.x" :cy="n.y" :r="n.r" :fill="n.status === 'dim' ? 'none' : n.c" :stroke="n.status === 'dim' ? n.c : 'none'" :stroke-width="n.status === 'dim' ? 1.4 : 0" />
+          <template v-if="n.isCurrent">
+            <rect :x="n.x - (n.r * 2 + 13) / 2" :y="n.y - (n.r * 2 + 13) / 2" :width="n.r * 2 + 13" :height="n.r * 2 + 13" rx="5" fill="none" :stroke="pal.cur" stroke-width="1.5" />
+            <circle :cx="n.x" :cy="n.y" :r="n.r + 5" fill="none" :stroke="pal.cur" stroke-width="1.5">
+              <animate attributeName="r" :values="(n.r + 5) + ';' + (n.r + 22)" dur="2.4s" repeatCount="indefinite" />
+              <animate attributeName="opacity" values="0.6;0" dur="2.4s" repeatCount="indefinite" />
+            </circle>
+          </template>
+          <circle v-if="n.selRing" :cx="n.x" :cy="n.y" :r="n.r + 5.5" fill="none" :stroke="n.c" stroke-width="1.2" opacity="0.85" />
+          <text v-if="n.showLabel" :x="n.lx" :y="n.ly" :text-anchor="n.la" :font-size="n.isMain ? 12 : 11" :fill="n.hi ? pal.labelHi : pal.label" :opacity="n.isMain ? 0.9 : 0.85" :style="{ pointerEvents: 'none' }">{{ n.short }}</text>
+        </g>
+      </svg>
+
+      <!-- 加载态 -->
+      <div v-else :style="{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mut)', fontSize: '13px' }">正在绘制知识图谱……</div>
+
+      <!-- 诊断结论卡 -->
+      <div v-if="rootCause && rootCauseData" :style="{ position: 'absolute', left: '20px', top: '20px', width: '352px', boxSizing: 'border-box', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '12px', padding: '18px 20px', zIndex: 20, animation: 'wjFadeUp 0.35s cubic-bezier(0.22,1,0.36,1) both', transition: 'background-color 0.35s, border-color 0.35s' }">
+        <div :style="{ fontSize: '11px', letterSpacing: '2px', color: 'var(--mut)', marginBottom: '10px' }">诊断结论</div>
+        <div :style="{ fontFamily: serif, fontSize: '18px', fontWeight: 600, lineHeight: 1.5, marginBottom: '10px' }">你卡在「{{ rootCauseData.currentName }}」</div>
+        <div :style="{ fontSize: '13px', color: 'var(--mut)', lineHeight: 1.75, marginBottom: '14px' }">{{ rootCauseData.reason }}</div>
+        <div :style="{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }">
+          <template v-for="(c, i) in rootChips" :key="i">
+            <span :style="{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11.5px', color: 'var(--ink)', border: '1px solid var(--line)', borderRadius: '999px', padding: '4px 9px' }">
+              <span :style="{ width: '6px', height: '6px', borderRadius: '50%', background: c.color }"></span>{{ c.name }}
+            </span>
+            <span v-if="c.arrow" :style="{ fontSize: '11px', color: 'var(--mut)' }">{{ c.arrow }}</span>
+          </template>
+        </div>
+        <div :style="{ display: 'flex', gap: '10px' }">
+          <router-link to="/path" class="wj-btn-acc" :style="{ flex: 1, height: '38px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--acc)', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, textDecoration: 'none' }">生成学习路径</router-link>
+          <button @click="toggleRoot" class="wj-hover-acc" :style="{ height: '38px', padding: '0 14px', background: 'transparent', border: '1px solid var(--line)', borderRadius: '9px', color: 'var(--mut)', fontSize: '13px', cursor: 'pointer' }">退出演示</button>
+        </div>
+      </div>
+
+      <!-- 图例 -->
+      <div v-if="!rootCause" :style="{ position: 'absolute', left: '20px', bottom: '20px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '12px', padding: '13px 16px', zIndex: 10, transition: 'background-color 0.35s, border-color 0.35s' }">
+        <div :style="{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }">
+          <div :style="legendRow"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: 'var(--ok)' }"></span><span>已掌握</span></div>
+          <div :style="legendRow"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: 'var(--warn)' }"></span><span>薄弱 · 待修</span></div>
+          <div :style="legendRow"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: 'var(--dim)' }"></span><span>未学</span></div>
+          <div :style="legendRow"><span :style="{ width: '9px', height: '9px', borderRadius: '3px', border: '1.5px solid var(--acc)', boxSizing: 'border-box' }"></span><span>当前位置 / 根因</span></div>
+        </div>
+        <div :style="{ height: '1px', background: 'var(--line)', margin: '11px 0 9px' }"></div>
+        <div :style="{ fontSize: '11.5px', color: 'var(--mut)' }">已掌握 {{ stats.ok }} · 薄弱 {{ stats.warn }} · 未学 {{ stats.dim }}</div>
+      </div>
+
+      <div v-show="width >= 640" :style="{ position: 'absolute', right: '20px', bottom: '20px', fontSize: '12px', color: 'var(--mut)', opacity: 0.75, zIndex: 10 }">悬停节点查看前置链 · 点击查看详情</div>
+
+      <!-- 抽屉 -->
+      <div v-if="sel" :style="{ position: 'absolute', right: '16px', top: '16px', bottom: '16px', width: drawerW, boxSizing: 'border-box', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '14px', display: 'flex', flexDirection: 'column', zIndex: 30, boxShadow: '0 12px 36px rgba(0,0,0,0.16)', animation: 'wjDrawerIn 0.34s cubic-bezier(0.22,1,0.36,1) both', transition: 'background-color 0.35s, border-color 0.35s' }">
+        <div :style="{ flex: 1, overflowY: 'auto', padding: '20px 22px 10px' }">
+          <div :style="{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '12px' }">
+            <span :style="{ fontSize: '11.5px', color: 'var(--mut)', border: '1px solid var(--line)', borderRadius: '999px', padding: '3px 10px', flex: 'none' }">{{ sel.chapter }}</span>
+            <button @click="selectedId = null" class="wj-hover-card2" :style="{ marginLeft: 'auto', width: '28px', height: '28px', border: 'none', background: 'transparent', color: 'var(--mut)', fontSize: '17px', cursor: 'pointer', borderRadius: '6px', lineHeight: 1 }">×</button>
+          </div>
+          <div :style="{ fontSize: '17px', fontWeight: 600, lineHeight: 1.45, marginBottom: '14px' }">{{ sel.name }}</div>
+
+          <div :style="{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }">
+            <span :style="{ fontSize: '12px', fontWeight: 500, color: selStatusColor, background: selStatusBg, borderRadius: '999px', padding: '4px 11px' }">{{ selStatusLabel }}</span>
+            <span :style="{ fontSize: '20px', fontWeight: 600, color: selStatusColor, marginLeft: 'auto' }">{{ selMasteryText }}</span>
+          </div>
+          <div :style="{ height: '5px', background: 'var(--line)', borderRadius: '99px', overflow: 'hidden', marginBottom: '14px' }">
+            <div :style="{ height: '100%', borderRadius: '99px', background: selStatusColor, width: selMasteryPct, transition: 'width 0.4s ease' }"></div>
+          </div>
+
+          <div :style="{ display: 'flex', gap: '16px', fontSize: '12px', color: 'var(--mut)', marginBottom: '14px', flexWrap: 'wrap' }">
+            <span>难度 <span :style="{ letterSpacing: '1px' }">{{ selDiffDots }}</span></span>
+            <span v-if="sel.bloom">认知层级 · {{ sel.bloom }}</span>
+            <span v-if="sel.is_key" :style="{ color: 'var(--ink)' }">考核重点</span>
+          </div>
+
+          <div :style="{ fontSize: '13px', color: 'var(--mut)', lineHeight: 1.75, paddingBottom: '16px', borderBottom: '1px solid var(--line)' }">{{ sel.description }}</div>
+
+          <div :style="{ fontSize: '11.5px', letterSpacing: '2px', color: 'var(--mut)', margin: '16px 0 10px' }">前置知识点</div>
+          <div v-if="selPrereqs.length" :style="{ display: 'flex', flexDirection: 'column', gap: '6px' }">
+            <div v-for="p in selPrereqs" :key="p.id" @click="selectedId = p.id" class="wj-hover-card2" :style="{ display: 'flex', alignItems: 'center', gap: '9px', padding: '9px 11px', border: '1px solid var(--line)', borderRadius: '9px', cursor: 'pointer' }">
+              <span :style="{ width: '8px', height: '8px', borderRadius: '50%', background: p.color, flex: 'none' }"></span>
+              <span :style="{ fontSize: '12.5px', lineHeight: 1.4 }">{{ p.name }}</span>
+              <span :style="{ fontSize: '11px', color: 'var(--mut)', marginLeft: 'auto', flex: 'none' }">{{ p.statusLabel }}</span>
+            </div>
+          </div>
+          <div v-else :style="{ fontSize: '12.5px', color: 'var(--mut)' }">无前置依赖，可直接学习</div>
+
+          <div :style="{ fontSize: '11.5px', letterSpacing: '2px', color: 'var(--mut)', margin: '18px 0 10px' }">学习资源</div>
+          <div :style="{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }">
+            <div v-for="(res, i) in selResources" :key="i" class="wj-hover-card2" :style="{ display: 'flex', alignItems: 'center', gap: '9px', padding: '9px 11px', border: '1px solid var(--line)', borderRadius: '9px', cursor: 'pointer' }">
+              <span :style="{ fontSize: '10.5px', color: 'var(--mut)', border: '1px solid var(--line)', borderRadius: '5px', padding: '2px 6px', flex: 'none' }">{{ res.t }}</span>
+              <span :style="{ fontSize: '12.5px' }">{{ res.n }}</span>
+            </div>
+          </div>
+        </div>
+        <div :style="{ flex: 'none', display: 'flex', gap: '10px', padding: '14px 22px 16px', borderTop: '1px solid var(--line)' }">
+          <router-link :to="{ path: '/knowledge', query: { nodeCode: sel.id } }" class="wj-btn-acc" :style="{ flex: 1, height: '40px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--acc)', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, textDecoration: 'none' }">{{ selCta }}</router-link>
+          <router-link :to="{ path: '/companion', query: { nodeCode: sel.id } }" class="wj-hover-card2" :style="{ height: '40px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', padding: '0 16px', background: 'transparent', border: '1px solid var(--line)', borderRadius: '9px', color: 'var(--ink)', fontSize: '13px', textDecoration: 'none' }">问 AI 伴侣</router-link>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import * as echarts from 'echarts'
-import { useGraphStore } from '../store/graph'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import ThemeToggle from '../components/ThemeToggle.vue'
+import NavLink from '../components/NavLink.vue'
+import { useTheme } from '../composables/useTheme.js'
+import { useViewport } from '../composables/useViewport.js'
+import { useGraphData } from '../composables/useGraphData.js'
+import { computeLayout, shortName, radiusOf } from '../utils/graphLayout.js'
+
+const serif = "'Noto Serif SC', serif"
+const { theme } = useTheme()
+const { width } = useViewport()
+const route = useRoute()
 
 // 本阶段不做登录，演示课程写死为 courseId=1（schema.sql 已种入 code=52015CC4B4 的课程）
 const DEMO_COURSE_ID = 1
 // 演示学生写死为 studentId=2（schema.sql 已种入 id=2 的演示学生账户，role=2 学生）
 const DEMO_STUDENT_ID = 2
 
-const store = useGraphStore()
-const router = useRouter()
-const chartEl = ref(null)
-const selectedChapter = ref('')
-const selectedNodeCode = ref('')
-const drawerOpen = ref(false)
+const { data } = useGraphData(DEMO_COURSE_ID, DEMO_STUDENT_ID)
 
-let chart = null
-let nodeData = []   // ECharts 节点数据（保持引用以维持力导向布局稳定）
-let edgeData = []   // ECharts 边数据
-let C = {}          // 从 CSS 变量读取的配色（占位主题的唯一来源）
+const CHAPTERS = ['全部章节', '软件工程概述', '需求确定', '软件项目管理', '系统分析', '系统设计', '对象设计', '软件测试', '部署与维护']
 
-// 当前抽屉展示的节点（来自 store，含完整字段）
-const current = computed(() => store.nodeMap.get(selectedNodeCode.value) || null)
-const prerequisites = computed(() =>
-  selectedNodeCode.value ? store.prerequisitesOf(selectedNodeCode.value) : []
-)
-
-function masteryLabel(m) {
-  return m === 'mastered' ? '已掌握' : m === 'weak' ? '薄弱' : '未学'
+const PAL = {
+  ink: { ok: '#57A87E', warn: '#E0A33E', dim: '#4A4D55', cur: '#D85E45', edge: 'rgba(232,227,216,0.10)', label: '#9A948A', labelHi: '#E8E3D8', star: '#E8E3D8', chap: '#9A948A' },
+  paper: { ok: '#3D7A5E', warn: '#C8862A', dim: '#C9C2B4', cur: '#B4422E', edge: 'rgba(42,37,32,0.12)', label: '#6F6759', labelHi: '#2A2520', star: '#6F6759', chap: '#6F6759' }
 }
-function masteryColor(m) {
-  return m === 'mastered' ? C.mastered : m === 'weak' ? C.weak : C.unlearned
-}
-// 掌握度三态 → CSS 变量色（与图节点配色同源，模板里直接用，避免依赖 C 的读取时序）
-function masteryVar(m) {
-  return m === 'mastered' ? 'var(--mastered)' : m === 'weak' ? 'var(--weak)' : 'var(--unlearned)'
-}
-// 抽屉掌握度文案：有分值时显示「薄弱 · 62」，否则仅级别
-function masteryText(node) {
-  const label = masteryLabel(node.mastery)
-  return node.masteryScore == null ? label : `${label} · ${Math.round(node.masteryScore)}`
+const STATUS_LABEL = { ok: '已掌握', warn: '薄弱 · 待修', dim: '未学', cur: '当前位置' }
+const STATUS_BG = {
+  ink: { ok: 'rgba(87,168,126,0.14)', warn: 'rgba(224,163,62,0.14)', dim: 'rgba(74,77,85,0.3)', cur: 'rgba(216,94,69,0.14)' },
+  paper: { ok: 'rgba(61,122,94,0.10)', warn: 'rgba(200,134,42,0.12)', dim: 'rgba(201,194,180,0.25)', cur: 'rgba(180,66,46,0.10)' }
 }
 
-// 读取占位主题配色
-function readColors() {
-  const s = getComputedStyle(document.documentElement)
-  const g = (k) => s.getPropertyValue(k).trim()
-  C = {
-    mastered: g('--mastered'),
-    weak: g('--weak'),
-    unlearned: g('--unlearned'),
-    accent: g('--accent'),
-    line: g('--line'),
-    text: g('--text'),
-    textMut: g('--text-mut')
-  }
+const hoverId = ref(null)
+const selectedId = ref(null)
+const rootCause = ref(false)
+const chapterFilter = ref('全部章节')
+const query = ref('')
+const mapIn = ref(false)
+const layout = ref(null)
+
+const pal = computed(() => PAL[theme.value])
+const drawerW = computed(() => (width.value < 460 ? 'calc(100% - 32px)' : '360px'))
+const legendRow = computed(() => ({ display: 'flex', alignItems: 'center', gap: '8px' }))
+
+// ── 动态掌握度映射 ──
+// 后端 mastery: mastered / weak / unlearned；masteryScore: 0–100 或 null
+// 映射到设计稿三态：ok / warn / dim
+function statusOf(id) {
+  const node = layout.value && layout.value.byId[id]
+  if (!node) return 'dim'
+  if (id === currentId.value) return 'cur'
+  const m = node.mastery
+  if (m === 'mastered') return 'ok'
+  if (m === 'weak') return 'warn'
+  return 'dim'
+}
+function masteryOf(id) {
+  const node = layout.value && layout.value.byId[id]
+  return node ? node.masteryScore : null
 }
 
-// 由接口数据构建 ECharts 节点/边数据
-function buildData() {
-  nodeData = store.nodes.map((n) => ({
-    id: n.nodeCode,
-    name: n.name,
-    chapter: n.chapter,
-    // 节点大小按是否重点两档
-    symbolSize: n.isKey ? 44 : 26,
-    itemStyle: { color: masteryColor(n.mastery), borderColor: C.accent, borderWidth: 0 },
-    label: { opacity: 1 }
-  }))
-
-  const chapterOf = {}
-  store.nodes.forEach((n) => (chapterOf[n.nodeCode] = n.chapter))
-
-  edgeData = store.edges.map((e) => {
-    const base = { source: e.source, target: e.target, _type: e.type }
-    if (e.type === '前置') {
-      // 前置：带箭头实线
-      base.symbol = ['none', 'arrow']
-      base.symbolSize = 7
-      base._opacity = 0.85
-      base.lineStyle = { type: 'solid', width: 1.6, color: C.accent, opacity: 0.85, curveness: 0.06 }
-    } else if (e.type === '包含') {
-      // 包含：虚线
-      base.symbol = ['none', 'none']
-      base._opacity = 0.6
-      base.lineStyle = { type: 'dashed', width: 1.3, color: C.textMut, opacity: 0.6, curveness: 0.06 }
-    } else {
-      // 相关/应用：低透明度细线
-      base.symbol = ['none', 'none']
-      base._opacity = 0.22
-      base.lineStyle = { type: 'solid', width: 0.8, color: C.textMut, opacity: 0.22, curveness: 0.12 }
+// ── 当前位置节点（掌握度最低的节点）──
+const currentId = computed(() => {
+  if (!data.value || !data.value.nodes.length) return null
+  let lowest = null
+  let lowestScore = Infinity
+  for (const n of data.value.nodes) {
+    if (n.masteryScore != null && n.masteryScore < lowestScore) {
+      lowestScore = n.masteryScore
+      lowest = n.id
     }
-    return base
+  }
+  return lowest
+})
+
+// ── 掌握度统计 ──
+const stats = computed(() => {
+  const s = { ok: 0, warn: 0, dim: 0 }
+  if (!data.value) return s
+  for (const n of data.value.nodes) {
+    const st = statusOf(n.id)
+    if (st === 'ok' || st === 'cur') s.ok++
+    else if (st === 'warn') s.warn++
+    else s.dim++
+  }
+  return s
+})
+
+// ── 薄弱根因回溯 ──
+// 根因节点：weak 且没有 weak 前置节点的节点（链的起点）
+const ROOT_NODES = computed(() => {
+  if (!data.value || !layout.value) return []
+  const weakNodes = new Set()
+  data.value.nodes.forEach((n) => {
+    if (n.mastery === 'weak' || n.masteryScore != null && n.masteryScore < 70) weakNodes.add(n.id)
   })
+  // 找 weak 链的根：weak 且其所有 weak 前置都不是 weak
+  const roots = []
+  const L = layout.value
+  for (const id of weakNodes) {
+    const ins = L.inEdges[id] || []
+    const hasWeakParent = ins.some((e) => weakNodes.has(e.source))
+    if (!hasWeakParent) roots.push(id)
+  }
+  return roots.length ? roots : Array.from(weakNodes).slice(0, 3)
+})
 
-  return { chapterOf }
-}
+const ROOT_EDGES = computed(() => {
+  if (!data.value || !layout.value) return []
+  const nodeSet = new Set(ROOT_NODES.value)
+  const edges = new Set()
+  // BFS 从根节点出发，沿 inEdges 找到所有到最低分节点的路径
+  const L = layout.value
+  const target = currentId.value
+  if (!target) return []
+  // 从 target 反向 BFS
+  const visited = new Set()
+  const queue = [target]
+  while (queue.length) {
+    const cur = queue.shift()
+    if (visited.has(cur)) continue
+    visited.add(cur)
+    const ins = L.inEdges[cur] || []
+    for (const e of ins) {
+      edges.add(e.source + '>' + e.target)
+      if (!visited.has(e.source)) queue.push(e.source)
+    }
+  }
+  return Array.from(edges)
+})
 
-let chapterOf = {}
+const rootNodeSet = computed(() => {
+  const s = {}
+  ROOT_NODES.value.forEach((id) => { s[id] = true })
+  return s
+})
+const rootEdgeSet = computed(() => {
+  const s = {}
+  ROOT_EDGES.value.forEach((k) => { s[k] = true })
+  return s
+})
 
-function renderChart() {
-  readColors() // 每次渲染前刷新配色，避免依赖 onMounted 的调用时序（占位主题/HMR 下更稳）
-  if (!chart) chart = echarts.init(chartEl.value)
-  const built = buildData()
-  chapterOf = built.chapterOf
-
-  const option = {
-    backgroundColor: 'transparent',
-    tooltip: {
-      formatter: (p) => (p.dataType === 'node' ? p.data.name : '')
-    },
-    series: [
-      {
-        id: 'kg',
-        type: 'graph',
-        layout: 'force',
-        roam: true,
-        draggable: true,
-        zoom: 0.9,
-        force: { repulsion: 300, edgeLength: [70, 180], gravity: 0.06, friction: 0.2 },
-        edgeSymbol: ['none', 'none'],
-        edgeSymbolSize: 7,
-        label: {
-          show: true,
-          position: 'right',
-          color: C.text,
-          fontSize: 11,
-          formatter: (p) => {
-            const s = p.data.name || ''
-            return s.length > 11 ? s.slice(0, 11) + '…' : s
-          }
-        },
-        emphasis: { focus: 'adjacency', label: { fontSize: 12 }, lineStyle: { width: 2.4 } },
-        data: nodeData,
-        links: edgeData
+// ── 根因诊断数据 ──
+const rootCauseData = computed(() => {
+  if (!rootCause.value || !currentId.value || !layout.value) return null
+  const L = layout.value
+  const curNode = L.byId[currentId.value]
+  if (!curNode) return null
+  // 找根因链：从当前节点沿 inEdges 回溯，找第一个 weak 祖先
+  const visited = new Set()
+  const queue = [currentId.value]
+  let rootAncestor = null
+  while (queue.length) {
+    const cur = queue.shift()
+    if (visited.has(cur)) continue
+    visited.add(cur)
+    const ins = L.inEdges[cur] || []
+    for (const e of ins) {
+      const srcNode = L.byId[e.source]
+      if (srcNode && (srcNode.mastery === 'weak' || (srcNode.masteryScore != null && srcNode.masteryScore < 70))) {
+        if (!rootAncestor || (srcNode.masteryScore != null && (rootAncestor.masteryScore == null || srcNode.masteryScore < rootAncestor.masteryScore))) {
+          rootAncestor = srcNode
+        }
       }
-    ]
+      if (!visited.has(e.source)) queue.push(e.source)
+    }
   }
-
-  chart.setOption(option, { notMerge: true })
-  applyVisualState()
-
-  chart.off('click')
-  chart.on('click', (params) => {
-    if (params.dataType === 'node') focus(params.data.id)
-  })
-}
-
-// 应用章节筛选（高亮/淡化）与选中描边；复用同一批数据对象，布局保持稳定
-function applyVisualState() {
-  if (!chart) return
-  const ch = selectedChapter.value
-  nodeData.forEach((nd) => {
-    const inCh = !ch || nd.chapter === ch
-    nd.itemStyle.opacity = inCh ? 1 : 0.12
-    nd.label = { opacity: inCh ? 1 : 0.1 }
-    nd.itemStyle.borderWidth = nd.id === selectedNodeCode.value ? 3 : 0
-  })
-  edgeData.forEach((ed) => {
-    const intra = !ch || (chapterOf[ed.source] === ch && chapterOf[ed.target] === ch)
-    ed.lineStyle.opacity = intra ? ed._opacity : 0.04
-  })
-  chart.setOption({ series: [{ id: 'kg', data: nodeData, links: edgeData }] })
-}
-
-// 聚焦某节点：打开抽屉 + 高亮其邻接 + 朱砂描边
-function focus(code) {
-  selectedNodeCode.value = code
-  drawerOpen.value = true
-  applyVisualState()
-  if (!chart) return
-  const idx = nodeData.findIndex((n) => n.id === code)
-  if (idx >= 0) {
-    chart.dispatchAction({ type: 'downplay', seriesIndex: 0 })
-    chart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: idx })
-  }
-}
-
-function closeDrawer() {
-  drawerOpen.value = false
-  selectedNodeCode.value = ''
-  applyVisualState()
-  if (chart) chart.dispatchAction({ type: 'downplay', seriesIndex: 0 })
-}
-
-function askCompanion() {
-  router.push(`/companion?nodeCode=${selectedNodeCode.value}`)
-}
-
-async function reload() {
-  await store.load(DEMO_COURSE_ID, DEMO_STUDENT_ID)
-}
-
-function onResize() {
-  if (chart) chart.resize()
-}
-
-watch(
-  () => store.nodes,
-  (nodes) => {
-    if (nodes && nodes.length) renderChart()
-  }
-)
-
-onMounted(async () => {
-  readColors()
-  await store.load(DEMO_COURSE_ID, DEMO_STUDENT_ID)
-  window.addEventListener('resize', onResize)
-  // 仅开发期暴露给端到端（Playwright）测试用；import.meta.env.DEV 守卫，生产构建会被剔除
-  if (import.meta.env.DEV) {
-    window.__wj = { store, focus, closeDrawer }
+  const ancestorName = rootAncestor ? shortName(rootAncestor) : '前置知识点'
+  return {
+    currentName: shortName(curNode),
+    reason: `根本原因更可能在前置点「${ancestorName}」——相关基础薄弱，导致后续知识点难以理解。建议先巩固前置知识。`
   }
 })
 
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', onResize)
-  if (chart) chart.dispose()
+// ── 根因链 chips ──
+const rootChips = computed(() => {
+  if (!rootCause.value || !layout.value || !currentId.value) return []
+  const L = layout.value
+  // 构建从根因到当前节点的链
+  const chain = []
+  const visited = new Set()
+  const queue = [[currentId.value]]
+  while (queue.length) {
+    const path = queue.shift()
+    const last = path[path.length - 1]
+    if (visited.has(last)) continue
+    visited.add(last)
+    if (rootNodeSet.value[last] || ROOT_NODES.value.includes(last)) {
+      chain.push(...path.reverse())
+      break
+    }
+    const ins = L.inEdges[last] || []
+    for (const e of ins) {
+      if (!visited.has(e.source)) queue.push([...path, e.source])
+    }
+  }
+  if (!chain.length) {
+    // 回退：用 ROOT_NODES + currentId
+    chain.push(...ROOT_NODES.value.slice(0, 2), currentId.value)
+  }
+  const unique = [...new Set(chain)].slice(0, 4)
+  return unique.map((id, i) => ({
+    name: shortName(L.byId[id] || { id, name: id }),
+    color: pal.value[statusOf(id)],
+    arrow: i < unique.length - 1 ? '→' : ''
+  }))
 })
+
+// ── 悬停前置链 ──
+function chainFor(id) {
+  const L = layout.value
+  const nodes = { [id]: true }
+  const edges = {}
+  const q = [id]
+  while (q.length) {
+    const cur = q.shift()
+    const ins = L.inEdges[cur] || []
+    for (const e of ins) {
+      edges[e.source + '>' + e.target] = true
+      if (!nodes[e.source]) { nodes[e.source] = true; q.push(e.source) }
+    }
+  }
+  return { nodes, edges }
+}
+
+const filterOn = computed(() => chapterFilter.value !== '全部章节')
+const chain = computed(() => (!rootCause.value && hoverId.value && layout.value ? chainFor(hoverId.value) : null))
+
+// ── 布局 ──
+onMounted(() => {
+  if (route.query.root === '1') rootCause.value = true
+  if (data.value) buildLayout()
+  watch(data, (d) => { if (d) buildLayout() })
+})
+
+function buildLayout() {
+  layout.value = computeLayout(data.value)
+  setTimeout(() => { mapIn.value = true }, 60)
+}
+
+// ── 章节标签 ──
+const chapterLabels = computed(() => {
+  if (!layout.value) return []
+  const ANCH = {
+    软件工程概述: [180, 320], 软件项目管理: [430, 110], 需求确定: [450, 480], 系统分析: [730, 300],
+    系统设计: [950, 510], 对象设计: [1010, 190], 软件测试: [1220, 360], 部署与维护: [1350, 150]
+  }
+  return Object.keys(ANCH).map((ch) => {
+    const a = ANCH[ch]
+    let op = filterOn.value ? (ch === chapterFilter.value ? 0.5 : 0.07) : (theme.value === 'ink' ? 0.16 : 0.28)
+    if (rootCause.value) op = 0.06
+    return { name: ch, x: a[0], y: Math.max(42, a[1] - 95), op }
+  })
+})
+
+// ── 边列表 ──
+const edgeList = computed(() => {
+  if (!layout.value) return []
+  const L = layout.value
+  const ch = chain.value
+  const out = []
+  data.value.edges.forEach((e) => {
+    const a = L.pos[e.source]; const b = L.pos[e.target]
+    if (!a || !b) return
+    const key = e.source + '>' + e.target
+    const na = L.byId[e.source]; const nb = L.byId[e.target]
+    let stroke = pal.value.edge
+    let width2 = e.type === '包含' ? 0.8 : 1
+    let op = e.type === '相关' ? 0.55 : 1
+    let dash = e.type === '相关' ? '3 5' : 'none'
+    let anim = 'none'
+    let glow = false
+    if (rootCause.value) {
+      if (rootEdgeSet.value[key]) { glow = true; stroke = pal.value.cur; width2 = 2.2; op = 1; dash = '7 9'; anim = 'wjDash 1.1s linear infinite' }
+      else op = 0.05
+    } else if (ch) {
+      if (ch.edges[key]) { stroke = pal.value[statusOf(e.source)]; width2 = 1.7; op = 0.85; if (e.type === '相关') dash = '3 5' }
+      else op = 0.18
+    }
+    if (filterOn.value && !(na.chapter === chapterFilter.value && nb.chapter === chapterFilter.value)) op = Math.min(op, 0.1)
+    out.push({ x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke, width: width2, op, dash, anim, glow })
+  })
+  return out
+})
+
+// ── 节点列表 ──
+const nodeList = computed(() => {
+  if (!layout.value) return []
+  const L = layout.value
+  const ch = chain.value
+  return data.value.nodes.map((n) => {
+    const p = L.pos[n.id]
+    const s = statusOf(n.id)
+    const c = pal.value[s]
+    const r = L.radius[n.id]
+    const isMain = n.id.indexOf('-') === -1
+    const hi = (ch && ch.nodes[n.id]) || (rootCause.value && rootNodeSet.value[n.id]) || selectedId.value === n.id || hoverId.value === n.id
+    let op = 1
+    if (rootCause.value) op = rootNodeSet.value[n.id] ? 1 : 0.12
+    else if (ch) op = ch.nodes[n.id] ? 1 : 0.2
+    if (filterOn.value && n.chapter !== chapterFilter.value) op = Math.min(op, 0.12)
+    if (selectedId.value === n.id) op = Math.max(op, 1)
+    const lp = L.labelPos[n.id] || { x: p[0], y: p[1] + r + 16, a: 'middle' }
+    const showLabel = isMain || hi || n.id === currentId.value || (filterOn.value && n.chapter === chapterFilter.value)
+    return {
+      id: n.id, x: p[0], y: p[1], r, c, status: s, op, isMain,
+      isCurrent: n.id === currentId.value,
+      rootGlow: rootCause.value && rootNodeSet.value[n.id],
+      selRing: selectedId.value === n.id && n.id !== currentId.value,
+      hi, showLabel, short: shortName(n), lx: lp.x, ly: lp.y, la: lp.a
+    }
+  })
+})
+
+// ── 搜索 ──
+const results = computed(() => {
+  if (!query.value.trim() || !data.value) return []
+  const q = query.value.trim().toLowerCase()
+  return data.value.nodes
+    .filter((n) => n.name.toLowerCase().indexOf(q) !== -1 || n.id.toLowerCase().indexOf(q) !== -1)
+    .slice(0, 6)
+    .map((n) => ({ id: n.id, name: n.name, chapter: n.chapter, color: pal.value[statusOf(n.id)] }))
+})
+function pickNode(id) { selectedId.value = id; query.value = '' }
+
+function toggleRoot() {
+  rootCause.value = !rootCause.value
+  selectedId.value = null
+  hoverId.value = null
+  chapterFilter.value = '全部章节'
+}
+
+// ── 抽屉 ──
+const sel = computed(() => (selectedId.value && layout.value ? layout.value.byId[selectedId.value] : null))
+const selStatus = computed(() => (sel.value ? statusOf(sel.value.id) : 'dim'))
+const selStatusColor = computed(() => pal.value[selStatus.value])
+const selStatusBg = computed(() => STATUS_BG[theme.value][selStatus.value])
+const selStatusLabel = computed(() => STATUS_LABEL[selStatus.value])
+const selMastery = computed(() => (sel.value ? masteryOf(sel.value.id) : null))
+const selMasteryText = computed(() => (selMastery.value === null ? '未开始' : selMastery.value + '%'))
+const selMasteryPct = computed(() => (selMastery.value === null ? 0 : selMastery.value) + '%')
+const selDiffDots = computed(() => (sel.value ? '●'.repeat(sel.value.difficulty) + '○'.repeat(5 - sel.value.difficulty) : ''))
+const selCta = computed(() => (selStatus.value === 'dim' ? '开始学习' : '开始针对练习'))
+
+const selPrereqs = computed(() => {
+  if (!sel.value || !layout.value) return []
+  const L = layout.value
+  const list = []
+  const parent = L.parentOf[sel.value.id]
+  if (parent) list.push({ id: parent })
+  data.value.edges.forEach((e) => { if (e.type === '前置' && e.target === sel.value.id) list.push({ id: e.source }) })
+  return list.map((p) => {
+    const pn = L.byId[p.id]
+    const ps = statusOf(p.id)
+    return { id: p.id, name: pn.name.length > 14 ? pn.name.slice(0, 14) + '…' : pn.name, color: pal.value[ps], statusLabel: STATUS_LABEL[ps] }
+  })
+})
+const selResources = computed(() => {
+  if (!sel.value || !layout.value) return []
+  return [
+    { t: '课件', n: '《软件工程》讲义 · ' + sel.value.chapter },
+    { t: '视频', n: shortName(sel.value) + ' · 精讲视频' }
+  ]
+})
+
+// 仅开发期暴露给端到端（Playwright）测试用
+if (import.meta.env.DEV) {
+  window.__wjColorMap = {
+    data,
+    layout,
+    currentId,
+    rootCause,
+    toggleRoot,
+    statusOf,
+    masteryOf,
+    stats,
+    ROOT_NODES
+  }
+}
+
+// 引用以消除告警
+radiusOf
 </script>
 
 <style scoped>
-.map-page {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
+.wj-search:focus {
+  border-color: var(--mut) !important;
 }
-
-/* 顶栏 */
-.topbar {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  padding: 12px 18px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
-  flex-wrap: wrap;
-}
-.title { display: flex; align-items: baseline; gap: 12px; }
-.title strong { font-size: 16px; }
-.title .course { color: var(--text-mut); font-size: 13px; }
-.title .count { color: var(--text-mut); font-size: 12px; }
-
-.filter { display: flex; align-items: center; gap: 8px; }
-.filter label { font-size: 13px; color: var(--text-mut); }
-.filter select {
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 13px;
-}
-
-.legend { display: flex; align-items: center; gap: 14px; margin-left: auto; flex-wrap: wrap; }
-.legend .lg { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-mut); }
-.legend .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--unlearned); display: inline-block; }
-.legend .dot.big { width: 16px; height: 16px; background: var(--text-mut); }
-.legend .dot.small { width: 9px; height: 9px; background: var(--text-mut); }
-.legend .ln { width: 20px; height: 0; display: inline-block; }
-.legend .ln.solid { border-top: 2px solid var(--accent); }
-.legend .ln.dashed { border-top: 2px dashed var(--text-mut); }
-.legend .ln.faint { border-top: 1px solid var(--text-mut); opacity: 0.4; }
-.legend .sep { width: 1px; height: 16px; background: var(--line); }
-
-/* 画布 */
-.canvas-wrap { position: relative; flex: 1; min-height: 0; }
-.chart { width: 100%; height: 100%; }
-
-.overlay {
-  position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center; gap: 12px;
-  color: var(--text-mut); font-size: 14px;
-}
-.overlay.err { color: var(--accent); }
-.retry {
-  background: var(--accent); border: none; color: #fff;
-  padding: 6px 14px; border-radius: 8px; cursor: pointer;
-}
-
-/* 抽屉 */
-.drawer {
-  position: absolute; top: 0; right: 0; height: 100%; width: 340px;
-  background: var(--panel);
-  border-left: 1px solid var(--line);
-  transform: translateX(100%);
-  transition: transform 0.25s ease;
-  display: flex; flex-direction: column;
-}
-.drawer.open { transform: translateX(0); }
-.drawer-head {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: 12px; padding: 16px 16px 12px; border-bottom: 1px solid var(--line);
-}
-.drawer-head h3 { margin: 0; font-size: 15px; line-height: 1.4; }
-.close {
-  background: transparent; border: none; color: var(--text-mut);
-  font-size: 22px; line-height: 1; cursor: pointer;
-}
-.drawer-body { padding: 14px 16px; overflow-y: auto; }
-.row { display: flex; gap: 10px; padding: 7px 0; font-size: 13px; align-items: baseline; }
-.row.col { flex-direction: column; gap: 6px; }
-.row .k { color: var(--text-mut); min-width: 64px; flex-shrink: 0; }
-.row .v { color: var(--text); }
-.row .v.code { font-family: ui-monospace, Consolas, monospace; }
-.desc { margin: 0; line-height: 1.6; color: var(--text); font-size: 13px; }
-.desc.muted { color: var(--text-mut); }
-
-.tag {
-  display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px;
-  background: var(--panel-2); color: var(--text-mut); border: 1px solid var(--line);
-}
-.tag.on { background: rgba(216, 103, 74, 0.16); color: var(--accent); border-color: var(--accent); }
-.tag.mastery { background: rgba(107, 114, 128, 0.18); }
-
-.prereq { display: flex; flex-wrap: wrap; gap: 8px; }
-.prereq-btn {
-  background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
-  padding: 5px 10px; border-radius: 8px; font-size: 12px; cursor: pointer;
-  display: inline-flex; align-items: center;
-}
-.prereq-btn:hover { border-color: var(--accent); color: var(--accent); }
-.mdot, .pdot {
-  width: 9px; height: 9px; border-radius: 50%;
-  display: inline-block; vertical-align: middle; margin-right: 6px;
-  flex-shrink: 0;
-}
-
-.drawer-actions {
-  margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line);
-}
-.btn-companion {
-  width: 100%; height: 40px; background: var(--accent); border: none;
-  border-radius: 8px; color: #fff; font-size: 13px; font-weight: 500;
-  cursor: pointer; font-family: inherit; display: flex; align-items: center;
-  justify-content: center; gap: 8px; transition: opacity 0.2s;
-}
-.btn-companion:hover { opacity: 0.9; }
-.btn-companion svg { flex-shrink: 0; }
 </style>
