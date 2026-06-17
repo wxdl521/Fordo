@@ -8,6 +8,7 @@
       <router-link to="/companion" class="nav-link">伴侣</router-link>
       <router-link to="/growth" class="nav-link">成长</router-link>
       <router-link to="/admin" class="nav-link">管理</router-link>
+      <router-link to="/teacher/graph" class="nav-link">教师端</router-link>
     </nav>
     <div class="app-content">
       <router-view />

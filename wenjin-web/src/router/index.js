@@ -9,6 +9,9 @@ const LearningPath = () => import('../views/LearningPath.vue')
 const Companion = () => import('../views/Companion.vue')
 const KnowledgePoint = () => import('../views/KnowledgePoint.vue')
 const Growth = () => import('../views/Growth.vue')
+const TeacherGraphReview = () => import('../views/TeacherGraphReview.vue')
+const TeacherQuestionPool = () => import('../views/TeacherQuestionPool.vue')
+const TeacherDashboard = () => import('../views/TeacherDashboard.vue')
 
 const routes = [
   { path: '/', redirect: '/diagnostic' },
@@ -19,7 +22,10 @@ const routes = [
   { path: '/companion', component: Companion },
   { path: '/knowledge', component: KnowledgePoint },
   { path: '/growth', component: Growth },
-  { path: '/admin', component: Admin }
+  { path: '/admin', component: Admin },
+  { path: '/teacher/graph', component: TeacherGraphReview },
+  { path: '/teacher/questions', component: TeacherQuestionPool },
+  { path: '/teacher/dashboard', component: TeacherDashboard }
 ]
 
 export const router = createRouter({
