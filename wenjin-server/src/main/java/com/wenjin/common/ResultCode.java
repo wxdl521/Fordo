@@ -15,6 +15,10 @@ public enum ResultCode {
     GRAPH_VALIDATE_FAIL(1001, "图谱校验失败"),
     /** AI 服务调用失败 */
     AI_ERROR(1002, "AI服务调用失败"),
+    /** 用户名已存在 */
+    USER_EXISTS(1003, "用户名已存在"),
+    /** 用户名或密码错误 */
+    LOGIN_FAIL(1004, "用户名或密码错误"),
     /** 服务器内部错误 */
     INTERNAL_ERROR(500, "服务器内部错误");
 
