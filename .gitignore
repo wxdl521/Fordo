@@ -21,6 +21,12 @@ dist/
 .test.err
 .build.out
 .build.err
+.pkg.out
+.run.out
+.run.err
+.dev.out
+.sdd/
+plans/
 
 # ───── IDE / 系统 ─────
 .idea/

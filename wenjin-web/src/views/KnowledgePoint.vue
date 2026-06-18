@@ -181,10 +181,9 @@ onMounted(async () => {
 
 <style scoped>
 .wj-knowledge {
-  --bg: #FAF7F0; --ink: #2b2b2b; --card: #ffffff; --card2: #f0ece3;
-  --line: #e3ddd0; --mut: #8a8276; --acc: #c2683f;
   --ok: #4a9e6d; --warn: #cc8a3c; --dim: #a89f90;
-  min-height: 100%; background: var(--bg); color: var(--ink); overflow-y: auto;
+  flex: 1; min-height: 0;
+  background: var(--bg); color: var(--ink); overflow-y: auto;
 }
 
 .kp-center {

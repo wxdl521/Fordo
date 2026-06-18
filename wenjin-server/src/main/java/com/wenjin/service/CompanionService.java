@@ -44,4 +44,11 @@ public interface CompanionService {
      * @return 消息列表
      */
     List<CompanionMessageVO> getMessages(Long conversationId);
+
+    /**
+     * 删除会话及其所有消息。
+     *
+     * @param conversationId 会话 ID
+     */
+    void deleteConversation(Long conversationId);
 }

@@ -1,9 +1,8 @@
-import { createRouter, createWebHashHistory } from 'vue-router'
+import { createRouter, createWebHistory } from 'vue-router'
 import Login from '../views/Login.vue'
 
 // 重页懒加载，移出落地首包
 const ColorMap = () => import('../views/ColorMap.vue')
-const Admin = () => import('../views/Admin.vue')
 const Diagnostic = () => import('../views/Diagnostic.vue')
 const DiagnosticResult = () => import('../views/DiagnosticResult.vue')
 const LearningPath = () => import('../views/LearningPath.vue')
@@ -24,7 +23,6 @@ const routes = [
   { path: '/knowledge', name: 'knowledge', component: KnowledgePoint, meta: { title: '知识点详情' } },
   { path: '/companion', name: 'companion', component: Companion, meta: { title: 'AI 学习伴侣' } },
   { path: '/growth', name: 'growth', component: Growth, meta: { title: '成长档案' } },
-  { path: '/admin', name: 'admin', component: Admin, meta: { title: '管理后台' } },
   { path: '/mobile', name: 'mobile', component: MobileMap, meta: { title: '移动端地图' } },
   { path: '/teacher/graph', name: 'teacher-graph', component: TeacherGraphReview, meta: { title: '图谱审核工作台' } },
   { path: '/teacher/questions', name: 'teacher-questions', component: TeacherQuestionPool, meta: { title: '题目审核池' } },
@@ -32,7 +30,7 @@ const routes = [
 ]
 
 export const router = createRouter({
-  history: createWebHashHistory(),
+  history: createWebHistory(),
   routes,
   scrollBehavior() {
     return { top: 0 }

@@ -1,42 +1,33 @@
 <template>
-  <div :style="{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)', color: 'var(--ink)', overflow: 'hidden', transition: 'background-color 0.35s, color 0.35s' }">
+  <div :style="{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--bg)', color: 'var(--ink)', overflow: 'hidden', transition: 'background-color 0.35s, color 0.35s' }">
 
-    <!-- 顶栏 -->
-    <div :style="{ height: '60px', flex: 'none', display: 'flex', alignItems: 'center', gap: '14px', padding: '0 20px', borderBottom: '1px solid var(--line)', transition: 'border-color 0.35s' }">
-      <span :style="{ fontFamily: serif, fontSize: '22px', fontWeight: 600, letterSpacing: '3px', whiteSpace: 'nowrap', flex: 'none' }">问津</span>
-      <div :style="{ width: '1px', height: '18px', background: 'var(--line)', flex: 'none' }"></div>
-      <span v-show="width >= 560" :style="{ fontSize: '14px', fontWeight: 500, whiteSpace: 'nowrap', flex: 'none' }">软件工程 · 染色地图</span>
+    <!-- 工具栏：搜索 + 章节筛选 + 根因回溯 -->
+    <div :style="{ height: '48px', flex: 'none', display: 'flex', alignItems: 'center', gap: '10px', padding: '0 20px', borderBottom: '1px solid var(--line)', transition: 'border-color 0.35s' }">
+      <span v-show="width >= 560" :style="{ fontSize: '13px', color: 'var(--mut)', whiteSpace: 'nowrap', flex: 'none' }">染色地图</span>
 
-      <div :style="{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px' }">
-        <NavLink v-show="width >= 1230" to="/path">学习路径</NavLink>
-        <NavLink v-show="width >= 1230" to="/growth">成长档案</NavLink>
-
-        <!-- 搜索 -->
-        <div v-show="width >= 720" :style="{ position: 'relative' }">
-          <input v-model="query" placeholder="搜索知识点…" class="wj-search" :style="{ width: '190px', height: '34px', boxSizing: 'border-box', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '8px', padding: '0 12px', color: 'var(--ink)', fontSize: '13px', outline: 'none', transition: 'background-color 0.35s, border-color 0.35s' }" />
-          <div v-if="results.length" :style="{ position: 'absolute', top: '40px', left: 0, width: '280px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '10px', padding: '6px', zIndex: 40, boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }">
-            <div v-for="r in results" :key="r.id" @click="pickNode(r.id)" class="wj-hover-card2" :style="{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', borderRadius: '6px', cursor: 'pointer' }">
-              <span :style="{ width: '7px', height: '7px', borderRadius: '50%', background: r.color, flex: 'none' }"></span>
-              <span :style="{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }">{{ r.name }}</span>
-              <span :style="{ fontSize: '11px', color: 'var(--mut)', marginLeft: 'auto', flex: 'none' }">{{ r.chapter }}</span>
-            </div>
+      <!-- 搜索 -->
+      <div v-show="width >= 720" :style="{ position: 'relative', marginLeft: 'auto' }">
+        <input v-model="query" placeholder="搜索知识点…" class="wj-search" :style="{ width: '190px', height: '34px', boxSizing: 'border-box', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '8px', padding: '0 12px', color: 'var(--ink)', fontSize: '13px', outline: 'none', transition: 'background-color 0.35s, border-color 0.35s' }" />
+        <div v-if="results.length" :style="{ position: 'absolute', top: '40px', left: 0, width: '280px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '10px', padding: '6px', zIndex: 40, boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }">
+          <div v-for="r in results" :key="r.id" @click="pickNode(r.id)" class="wj-hover-card2" :style="{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', borderRadius: '6px', cursor: 'pointer' }">
+            <span :style="{ width: '7px', height: '7px', borderRadius: '50%', background: r.color, flex: 'none' }"></span>
+            <span :style="{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }">{{ r.name }}</span>
+            <span :style="{ fontSize: '11px', color: 'var(--mut)', marginLeft: 'auto', flex: 'none' }">{{ r.chapter }}</span>
           </div>
         </div>
-
-        <!-- 章节筛选 -->
-        <select v-show="width >= 900" v-model="chapterFilter" :style="{ height: '34px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '8px', padding: '0 8px', color: 'var(--ink)', fontSize: '12.5px', outline: 'none', cursor: 'pointer', transition: 'background-color 0.35s, border-color 0.35s' }">
-          <option v-for="c in CHAPTERS" :key="c" :value="c">{{ c }}</option>
-        </select>
-
-        <!-- 薄弱根因回溯 -->
-        <button @click="toggleRoot" class="wj-hover-acc" :style="rootCause
-          ? { height: '34px', padding: '0 14px', background: 'var(--accSoft)', border: '1px solid var(--acc)', borderRadius: '8px', color: 'var(--acc)', fontSize: '12.5px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px', fontWeight: 500, whiteSpace: 'nowrap', flex: 'none' }
-          : { height: '34px', padding: '0 14px', background: 'transparent', border: '1px solid var(--line)', borderRadius: '8px', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px', whiteSpace: 'nowrap', flex: 'none' }">
-          <span :style="{ width: '6px', height: '6px', borderRadius: '50%', background: rootCause ? 'var(--acc)' : 'var(--mut)', opacity: rootCause ? 1 : 0.5 }"></span>{{ width < 1080 ? '回溯' : '薄弱根因回溯' }}
-        </button>
-
-        <ThemeToggle />
       </div>
+
+      <!-- 章节筛选 -->
+      <select v-show="width >= 900" v-model="chapterFilter" :style="{ height: '34px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '8px', padding: '0 8px', color: 'var(--ink)', fontSize: '12.5px', outline: 'none', cursor: 'pointer', transition: 'background-color 0.35s, border-color 0.35s' }">
+        <option v-for="c in CHAPTERS" :key="c" :value="c">{{ c }}</option>
+      </select>
+
+      <!-- 薄弱根因回溯 -->
+      <button @click="toggleRoot" class="wj-hover-acc" :style="rootCause
+        ? { height: '34px', padding: '0 14px', background: 'var(--accSoft)', border: '1px solid var(--acc)', borderRadius: '8px', color: 'var(--acc)', fontSize: '12.5px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px', fontWeight: 500, whiteSpace: 'nowrap', flex: 'none' }
+        : { height: '34px', padding: '0 14px', background: 'transparent', border: '1px solid var(--line)', borderRadius: '8px', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px', whiteSpace: 'nowrap', flex: 'none' }">
+        <span :style="{ width: '6px', height: '6px', borderRadius: '50%', background: rootCause ? 'var(--acc)' : 'var(--mut)', opacity: rootCause ? 1 : 0.5 }"></span>{{ width < 1080 ? '回溯' : '薄弱根因回溯' }}
+      </button>
     </div>
 
     <!-- 画布 -->
@@ -49,51 +40,78 @@
         <button @click="router.push('/')" class="wj-btn-acc" :style="{ height: '40px', padding: '0 28px', background: 'var(--acc)', border: 'none', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, cursor: 'pointer' }">去登录</button>
       </div>
 
-      <svg v-else-if="layout" viewBox="0 0 1480 740" preserveAspectRatio="xMidYMid meet" :style="{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', transform: mapIn ? 'scale(1)' : 'scale(0.96)', transformOrigin: '50% 50%', transition: 'transform 1.2s cubic-bezier(0.22,1,0.36,1)' }">
+      <svg v-else-if="layout" width="100%" height="100%" :style="{ position: 'absolute', inset: 0, display: 'block', cursor: spaceHeld ? 'grab' : (isPanning ? 'grabbing' : 'default'), transform: mapIn ? 'scale(1)' : 'scale(0.96)', transformOrigin: '50% 50%', transition: 'transform 1.2s cubic-bezier(0.22,1,0.36,1)', userSelect: 'none' }" @wheel.prevent="onWheel" @pointerdown="onSvgPointerDown" @pointermove="onSvgPointerMove" @pointerup="onSvgPointerUp" @pointercancel="onSvgPointerUp">
 
-        <!-- 星空 -->
-        <template v-if="theme === 'ink'">
-          <circle v-for="(s, i) in layout.stars" :key="'st' + i" :cx="s.x" :cy="s.y" :r="s.r" :fill="pal.star" :opacity="s.o * 0.5">
-            <animate v-if="i % 6 === 0" attributeName="opacity" :values="(s.o * 0.5) + ';' + Math.min(0.55, s.o * 1.6) + ';' + (s.o * 0.5)" :dur="(3.5 + (i % 9) * 0.7) + 's'" repeatCount="indefinite" />
-          </circle>
-        </template>
+        <!-- 可变换的内容层 -->
+        <g :transform="`translate(${panX}, ${panY}) scale(${zoom})`">
 
-        <!-- 章节名 -->
-        <text v-for="ch in chapterLabels" :key="'ch' + ch.name" :x="ch.x" :y="ch.y" text-anchor="middle" :fill="pal.chap" :opacity="ch.op" font-size="21" letter-spacing="7" :font-family="serif" font-weight="500" :style="{ transition: 'opacity 0.3s', pointerEvents: 'none' }">{{ ch.name }}</text>
-
-        <!-- 边 -->
-        <template v-for="(e, i) in edgeList" :key="'e' + i">
-          <line v-if="e.glow" :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2" :stroke="pal.cur" stroke-width="12" opacity="0.2" stroke-linecap="round" pointer-events="none">
-            <animate attributeName="opacity" values="0.1;0.32;0.1" dur="2.2s" repeatCount="indefinite" />
-          </line>
-          <line :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2" :stroke="e.stroke" :stroke-width="e.width" :opacity="e.op" :stroke-dasharray="e.dash" pointer-events="none" :style="{ transition: 'opacity 0.25s, stroke 0.25s', animation: e.anim }" />
-        </template>
-
-        <!-- 节点 -->
-        <g v-for="n in nodeList" :key="n.id" :opacity="n.op" :style="{ cursor: 'pointer', transition: 'opacity 0.25s' }" @mouseenter="hoverId = n.id" @mouseleave="hoverId = null" @click="selectedId = n.id">
-          <circle :cx="n.x" :cy="n.y" :r="Math.max(n.r * 2, 18)" fill="transparent" />
-          <template v-if="n.status !== 'dim'">
-            <circle :cx="n.x" :cy="n.y" :r="n.r * 1.95" :fill="n.c" opacity="0.08" />
-            <circle :cx="n.x" :cy="n.y" :r="n.r * 1.35" :fill="n.c" opacity="0.18" />
-          </template>
-          <circle v-if="n.rootGlow" :cx="n.x" :cy="n.y" :r="n.r * 2.8" :fill="n.c" opacity="0.1">
-            <animate attributeName="opacity" values="0.06;0.18;0.06" dur="2.2s" repeatCount="indefinite" />
-          </circle>
-          <circle :cx="n.x" :cy="n.y" :r="n.r" :fill="n.status === 'dim' ? 'none' : n.c" :stroke="n.status === 'dim' ? n.c : 'none'" :stroke-width="n.status === 'dim' ? 2 : 0" />
-          <template v-if="n.isCurrent">
-            <rect :x="n.x - (n.r * 2 + 13) / 2" :y="n.y - (n.r * 2 + 13) / 2" :width="n.r * 2 + 13" :height="n.r * 2 + 13" rx="5" fill="none" :stroke="pal.cur" stroke-width="1.5" />
-            <circle :cx="n.x" :cy="n.y" :r="n.r + 5" fill="none" :stroke="pal.cur" stroke-width="1.5">
-              <animate attributeName="r" :values="(n.r + 5) + ';' + (n.r + 22)" dur="2.4s" repeatCount="indefinite" />
-              <animate attributeName="opacity" values="0.6;0" dur="2.4s" repeatCount="indefinite" />
+          <!-- 星空 -->
+          <template v-if="theme === 'ink'">
+            <circle v-for="(s, i) in layout.stars" :key="'st' + i" :cx="s.x" :cy="s.y" :r="s.r" :fill="pal.star" :opacity="s.o * 0.5">
+              <animate v-if="i % 6 === 0" attributeName="opacity" :values="(s.o * 0.5) + ';' + Math.min(0.55, s.o * 1.6) + ';' + (s.o * 0.5)" :dur="(3.5 + (i % 9) * 0.7) + 's'" repeatCount="indefinite" />
             </circle>
           </template>
-          <circle v-if="n.selRing" :cx="n.x" :cy="n.y" :r="n.r + 5.5" fill="none" :stroke="n.c" stroke-width="1.2" opacity="0.85" />
-          <text v-if="n.showLabel" :x="n.lx" :y="n.ly" :text-anchor="n.la" :font-size="n.isMain ? 12 : 11" :fill="n.hi ? pal.labelHi : pal.label" :opacity="n.isMain ? 0.9 : 0.85" :style="{ pointerEvents: 'none' }">{{ n.short }}</text>
+
+          <!-- 章节名 -->
+          <text v-for="ch in chapterLabels" :key="'ch' + ch.name" :x="ch.x" :y="ch.y" text-anchor="middle" :fill="pal.chap" :opacity="ch.op" font-size="21" letter-spacing="7" :font-family="serif" font-weight="500" :style="{ transition: 'opacity 0.3s', pointerEvents: 'none' }">{{ ch.name }}</text>
+
+          <!-- 边 -->
+          <template v-for="(e, i) in edgeList" :key="'e' + i">
+            <line v-if="e.glow" :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2" :stroke="pal.cur" stroke-width="12" opacity="0.2" stroke-linecap="round" pointer-events="none">
+              <animate attributeName="opacity" values="0.1;0.32;0.1" dur="2.2s" repeatCount="indefinite" />
+            </line>
+            <line :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2" :stroke="e.stroke" :stroke-width="e.width" :opacity="e.op" :stroke-dasharray="e.dash" pointer-events="none" :style="{ transition: 'opacity 0.25s, stroke 0.25s', animation: e.anim }" />
+          </template>
+
+          <!-- 节点 -->
+          <g v-for="n in nodeList" :key="n.id" :opacity="n.op" :style="{ cursor: draggingNode === n.id ? 'grabbing' : 'pointer', transition: 'opacity 0.25s' }" @mouseenter="hoverId = n.id" @mouseleave="hoverId = null" @click="!wasDragged && (selectedId = n.id)" @pointerdown.stop="onNodePointerDown($event, n.id)">
+            <circle :cx="n.x" :cy="n.y" :r="Math.max(n.r * 2, 18)" fill="transparent" />
+            <template v-if="n.status !== 'dim'">
+              <circle :cx="n.x" :cy="n.y" :r="n.r * 1.95" :fill="n.c" opacity="0.08" />
+              <circle :cx="n.x" :cy="n.y" :r="n.r * 1.35" :fill="n.c" opacity="0.18" />
+            </template>
+            <circle v-if="n.rootGlow" :cx="n.x" :cy="n.y" :r="n.r * 2.8" :fill="n.c" opacity="0.1">
+              <animate attributeName="opacity" values="0.06;0.18;0.06" dur="2.2s" repeatCount="indefinite" />
+            </circle>
+            <circle :cx="n.x" :cy="n.y" :r="n.r" :fill="n.status === 'dim' ? 'none' : n.c" :stroke="n.status === 'dim' ? n.c : 'none'" :stroke-width="n.status === 'dim' ? 2 : 0" />
+            <template v-if="n.isCurrent">
+              <rect :x="n.x - (n.r * 2 + 13) / 2" :y="n.y - (n.r * 2 + 13) / 2" :width="n.r * 2 + 13" :height="n.r * 2 + 13" rx="5" fill="none" :stroke="pal.cur" stroke-width="1.5" />
+              <circle :cx="n.x" :cy="n.y" :r="n.r + 5" fill="none" :stroke="pal.cur" stroke-width="1.5">
+                <animate attributeName="r" :values="(n.r + 5) + ';' + (n.r + 22)" dur="2.4s" repeatCount="indefinite" />
+                <animate attributeName="opacity" values="0.6;0" dur="2.4s" repeatCount="indefinite" />
+              </circle>
+            </template>
+            <circle v-if="n.selRing" :cx="n.x" :cy="n.y" :r="n.r + 5.5" fill="none" :stroke="n.c" stroke-width="1.2" opacity="0.85" />
+            <text v-if="n.showLabel" :x="n.lx" :y="n.ly" :text-anchor="n.la" :font-size="n.isMain ? 12 : 11" :fill="n.hi ? pal.labelHi : pal.label" :opacity="n.isMain ? 0.9 : 0.85" :style="{ pointerEvents: 'none' }">{{ n.short }}</text>
+          </g>
         </g>
       </svg>
 
       <!-- 加载态 -->
       <div v-else :style="{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mut)', fontSize: '13px' }">正在绘制知识图谱……</div>
+
+      <!-- 缩放工具栏 -->
+      <div v-if="layout && currentUser" :style="{ position: 'absolute', top: '14px', right: '14px', display: 'flex', alignItems: 'center', gap: '2px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '10px', padding: '4px', zIndex: 15, transition: 'background-color 0.35s, border-color 0.35s' }">
+        <button @click="zoomIn" class="wj-zoom-btn" :style="{ width: '32px', height: '32px', border: 'none', background: 'transparent', color: 'var(--ink)', fontSize: '17px', cursor: 'pointer', borderRadius: '7px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }">+</button>
+        <span :style="{ minWidth: '44px', textAlign: 'center', fontSize: '12px', color: 'var(--mut)', fontWeight: 500, userSelect: 'none' }">{{ zoomPct }}%</span>
+        <button @click="zoomOut" class="wj-zoom-btn" :style="{ width: '32px', height: '32px', border: 'none', background: 'transparent', color: 'var(--ink)', fontSize: '17px', cursor: 'pointer', borderRadius: '7px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }">-</button>
+        <div :style="{ width: '1px', height: '20px', background: 'var(--line)', margin: '0 2px' }"></div>
+        <button @click="fitAll" class="wj-zoom-btn" :style="{ width: '32px', height: '32px', border: 'none', background: 'transparent', color: 'var(--mut)', fontSize: '11px', cursor: 'pointer', borderRadius: '7px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, fontWeight: 600 }" title="适合全部">Fit</button>
+      </div>
+
+      <!-- 缩略图 -->
+      <svg v-if="layout && currentUser" width="150" height="100" :style="{ position: 'absolute', right: '14px', bottom: '14px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '8px', zIndex: 15, cursor: 'pointer', transition: 'background-color 0.35s, border-color 0.35s' }" @click="onMiniMapClick">
+        <!-- 缩略图内容（静态缩小） -->
+        <g :transform="`scale(${150 / 1480}, ${100 / 740})`">
+          <template v-if="theme === 'ink'">
+            <circle v-for="(s, i) in layout.stars" :key="'mst' + i" :cx="s.x" :cy="s.y" :r="s.r" :fill="pal.star" :opacity="s.o * 0.3" />
+          </template>
+          <line v-for="(e, i) in edgeList" :key="'me' + i" :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2" :stroke="e.stroke" :stroke-width="e.width * 2" :opacity="Math.min(e.op, 0.4)" />
+          <circle v-for="n in nodeList" :key="'mn' + n.id" :cx="n.x" :cy="n.y" :r="n.r * 1.5" :fill="n.c" :opacity="n.op * 0.7" />
+        </g>
+        <!-- 视口矩形 -->
+        <rect :x="miniView.x" :y="miniView.y" :width="miniView.w" :height="miniView.h" fill="none" stroke="var(--acc)" stroke-width="2" rx="2" />
+      </svg>
 
       <!-- 诊断结论卡 -->
       <div v-if="rootCause && rootCauseData" :style="{ position: 'absolute', left: '20px', top: '20px', width: '352px', boxSizing: 'border-box', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '12px', padding: '18px 20px', zIndex: 20, animation: 'wjFadeUp 0.35s cubic-bezier(0.22,1,0.36,1) both', transition: 'background-color 0.35s, border-color 0.35s' }">
@@ -181,10 +199,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import ThemeToggle from '../components/ThemeToggle.vue'
-import NavLink from '../components/NavLink.vue'
 import { useTheme } from '../composables/useTheme.js'
 import { useViewport } from '../composables/useViewport.js'
 import { useGraphData, resetGraphData } from '../composables/useGraphData.js'
@@ -206,8 +222,8 @@ const courseId = computed(() => {
   return q > 0 ? q : 1
 })
 
-// 用户信息变化时重置单例并重新加载
-const { data } = useGraphData(courseId.value, currentUser.value?.id)
+// 每次进入页面都重新加载（诊断后 mastery 会更新）
+const { data } = useGraphData(courseId.value, currentUser.value?.id, true)
 
 // 监听 storage 事件（其他标签页登录/退出时同步）
 if (typeof window !== 'undefined') {
@@ -243,6 +259,174 @@ const chapterFilter = ref('全部章节')
 const query = ref('')
 const mapIn = ref(false)
 const layout = ref(null)
+
+// ── 视口状态（Canva 风格交互画布）──
+const zoom = ref(1)
+const panX = ref(0)
+const panY = ref(0)
+const isPanning = ref(false)
+const panStart = ref({ x: 0, y: 0 })
+const panStartPan = ref({ x: 0, y: 0 })
+const draggingNode = ref(null)
+const dragOffset = ref({ x: 0, y: 0 })
+const dragStartPos = ref({ x: 0, y: 0 })
+const wasDragged = ref(false)
+const spaceHeld = ref(false)
+const dragTick = ref(0) // 拖拽时递增，强制 nodeList 重新计算
+const svgRef = ref(null)
+
+const GRAPH_W = 1480
+const GRAPH_H = 740
+
+const zoomPct = computed(() => Math.round(zoom.value * 100))
+
+// 缩放工具栏
+function zoomIn() { zoomTo(zoom.value * 1.25) }
+function zoomOut() { zoomTo(zoom.value / 1.25) }
+function fitAll() { zoom.value = 1; panX.value = 0; panY.value = 0 }
+
+function zoomTo(newZoom, cx, cy) {
+  newZoom = Math.max(0.3, Math.min(3, newZoom))
+  if (cx !== undefined && cy !== undefined) {
+    panX.value = cx - (cx - panX.value) * newZoom / zoom.value
+    panY.value = cy - (cy - panY.value) * newZoom / zoom.value
+  }
+  zoom.value = newZoom
+}
+
+// 鼠标滚轮缩放
+function onWheel(e) {
+  const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
+  const svg = e.currentTarget
+  const rect = svg.getBoundingClientRect()
+  const mx = e.clientX - rect.left
+  const my = e.clientY - rect.top
+  const newZoom = Math.max(0.3, Math.min(3, zoom.value * factor))
+  panX.value = mx - (mx - panX.value) * newZoom / zoom.value
+  panY.value = my - (my - panY.value) * newZoom / zoom.value
+  zoom.value = newZoom
+}
+
+// SVG pointer down — 平移开始
+function onSvgPointerDown(e) {
+  if (draggingNode.value) return
+  // 中键或 Space+左键
+  if (e.button === 1 || (e.button === 0 && spaceHeld.value)) {
+    isPanning.value = true
+    panStart.value = { x: e.clientX, y: e.clientY }
+    panStartPan.value = { x: panX.value, y: panY.value }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+}
+
+// SVG pointer move
+function onSvgPointerMove(e) {
+  if (isPanning.value) {
+    panX.value = panStartPan.value.x + (e.clientX - panStart.value.x)
+    panY.value = panStartPan.value.y + (e.clientY - panStart.value.y)
+  }
+  if (draggingNode.value) {
+    const svg = e.currentTarget.closest('svg')
+    const rect = svg.getBoundingClientRect()
+    const svgX = (e.clientX - rect.left - panX.value) / zoom.value
+    const svgY = (e.clientY - rect.top - panY.value) / zoom.value
+    const L = layout.value
+    if (L) {
+      const oldPos = L.pos[draggingNode.value]
+      const dx = svgX - dragOffset.value.x
+      const dy = svgY - dragOffset.value.y
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) wasDragged.value = true
+      // 更新节点位置
+      L.pos[draggingNode.value] = [oldPos[0] + dx, oldPos[1] + dy]
+      // 更新标签位置（保持相对偏移）
+      const lp = L.labelPos[draggingNode.value]
+      if (lp) {
+        lp.x += dx
+        lp.y += dy
+      }
+      dragOffset.value = { x: svgX, y: svgY }
+      dragTick.value++ // 强制响应式更新
+    }
+  }
+}
+
+// SVG pointer up
+function onSvgPointerUp(e) {
+  if (isPanning.value) {
+    isPanning.value = false
+  }
+  if (draggingNode.value) {
+    draggingNode.value = null
+    // wasDragged 在 click handler 中消费后重置
+    setTimeout(() => { wasDragged.value = false }, 0)
+  }
+}
+
+// 节点拖拽开始
+function onNodePointerDown(e, nodeId) {
+  if (e.button !== 0 || spaceHeld.value) return
+  draggingNode.value = nodeId
+  wasDragged.value = false
+  const svg = e.currentTarget.closest('svg')
+  const rect = svg.getBoundingClientRect()
+  const svgX = (e.clientX - rect.left - panX.value) / zoom.value
+  const svgY = (e.clientY - rect.top - panY.value) / zoom.value
+  dragOffset.value = { x: svgX, y: svgY }
+}
+
+// 缩略图点击导航
+function onMiniMapClick(e) {
+  const svg = e.currentTarget
+  const rect = svg.getBoundingClientRect()
+  const mx = e.clientX - rect.left
+  const my = e.clientY - rect.top
+  // 缩略图坐标 -> 图谱坐标
+  const graphX = mx / (150 / GRAPH_W)
+  const graphY = my / (100 / GRAPH_H)
+  // 计算需要的 pan 使该点居中于视口
+  const container = svg.closest('.wj-canvas-container') || svg.parentElement
+  const cw = container.clientWidth
+  const ch2 = container.clientHeight
+  panX.value = cw / 2 - graphX * zoom.value
+  panY.value = ch2 / 2 - graphY * zoom.value
+}
+
+// 缩略图视口矩形
+const miniView = computed(() => {
+  if (!layout.value) return { x: 0, y: 0, w: 150, h: 100 }
+  // 获取容器尺寸（近似用 window）
+  const cw = typeof window !== 'undefined' ? window.innerWidth : 1480
+  const ch2 = typeof window !== 'undefined' ? window.innerHeight - 48 : 740
+  // 视口在图谱坐标中的范围
+  const left = -panX.value / zoom.value
+  const top = -panY.value / zoom.value
+  const vw = cw / zoom.value
+  const vh = ch2 / zoom.value
+  // 映射到缩略图坐标
+  const sx = 150 / GRAPH_W
+  const sy = 100 / GRAPH_H
+  return {
+    x: Math.max(0, left * sx),
+    y: Math.max(0, top * sy),
+    w: Math.min(150, vw * sx),
+    h: Math.min(100, vh * sy)
+  }
+})
+
+// 键盘快捷键
+function onKeyDown(e) {
+  if (e.code === 'Space' && !e.repeat) {
+    spaceHeld.value = true
+  }
+  if (e.key === '0') { fitAll() }
+  if (e.key === '+' || e.key === '=') { zoomIn() }
+  if (e.key === '-') { zoomOut() }
+}
+function onKeyUp(e) {
+  if (e.code === 'Space') {
+    spaceHeld.value = false
+  }
+}
 
 const pal = computed(() => PAL[theme.value])
 const drawerW = computed(() => (width.value < 460 ? 'calc(100% - 32px)' : '360px'))
@@ -437,6 +621,12 @@ onMounted(() => {
   if (route.query.root === '1') rootCause.value = true
   if (data.value) buildLayout()
   watch(data, (d) => { if (d) buildLayout() })
+  window.addEventListener('keydown', onKeyDown)
+  window.addEventListener('keyup', onKeyUp)
+})
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('keyup', onKeyUp)
 })
 
 function buildLayout() {
@@ -462,6 +652,7 @@ const chapterLabels = computed(() => {
 // ── 边列表 ──
 const edgeList = computed(() => {
   if (!layout.value) return []
+  void dragTick.value // 拖拽时强制重算
   const L = layout.value
   const ch = chain.value
   const out = []
@@ -492,6 +683,7 @@ const edgeList = computed(() => {
 // ── 节点列表 ──
 const nodeList = computed(() => {
   if (!layout.value) return []
+  void dragTick.value // 拖拽时强制重算
   const L = layout.value
   const ch = chain.value
   return data.value.nodes.map((n) => {
@@ -591,5 +783,8 @@ radiusOf
 <style scoped>
 .wj-search:focus {
   border-color: var(--mut) !important;
+}
+.wj-zoom-btn:hover {
+  background: var(--line) !important;
 }
 </style>

@@ -20,6 +20,7 @@
         >
           <div class="cp-conv-title">{{ conv.title || '新对话' }}</div>
           <div class="cp-conv-meta">{{ formatTime(conv.createdAt) }}</div>
+          <button class="cp-conv-del" @click.stop="handleDelete(conv.id)" title="删除对话">×</button>
         </div>
         <div v-if="!conversations.length" class="cp-conv-empty">暂无对话</div>
       </div>
@@ -93,11 +94,21 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
-import { listConversations, fetchConversation, chatStream } from '../api/companion.js'
+import { useRouter, useRoute } from 'vue-router'
+import { listConversations, fetchConversation, deleteConversation, chatStream } from '../api/companion.js'
 
-const DEMO_STUDENT_ID = 2
-const DEMO_COURSE_ID = 1
+const route = useRoute()
+
+// 从 localStorage 读取当前登录用户
+function readUser() {
+  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
+}
+const currentUser = readUser()
+const DEMO_STUDENT_ID = currentUser?.id || 2
+const DEMO_COURSE_ID = (() => {
+  const q = Number(route.query.courseId)
+  return q > 0 ? q : 1
+})()
 
 const router = useRouter()
 
@@ -142,7 +153,7 @@ async function openConversation(id) {
   conversationId.value = id
   try {
     const conv = await fetchConversation(id)
-    msgs.value = conv.messages || []
+    msgs.value = Array.isArray(conv) ? conv : (conv.messages || [])
     await nextTick()
     scrollToEnd()
   } catch (e) {
@@ -157,6 +168,21 @@ function newChat() {
   msgs.value = []
   input.value = ''
   ctxNodeCode.value = null
+}
+
+// 删除会话
+async function handleDelete(id) {
+  try {
+    await deleteConversation(id)
+    // 如果删除的是当前会话，清空聊天
+    if (conversationId.value === id) {
+      conversationId.value = null
+      msgs.value = []
+    }
+    await loadConversations()
+  } catch (e) {
+    console.error('删除会话失败:', e)
+  }
 }
 
 // 发送消息
@@ -280,17 +306,9 @@ onMounted(async () => {
 
 <style scoped>
 .wj-companion {
-  --bg: #FAF7F0;
-  --ink: #2b2b2b;
-  --card: #ffffff;
-  --card2: #f0ece3;
-  --line: #e3ddd0;
-  --mut: #8a8276;
-  --acc: #c2683f;
-  --hover: #f5f2eb;
-
   display: flex;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   background: var(--bg);
   color: var(--ink);
   overflow: hidden;
@@ -347,7 +365,8 @@ onMounted(async () => {
 }
 
 .cp-conv-item {
-  padding: 12px 14px;
+  position: relative;
+  padding: 12px 32px 12px 14px;
   border-radius: 9px;
   cursor: pointer;
   margin-bottom: 4px;
@@ -356,6 +375,34 @@ onMounted(async () => {
 
 .cp-conv-item:hover {
   background: var(--hover);
+}
+
+.cp-conv-del {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mut);
+  font-size: 15px;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.cp-conv-item:hover .cp-conv-del {
+  display: flex;
+}
+
+.cp-conv-del:hover {
+  background: var(--card2);
+  color: var(--acc);
 }
 
 .cp-conv-item.active {
@@ -448,6 +495,7 @@ onMounted(async () => {
 /* 消息列表 */
 .cp-messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 24px;
   scroll-behavior: smooth;

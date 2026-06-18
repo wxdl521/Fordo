@@ -15,4 +15,7 @@ public class ImportBankResult {
 
     /** 题干已存在被跳过题目数 */
     private int skipped;
+
+    /** 是否使用了 AI 清洗 */
+    private boolean aiCleaned;
 }

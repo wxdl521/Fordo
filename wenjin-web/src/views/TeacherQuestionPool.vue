@@ -1,17 +1,5 @@
 <template>
   <div :style="pageStyle">
-    <!-- 顶栏 -->
-    <header :style="headerStyle">
-      <div :style="titleStyle">
-        <strong>问津 · 题目审核池</strong>
-        <span :style="courseStyle">软件工程</span>
-      </div>
-      <nav :style="navStyle">
-        <router-link to="/teacher/graph" :style="linkStyle">图谱审核工作台</router-link>
-        <router-link to="/teacher/dashboard" :style="linkStyle">学情看板</router-link>
-      </nav>
-    </header>
-
     <!-- 工具条 -->
     <div :style="toolbarStyle">
       <div :style="tabGroupStyle">
@@ -31,12 +19,80 @@
         <span :style="filterLabelStyle">知识点</span>
         <select v-model="nodeCode" :style="selectStyle">
           <option value="">全部</option>
-          <option v-for="node in nodeOptions" :key="node.code" :value="node.code">
+          <option v-for="node in graphNodes" :key="node.nodeCode" :value="node.nodeCode">
             {{ node.name }}
           </option>
         </select>
       </div>
       <span :style="infoStyle" v-if="data">共 {{ data.total }} 题</span>
+      <button @click="showTools = !showTools" :style="toolsToggleStyle">
+        {{ showTools ? '收起工具' : '批量工具' }}
+      </button>
+    </div>
+
+    <!-- 批量工具面板 -->
+    <div v-if="showTools" :style="toolsPanelStyle">
+      <!-- AI 出题 -->
+      <div :style="toolBlockStyle">
+        <div :style="toolTitleStyle">AI 出题</div>
+        <div :style="toolRowStyle">
+          <select v-model="genNodeCode" :style="selectStyle">
+            <option v-for="node in graphNodes" :key="node.nodeCode" :value="node.nodeCode">
+              {{ node.nodeCode }} · {{ node.name }}
+            </option>
+          </select>
+          <input v-model.number="genCount" type="number" min="1" max="20" :style="numInputStyle" />
+          <button @click="handleGenerate" :disabled="genLoading" :style="toolBtnStyle">
+            {{ genLoading ? '生成中…' : '生成' }}
+          </button>
+        </div>
+        <div v-if="genResult" :style="toolResultStyle">
+          生成 <strong>{{ genResult.generated }}</strong> 题 · 去重 <strong>{{ genResult.duplicated }}</strong> · 丢弃 <strong>{{ genResult.dropped }}</strong>
+          <span v-if="genResult.message" :style="{ marginLeft: '8px', color: 'var(--text-mut)' }">{{ genResult.message }}</span>
+        </div>
+        <div v-if="genError" :style="toolErrorStyle">{{ genError }}</div>
+      </div>
+
+      <!-- 导入题库 -->
+      <div :style="toolBlockStyle">
+        <div :style="toolTitleStyle">导入题库</div>
+        <div :style="toolRowStyle">
+          <div
+            @dragover.prevent="importDrag = true"
+            @dragleave="importDrag = false"
+            @drop.prevent="handleImportDrop"
+            @click="$refs.importInput.click()"
+            :style="dropZoneStyle(importDrag)"
+          >
+            <span v-if="!importFile">拖拽或点击选择文件（.json / .xlsx）</span>
+            <span v-else>{{ importFile.name }}</span>
+          </div>
+          <input ref="importInput" type="file" accept=".json,.xlsx,.xls" @change="handleImportSelect" :style="{ display: 'none' }" />
+          <button @click="handleImportFile" :disabled="importLoading || !importFile" :style="toolBtnStyle">
+            {{ importLoading ? '导入中…' : '导入' }}
+          </button>
+        </div>
+        <div v-if="importResult" :style="toolResultStyle">
+          导入 <strong>{{ importResult.imported }}</strong> 题 · 跳过 <strong>{{ importResult.skipped }}</strong> 题
+          <span v-if="importResult.aiCleaned" :style="{ marginLeft: '8px', color: 'var(--accent)' }">（AI 清洗）</span>
+        </div>
+        <div v-if="importError" :style="toolErrorStyle">{{ importError }}</div>
+      </div>
+
+      <!-- 标注 -->
+      <div :style="toolBlockStyle">
+        <div :style="toolTitleStyle">存量题标注</div>
+        <textarea v-model="annotateJson" :style="textareaStyle" rows="6" spellcheck="false" placeholder="粘贴 AnnotateRequest JSON: { items: [{ stem, options }] }"></textarea>
+        <div :style="toolRowStyle">
+          <button @click="handleAnnotate" :disabled="annotateLoading" :style="toolBtnStyle">
+            {{ annotateLoading ? '标注中…' : '标注' }}
+          </button>
+          <span v-if="annotateResult" :style="toolResultStyle">
+            标注 <strong>{{ annotateResult.length }}</strong> 题，落库 <strong>{{ annotateResult.filter(r => r.persisted).length }}</strong> 题
+          </span>
+          <span v-if="annotateError" :style="toolErrorStyle">{{ annotateError }}</span>
+        </div>
+      </div>
     </div>
 
     <!-- 批量操作条 -->
@@ -117,7 +173,8 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { fetchQuestions, reviewQuestions } from '../api/teacher.js'
+import { fetchQuestions, reviewQuestions, fetchTeacherGraph } from '../api/teacher.js'
+import { generateQuestions, annotateQuestions, importQuestionJson, importQuestionExcel } from '../api/admin.js'
 
 const COURSE_ID = 1
 const optionKeys = ['A', 'B', 'C', 'D']
@@ -138,6 +195,24 @@ const confOptions = [
   { value: 'mid', label: '70–84%' },
   { value: 'lt70', label: '<70%' }
 ]
+
+// ── 批量工具状态 ──
+const showTools = ref(false)
+const graphNodes = ref([]) // [{nodeCode, name, chapter}]
+const genNodeCode = ref('')
+const genCount = ref(5)
+const genLoading = ref(false)
+const genError = ref('')
+const genResult = ref(null)
+const importLoading = ref(false)
+const importError = ref('')
+const importResult = ref(null)
+const importFile = ref(null)
+const importDrag = ref(false)
+const annotateJson = ref('{\n  "items": [\n    {\n      "stem": "题目内容",\n      "options": [\n        { "key": "A", "text": "选项A", "correct": true },\n        { "key": "B", "text": "选项B", "correct": false }\n      ]\n    }\n  ]\n}')
+const annotateLoading = ref(false)
+const annotateError = ref('')
+const annotateResult = ref(null)
 
 // ── 计算属性 ──
 const tabDefs = computed(() => {
@@ -192,6 +267,90 @@ async function load() {
     console.error('加载题目失败', err)
   } finally {
     loading.value = false
+  }
+}
+
+// ── 加载图谱节点 ──
+async function loadGraphNodes() {
+  try {
+    const graph = await fetchTeacherGraph(COURSE_ID)
+    graphNodes.value = (graph.nodes || []).sort((a, b) => a.nodeCode.localeCompare(b.nodeCode))
+    if (graphNodes.value.length > 0 && !genNodeCode.value) {
+      genNodeCode.value = graphNodes.value[0].nodeCode
+    }
+  } catch (err) {
+    console.error('加载图谱节点失败', err)
+  }
+}
+
+// ── AI 出题 ──
+async function handleGenerate() {
+  if (!genNodeCode.value) return
+  genLoading.value = true
+  genError.value = ''
+  genResult.value = null
+  try {
+    genResult.value = await generateQuestions(COURSE_ID, genNodeCode.value, genCount.value)
+    await load() // 刷新题目列表
+  } catch (e) {
+    genError.value = e.message || '出题失败'
+  } finally {
+    genLoading.value = false
+  }
+}
+
+// ── 导入题库 ──
+function handleImportSelect(e) {
+  const f = e.target.files[0]
+  if (f) importFile.value = f
+}
+
+function handleImportDrop(e) {
+  importDrag.value = false
+  const f = e.dataTransfer.files[0]
+  if (f) importFile.value = f
+}
+
+async function handleImportFile() {
+  if (!importFile.value) return
+  importLoading.value = true
+  importError.value = ''
+  importResult.value = null
+  try {
+    const isExcel = /\.(xlsx?|xls)$/i.test(importFile.value.name)
+    if (isExcel) {
+      importResult.value = await importQuestionExcel(COURSE_ID, importFile.value)
+    } else {
+      importResult.value = await importQuestionJson(COURSE_ID, importFile.value)
+    }
+    await load()
+  } catch (e) {
+    importError.value = e.message || '导入失败'
+  } finally {
+    importLoading.value = false
+  }
+}
+
+// ── 标注 ──
+async function handleAnnotate() {
+  annotateLoading.value = true
+  annotateError.value = ''
+  annotateResult.value = null
+  let parsed
+  try {
+    parsed = JSON.parse(annotateJson.value)
+  } catch {
+    annotateError.value = 'JSON 格式有误'
+    annotateLoading.value = false
+    return
+  }
+  try {
+    annotateResult.value = await annotateQuestions(COURSE_ID, parsed)
+    await load()
+  } catch (e) {
+    annotateError.value = e.message || '标注失败'
+  } finally {
+    annotateLoading.value = false
   }
 }
 
@@ -279,6 +438,7 @@ watch([tab, conf, nodeCode, page], () => {
 
 onMounted(() => {
   load()
+  loadGraphNodes()
 })
 
 // ── DEV 钩子 ──
@@ -293,8 +453,122 @@ if (import.meta.env.DEV) {
 }
 
 // ── 样式 ──
+const toolsToggleStyle = {
+  marginLeft: 'auto',
+  height: '32px',
+  padding: '0 14px',
+  border: '1px solid var(--line)',
+  borderRadius: '8px',
+  background: 'transparent',
+  color: 'var(--text-mut)',
+  fontSize: '12.5px',
+  cursor: 'pointer',
+  transition: 'all 0.2s'
+}
+
+const toolsPanelStyle = {
+  display: 'flex',
+  gap: '16px',
+  padding: '16px 32px',
+  borderBottom: '1px solid var(--line)',
+  background: 'var(--panel)',
+  flexWrap: 'wrap'
+}
+
+const toolBlockStyle = {
+  flex: '1',
+  minWidth: '280px',
+  background: 'var(--panel-2)',
+  border: '1px solid var(--line)',
+  borderRadius: '10px',
+  padding: '14px 16px'
+}
+
+const toolTitleStyle = {
+  fontSize: '13px',
+  fontWeight: 600,
+  marginBottom: '10px',
+  color: 'var(--text)'
+}
+
+const toolRowStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
+  flexWrap: 'wrap'
+}
+
+const numInputStyle = {
+  width: '60px',
+  height: '28px',
+  padding: '0 8px',
+  border: '1px solid var(--line)',
+  borderRadius: '6px',
+  background: 'var(--panel)',
+  color: 'var(--text)',
+  fontSize: '12px',
+  textAlign: 'center'
+}
+
+const toolBtnStyle = {
+  height: '32px',
+  padding: '0 16px',
+  background: 'var(--accent)',
+  border: 'none',
+  borderRadius: '8px',
+  color: '#fff',
+  fontSize: '12.5px',
+  fontWeight: 500,
+  cursor: 'pointer',
+  transition: 'opacity 0.2s'
+}
+
+function dropZoneStyle(dragging) {
+  return {
+    flex: 1,
+    height: '36px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    border: `1.5px dashed ${dragging ? 'var(--accent)' : 'var(--line)'}`,
+    borderRadius: '8px',
+    background: dragging ? 'rgba(107,91,71,0.06)' : 'transparent',
+    color: 'var(--text-mut)',
+    fontSize: '12px',
+    cursor: 'pointer',
+    transition: 'all 0.2s'
+  }
+}
+
+const toolResultStyle = {
+  fontSize: '12.5px',
+  color: 'var(--text)',
+  marginTop: '8px'
+}
+
+const toolErrorStyle = {
+  fontSize: '12.5px',
+  color: '#e0a33e',
+  marginTop: '6px'
+}
+
+const textareaStyle = {
+  width: '100%',
+  boxSizing: 'border-box',
+  background: 'var(--panel)',
+  border: '1px solid var(--line)',
+  borderRadius: '8px',
+  padding: '10px 12px',
+  fontSize: '12px',
+  fontFamily: "'Consolas', 'Fira Mono', monospace",
+  color: 'var(--text)',
+  outline: 'none',
+  resize: 'vertical',
+  marginBottom: '8px'
+}
+
 const pageStyle = {
-  minHeight: '100vh',
+  flex: 1,
   minWidth: '1100px',
   background: 'var(--bg)',
   color: 'var(--text)',

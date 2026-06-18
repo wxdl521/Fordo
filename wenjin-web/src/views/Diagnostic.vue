@@ -3,11 +3,9 @@
        only inside this component, leaving ColorMap's dark palette untouched. -->
   <div class="wj-diag">
 
-    <!-- 顶栏 -->
+    <!-- 工具栏 -->
     <div class="diag-topbar">
-      <span class="diag-brand">问津</span>
-      <div class="diag-sep"></div>
-      <span v-show="width >= 560" class="diag-subtitle">软件工程 · 入口诊断</span>
+      <span v-show="width >= 560" class="diag-subtitle">入口诊断</span>
       <div style="margin-left:auto;display:flex;align-items:center;gap:10px;">
         <span v-show="width >= 480" class="diag-meta">已答 {{ answeredCount }} · 跳过 {{ skippedCount }}</span>
         <router-link to="/map" class="diag-exit-btn">保存并退出</router-link>
@@ -136,11 +134,22 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { fetchPaper, submitPaper } from '../api/diagnostic.js'
+import { useRoute } from 'vue-router'
 
 // ─── 常量 ──────────────────────────────────────────────────────────────────
-const DEMO_COURSE_ID = 1
-const DEMO_STUDENT_ID = 2
+const route = useRoute()
 const letters = ['A', 'B', 'C', 'D']
+
+// 从 localStorage 读取当前登录用户
+function readUser() {
+  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
+}
+const currentUser = readUser()
+const DEMO_STUDENT_ID = currentUser?.id || 2
+const DEMO_COURSE_ID = (() => {
+  const q = Number(route.query.courseId)
+  return q > 0 ? q : 1
+})()
 
 // ─── 响应式视口宽度（替代 useViewport） ──────────────────────────────────────
 const width = ref(typeof window !== 'undefined' ? window.innerWidth : 1024)
@@ -332,16 +341,8 @@ onBeforeUnmount(() => {
  * ColorMap 的深色主题不受影响，因为 CSS 自定义属性只在此元素子树内继承。
  */
 .wj-diag {
-  --bg:      #FAF7F0;
-  --ink:     #2b2b2b;
-  --card:    #ffffff;
-  --card2:   #f0ece3;
-  --line:    #e3ddd0;
-  --mut:     #8a8276;
-  --acc:     #c2683f;
-  --accSoft: #f4e6dd;
-
-  min-height: 100%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--bg);
@@ -350,29 +351,13 @@ onBeforeUnmount(() => {
 
 /* ── 顶栏 ─────────────────────────────────────────────────────────── */
 .diag-topbar {
-  height: 56px;
+  height: 48px;
   flex: none;
   display: flex;
   align-items: center;
   gap: 14px;
   padding: 0 20px;
   border-bottom: 1px solid var(--line);
-}
-
-.diag-brand {
-  font-family: 'Noto Serif SC', 'Songti SC', serif;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: 3px;
-  white-space: nowrap;
-  flex: none;
-}
-
-.diag-sep {
-  width: 1px;
-  height: 16px;
-  background: var(--line);
-  flex: none;
 }
 
 .diag-subtitle {

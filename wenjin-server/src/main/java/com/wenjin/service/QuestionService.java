@@ -3,7 +3,6 @@ package com.wenjin.service;
 import com.wenjin.dto.AnnotateItemResult;
 import com.wenjin.dto.AnnotateRequest;
 import com.wenjin.dto.GenerateResult;
-import com.wenjin.dto.ImportBankResult;
 
 import java.util.List;
 
@@ -21,7 +20,7 @@ public interface QuestionService {
      * @param count    期望生成数量
      * @return 出题结果摘要
      */
-    GenerateResult generate(String nodeCode, int count);
+    GenerateResult generate(Long courseId, String nodeCode, int count);
 
     /**
      * 存量题标注（Prompt 3，超纲不强标）：
@@ -32,15 +31,5 @@ public interface QuestionService {
      * @param req 待标注题目批
      * @return 每题标注结果（含是否落库）
      */
-    List<AnnotateItemResult> annotate(AnnotateRequest req);
-
-    /**
-     * 题库种子导入：读题库 JSON → 按 courseCode 定位课程 →
-     * 逐题落库 question(status=已通过, source=1, type=1) + options(含 correct 标志)
-     * + question_node(nodeCode→node_id, weight=1)；同课程题干已存在则跳过。
-     *
-     * @param courseCode 课程业务编码
-     * @return 导入/跳过计数
-     */
-    ImportBankResult importBank(String courseCode);
+    List<AnnotateItemResult> annotate(Long courseId, AnnotateRequest req);
 }

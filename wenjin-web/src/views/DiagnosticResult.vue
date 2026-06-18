@@ -84,12 +84,22 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { fetchResult } from '../api/diagnostic.js'
 import { generatePath } from '../api/path.js'
 
-const DEMO_COURSE_ID = 1
-const DEMO_STUDENT_ID = 2
+const route = useRoute()
+
+// 从 localStorage 读取当前登录用户
+function readUser() {
+  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
+}
+const currentUser = readUser()
+const DEMO_STUDENT_ID = currentUser?.id || 2
+const DEMO_COURSE_ID = (() => {
+  const q = Number(route.query.courseId)
+  return q > 0 ? q : 1
+})()
 
 const router = useRouter()
 const data = ref(null)
@@ -154,10 +164,9 @@ onMounted(async () => {
 
 <style scoped>
 .wj-result {
-  --bg: #FAF7F0; --ink: #2b2b2b; --card: #ffffff; --card2: #f0ece3;
-  --line: #e3ddd0; --mut: #8a8276; --acc: #c2683f;
   --ok: #4a9e6d; --warn: #cc8a3c; --dim: #a89f90;
-  min-height: 100%; background: var(--bg); color: var(--ink);
+  flex: 1; min-height: 0;
+  background: var(--bg); color: var(--ink);
   overflow-y: auto;
 }
 .rs-center {

@@ -9,6 +9,7 @@ import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -94,6 +95,7 @@ public class CompanionController {
                 emitter.complete();
 
             } catch (Exception e) {
+                log.error("Companion chat error", e);
                 try {
                     // 发送 error 事件
                     emitter.send(SseEmitter.event()
@@ -102,7 +104,7 @@ public class CompanionController {
                 } catch (Exception sendError) {
                     log.error("Failed to send error event via SSE", sendError);
                 }
-                emitter.completeWithError(e);
+                emitter.complete(); // 用 complete() 而非 completeWithError()，避免触发全局异常处理
             }
         });
 
@@ -127,5 +129,15 @@ public class CompanionController {
     @GetMapping("/conversations/{id}")
     public Result<List<CompanionMessageVO>> getMessages(@PathVariable("id") Long id) {
         return Result.ok(companionService.getMessages(id));
+    }
+
+    /**
+     * 删除会话（含所有消息）。
+     * DELETE /api/companion/conversations/{id}
+     */
+    @DeleteMapping("/conversations/{id}")
+    public Result<Void> deleteConversation(@PathVariable("id") Long id) {
+        companionService.deleteConversation(id);
+        return Result.ok(null);
     }
 }

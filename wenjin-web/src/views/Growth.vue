@@ -142,11 +142,21 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { fetchGrowth } from '../api/growth.js'
 
-// 常量
-const DEMO_STUDENT_ID = 2
-const DEMO_COURSE_ID = 1
+const route = useRoute()
+
+// 从 localStorage 读取当前登录用户
+function readUser() {
+  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
+}
+const currentUser = readUser()
+const DEMO_STUDENT_ID = currentUser?.id || 2
+const DEMO_COURSE_ID = (() => {
+  const q = Number(route.query.courseId)
+  return q > 0 ? q : 1
+})()
 
 // 状态
 const data = ref(null)
@@ -286,7 +296,7 @@ onMounted(() => {
 
 <style scoped>
 .wj-growth {
-  min-height: 100vh;
+  flex: 1;
   background: var(--bg);
   color: var(--ink);
   padding: 32px 20px;

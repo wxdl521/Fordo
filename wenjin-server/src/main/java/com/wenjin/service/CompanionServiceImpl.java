@@ -188,6 +188,16 @@ public class CompanionServiceImpl implements CompanionService {
         }).collect(Collectors.toList());
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteConversation(Long conversationId) {
+        // 先删消息，再删会话
+        messageMapper.delete(
+            new LambdaQueryWrapper<CompanionMessage>()
+                .eq(CompanionMessage::getConversationId, conversationId));
+        conversationMapper.deleteById(conversationId);
+    }
+
     /**
      * 构建会话标题：从节点发起则前缀节点名，否则直接截断用户问题。
      */

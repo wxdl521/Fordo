@@ -1,18 +1,5 @@
 <template>
   <div :style="pageStyle">
-    <!-- 顶栏 -->
-    <header :style="headerStyle">
-      <div :style="titleStyle">
-        <strong>问津 · 图谱审核工作台</strong>
-        <span :style="courseStyle">软件工程</span>
-      </div>
-      <nav :style="navStyle">
-        <button @click="showImportModal = true" :style="importBtnHeaderStyle">导入图谱</button>
-        <router-link to="/teacher/questions" :style="linkStyle">题目审核池</router-link>
-        <router-link to="/teacher/dashboard" :style="linkStyle">学情看板</router-link>
-      </nav>
-    </header>
-
     <!-- 状态条 -->
     <div :style="statusBarStyle">
       <span>待复核边 <b :style="{ color: 'var(--text)' }">{{ pending.length }}</b> 条 · 已处理 <b :style="{ color: 'var(--text)' }">{{ processed }}</b> 条</span>
@@ -21,13 +8,15 @@
           <div :style="progressBarStyle"></div>
         </div>
         <span>{{ progressText }}</span>
+        <button @click="toggleLinkMode" :style="linkMode ? linkBtnActiveStyle : linkBtnStyle">连线模式</button>
+        <button @click="showImportModal = true" :style="importBtnHeaderStyle">导入图谱</button>
       </div>
     </div>
 
     <!-- 主体 -->
     <div :style="mainStyle">
       <!-- 图谱画布 -->
-      <div :style="canvasWrapStyle">
+      <div :style="{ ...canvasWrapStyle, cursor: linkMode ? 'crosshair' : 'default' }">
         <div ref="chartEl" :style="chartStyle"></div>
         <div v-if="loading" :style="overlayStyle">加载中…</div>
         <div v-else-if="error" :style="{ ...overlayStyle, color: 'var(--accent)' }">
@@ -45,7 +34,10 @@
         <!-- 操作提示 -->
         <div :style="hintStyle">
           <button @click="showNodeForm = true" :style="addNodeBtnStyle">+ 新增节点</button>
-          <span :style="{ fontSize: '11.5px', color: 'var(--text-mut)', opacity: 0.8 }">点击节点可编辑/删除</span>
+          <span v-if="linkMode" :style="{ fontSize: '11.5px', color: 'var(--accent)', fontWeight: 500 }">
+            {{ linkSource ? `已选起点：${linkSource.name}，请点击终点节点` : '请点击起点节点' }} · Esc 取消
+          </span>
+          <span v-else :style="{ fontSize: '11.5px', color: 'var(--text-mut)', opacity: 0.8 }">点击节点可编辑/删除 · 双击空白添加节点</span>
         </div>
       </div>
 
@@ -238,6 +230,29 @@
         </div>
       </div>
     </div>
+
+    <!-- 右键菜单 -->
+    <div
+      v-if="contextMenu.visible"
+      :style="contextMenuStyle(contextMenu.x, contextMenu.y)"
+      @click.stop
+    >
+      <div :style="ctxMenuItemStyle" @click="ctxEdit">编辑</div>
+      <div :style="{ ...ctxMenuItemStyle, color: 'var(--weak)' }" @click="ctxDelete">删除</div>
+      <div :style="ctxMenuItemStyle" @click="contextMenu.visible = false">取消</div>
+    </div>
+
+    <!-- 边类型选择弹窗 -->
+    <div
+      v-if="edgeTypePopup.visible"
+      :style="contextMenuStyle(edgeTypePopup.x, edgeTypePopup.y)"
+      @click.stop
+    >
+      <div :style="{ ...ctxMenuItemStyle, fontSize: '11px', color: 'var(--text-mut)', cursor: 'default' }">选择边类型</div>
+      <div :style="ctxMenuItemStyle" @click="confirmEdgeType('前置')">前置</div>
+      <div :style="ctxMenuItemStyle" @click="confirmEdgeType('包含')">包含</div>
+      <div :style="ctxMenuItemStyle" @click="confirmEdgeType('相关')">相关</div>
+    </div>
   </div>
 </template>
 
@@ -266,6 +281,14 @@ const showNodeForm = ref(false)
 const showEditForm = ref(false)
 const processed = ref(0)
 
+// ── 连线模式 ──
+const linkMode = ref(false)
+const linkSource = ref(null) // { nodeCode, name }
+const edgeTypePopup = ref({ visible: false, x: 0, y: 0 })
+
+// ── 右键菜单 ──
+const contextMenu = ref({ visible: false, x: 0, y: 0, node: null })
+
 // ── 导入状态 ──
 const showImportModal = ref(false)
 const importFile = ref(null)
@@ -286,7 +309,9 @@ const nodeForm = ref({
   difficulty: 3,
   isKey: false,
   description: '',
-  note: ''
+  note: '',
+  x: null,
+  y: null
 })
 
 const editForm = ref({
@@ -438,10 +463,39 @@ function renderChart() {
   chart.setOption(option, { notMerge: true })
 
   chart.off('click')
+  chart.off('dblclick')
+  chart.off('contextmenu')
   chart.on('click', (params) => {
-    if (params.dataType === 'node') {
+    if (params.dataType !== 'node') return
+    if (linkMode.value) {
+      selectLinkNode(params.data._raw)
+    } else {
       openEditForm(params.data._raw)
     }
+  })
+  chart.on('dblclick', (params) => {
+    if (params.dataType === 'node') return
+    // 双击空白区域：新增节点，预填坐标
+    const pixel = params.event?.offsetX != null
+      ? { x: params.event.offsetX, y: params.event.offsetY }
+      : null
+    if (pixel && chart) {
+      try {
+        const coord = chart.convertFromPixel({ seriesIndex: 0 }, [pixel.x, pixel.y])
+        if (coord && !isNaN(coord[0])) {
+          nodeForm.value.x = Math.round(coord[0])
+          nodeForm.value.y = Math.round(coord[1])
+        }
+      } catch (_) { /* force layout 不支持 convertFromPixel 时忽略 */ }
+    }
+    showNodeForm.value = true
+  })
+  chart.on('contextmenu', (params) => {
+    if (params.dataType !== 'node') return
+    const e = params.event?.event || params.event
+    const x = e?.clientX || e?.offsetX || 200
+    const y = e?.clientY || e?.offsetY || 200
+    contextMenu.value = { visible: true, x, y, node: params.data._raw }
   })
 }
 
@@ -487,7 +541,7 @@ async function submitCreate() {
   try {
     await createNode(COURSE_ID, nodeForm.value)
     showNodeForm.value = false
-    nodeForm.value = { nodeCode: '', name: '', chapter: '', difficulty: 3, isKey: false, description: '', note: '' }
+    nodeForm.value = { nodeCode: '', name: '', chapter: '', difficulty: 3, isKey: false, description: '', note: '', x: null, y: null }
     await reload()
   } catch (e) {
     console.error('创建失败', e)
@@ -520,6 +574,109 @@ async function confirmDelete() {
   } catch (e) {
     console.error('删除失败', e)
     alert('删除失败：' + (e.message || '网络错误'))
+  }
+}
+
+// ── 连线模式 ──
+function toggleLinkMode() {
+  if (linkMode.value) {
+    exitLinkMode()
+  } else {
+    linkMode.value = true
+    linkSource.value = null
+  }
+}
+
+function exitLinkMode() {
+  linkMode.value = false
+  linkSource.value = null
+  edgeTypePopup.value = { visible: false, x: 0, y: 0 }
+  highlightLinkSource() // 清除高亮
+}
+
+function highlightLinkSource() {
+  if (!chart || !graph.value) return
+  const srcCode = linkSource.value?.nodeCode
+  const nodes = (graph.value.nodes || []).map(n => ({
+    id: n.nodeCode,
+    name: n.name,
+    symbolSize: n.isKey ? 40 : 24,
+    itemStyle: {
+      color: C.unlearned,
+      borderColor: n.nodeCode === srcCode ? '#ff4444' : C.accent,
+      borderWidth: n.nodeCode === srcCode ? 3 : 0
+    },
+    label: { show: true, position: 'right', color: C.text, fontSize: 11 },
+    _raw: n
+  }))
+  chart.setOption({ series: [{ data: nodes }] }, { replaceMerge: ['series'] })
+}
+
+function selectLinkNode(rawNode) {
+  if (!linkSource.value) {
+    linkSource.value = { nodeCode: rawNode.nodeCode, name: rawNode.name }
+    highlightLinkSource()
+  } else if (rawNode.nodeCode !== linkSource.value.nodeCode) {
+    // 第二个节点：显示边类型选择弹窗
+    edgeTypePopup.value = {
+      visible: true,
+      x: 200,
+      y: 200,
+      source: linkSource.value.nodeCode,
+      target: rawNode.nodeCode
+    }
+  }
+}
+
+function confirmEdgeType(type) {
+  const src = edgeTypePopup.value.source
+  const tgt = edgeTypePopup.value.target
+  edgeTypePopup.value = { visible: false, x: 0, y: 0 }
+  // TODO: POST /api/teacher/graph/edges
+  alert(`连线功能待后端接口支持\n${src} → [${type}] → ${tgt}`)
+  exitLinkMode()
+}
+
+// ── 右键菜单 ──
+function ctxEdit() {
+  if (contextMenu.value.node) openEditForm(contextMenu.value.node)
+  contextMenu.value = { visible: false, x: 0, y: 0, node: null }
+}
+
+function ctxDelete() {
+  const node = contextMenu.value.node
+  contextMenu.value = { visible: false, x: 0, y: 0, node: null }
+  if (!node) return
+  editForm.value = {
+    id: node.id,
+    nodeCode: node.nodeCode,
+    name: node.name,
+    chapter: node.chapter || '',
+    difficulty: node.difficulty || 3,
+    isKey: node.isKey || false,
+    description: node.description || '',
+    note: node.note || ''
+  }
+  confirmDelete()
+}
+
+// ── 键盘事件 ──
+function closeMenus() {
+  if (contextMenu.value.visible) contextMenu.value = { visible: false, x: 0, y: 0, node: null }
+  if (edgeTypePopup.value.visible) edgeTypePopup.value = { visible: false, x: 0, y: 0 }
+}
+
+function handleKeydown(e) {
+  if (e.key === 'Escape') {
+    if (edgeTypePopup.value.visible) { edgeTypePopup.value = { visible: false, x: 0, y: 0 }; return }
+    if (contextMenu.value.visible) { contextMenu.value = { visible: false, x: 0, y: 0, node: null }; return }
+    if (linkMode.value) { exitLinkMode(); return }
+  }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && showEditForm.value) {
+    const tag = e.target.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return
+    e.preventDefault()
+    confirmDelete()
   }
 }
 
@@ -594,6 +751,8 @@ onMounted(async () => {
   readColors()
   await reload()
   window.addEventListener('resize', onResize)
+  window.addEventListener('keydown', handleKeydown)
+  document.addEventListener('click', closeMenus, true)
 
   if (import.meta.env.DEV) {
     window.__wjTeacherGraph = {
@@ -608,13 +767,15 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
+  window.removeEventListener('keydown', handleKeydown)
+  document.removeEventListener('click', closeMenus, true)
   if (chart) chart.dispose()
 })
 
 // ── 样式 ──
 const pageStyle = {
   minWidth: '1180px',
-  height: '100vh',
+  flex: 1,
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
@@ -1051,5 +1212,54 @@ const importErrorBoxStyle = {
   background: 'rgba(224, 100, 100, 0.08)',
   border: '1px solid rgba(224, 100, 100, 0.3)',
   borderRadius: '10px'
+}
+
+// ── 连线模式按钮 ──
+const linkBtnStyle = {
+  fontSize: '13px',
+  color: 'var(--text-mut)',
+  background: 'transparent',
+  border: '1px solid var(--line)',
+  borderRadius: '8px',
+  padding: '6px 14px',
+  cursor: 'pointer',
+  transition: 'all 0.2s',
+  fontWeight: 500
+}
+
+const linkBtnActiveStyle = {
+  fontSize: '13px',
+  color: '#fff',
+  background: 'var(--accent)',
+  border: '1px solid var(--accent)',
+  borderRadius: '8px',
+  padding: '6px 14px',
+  cursor: 'pointer',
+  transition: 'all 0.2s',
+  fontWeight: 500
+}
+
+// ── 右键菜单 / 边类型弹窗 ──
+function contextMenuStyle(x, y) {
+  return {
+    position: 'fixed',
+    left: x + 'px',
+    top: y + 'px',
+    background: 'var(--panel)',
+    border: '1px solid var(--line)',
+    borderRadius: '10px',
+    padding: '6px 0',
+    minWidth: '120px',
+    boxShadow: '0 6px 20px rgba(0,0,0,0.25)',
+    zIndex: 2000
+  }
+}
+
+const ctxMenuItemStyle = {
+  padding: '8px 18px',
+  fontSize: '13px',
+  color: 'var(--text)',
+  cursor: 'pointer',
+  transition: 'background 0.15s'
 }
 </script>

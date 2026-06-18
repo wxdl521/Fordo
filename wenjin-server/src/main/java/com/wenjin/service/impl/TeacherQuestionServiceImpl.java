@@ -10,6 +10,8 @@ import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
 import com.wenjin.support.QuestionStatus;
+
+import java.util.Comparator;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
@@ -86,16 +88,18 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
             applyConf(w, conf);
         }
 
-        List<Question> all = questionMapper.selectList(w);
+        List<Question> filtered = questionMapper.selectList(w);
 
-        // Sort by confidence desc
+        // Sort by confidence desc (nulls last)
         // C2: TODO: 生产环境改用数据库层面的 ORDER BY confidence DESC LIMIT offset, size
-        all.sort(Comparator.comparing(Question::getConfidence, Comparator.reverseOrder()));
+        filtered.sort(Comparator.comparing(
+                Question::getConfidence,
+                Comparator.nullsLast(Comparator.reverseOrder())));
 
         // Memory pagination
-        int from = Math.min((page - 1) * size, all.size());
-        int to = Math.min(from + size, all.size());
-        List<Question> pageList = all.subList(from, to);
+        int from = Math.min((page - 1) * size, filtered.size());
+        int to = Math.min(from + size, filtered.size());
+        List<Question> pageList = filtered.subList(from, to);
 
         // C1: Batch load to avoid N+1 queries
         List<TeacherQuestionVO> items;
@@ -105,11 +109,14 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
             items = batchToVO(pageList);
         }
 
-        // C3: Reuse 'all' list for counts instead of re-querying
-        TeacherQuestionPageVO.Counts counts = computeCounts(all);
+        // Counts: query ALL questions for this course (not just filtered subset)
+        LambdaQueryWrapper<Question> countW = new LambdaQueryWrapper<>();
+        countW.eq(Question::getCourseId, courseId);
+        List<Question> allForCourse = questionMapper.selectList(countW);
+        TeacherQuestionPageVO.Counts counts = computeCounts(allForCourse);
 
         TeacherQuestionPageVO result = new TeacherQuestionPageVO();
-        result.setTotal((long) all.size());
+        result.setTotal((long) filtered.size());
         result.setPage(page);
         result.setSize(size);
         result.setItems(items);

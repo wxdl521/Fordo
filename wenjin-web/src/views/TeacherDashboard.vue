@@ -443,7 +443,7 @@ onBeforeUnmount(() => {
 .dashboard-page {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  flex: 1;
   min-width: 1180px;
   background: var(--bg);
   color: var(--text);

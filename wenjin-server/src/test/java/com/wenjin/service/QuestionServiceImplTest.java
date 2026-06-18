@@ -7,14 +7,10 @@ import com.wenjin.ai.dto.AiQuestion;
 import com.wenjin.dto.AnnotateItemResult;
 import com.wenjin.dto.AnnotateRequest;
 import com.wenjin.dto.GenerateResult;
-import com.wenjin.dto.ImportBankResult;
-import com.wenjin.dto.QuestionBankFile;
-import com.wenjin.entity.Course;
 import com.wenjin.entity.KgNode;
 import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
-import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
@@ -27,8 +23,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -55,18 +49,13 @@ class QuestionServiceImplTest {
     @Mock QuestionMapper questionMapper;
     @Mock QuestionOptionMapper questionOptionMapper;
     @Mock QuestionNodeMapper questionNodeMapper;
-    @Mock CourseMapper courseMapper;
-    @Mock QuestionBankLoader bankLoader;
 
     private static final Long COURSE_ID = 1L;
 
     private QuestionServiceImpl service() {
-        QuestionServiceImpl impl = new QuestionServiceImpl(
+        return new QuestionServiceImpl(
                 graphQueryService, questionAiClient, kgNodeMapper,
-                questionMapper, questionOptionMapper, questionNodeMapper,
-                courseMapper, bankLoader);
-        ReflectionTestUtils.setField(impl, "demoCourseId", COURSE_ID);
-        return impl;
+                questionMapper, questionOptionMapper, questionNodeMapper);
     }
 
     /** 默认白名单与节点环境：whitelist={KT07,KT05,KT04}，目标 KT07。 */
@@ -101,7 +90,7 @@ class QuestionServiceImplTest {
         when(questionAiClient.generate(any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(), any()))
                 .thenReturn(List.of(validQuestion("继承表示？"), validQuestion("封装表示？")));
 
-        GenerateResult result = service().generate("KT07", 2);
+        GenerateResult result = service().generate(COURSE_ID, "KT07", 2);
 
         assertThat(result.getGenerated()).isEqualTo(2);
         assertThat(result.getDropped()).isZero();
@@ -154,7 +143,7 @@ class QuestionServiceImplTest {
                 .thenReturn(List.of(legal, illegal))   // 第一轮：1 合法 1 非法
                 .thenReturn(List.of(legal2));          // 第二轮：补 1 合法
 
-        GenerateResult result = service().generate("KT07", 2);
+        GenerateResult result = service().generate(COURSE_ID, "KT07", 2);
 
         // AI 被调两次（重试一次）
         verify(questionAiClient, times(2))
@@ -175,7 +164,7 @@ class QuestionServiceImplTest {
         when(questionAiClient.generate(any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(), any()))
                 .thenReturn(List.of(validQuestion("重复题干")));
 
-        GenerateResult result = service().generate("KT07", 1);
+        GenerateResult result = service().generate(COURSE_ID, "KT07", 1);
 
         assertThat(result.getDuplicated()).isEqualTo(1);
         assertThat(result.getGenerated()).isZero();
@@ -201,7 +190,7 @@ class QuestionServiceImplTest {
                 .thenReturn(List.of(noCorrect))
                 .thenReturn(List.of(noCorrect));
 
-        GenerateResult result = service().generate("KT07", 1);
+        GenerateResult result = service().generate(COURSE_ID, "KT07", 1);
 
         assertThat(result.getGenerated()).isZero();
         assertThat(result.getDropped()).isGreaterThanOrEqualTo(1);
@@ -235,7 +224,7 @@ class QuestionServiceImplTest {
                 reqOption("B", "干扰项1", false),
                 reqOption("C", "干扰项2", false)));
 
-        List<AnnotateItemResult> results = service().annotate(req);
+        List<AnnotateItemResult> results = service().annotate(COURSE_ID, req);
 
         assertThat(results).hasSize(1);
         AnnotateItemResult r = results.get(0);
@@ -286,7 +275,7 @@ class QuestionServiceImplTest {
                 reqOption("A", "选项A", true),
                 reqOption("B", "选项B", false)));
 
-        List<AnnotateItemResult> results = service().annotate(req);
+        List<AnnotateItemResult> results = service().annotate(COURSE_ID, req);
 
         assertThat(results).hasSize(1);
         AnnotateItemResult r = results.get(0);
@@ -298,70 +287,6 @@ class QuestionServiceImplTest {
         verify(questionMapper, times(0)).insert(any(Question.class));
         verify(questionOptionMapper, times(0)).insert(any(QuestionOption.class));
         verify(questionNodeMapper, times(0)).insert(any(QuestionNode.class));
-    }
-
-    // ──────────────── 用例 G：题库导入 全新导入 ────────────────
-
-    @Test
-    @DisplayName("G 全新导入：题库 2 题全部落库，status=已通过、source=1、type=1，主点 weight=1")
-    void importBankAllImported() {
-        when(bankLoader.load()).thenReturn(bankFile(
-                bankQuestion("瀑布模型特点？", "KT07"),
-                bankQuestion("迭代模型特点？", "KT05")));
-        when(courseMapper.selectOne(any())).thenReturn(course(COURSE_ID));
-        when(graphQueryService.codeToId(COURSE_ID))
-                .thenReturn(Map.of("KT07", 70L, "KT05", 50L));
-        stubInsertAutoId();
-        when(questionMapper.selectList(any())).thenReturn(new ArrayList<>());
-
-        ImportBankResult result = service().importBank("52015CC4B4");
-
-        assertThat(result.getImported()).isEqualTo(2);
-        assertThat(result.getSkipped()).isZero();
-
-        // question 落库 2 次：status=已通过、source=1、type=1、答案=正确项 key(A)
-        ArgumentCaptor<Question> qCaptor = ArgumentCaptor.forClass(Question.class);
-        verify(questionMapper, times(2)).insert(qCaptor.capture());
-        assertThat(qCaptor.getAllValues()).allSatisfy(q -> {
-            assertThat(q.getStatus()).isEqualTo(QuestionStatus.APPROVED);
-            assertThat(q.getSource()).isEqualTo(1);
-            assertThat(q.getType()).isEqualTo(1);
-            assertThat(q.getAnswer()).isEqualTo("A");
-        });
-
-        // question_node：每题一条主点 weight=1
-        ArgumentCaptor<QuestionNode> nCaptor = ArgumentCaptor.forClass(QuestionNode.class);
-        verify(questionNodeMapper, times(2)).insert(nCaptor.capture());
-        assertThat(nCaptor.getAllValues()).allMatch(n -> n.getWeight() == 1);
-        assertThat(nCaptor.getAllValues())
-                .anyMatch(n -> n.getNodeId().equals(70L));
-
-        // 选项落库：每题 2 个选项
-        verify(questionOptionMapper, times(4)).insert(any(QuestionOption.class));
-    }
-
-    // ──────────────── 用例 H：题库导入 一题去重 ────────────────
-
-    @Test
-    @DisplayName("H 一题去重：首题题干已存在被跳过，imported==1、skipped==1")
-    void importBankOneSkipped() {
-        when(bankLoader.load()).thenReturn(bankFile(
-                bankQuestion("已存在的题干？", "KT07"),
-                bankQuestion("全新的题干？", "KT05")));
-        when(courseMapper.selectOne(any())).thenReturn(course(COURSE_ID));
-        when(graphQueryService.codeToId(COURSE_ID))
-                .thenReturn(Map.of("KT07", 70L, "KT05", 50L));
-        stubInsertAutoId();
-        // 首题查到已存在 → skip；次题查不到 → import
-        when(questionMapper.selectList(any()))
-                .thenReturn(List.of(new Question()))
-                .thenReturn(new ArrayList<>());
-
-        ImportBankResult result = service().importBank("52015CC4B4");
-
-        assertThat(result.getImported()).isEqualTo(1);
-        assertThat(result.getSkipped()).isEqualTo(1);
-        verify(questionMapper, times(1)).insert(any(Question.class));
     }
 
     // ───────────────────────── 测试辅助 ─────────────────────────
@@ -405,43 +330,6 @@ class QuestionServiceImplTest {
 
     private AnnotateRequest.Option reqOption(String key, String text, boolean correct) {
         AnnotateRequest.Option o = new AnnotateRequest.Option();
-        o.setKey(key);
-        o.setText(text);
-        o.setCorrect(correct);
-        return o;
-    }
-
-    private Course course(Long id) {
-        Course c = new Course();
-        c.setId(id);
-        c.setCode("52015CC4B4");
-        c.setName("软件工程");
-        return c;
-    }
-
-    private QuestionBankFile bankFile(QuestionBankFile.BankQuestion... questions) {
-        QuestionBankFile f = new QuestionBankFile();
-        f.setCourseCode("52015CC4B4");
-        f.setQuestions(new ArrayList<>(List.of(questions)));
-        return f;
-    }
-
-    /** 一道题库题：2 选项（A 正确、B 错误），主点 nodeCode，难度 2。 */
-    private QuestionBankFile.BankQuestion bankQuestion(String stem, String nodeCode) {
-        QuestionBankFile.BankQuestion q = new QuestionBankFile.BankQuestion();
-        q.setStem(stem);
-        q.setNodeCode(nodeCode);
-        q.setChapter("软件工程概述");
-        q.setDifficulty(2);
-        q.setAnalysis("解析");
-        q.setOptions(new ArrayList<>(List.of(
-                bankOption("A", "正确项", true),
-                bankOption("B", "干扰项", false))));
-        return q;
-    }
-
-    private QuestionBankFile.BankOption bankOption(String key, String text, boolean correct) {
-        QuestionBankFile.BankOption o = new QuestionBankFile.BankOption();
         o.setKey(key);
         o.setText(text);
         o.setCorrect(correct);

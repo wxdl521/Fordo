@@ -10,25 +10,19 @@ import com.wenjin.common.ResultCode;
 import com.wenjin.dto.AnnotateItemResult;
 import com.wenjin.dto.AnnotateRequest;
 import com.wenjin.dto.GenerateResult;
-import com.wenjin.dto.ImportBankResult;
-import com.wenjin.dto.QuestionBankFile;
-import com.wenjin.entity.Course;
 import com.wenjin.entity.KgNode;
 import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
-import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
 import com.wenjin.service.GraphQueryService;
-import com.wenjin.service.QuestionBankLoader;
 import com.wenjin.service.QuestionService;
 import com.wenjin.support.QuestionStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -68,35 +62,23 @@ public class QuestionServiceImpl implements QuestionService {
     private final QuestionMapper questionMapper;
     private final QuestionOptionMapper questionOptionMapper;
     private final QuestionNodeMapper questionNodeMapper;
-    private final CourseMapper courseMapper;
-    private final QuestionBankLoader bankLoader;
-
-    /** 演示课程ID（本阶段不做课程选择，固定演示课程） */
-    @Value("${wenjin.demo.course-id:1}")
-    private Long demoCourseId;
-
     public QuestionServiceImpl(GraphQueryService graphQueryService,
                                QuestionAiClient aiClient,
                                KgNodeMapper nodeMapper,
                                QuestionMapper questionMapper,
                                QuestionOptionMapper questionOptionMapper,
-                               QuestionNodeMapper questionNodeMapper,
-                               CourseMapper courseMapper,
-                               QuestionBankLoader bankLoader) {
+                               QuestionNodeMapper questionNodeMapper) {
         this.graphQueryService = graphQueryService;
         this.aiClient = aiClient;
         this.nodeMapper = nodeMapper;
         this.questionMapper = questionMapper;
         this.questionOptionMapper = questionOptionMapper;
         this.questionNodeMapper = questionNodeMapper;
-        this.courseMapper = courseMapper;
-        this.bankLoader = bankLoader;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public GenerateResult generate(String nodeCode, int count) {
-        Long courseId = demoCourseId;
+    public GenerateResult generate(Long courseId, String nodeCode, int count) {
 
         // 1. 白名单（codes）：目标 + 1–2 层前置
         Set<String> whitelist = graphQueryService.whitelistOf(courseId, nodeCode, WHITELIST_DEPTH);
@@ -165,12 +147,11 @@ public class QuestionServiceImpl implements QuestionService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public List<AnnotateItemResult> annotate(AnnotateRequest req) {
+    public List<AnnotateItemResult> annotate(Long courseId, AnnotateRequest req) {
         List<AnnotateItemResult> results = new ArrayList<>();
         if (req == null || req.getItems() == null || req.getItems().isEmpty()) {
             return results;
         }
-        Long courseId = demoCourseId;
 
         // 1. 标注白名单（全图 codes）+ AI 白名单（每项 [code, name]）
         Set<String> whitelist = graphQueryService.allNodeCodes(courseId);
@@ -185,89 +166,6 @@ public class QuestionServiceImpl implements QuestionService {
             results.add(annotateOne(courseId, item, whitelist, aiWhitelist, codeToId));
         }
         return results;
-    }
-
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public ImportBankResult importBank(String courseCode) {
-        if (!StringUtils.hasText(courseCode)) {
-            throw new BusinessException(ResultCode.BAD_REQUEST, "courseCode 不能为空");
-        }
-        // 1. 读题库种子文件
-        QuestionBankFile bank = bankLoader.load();
-
-        // 2. 按 courseCode 定位课程
-        Course course = courseMapper.selectOne(
-                new LambdaQueryWrapper<Course>().eq(Course::getCode, courseCode));
-        if (course == null) {
-            throw new BusinessException(ResultCode.NOT_FOUND, "课程不存在: " + courseCode);
-        }
-        Long courseId = course.getId();
-
-        // 3. code→node_id（落库 question_node 用）
-        Map<String, Long> codeToId = graphQueryService.codeToId(courseId);
-
-        ImportBankResult result = new ImportBankResult();
-        if (bank.getQuestions() == null) {
-            return result;
-        }
-
-        // 4. 逐题：题干已存在则跳过，否则落库
-        for (QuestionBankFile.BankQuestion bq : bank.getQuestions()) {
-            String stem = bq.getStem() == null ? null : bq.getStem().trim();
-            if (existsStem(courseId, stem)) {
-                result.setSkipped(result.getSkipped() + 1);
-                continue;
-            }
-            persistBankQuestion(courseId, stem, bq, codeToId);
-            result.setImported(result.getImported() + 1);
-        }
-        log.info("题库导入完成 courseCode={} -> imported={} skipped={}",
-                courseCode, result.getImported(), result.getSkipped());
-        return result;
-    }
-
-    /** 落库一道题库题：question(source=1,status=已通过) → option → question_node(主点 weight=1)。 */
-    private void persistBankQuestion(Long courseId, String stem, QuestionBankFile.BankQuestion bq,
-            Map<String, Long> codeToId) {
-        // 答案 = 第一个 correct 选项的 key（无则 null）
-        String answerKey = null;
-        if (bq.getOptions() != null) {
-            for (QuestionBankFile.BankOption o : bq.getOptions()) {
-                if (Boolean.TRUE.equals(o.getCorrect())) {
-                    answerKey = o.getKey();
-                    break;
-                }
-            }
-        }
-
-        Question question = new Question();
-        question.setCourseId(courseId);
-        question.setStem(stem);
-        question.setType(1); // 单选
-        question.setDifficulty(bq.getDifficulty() == null ? DEFAULT_DIFFICULTY : bq.getDifficulty());
-        question.setAnswer(answerKey);
-        question.setAnalysis(bq.getAnalysis());
-        question.setSource(1); // 学校题库（种子）
-        question.setStatus(QuestionStatus.APPROVED); // 种子直接已通过
-        questionMapper.insert(question);
-        Long questionId = question.getId();
-
-        // 选项落库：种子无干扰项考点映射，point_node_code 一律置空
-        if (bq.getOptions() != null) {
-            for (QuestionBankFile.BankOption o : bq.getOptions()) {
-                QuestionOption option = new QuestionOption();
-                option.setQuestionId(questionId);
-                option.setOptionKey(o.getKey());
-                option.setOptionText(o.getText());
-                option.setIsCorrect(Boolean.TRUE.equals(o.getCorrect()) ? 1 : 0);
-                option.setPointNodeCode(null);
-                questionOptionMapper.insert(option);
-            }
-        }
-
-        // 题-知识点：主点 weight=1（种子无次考点）
-        insertQuestionNode(questionId, bq.getNodeCode(), WEIGHT_MAIN, codeToId);
     }
 
     /** 标注单题：超纲（mainPoint=null）不强标；校验未过也不落库；合法则落库。 */
