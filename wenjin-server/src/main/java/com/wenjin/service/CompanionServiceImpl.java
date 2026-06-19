@@ -310,7 +310,7 @@ public class CompanionServiceImpl implements CompanionService {
     ) {
         StringBuilder sb = new StringBuilder();
 
-        sb.append("你是一位耐心的数学学习伴侣，专注于帮助学生理解和掌握知识点。\n\n");
+        sb.append("你是「问津」的 AI 学习伴侣，专注于帮助学生理解和掌握《软件工程》课程的知识点。\n\n");
 
         // 白名单
         sb.append("## 课程知识点范围\n");
