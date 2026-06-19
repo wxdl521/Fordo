@@ -113,7 +113,10 @@ public class OpenAiCompatibleQuestionBankCleanAiClient implements QuestionBankCl
         sb.append("4. 选项 key 标准化为大写 A/B/C/D。\n");
         sb.append("5. 去除 stem、option text、analysis 的首尾空白。\n");
         sb.append("6. nodeCode 格式校验：必须以 KT 开头，不合规的保留原值但在 note 中标注。\n");
-        sb.append("7. 缺失 analysis 的用占位符 \"暂无解析\" 补充。\n\n");
+        sb.append("7. 缺失 analysis 的用占位符 \"暂无解析\" 补充。\n");
+        sb.append("8. 干扰项考点映射：对每个错误选项（correct=false），若它对应一种常见的错误理解，"
+                + "给出导致该误解的「前置知识点编码」point_node_code（须以 KT 开头）；"
+                + "无法判断则置为 null。正确选项的 point_node_code 一律为 null。\n\n");
 
         sb.append("以下是原始数据（JSON 格式）：\n");
         try {
@@ -124,7 +127,8 @@ public class OpenAiCompatibleQuestionBankCleanAiClient implements QuestionBankCl
 
         sb.append("\n\n只返回一个 JSON 对象（不要任何多余文字、不要 Markdown 围栏），结构如下：\n");
         sb.append("{\"questions\":[{\"stem\":\"...\",\"nodeCode\":\"KT01\",\"chapter\":\"...\"," +
-                "\"difficulty\":3,\"analysis\":\"...\",\"options\":[{\"key\":\"A\",\"text\":\"...\",\"correct\":true}]}]}\n");
+                "\"difficulty\":3,\"analysis\":\"...\",\"options\":[" +
+                "{\"key\":\"A\",\"text\":\"...\",\"correct\":true,\"point_node_code\":null}]}]}\n");
         return sb.toString();
     }
 
@@ -163,6 +167,7 @@ public class OpenAiCompatibleQuestionBankCleanAiClient implements QuestionBankCl
                             opt.setKey(on.path("key").asText(null));
                             opt.setText(on.path("text").asText(null));
                             opt.setCorrect(on.path("correct").asBoolean(false));
+                            opt.setPointNodeCode(on.path("point_node_code").asText(null));
                             options.add(opt);
                         }
                     }

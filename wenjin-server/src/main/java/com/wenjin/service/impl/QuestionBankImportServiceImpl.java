@@ -77,6 +77,15 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
         HEADER_ALIASES.put("optiond", "optiond");
         HEADER_ALIASES.put("正确答案", "answer");
         HEADER_ALIASES.put("answer", "answer");
+        // 可选：各选项的干扰项考点（前置知识点编码）。无此列则留空，交给 AI 清洗推断。
+        HEADER_ALIASES.put("选项a考点", "optionapoint");
+        HEADER_ALIASES.put("optionapoint", "optionapoint");
+        HEADER_ALIASES.put("选项b考点", "optionbpoint");
+        HEADER_ALIASES.put("optionbpoint", "optionbpoint");
+        HEADER_ALIASES.put("选项c考点", "optioncpoint");
+        HEADER_ALIASES.put("optioncpoint", "optioncpoint");
+        HEADER_ALIASES.put("选项d考点", "optiondpoint");
+        HEADER_ALIASES.put("optiondpoint", "optiondpoint");
     }
 
     private final QuestionBankCleanAiClient aiClient;
@@ -238,15 +247,21 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
         questionMapper.insert(question);
         Long questionId = question.getId();
 
-        // 选项落库：种子无干扰项考点映射，point_node_code 一律置空
+        // 选项落库：采用清洗返回的干扰项考点映射。
+        //   · 正确项 point_node_code 恒置空；
+        //   · 干扰项的 code 须在课程图谱白名单（codeToId 键集）内，越界则降级为 null（不丢题）。
         if (bq.getOptions() != null) {
             for (QuestionBankFile.BankOption o : bq.getOptions()) {
+                boolean correct = Boolean.TRUE.equals(o.getCorrect());
+                String pnc = o.getPointNodeCode();
+                String effectivePnc = (correct || pnc == null || !codeToId.containsKey(pnc)) ? null : pnc;
+
                 QuestionOption option = new QuestionOption();
                 option.setQuestionId(questionId);
                 option.setOptionKey(o.getKey());
                 option.setOptionText(o.getText());
-                option.setIsCorrect(Boolean.TRUE.equals(o.getCorrect()) ? 1 : 0);
-                option.setPointNodeCode(null);
+                option.setIsCorrect(correct ? 1 : 0);
+                option.setPointNodeCode(effectivePnc);
                 questionOptionMapper.insert(option);
             }
         }
@@ -325,13 +340,17 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
             String answerUpper = answer == null ? null : answer.trim().toUpperCase();
 
             List<QuestionBankFile.BankOption> options = new ArrayList<>();
-            addOption(options, "A", getCellString(row, headerMap.get("optiona")), answerUpper);
-            addOption(options, "B", getCellString(row, headerMap.get("optionb")), answerUpper);
+            addOption(options, "A", getCellString(row, headerMap.get("optiona")), answerUpper,
+                    getCellString(row, headerMap.get("optionapoint")));
+            addOption(options, "B", getCellString(row, headerMap.get("optionb")), answerUpper,
+                    getCellString(row, headerMap.get("optionbpoint")));
             if (headerMap.containsKey("optionc")) {
-                addOption(options, "C", getCellString(row, headerMap.get("optionc")), answerUpper);
+                addOption(options, "C", getCellString(row, headerMap.get("optionc")), answerUpper,
+                        getCellString(row, headerMap.get("optioncpoint")));
             }
             if (headerMap.containsKey("optiond")) {
-                addOption(options, "D", getCellString(row, headerMap.get("optiond")), answerUpper);
+                addOption(options, "D", getCellString(row, headerMap.get("optiond")), answerUpper,
+                        getCellString(row, headerMap.get("optiondpoint")));
             }
             q.setOptions(options);
 
@@ -340,7 +359,8 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
         return questions;
     }
 
-    private void addOption(List<QuestionBankFile.BankOption> options, String key, String text, String answer) {
+    private void addOption(List<QuestionBankFile.BankOption> options, String key, String text,
+                           String answer, String pointNodeCode) {
         if (!StringUtils.hasText(text)) {
             return;
         }
@@ -348,6 +368,8 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
         opt.setKey(key);
         opt.setText(text.trim());
         opt.setCorrect(key.equals(answer));
+        // 原始干扰项考点（可空）；正确项的 code 在落库时会被统一置空，越界 code 也会降级
+        opt.setPointNodeCode(StringUtils.hasText(pointNodeCode) ? pointNodeCode.trim() : null);
         options.add(opt);
     }
 
@@ -418,6 +440,8 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
                     // text trim
                     opt.setText(o.getText() == null ? null : o.getText().trim());
                     opt.setCorrect(Boolean.TRUE.equals(o.getCorrect()));
+                    // 保留原始干扰项考点（落库时再做白名单降级）
+                    opt.setPointNodeCode(o.getPointNodeCode());
                     options.add(opt);
                 }
             }

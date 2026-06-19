@@ -56,5 +56,11 @@ public class QuestionBankFile {
 
         /** 是否为正确选项 */
         private Boolean correct;
+
+        /**
+         * 干扰项考点映射：该错误选项对应的误解所指向的前置知识点编码（以 KT 开头）。
+         * 正确选项恒为 null；导入时若不在课程图谱白名单内会被降级为 null。
+         */
+        private String pointNodeCode;
     }
 }
