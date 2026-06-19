@@ -5,6 +5,7 @@ import com.wenjin.ai.CompanionAiClient;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
+import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.LearningPathVO;
 import com.wenjin.entity.CompanionConversation;
 import com.wenjin.entity.CompanionMessage;
@@ -53,6 +54,9 @@ class CompanionServiceImplTest {
 
     @Mock
     private PathService pathService;
+
+    @Mock
+    private DiagnosticResultService diagnosticResultService;
 
     @Mock
     private CompanionAiClient aiClient;
@@ -172,7 +176,7 @@ class CompanionServiceImplTest {
         currentStep.setName("二次函数基础");
 
         String prompt = CompanionServiceImpl.buildSystemPrompt(
-            whitelist, weakPoints, targetNode, currentStep, "KT12", "二次函数基础"
+            whitelist, weakPoints, targetNode, currentStep, "KT12", "二次函数基础", null
         );
 
         // 验证包含白名单
@@ -290,5 +294,64 @@ class CompanionServiceImplTest {
         assertEquals(300L, savedMsg.getConversationId());
         assertEquals(2, savedMsg.getRole());  // ai
         assertEquals("二次函数是一种重要的数学模型", savedMsg.getContent());
+    }
+
+    /**
+     * 测试 5：存在非自身根因时，prompt 注入"诊断根因"段（根因名 + 前置 + 卡点名 + 掌握度）。
+     */
+    @Test
+    void buildPromptInjectsDiagnosticRootCause() {
+        DiagnosticResultVO diag = new DiagnosticResultVO();
+        diag.setHasWeakness(true);
+
+        DiagnosticResultVO.NodeRef stuck = new DiagnosticResultVO.NodeRef();
+        stuck.setName("软件测试");
+        diag.setStuckNode(stuck);
+
+        DiagnosticResultVO.RootCause rc = new DiagnosticResultVO.RootCause();
+        rc.setName("需求分析");
+        rc.setMasteryScore(42.0);
+        rc.setSelf(false);
+        diag.setRootCause(rc);
+
+        DiagnosticResultVO.ChainNode c1 = new DiagnosticResultVO.ChainNode();
+        c1.setName("需求分析");
+        DiagnosticResultVO.ChainNode c2 = new DiagnosticResultVO.ChainNode();
+        c2.setName("软件测试");
+        diag.setChain(Arrays.asList(c1, c2));
+
+        String prompt = CompanionServiceImpl.buildSystemPrompt(
+            Arrays.asList("需求分析", "软件测试"), Arrays.asList(),
+            null, null, null, null, diag);
+
+        assertTrue(prompt.contains("## 诊断根因"));  // 段标题（区别于对话规则里的"诊断根因"关键词）
+        assertTrue(prompt.contains("需求分析"));   // 根因名
+        assertTrue(prompt.contains("前置"));        // 因果结构关键词
+        assertTrue(prompt.contains("软件测试"));     // 卡点名
+        assertTrue(prompt.contains("42"));          // 根因掌握度
+    }
+
+    /**
+     * 测试 6：根因即卡点自身（self）或无诊断时，不注入"诊断根因"段。
+     */
+    @Test
+    void buildPromptSkipsRootCauseWhenSelfOrAbsent() {
+        DiagnosticResultVO diag = new DiagnosticResultVO();
+        diag.setHasWeakness(true);
+        DiagnosticResultVO.NodeRef stuck = new DiagnosticResultVO.NodeRef();
+        stuck.setName("软件测试");
+        diag.setStuckNode(stuck);
+        DiagnosticResultVO.RootCause rc = new DiagnosticResultVO.RootCause();
+        rc.setName("软件测试");
+        rc.setSelf(true);
+        diag.setRootCause(rc);
+
+        String selfPrompt = CompanionServiceImpl.buildSystemPrompt(
+            Arrays.asList("软件测试"), Arrays.asList(), null, null, null, null, diag);
+        assertFalse(selfPrompt.contains("## 诊断根因"));  // 段标题不出现（规则里的关键词不算）
+
+        String nullPrompt = CompanionServiceImpl.buildSystemPrompt(
+            Arrays.asList("软件测试"), Arrays.asList(), null, null, null, null, null);
+        assertFalse(nullPrompt.contains("## 诊断根因"));
     }
 }

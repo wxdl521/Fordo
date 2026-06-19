@@ -13,6 +13,9 @@ dist/
 
 # ───── 日志 / 临时测试输出 ─────
 *.log
+*.out
+*-test.out
+test-output.txt
 .t*.out
 .t*.err
 .rev*.out

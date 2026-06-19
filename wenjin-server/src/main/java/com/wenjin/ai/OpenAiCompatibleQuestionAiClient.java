@@ -169,9 +169,11 @@ public class OpenAiCompatibleQuestionAiClient implements QuestionAiClient {
         sb.append("2. 只在上述白名单范围内命题，考点不得超出白名单。\n");
         sb.append("3. main_point 必须等于目标知识点 ").append(targetCode)
                 .append("；sub_points 必须是白名单内的 code 子集。\n");
-        sb.append("4. 每个干扰项（correct=false）应尽量给出其错误所对应的考点 point_node_code，"
-                + "且该 code 必须在白名单内；正确项的 point_node_code 置为 null。\n");
-        sb.append("5. difficulty 取 1–5 的整数。\n\n");
+        sb.append("4. 每个干扰项（correct=false）必须对应一种具体的常见错误理解，并映射到导致该误解的"
+                + "前置知识点编码 point_node_code（必须在白名单内）；确实无对应误解时才允许为 null；"
+                + "正确项的 point_node_code 置为 null。\n");
+        sb.append("5. difficulty 取 1–5 的整数。\n");
+        sb.append("6. 生成的题目难度尽量覆盖 2~4 档，不要全部集中在同一难度，以提升诊断区分度。\n\n");
 
         sb.append("只返回一个 JSON 对象（不要任何多余文字、不要 Markdown 围栏），结构如下：\n");
         sb.append("{\"questions\":[\n");

@@ -7,6 +7,7 @@ import com.wenjin.common.ResultCode;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
+import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.LearningPathVO;
 import com.wenjin.entity.CompanionConversation;
 import com.wenjin.entity.CompanionMessage;
@@ -43,6 +44,7 @@ public class CompanionServiceImpl implements CompanionService {
     private final KgNodeMapper nodeMapper;
     private final StudentMasteryMapper masteryMapper;
     private final PathService pathService;
+    private final DiagnosticResultService diagnosticResultService;
     private final CompanionAiClient aiClient;
 
     @Override
@@ -271,6 +273,14 @@ public class CompanionServiceImpl implements CompanionService {
             // 路径不存在或查询失败，继续对话
         }
 
+        // 3.5 诊断根因（错误不中断对话）：让伴侣知道"卡点的根本原因可能是前置点"这条因果结构
+        DiagnosticResultVO diagnostic = null;
+        try {
+            diagnostic = diagnosticResultService.getResult(studentId, courseId);
+        } catch (Exception e) {
+            // 诊断数据不存在或查询失败，继续对话
+        }
+
         LearningPathVO.NodeRef targetNode = path != null ? path.getTargetNode() : null;
         LearningPathVO.StepVO currentStep = null;
         if (path != null && path.getSteps() != null) {
@@ -294,11 +304,12 @@ public class CompanionServiceImpl implements CompanionService {
             }
         }
 
-        return buildSystemPrompt(whitelist, weakPoints, targetNode, currentStep, focusNodeCode, focusNodeName);
+        return buildSystemPrompt(whitelist, weakPoints, targetNode, currentStep,
+                focusNodeCode, focusNodeName, diagnostic);
     }
 
     /**
-     * 静态方法：构建系统提示（可测试）。
+     * 静态方法：构建系统提示（可测试）。diagnostic 为可空的诊断回溯结果，存在非自身根因时注入"诊断根因"段。
      */
     public static String buildSystemPrompt(
         List<String> whitelist,
@@ -306,11 +317,15 @@ public class CompanionServiceImpl implements CompanionService {
         LearningPathVO.NodeRef targetNode,
         LearningPathVO.StepVO currentStep,
         String focusNodeCode,
-        String focusNodeName
+        String focusNodeName,
+        DiagnosticResultVO diagnostic
     ) {
         StringBuilder sb = new StringBuilder();
 
-        sb.append("你是一位耐心的数学学习伴侣，专注于帮助学生理解和掌握知识点。\n\n");
+        sb.append("你是「问津」的 AI 学习伴侣，专注于帮助学生理解和掌握《软件工程》课程的知识点。\n\n");
+
+        // 诊断根因（产品灵魂）：仅当有薄弱点且根因为前置点（非卡点自身）时注入，放在最前以提示优先级
+        appendRootCauseSection(sb, diagnostic);
 
         // 白名单
         sb.append("## 课程知识点范围\n");
@@ -347,13 +362,51 @@ public class CompanionServiceImpl implements CompanionService {
             sb.append("\n");
         }
 
-        // 引导
+        // 引导：启发式教学 + 聊天气泡风格
         sb.append("## 对话规则\n");
-        sb.append("- 只回答上述课程范围内的问题。\n");
-        sb.append("- 如果学生提问超出范围，礼貌引导回到课程内容。\n");
-        sb.append("- 优先关注学生的薄弱点和当前学习路径。\n");
-        sb.append("- 回答简洁清晰，避免过长的理论，多用例子。\n");
+        sb.append("- 只回答《软件工程》课程范围内的问题；超出范围时礼貌地把话题引导回当前焦点节点或学习路径目标。\n");
+        sb.append("- 采用启发式教学：不要一次性给出完整答案。先一句话点出关键，再反问一个小问题确认理解；"
+                + "学生卡住时再分步提示，逐步逼近答案。\n");
+        sb.append("- 关注优先级：诊断根因 > 学生薄弱点 > 当前学习路径。\n");
+        sb.append("- 回答控制在 3–5 句、口语化，适合聊天气泡；多用具体例子，少长篇理论。\n");
+        sb.append("- 不要编造学生未学内容的掌握情况，只依据上文提供的诊断/掌握度信息。\n");
 
         return sb.toString();
+    }
+
+    /**
+     * 注入"诊断根因"段：仅当存在薄弱点且根因为前置点（非卡点自身）时，
+     * 让伴侣理解"卡在 X 的根因是前置点 Y"这条因果结构，而非看到一堆并列薄弱点。
+     */
+    private static void appendRootCauseSection(StringBuilder sb, DiagnosticResultVO diagnostic) {
+        if (diagnostic == null || !diagnostic.isHasWeakness()) {
+            return;
+        }
+        DiagnosticResultVO.RootCause rc = diagnostic.getRootCause();
+        DiagnosticResultVO.NodeRef stuck = diagnostic.getStuckNode();
+        if (rc == null || stuck == null || rc.isSelf()) {
+            return;  // 无根因或根因即卡点本身（无前置因果结构），不注入
+        }
+        sb.append("## 诊断根因（最重要）\n");
+        sb.append("该学生最近一次诊断显示：当前卡点是「").append(stuck.getName())
+          .append("」，但根本原因更可能是前置点「").append(rc.getName())
+          .append("」掌握薄弱（掌握度 ").append(fmtScore(rc.getMasteryScore())).append("）。\n");
+        if (diagnostic.getChain() != null && !diagnostic.getChain().isEmpty()) {
+            StringBuilder chainStr = new StringBuilder();
+            for (DiagnosticResultVO.ChainNode cn : diagnostic.getChain()) {
+                if (chainStr.length() > 0) {
+                    chainStr.append(" → ");
+                }
+                chainStr.append(cn.getName());
+            }
+            sb.append("回溯链：").append(chainStr).append("。\n");
+        }
+        sb.append("当学生问到卡点或其下游内容时，优先提醒「问题可能出在更前面的 ").append(rc.getName())
+          .append("」，引导先补 ").append(rc.getName()).append("，而不是直接讲卡点本身。\n\n");
+    }
+
+    /** 掌握度格式化：null → "暂无"，否则四舍五入为整数。 */
+    private static String fmtScore(Double score) {
+        return score == null ? "暂无" : String.valueOf(Math.round(score));
     }
 }

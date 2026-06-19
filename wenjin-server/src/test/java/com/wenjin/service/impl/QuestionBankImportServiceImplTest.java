@@ -236,6 +236,68 @@ class QuestionBankImportServiceImplTest {
         assertThat(cleaned.getQuestions()).isEmpty();
     }
 
+    // ──────────────── 用例 I：nodeCode 非法跳过 ────────────────
+
+    @Test
+    @DisplayName("I importFromJson：nodeCode 不在课程图谱内的题被跳过，合法题正常入库")
+    void importFromJsonSkipsInvalidNodeCode() {
+        when(courseMapper.selectById(COURSE_ID)).thenReturn(course(COURSE_ID));
+        // 课程图谱仅有 KT07；KT99 为幽灵 code
+        when(graphQueryService.codeToId(COURSE_ID)).thenReturn(Map.of("KT07", 70L));
+        stubInsertAutoId();
+        when(questionMapper.selectList(any())).thenReturn(new ArrayList<>());
+
+        QuestionBankFile bank = bankFile(
+                bankQuestion("合法题：瀑布模型特点？", "KT07"),
+                bankQuestion("幽灵题：写错了的 code？", "KT99"));
+
+        ImportBankResult result = service().importFromJson(COURSE_ID, bank);
+
+        assertThat(result.getImported()).isEqualTo(1);
+        assertThat(result.getInvalidNodeSkipped()).isEqualTo(1);
+        assertThat(result.getSkipped()).isEqualTo(1);
+        // 仅合法题落库
+        verify(questionMapper, times(1)).insert(any(Question.class));
+    }
+
+    // ──────────────── 用例 J：干扰项 point_node_code 白名单降级 ────────────────
+
+    @Test
+    @DisplayName("J importFromJson：干扰项 point_node_code 在白名单内落库非空，越界降级 null，正确项恒 null")
+    void importFromJsonKeepsValidPointNodeCodeDowngradesInvalid() {
+        when(courseMapper.selectById(COURSE_ID)).thenReturn(course(COURSE_ID));
+        // 白名单：KT07（主点）、KT05（合法前置）；KT99 越界
+        when(graphQueryService.codeToId(COURSE_ID)).thenReturn(Map.of("KT07", 70L, "KT05", 50L));
+        stubInsertAutoId();
+        when(questionMapper.selectList(any())).thenReturn(new ArrayList<>());
+
+        QuestionBankFile.BankQuestion q = new QuestionBankFile.BankQuestion();
+        q.setStem("题干带干扰项考点？");
+        q.setNodeCode("KT07");
+        q.setDifficulty(3);
+        q.setAnalysis("解析");
+        QuestionBankFile.BankOption a = bankOption("A", "正确项", true);
+        a.setPointNodeCode("KT05"); // 正确项即使带 code 也应被置空
+        QuestionBankFile.BankOption b = bankOption("B", "误解一", false);
+        b.setPointNodeCode("KT05"); // 白名单内 → 保留
+        QuestionBankFile.BankOption c = bankOption("C", "误解二", false);
+        c.setPointNodeCode("KT99"); // 越界 → 降级 null
+        q.setOptions(new ArrayList<>(List.of(a, b, c)));
+
+        service().importFromJson(COURSE_ID, bankFile(q));
+
+        ArgumentCaptor<QuestionOption> optCap = ArgumentCaptor.forClass(QuestionOption.class);
+        verify(questionOptionMapper, times(3)).insert(optCap.capture());
+        for (QuestionOption o : optCap.getAllValues()) {
+            switch (o.getOptionKey()) {
+                case "A" -> assertThat(o.getPointNodeCode()).isNull();
+                case "B" -> assertThat(o.getPointNodeCode()).isEqualTo("KT05");
+                case "C" -> assertThat(o.getPointNodeCode()).isNull();
+                default -> { }
+            }
+        }
+    }
+
     // ───────────────────────── 测试辅助 ─────────────────────────
 
     private Course course(Long id) {

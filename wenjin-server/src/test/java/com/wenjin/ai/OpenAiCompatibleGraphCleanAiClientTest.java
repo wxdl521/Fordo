@@ -40,6 +40,8 @@ class OpenAiCompatibleGraphCleanAiClientTest {
         assertThat(prompt).contains("difficulty 标准化");
         assertThat(prompt).contains("bloom 层级补充");
         assertThat(prompt).contains("is_key 标准化");
+        assertThat(prompt).contains("节点去重");      // T8 新增去重规则
+        assertThat(prompt).contains("示例输入");       // T8 few-shot 范例
     }
 
     // ============================ JSON 解析 ============================

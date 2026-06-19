@@ -34,6 +34,8 @@ wenjin:
   demo:
     teacher-id: 1                                # 写死的演示教师，导入图谱时作为课程创建者
     course-id: 1                                 # 写死的演示课程，AI 出题时的目标课程
+  seed:
+    enabled: false                               # 演示数据播种开关，默认关闭；仅本地演示前临时置 true（绝不在测试/生产开启）
   ai:                                            # AI 出题/标注（OpenAI 兼容，默认 DeepSeek）
     enabled: ${WENJIN_AI_ENABLED:true}
     base-url: ${WENJIN_AI_BASE_URL:https://api.deepseek.com}

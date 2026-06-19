@@ -52,6 +52,8 @@ public class MasteryServiceImpl implements MasteryService {
     private static final double COLD_START_WRONG_BASE = 30.0;
     /** 冷启动每级难度加分步长 */
     private static final double COLD_START_STEP = 5.0;
+    /** EWMA 单题有效步长封顶：避免高难度主点单题把掌握度拉动过猛（演示时"答一题地图猛跳"） */
+    private static final double EFF_ALPHA_CAP = 0.4;
 
     private final QuestionMapper questionMapper;
     private final QuestionNodeMapper questionNodeMapper;
@@ -148,7 +150,9 @@ public class MasteryServiceImpl implements MasteryService {
                             : currentRows.get(nodeId).getMasteryScore().doubleValue();
                     double targetVal = ans.isCorrect() ? 100.0 : 0.0;
                     double weightFactor = weight == WEIGHT_MAIN ? MAIN_FACTOR : SUB_FACTOR;
-                    double effAlpha = clamp(alpha * (difficulty / DIFFICULTY_PIVOT) * weightFactor, 0, 1);
+                    double effAlpha = Math.min(
+                            clamp(alpha * (difficulty / DIFFICULTY_PIVOT) * weightFactor, 0, 1),
+                            EFF_ALPHA_CAP);
                     newScore = clamp(oldScore + effAlpha * (targetVal - oldScore), 0, 100);
                 }
 

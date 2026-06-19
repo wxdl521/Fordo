@@ -117,7 +117,9 @@ public class OpenAiCompatibleGraphCleanAiClient implements GraphCleanAiClient {
         sb.append("4. is_key 标准化：将 \"是\"/\"true\"/\"1\"/\"Y\" 映射为 true，其他映射为 false。\n");
         sb.append("5. 边端点校验：若 source 或 target 不在节点 id 列表中，在 note 字段标注 \"[警告]端点不存在\"，但保留该边。\n");
         sb.append("6. 空 id 的节点补充为 \"AUTO_\" + 序号。\n");
-        sb.append("7. 空 name 的节点保留，但 note 标注 \"[警告]缺少名称\"。\n\n");
+        sb.append("7. 空 name 的节点保留，但 note 标注 \"[警告]缺少名称\"。\n");
+        sb.append("8. 节点去重：id 相同的节点只保留一个（合并非空字段）；"
+                + "source/target/type 完全相同的边只保留一条。\n\n");
 
         sb.append("以下是原始数据（JSON 格式）：\n");
         sb.append("节点列表：\n");
@@ -137,6 +139,14 @@ public class OpenAiCompatibleGraphCleanAiClient implements GraphCleanAiClient {
         sb.append("{\"nodes\":[{\"id\":\"...\",\"name\":\"...\",\"chapter\":\"...\",\"difficulty\":3,");
         sb.append("\"is_key\":false,\"bloom\":\"...\",\"description\":\"...\",\"note\":\"...\"}],\n");
         sb.append("\"edges\":[{\"source\":\"...\",\"target\":\"...\",\"type\":\"前置\",\"note\":\"...\"}]}\n");
+
+        // few-shot：一条完整样例（含关系映射 依赖→前置、is_key 归一、difficulty 归一）
+        sb.append("\n示例（仅供格式参考，请按相同 schema 输出）：\n");
+        sb.append("示例输入：节点 [{\"id\":\"kt01\",\"name\":\"用例图\",\"difficulty\":\"高\",\"is_key\":\"是\"}]，" +
+                "边 [{\"source\":\"KT01\",\"target\":\"KT02\",\"type\":\"依赖\"}]\n");
+        sb.append("示例输出：{\"nodes\":[{\"id\":\"kt01\",\"name\":\"用例图\",\"chapter\":\"需求建模\"," +
+                "\"difficulty\":3,\"is_key\":true,\"bloom\":\"理解\",\"description\":\"描述系统对外功能\",\"note\":\"\"}]," +
+                "\"edges\":[{\"source\":\"KT01\",\"target\":\"KT02\",\"type\":\"前置\",\"note\":\"\"}]}\n");
         return sb.toString();
     }
 
