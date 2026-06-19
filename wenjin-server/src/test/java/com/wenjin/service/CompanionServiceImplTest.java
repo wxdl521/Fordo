@@ -324,7 +324,7 @@ class CompanionServiceImplTest {
             Arrays.asList("需求分析", "软件测试"), Arrays.asList(),
             null, null, null, null, diag);
 
-        assertTrue(prompt.contains("诊断根因"));
+        assertTrue(prompt.contains("## 诊断根因"));  // 段标题（区别于对话规则里的"诊断根因"关键词）
         assertTrue(prompt.contains("需求分析"));   // 根因名
         assertTrue(prompt.contains("前置"));        // 因果结构关键词
         assertTrue(prompt.contains("软件测试"));     // 卡点名
@@ -348,10 +348,10 @@ class CompanionServiceImplTest {
 
         String selfPrompt = CompanionServiceImpl.buildSystemPrompt(
             Arrays.asList("软件测试"), Arrays.asList(), null, null, null, null, diag);
-        assertFalse(selfPrompt.contains("诊断根因"));
+        assertFalse(selfPrompt.contains("## 诊断根因"));  // 段标题不出现（规则里的关键词不算）
 
         String nullPrompt = CompanionServiceImpl.buildSystemPrompt(
             Arrays.asList("软件测试"), Arrays.asList(), null, null, null, null, null);
-        assertFalse(nullPrompt.contains("诊断根因"));
+        assertFalse(nullPrompt.contains("## 诊断根因"));
     }
 }
