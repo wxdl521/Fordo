@@ -37,6 +37,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 题库导入服务实现（JSON / Excel 上传）。
@@ -179,11 +180,23 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
             return result;
         }
 
-        // 逐题：题干已存在则跳过，否则落库
+        // 课程图谱白名单：所有 kg_node 的 nodeCode（复用 code→id 映射的键集，避免额外查询）
+        Set<String> validCodes = codeToId.keySet();
+
+        // 逐题：题干为空/nodeCode 非法/题干已存在则跳过，否则落库
         for (QuestionBankFile.BankQuestion bq : bank.getQuestions()) {
             String stem = bq.getStem() == null ? null : bq.getStem().trim();
             if (!StringUtils.hasText(stem)) {
                 result.setSkipped(result.getSkipped() + 1);
+                continue;
+            }
+            // nodeCode 必须在当前课程图谱内，否则为幽灵题（组卷时孤儿化），跳过
+            String nodeCode = bq.getNodeCode();
+            if (nodeCode == null || !validCodes.contains(nodeCode)) {
+                result.setSkipped(result.getSkipped() + 1);
+                result.setInvalidNodeSkipped(result.getInvalidNodeSkipped() + 1);
+                log.warn("题库导入跳过：nodeCode「{}」不在课程图谱内，题干前 20 字「{}」",
+                        nodeCode, stemPreview(stem));
                 continue;
             }
             if (existsStem(courseId, stem)) {
@@ -193,8 +206,9 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
             persistBankQuestion(courseId, stem, bq, codeToId);
             result.setImported(result.getImported() + 1);
         }
-        log.info("题库导入完成 courseId={} -> imported={} skipped={} aiCleaned={}",
-                courseId, result.getImported(), result.getSkipped(), aiCleaned);
+        log.info("题库导入完成 courseId={} -> imported={} skipped={}（其中 nodeCode 非法 {}）aiCleaned={}",
+                courseId, result.getImported(), result.getSkipped(),
+                result.getInvalidNodeSkipped(), aiCleaned);
         return result;
     }
 
@@ -252,6 +266,14 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
         qn.setNodeId(nodeId);
         qn.setWeight(weight);
         questionNodeMapper.insert(qn);
+    }
+
+    /** 题干前 20 字预览（用于 log.warn，避免日志过长）。 */
+    private String stemPreview(String stem) {
+        if (stem == null) {
+            return "";
+        }
+        return stem.length() > 20 ? stem.substring(0, 20) : stem;
     }
 
     /** 同课程下该 trim 后的题干是否已存在。 */

@@ -236,6 +236,30 @@ class QuestionBankImportServiceImplTest {
         assertThat(cleaned.getQuestions()).isEmpty();
     }
 
+    // ──────────────── 用例 I：nodeCode 非法跳过 ────────────────
+
+    @Test
+    @DisplayName("I importFromJson：nodeCode 不在课程图谱内的题被跳过，合法题正常入库")
+    void importFromJsonSkipsInvalidNodeCode() {
+        when(courseMapper.selectById(COURSE_ID)).thenReturn(course(COURSE_ID));
+        // 课程图谱仅有 KT07；KT99 为幽灵 code
+        when(graphQueryService.codeToId(COURSE_ID)).thenReturn(Map.of("KT07", 70L));
+        stubInsertAutoId();
+        when(questionMapper.selectList(any())).thenReturn(new ArrayList<>());
+
+        QuestionBankFile bank = bankFile(
+                bankQuestion("合法题：瀑布模型特点？", "KT07"),
+                bankQuestion("幽灵题：写错了的 code？", "KT99"));
+
+        ImportBankResult result = service().importFromJson(COURSE_ID, bank);
+
+        assertThat(result.getImported()).isEqualTo(1);
+        assertThat(result.getInvalidNodeSkipped()).isEqualTo(1);
+        assertThat(result.getSkipped()).isEqualTo(1);
+        // 仅合法题落库
+        verify(questionMapper, times(1)).insert(any(Question.class));
+    }
+
     // ───────────────────────── 测试辅助 ─────────────────────────
 
     private Course course(Long id) {
