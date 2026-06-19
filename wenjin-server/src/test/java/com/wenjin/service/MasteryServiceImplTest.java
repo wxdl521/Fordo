@@ -172,7 +172,7 @@ class MasteryServiceImplTest {
     }
 
     @Test
-    @DisplayName("F 难度因子：难度5答对(旧50,主点) 幅度更大 → 75.00 达已掌握(2)")
+    @DisplayName("F 难度因子+封顶：难度5答对(旧50,主点) effAlpha 由 0.5 封顶到 0.4 → 70.00 仍薄弱(1)")
     void higherDifficultyMovesMore() {
         when(questionMapper.selectList(any())).thenReturn(List.of(question(1L, 5)));
         when(questionNodeMapper.selectList(any())).thenReturn(List.of(qnode(1L, 100L, 1)));
@@ -182,8 +182,9 @@ class MasteryServiceImplTest {
 
         ArgumentCaptor<StudentMastery> smCap = ArgumentCaptor.forClass(StudentMastery.class);
         verify(studentMasteryMapper, times(1)).updateById(smCap.capture());
-        assertThat(smCap.getValue().getMasteryScore()).isEqualByComparingTo("75.00");
-        assertThat(smCap.getValue().getMasteryLevel()).isEqualTo(2);
+        // effAlpha = min(0.3 * 5/3 * 1.0, 0.4) = 0.4 → 50 + 0.4*(100-50) = 70.00
+        assertThat(smCap.getValue().getMasteryScore()).isEqualByComparingTo("70.00");
+        assertThat(smCap.getValue().getMasteryLevel()).isEqualTo(1);
     }
 
     @Test
