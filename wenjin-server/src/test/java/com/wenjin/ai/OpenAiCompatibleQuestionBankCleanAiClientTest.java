@@ -24,6 +24,9 @@ class OpenAiCompatibleQuestionBankCleanAiClientTest {
         assertThat(prompt).contains("干扰项考点映射");
         assertThat(prompt).contains("point_node_code");
         assertThat(prompt).contains("以 KT 开头");
+        // few-shot 范例存在且与最新 schema 一致（含 point_node_code）
+        assertThat(prompt).contains("示例输入");
+        assertThat(prompt).contains("示例输出");
     }
 
     // ============================ JSON 解析 ============================

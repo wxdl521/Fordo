@@ -129,6 +129,16 @@ public class OpenAiCompatibleQuestionBankCleanAiClient implements QuestionBankCl
         sb.append("{\"questions\":[{\"stem\":\"...\",\"nodeCode\":\"KT01\",\"chapter\":\"...\"," +
                 "\"difficulty\":3,\"analysis\":\"...\",\"options\":[" +
                 "{\"key\":\"A\",\"text\":\"...\",\"correct\":true,\"point_node_code\":null}]}]}\n");
+
+        // few-shot：一条完整样例（含难度归一、key 大写、trim、analysis 补全、干扰项 point_node_code 映射）
+        sb.append("\n示例（仅供格式参考，请按相同 schema 输出）：\n");
+        sb.append("示例输入：[{\"stem\":\" 瀑布模型的主要特点是？ \",\"nodeCode\":\"KT07\",\"difficulty\":9," +
+                "\"options\":[{\"key\":\"a\",\"text\":\"阶段线性、文档驱动\",\"correct\":true}," +
+                "{\"key\":\"b\",\"text\":\"强调持续迭代与增量交付\",\"correct\":false}]}]\n");
+        sb.append("示例输出：{\"questions\":[{\"stem\":\"瀑布模型的主要特点是？\",\"nodeCode\":\"KT07\"," +
+                "\"chapter\":\"软件过程\",\"difficulty\":3,\"analysis\":\"瀑布模型阶段线性、以文档驱动推进。\"," +
+                "\"options\":[{\"key\":\"A\",\"text\":\"阶段线性、文档驱动\",\"correct\":true,\"point_node_code\":null}," +
+                "{\"key\":\"B\",\"text\":\"强调持续迭代与增量交付\",\"correct\":false,\"point_node_code\":\"KT05\"}]}]}\n");
         return sb.toString();
     }
 
