@@ -35,3 +35,9 @@ export function reviewQuestions(courseId, ids, action) {
 export function fetchDashboard(courseId) {
   return http.get('/teacher/dashboard', { params: { courseId } })
 }
+
+// ── 图谱预览 SVG（AI 生成，长任务）──
+export function generateGraphPreviewSvg(courseId) {
+  // AI 出 SVG 最坏 2 轮 LLM（每轮读超时 60s），给足超时避免前端先放弃
+  return http.post('/teacher/graph/preview-svg', null, { params: { courseId }, timeout: 180000 })
+}
