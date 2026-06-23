@@ -80,7 +80,7 @@ public class OpenAiCompatibleGraphSvgAiClient implements GraphSvgAiClient {
 
     // ============================ Prompt 构造（包可见，可测） ============================
 
-    static String buildSvgPrompt(List<TeacherGraphVO.NodeVO> nodes, List<TeacherGraphVO.EdgeVO> edges) {
+    public static String buildSvgPrompt(List<TeacherGraphVO.NodeVO> nodes, List<TeacherGraphVO.EdgeVO> edges) {
         StringBuilder sb = new StringBuilder();
         sb.append("你是知识图谱可视化专家。请把下面这份知识图谱画成一张完整、可读、美观的 SVG。\n\n");
         sb.append("严格遵守以下视觉契约：\n");
@@ -110,7 +110,7 @@ public class OpenAiCompatibleGraphSvgAiClient implements GraphSvgAiClient {
         return sb.toString();
     }
 
-    static String buildRepairPrompt(String prevSvg, List<String> issues) {
+    public static String buildRepairPrompt(String prevSvg, List<String> issues) {
         StringBuilder sb = new StringBuilder();
         sb.append("你上一版生成的 SVG 存在以下问题：\n");
         for (String it : issues) {
