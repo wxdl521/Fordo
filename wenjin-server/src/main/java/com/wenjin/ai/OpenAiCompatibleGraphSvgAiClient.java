@@ -1,7 +1,6 @@
 package com.wenjin.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.AiProperties;
@@ -23,8 +22,6 @@ import java.util.Map;
  */
 @Component
 public class OpenAiCompatibleGraphSvgAiClient implements GraphSvgAiClient {
-
-    static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final AiProperties properties;
     private final RestClient restClient;
@@ -168,9 +165,9 @@ public class OpenAiCompatibleGraphSvgAiClient implements GraphSvgAiClient {
         int fence = s.indexOf("```");
         if (fence >= 0) {
             int start = s.indexOf('\n', fence);
-            int end = s.indexOf("```", fence + 3);
-            if (start >= 0 && end > start) {
-                s = s.substring(start + 1, end).trim();
+            int fenceEnd = s.indexOf("```", fence + 3);
+            if (start >= 0 && fenceEnd > start) {
+                s = s.substring(start + 1, fenceEnd).trim();
             }
         }
         int begin = s.indexOf("<svg");
