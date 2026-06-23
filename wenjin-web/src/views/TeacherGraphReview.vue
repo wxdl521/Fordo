@@ -10,6 +10,7 @@
         <span>{{ progressText }}</span>
         <button @click="toggleLinkMode" :style="linkMode ? linkBtnActiveStyle : linkBtnStyle">连线模式</button>
         <button @click="showImportModal = true" :style="importBtnHeaderStyle">导入图谱</button>
+        <button @click="openPreview" :style="importBtnHeaderStyle">生成预览图</button>
       </div>
     </div>
 
@@ -231,6 +232,40 @@
       </div>
     </div>
 
+    <!-- 预览图弹窗 -->
+    <div v-if="showPreview" :style="modalOverlayStyle" @click.self="closePreview">
+      <div :style="previewModalStyle">
+        <div :style="modalHeadStyle">
+          <h3 :style="{ margin: 0, fontSize: '15px' }">知识图谱预览图</h3>
+          <button @click="closePreview" :style="closeBtnStyle">×</button>
+        </div>
+        <div :style="previewBodyStyle">
+          <div v-if="previewLoading" :style="{ padding: '60px', textAlign: 'center', color: 'var(--text-mut)' }">
+            正在生成预览图，AI 出图较慢请稍候…
+          </div>
+          <template v-else>
+            <div :style="previewMetaStyle">
+              <span v-if="previewSource === 'ai'" :style="previewBadgeOk">AI 生成</span>
+              <span v-else-if="previewSource === 'ai-repaired'" :style="previewBadgeOk">AI 生成（修复后）</span>
+              <span v-else-if="previewSource === 'fallback'" :style="previewBadgeFallback">兜底生成</span>
+              <span v-if="previewIssues.length" :style="{ fontSize: '11.5px', color: 'var(--text-mut)' }">
+                （AI 未达标：{{ previewIssues.join('；') }}）
+              </span>
+            </div>
+            <div v-if="previewSvg" :style="previewCanvasStyle" v-html="previewSvg"></div>
+            <div v-else :style="{ padding: '40px', textAlign: 'center', color: 'var(--accent)' }">
+              生成失败，请重试。
+              <button @click="openPreview" :style="retryBtnStyle">重试</button>
+            </div>
+          </template>
+        </div>
+        <div :style="modalFooterStyle">
+          <button v-if="previewSvg && !previewLoading" @click="downloadPreview" :style="submitBtnStyle">下载 .svg</button>
+          <button @click="closePreview" :style="cancelBtnStyle">关闭</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 右键菜单 -->
     <div
       v-if="contextMenu.visible"
@@ -266,8 +301,10 @@ import {
   rejectEdge,
   createNode,
   updateNode,
-  deleteNode
+  deleteNode,
+  generateGraphPreviewSvg
 } from '../api/teacher.js'
+import { renderGraphSvg } from '../utils/graphSvgRenderer.js'
 import { importGraphJson, importGraphExcel } from '../api/admin.js'
 
 const COURSE_ID = 1
@@ -298,6 +335,13 @@ const importProgress = ref(0)
 const importResult = ref(null)
 const importError = ref(null)
 const fileInput = ref(null)
+
+// ── 预览图状态 ──
+const showPreview = ref(false)
+const previewLoading = ref(false)
+const previewSvg = ref('')
+const previewSource = ref('')   // 'ai' | 'ai-repaired' | 'fallback'
+const previewIssues = ref([])
 
 let chart = null
 let C = {}
@@ -680,6 +724,71 @@ function handleKeydown(e) {
   }
 }
 
+
+// ── 预览图：AI 生成，失败兜底 ──
+function graphToLayoutData() {
+  const g = graph.value || {}
+  return {
+    nodes: (g.nodes || []).map((n) => ({
+      id: n.nodeCode, name: n.name, chapter: n.chapter || '',
+      difficulty: n.difficulty ?? 3, is_key: !!n.isKey
+    })),
+    edges: (g.edges || []).map((e) => ({ source: e.source, target: e.target, type: e.type }))
+  }
+}
+
+function fallbackPreview(issues) {
+  try {
+    previewSvg.value = renderGraphSvg(graphToLayoutData())
+    previewSource.value = 'fallback'
+    previewIssues.value = issues || []
+  } catch (e) {
+    previewSvg.value = ''
+    previewSource.value = ''
+    previewIssues.value = ['兜底渲染失败：' + (e.message || e)]
+  }
+}
+
+async function openPreview() {
+  showPreview.value = true
+  previewLoading.value = true
+  previewSvg.value = ''
+  previewSource.value = ''
+  previewIssues.value = []
+  try {
+    const res = await generateGraphPreviewSvg(COURSE_ID) // http 拦截器已拆 Result 信封
+    if (res && res.valid && res.svg) {
+      previewSvg.value = res.svg
+      previewSource.value = res.source || 'ai'
+      previewIssues.value = []
+    } else {
+      fallbackPreview(res ? res.issues : [])
+    }
+  } catch (e) {
+    fallbackPreview(['AI 调用失败：' + (e.message || '网络错误')])
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+function closePreview() {
+  showPreview.value = false
+  previewSvg.value = ''
+}
+
+function downloadPreview() {
+  if (!previewSvg.value) return
+  const blob = new Blob([previewSvg.value], { type: 'image/svg+xml;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `知识图谱预览-${COURSE_ID}.svg`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 // ── 导入 ──
 function closeImportModal() {
   if (importUploading.value) return
@@ -760,7 +869,8 @@ onMounted(async () => {
       accept: acceptEdge,
       reject: rejectEdge,
       openImport: () => { showImportModal.value = true },
-      state: () => ({ pending: pending.value, edges: graph.value?.edges })
+      state: () => ({ pending: pending.value, edges: graph.value?.edges }),
+      openPreview: () => { openPreview() },
     }
   }
 })
@@ -1148,6 +1258,55 @@ const importModalStyle = {
   borderRadius: '12px',
   display: 'flex',
   flexDirection: 'column'
+}
+
+const previewModalStyle = {
+  width: '90vw',
+  maxWidth: '1200px',
+  maxHeight: '88vh',
+  background: 'var(--panel)',
+  border: '1px solid var(--line)',
+  borderRadius: '12px',
+  display: 'flex',
+  flexDirection: 'column'
+}
+
+const previewBodyStyle = {
+  flex: 1,
+  minHeight: 0,
+  overflowY: 'auto',
+  padding: '16px 20px'
+}
+
+const previewMetaStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '10px',
+  marginBottom: '12px'
+}
+
+const previewCanvasStyle = {
+  width: '100%',
+  background: '#121317',
+  borderRadius: '10px',
+  overflow: 'hidden'
+}
+
+const previewBadgeOk = {
+  fontSize: '12px',
+  color: '#fff',
+  background: 'var(--mastered)',
+  borderRadius: '999px',
+  padding: '2px 10px'
+}
+
+const previewBadgeFallback = {
+  fontSize: '12px',
+  color: 'var(--text)',
+  background: 'var(--panel-2)',
+  border: '1px solid var(--line)',
+  borderRadius: '999px',
+  padding: '2px 10px'
 }
 
 function dropZoneStyle(dragging) {
