@@ -78,7 +78,7 @@ public class OpenAiCompatibleGraphSvgAiClient implements GraphSvgAiClient {
         return contentNode.asText();
     }
 
-    // ============================ Prompt 构造（包可见，可测） ============================
+    // ============================ Prompt 构造（公开静态，可测） ============================
 
     public static String buildSvgPrompt(List<TeacherGraphVO.NodeVO> nodes, List<TeacherGraphVO.EdgeVO> edges) {
         StringBuilder sb = new StringBuilder();
