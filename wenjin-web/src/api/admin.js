@@ -8,7 +8,13 @@ import { http } from './http.js'
  * @returns {Promise<GenerateResult>} { generated, dropped, duplicated, questionIds, message }
  */
 export function generateQuestions(courseId, nodeCode, count) {
-  return http.post('/admin/question/generate', null, { params: { courseId, nodeCode, count } })
+  // AI 出题是同步长任务：后端每轮 LLM 读超时 60s，最多 2 轮（MAX_ROUNDS），
+  // 20 题最坏 ~120s+，远超默认 15s。给足超时，避免前端先放弃、后端却仍在出题
+  // （表现为前台报超时、刷新后题目又出现）。
+  return http.post('/admin/question/generate', null, {
+    params: { courseId, nodeCode, count },
+    timeout: 180000
+  })
 }
 
 /**

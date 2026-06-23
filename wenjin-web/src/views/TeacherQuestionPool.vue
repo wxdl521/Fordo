@@ -569,6 +569,8 @@ const textareaStyle = {
 
 const pageStyle = {
   flex: 1,
+  minHeight: 0,
+  overflowY: 'auto',
   minWidth: '1100px',
   background: 'var(--bg)',
   color: 'var(--text)',
