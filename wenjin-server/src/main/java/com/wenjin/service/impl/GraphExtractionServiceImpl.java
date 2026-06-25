@@ -6,6 +6,7 @@ import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.dto.GraphImportRequest;
 import com.wenjin.service.GraphExtractionService;
+import com.wenjin.support.DocumentTextExtractor;
 import com.wenjin.support.ImagePreprocessor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -18,17 +19,21 @@ import java.util.Set;
 public class GraphExtractionServiceImpl implements GraphExtractionService {
 
     private static final Set<String> IMAGE_EXT = Set.of("png", "jpg", "jpeg", "webp", "bmp");
+    private static final Set<String> DOC_EXT = Set.of("pdf", "docx");
 
     private final ImagePreprocessor imagePreprocessor;
     private final ImageToMarkdownAiClient imageToMarkdownAiClient;
     private final SyllabusGraphAiClient syllabusGraphAiClient;
+    private final DocumentTextExtractor documentTextExtractor;
 
     public GraphExtractionServiceImpl(ImagePreprocessor imagePreprocessor,
                                       ImageToMarkdownAiClient imageToMarkdownAiClient,
-                                      SyllabusGraphAiClient syllabusGraphAiClient) {
+                                      SyllabusGraphAiClient syllabusGraphAiClient,
+                                      DocumentTextExtractor documentTextExtractor) {
         this.imagePreprocessor = imagePreprocessor;
         this.imageToMarkdownAiClient = imageToMarkdownAiClient;
         this.syllabusGraphAiClient = syllabusGraphAiClient;
+        this.documentTextExtractor = documentTextExtractor;
     }
 
     @Override
@@ -48,10 +53,12 @@ public class GraphExtractionServiceImpl implements GraphExtractionService {
             } catch (IOException e) {
                 throw new BusinessException(ResultCode.BAD_REQUEST, "读取图片失败：" + e.getMessage());
             }
-            byte[] jpeg = imagePreprocessor.compress(raw);
-            text = imageToMarkdownAiClient.toMarkdown(jpeg);
+            text = imageToMarkdownAiClient.toMarkdown(imagePreprocessor.compress(raw));
+        } else if (DOC_EXT.contains(ext)) {
+            text = documentTextExtractor.extract(file);
         } else {
-            throw new BusinessException(ResultCode.BAD_REQUEST, "暂不支持的文件类型：" + ext + "(当前支持图片)");
+            throw new BusinessException(ResultCode.BAD_REQUEST,
+                    "暂不支持的文件类型：" + ext + "(支持图片 / .pdf / .docx)");
         }
         return syllabusGraphAiClient.extract(text);
     }

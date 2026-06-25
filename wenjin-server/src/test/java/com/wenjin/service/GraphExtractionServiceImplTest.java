@@ -24,6 +24,7 @@ class GraphExtractionServiceImplTest {
     @Mock ImagePreprocessor pre;
     @Mock ImageToMarkdownAiClient vision;
     @Mock SyllabusGraphAiClient syllabus;
+    @org.mockito.Mock com.wenjin.support.DocumentTextExtractor docExtractor;
     @InjectMocks GraphExtractionServiceImpl service;
 
     @Test
@@ -54,5 +55,21 @@ class GraphExtractionServiceImplTest {
     void blankCourseCode_throws() {
         MockMultipartFile f = new MockMultipartFile("file", "a.png", "image/png", new byte[]{1});
         assertThatThrownBy(() -> service.extract("  ", f)).isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void docFlow_runsPipelineAndReturnsDraft() {
+        org.springframework.mock.web.MockMultipartFile f =
+                new org.springframework.mock.web.MockMultipartFile("file", "a.docx",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document", new byte[]{1});
+        when(docExtractor.extract(f)).thenReturn("第1章 绪论");
+        GraphImportRequest draft = new GraphImportRequest();
+        when(syllabus.extract("第1章 绪论")).thenReturn(draft);
+
+        GraphImportRequest result = service.extract("C1", f);
+
+        assertThat(result).isSameAs(draft);
+        verify(docExtractor).extract(f);
+        verify(syllabus).extract("第1章 绪论");
     }
 }
