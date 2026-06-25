@@ -42,6 +42,11 @@ wenjin:
     api-key: ${WENJIN_AI_API_KEY:}
     model: ${WENJIN_AI_MODEL:deepseek-chat}
     temperature: 0.4
+    vision:                                       # 多模态仅识图,可换更强模型;key 经环境变量注入勿硬编码
+      enabled: ${WENJIN_AI_VISION_ENABLED:true}
+      base-url: ${WENJIN_AI_VISION_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+      api-key: ${WENJIN_AI_VISION_API_KEY:}
+      model: ${WENJIN_AI_VISION_MODEL:glm-5v-turbo}
   diagnostic:                                    # 入口诊断组卷（T6）
     paper-size: 25                               # 诊断试卷目标题数（分层抽样上限）
   mastery:                                       # 掌握度计算（阶段三 EWMA）

@@ -24,4 +24,16 @@ public class AiProperties {
 
     /** 采样温度 */
     private Double temperature;
+
+    /** 视觉模型(仅识图,OpenAI 兼容,可换任意更强模型) */
+    private Vision vision = new Vision();
+
+    @lombok.Data
+    public static class Vision {
+        private boolean enabled = true;
+        /** 到 chat/completions 之前的完整前缀,如智谱 https://open.bigmodel.cn/api/paas/v4 */
+        private String baseUrl;
+        private String apiKey;
+        private String model;
+    }
 }
