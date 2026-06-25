@@ -3,6 +3,7 @@ package com.wenjin.controller;
 import com.wenjin.common.Result;
 import com.wenjin.dto.GraphImportRequest;
 import com.wenjin.dto.GraphImportResult;
+import com.wenjin.service.GraphExtractionService;
 import com.wenjin.service.GraphImportService;
 import com.wenjin.service.GraphService;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,10 +22,14 @@ public class GraphAdminController {
 
     private final GraphService graphService;
     private final GraphImportService graphImportService;
+    private final GraphExtractionService graphExtractionService;
 
-    public GraphAdminController(GraphService graphService, GraphImportService graphImportService) {
+    public GraphAdminController(GraphService graphService,
+                                GraphImportService graphImportService,
+                                GraphExtractionService graphExtractionService) {
         this.graphService = graphService;
         this.graphImportService = graphImportService;
+        this.graphExtractionService = graphExtractionService;
     }
 
     /**
@@ -52,5 +57,16 @@ public class GraphAdminController {
             @RequestParam("courseCode") String courseCode,
             @RequestParam("file") MultipartFile file) {
         return Result.ok(graphImportService.importFromExcel(courseCode, file));
+    }
+
+    /**
+     * 从课程标准(图片/文档)抽取图谱草稿,返回草稿不落库。
+     * POST /api/admin/graph/extract?courseCode=...
+     * body: multipart/form-data,字段名 file
+     */
+    @PostMapping("/extract")
+    public Result<GraphImportRequest> extract(@RequestParam("courseCode") String courseCode,
+                                              @RequestParam("file") MultipartFile file) {
+        return Result.ok(graphExtractionService.extract(courseCode, file));
     }
 }
