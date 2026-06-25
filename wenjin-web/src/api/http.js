@@ -6,6 +6,17 @@ const http = axios.create({
   timeout: 15000
 })
 
+// 请求拦截器：带上当前登录用户 id（教师端 / 管理端接口据此做角色校验）
+http.interceptors.request.use((config) => {
+  try {
+    const user = JSON.parse(localStorage.getItem('wj_user'))
+    if (user && user.id != null) {
+      config.headers['X-User-Id'] = user.id
+    }
+  } catch { /* 未登录或解析失败：不带身份头 */ }
+  return config
+})
+
 // 拆解统一返回体 Result<T>：code===0 取 data，否则抛出携带明细的错误
 http.interceptors.response.use(
   (resp) => {

@@ -113,8 +113,11 @@
 
           <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px' }">
             <button @click="handleLogout" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' }">退出登录</button>
-            <span :style="{ width: '1px', height: '12px', background: 'var(--line)' }"></span>
-            <router-link to="/teacher/graph" class="wj-underline" :style="{ color: 'var(--mut)', fontSize: '12.5px', textDecoration: 'underline', textUnderlineOffset: '3px' }">我是教师 · 进入教师端</router-link>
+            <!-- 教师端入口仅对教师（role === 1）可见 -->
+            <template v-if="isTeacher">
+              <span :style="{ width: '1px', height: '12px', background: 'var(--line)' }"></span>
+              <router-link to="/teacher/graph" class="wj-underline" :style="{ color: 'var(--mut)', fontSize: '12.5px', textDecoration: 'underline', textUnderlineOffset: '3px' }">我是教师 · 进入教师端</router-link>
+            </template>
           </div>
         </div>
       </div>
@@ -156,6 +159,9 @@ const displayName = computed(() => {
   }
   return '同学'
 })
+
+// 是否教师（role === 1）——决定课程页是否显示「进入教师端」入口
+const isTeacher = computed(() => currentUser.value && currentUser.value.role === 1)
 
 function masteryPercent(c) {
   const total = c.masteredCount + c.weakCount + c.unlearnedCount

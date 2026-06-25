@@ -36,3 +36,24 @@ export const router = createRouter({
     return { top: 0 }
   }
 })
+
+// 当前登录用户（localStorage 约定见 Login.vue / ColorMap.vue）
+function currentUser() {
+  try {
+    return JSON.parse(localStorage.getItem('wj_user'))
+  } catch {
+    return null
+  }
+}
+
+// 路由守卫：教师端（/teacher/*）仅允许教师（role === 1）进入，
+// 未登录或学生一律重定向回登录 / 课程选择页。
+router.beforeEach((to) => {
+  if (to.path.startsWith('/teacher')) {
+    const user = currentUser()
+    if (!user || user.role !== 1) {
+      return { path: '/' }
+    }
+  }
+  return true
+})
