@@ -13,7 +13,7 @@
         <button @click="openPreview" :style="importBtnHeaderStyle">生成预览图</button>
         <label :style="{ ...importBtnHeaderStyle, cursor: 'pointer' }">
           从课程标准生成
-          <input type="file" accept="image/png,image/jpeg,image/webp,image/bmp"
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/bmp,.pdf,.docx"
                  style="display:none" @change="handleSyllabusImage" />
         </label>
         <span v-if="syllabusBusy" :style="{ marginLeft: '8px', fontSize: '13px', color: 'var(--text-mut)' }">识别中…</span>
