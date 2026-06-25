@@ -18,6 +18,10 @@ spring:
   sql:
     init:
       mode: never
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
 
 # MyBatis-Plus 配置
 mybatis-plus:

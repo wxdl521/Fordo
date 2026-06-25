@@ -26,6 +26,9 @@
       <div :style="{ fontSize: '13px', color: 'var(--text)', marginBottom: '10px' }">
         草稿:节点 {{ syllabusDraft.nodes?.length || 0 }} 个 · 边 {{ syllabusDraft.edges?.length || 0 }} 条(推断关系将进入待复核)
       </div>
+      <div :style="{ fontSize: '12.5px', color: 'var(--accent)', marginBottom: '10px' }">
+        ⚠ 确认导入将<b>全量替换</b>当前课程图谱（现有节点与边会被覆盖,不可撤销）
+      </div>
       <button :disabled="syllabusBusy" @click="confirmSyllabusImport" :style="importBtnHeaderStyle">确认导入</button>
       <button @click="syllabusDraft = null" :style="{ ...cancelBtnStyle, marginLeft: '8px' }">取消</button>
     </div>
