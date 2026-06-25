@@ -87,3 +87,21 @@ export function importGraphExcel(courseCode, file, onUploadProgress) {
     onUploadProgress
   })
 }
+
+/**
+ * 从课程标准(图片/文档)抽取图谱草稿(不落库)
+ * @param {string} courseCode
+ * @param {File} file  图片(或后续文档)
+ * @param {function} [onUploadProgress]
+ * @returns {Promise<{nodes:Array, edges:Array}>} 图谱草稿
+ */
+export function extractGraphFromFile(courseCode, file, onUploadProgress) {
+  const form = new FormData()
+  form.append('file', file)
+  return http.post('/admin/graph/extract', form, {
+    params: { courseCode },
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180000,
+    onUploadProgress
+  })
+}

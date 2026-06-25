@@ -11,7 +11,23 @@
         <button @click="toggleLinkMode" :style="linkMode ? linkBtnActiveStyle : linkBtnStyle">连线模式</button>
         <button @click="showImportModal = true" :style="importBtnHeaderStyle">导入图谱</button>
         <button @click="openPreview" :style="importBtnHeaderStyle">生成预览图</button>
+        <label :style="{ ...importBtnHeaderStyle, cursor: 'pointer' }">
+          从课程标准生成
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/bmp"
+                 style="display:none" @change="handleSyllabusImage" />
+        </label>
+        <span v-if="syllabusBusy" :style="{ marginLeft: '8px', fontSize: '13px', color: 'var(--text-mut)' }">识别中…</span>
+        <span v-if="syllabusError" :style="{ marginLeft: '8px', fontSize: '13px', color: 'var(--accent)' }">{{ syllabusError }}</span>
       </div>
+    </div>
+
+    <!-- 课程标准草稿预览 -->
+    <div v-if="syllabusDraft" :style="{ margin: '10px 16px', padding: '12px', border: '1px solid var(--line)', borderRadius: '8px', background: 'var(--panel)' }">
+      <div :style="{ fontSize: '13px', color: 'var(--text)', marginBottom: '10px' }">
+        草稿:节点 {{ syllabusDraft.nodes?.length || 0 }} 个 · 边 {{ syllabusDraft.edges?.length || 0 }} 条(推断关系将进入待复核)
+      </div>
+      <button :disabled="syllabusBusy" @click="confirmSyllabusImport" :style="importBtnHeaderStyle">确认导入</button>
+      <button @click="syllabusDraft = null" :style="{ ...cancelBtnStyle, marginLeft: '8px' }">取消</button>
     </div>
 
     <!-- 主体 -->
@@ -305,7 +321,7 @@ import {
   generateGraphPreviewSvg
 } from '../api/teacher.js'
 import { renderGraphSvg } from '../utils/graphSvgRenderer.js'
-import { importGraphJson, importGraphExcel } from '../api/admin.js'
+import { importGraphJson, importGraphExcel, extractGraphFromFile } from '../api/admin.js'
 
 const COURSE_ID = 1
 
@@ -335,6 +351,11 @@ const importProgress = ref(0)
 const importResult = ref(null)
 const importError = ref(null)
 const fileInput = ref(null)
+
+// ── 课程标准图片抽取状态 ──
+const syllabusDraft = ref(null)      // 抽取出的草稿 {nodes, edges}
+const syllabusBusy = ref(false)
+const syllabusError = ref('')
 
 // ── 预览图状态 ──
 const showPreview = ref(false)
@@ -787,6 +808,39 @@ function downloadPreview() {
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
+}
+
+// ── 课程标准图片抽取 ──
+async function handleSyllabusImage(event) {
+  const file = event.target.files && event.target.files[0]
+  event.target.value = ''            // 允许重复选同一文件
+  if (!file) return
+  syllabusError.value = ''
+  syllabusBusy.value = true
+  syllabusDraft.value = null
+  try {
+    const courseCode = '52015CC4B4'
+    syllabusDraft.value = await extractGraphFromFile(courseCode, file)
+  } catch (e) {
+    syllabusError.value = e.message || '识别失败'
+  } finally {
+    syllabusBusy.value = false
+  }
+}
+
+async function confirmSyllabusImport() {
+  if (!syllabusDraft.value) return
+  syllabusBusy.value = true
+  try {
+    const courseCode = '52015CC4B4'
+    await importGraphJson(courseCode, syllabusDraft.value)
+    syllabusDraft.value = null
+    await reload()
+  } catch (e) {
+    syllabusError.value = e.message || '导入失败'
+  } finally {
+    syllabusBusy.value = false
+  }
 }
 
 // ── 导入 ──
