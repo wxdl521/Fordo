@@ -815,6 +815,7 @@ async function handleSyllabusImage(event) {
   const file = event.target.files && event.target.files[0]
   event.target.value = ''            // 允许重复选同一文件
   if (!file) return
+  if (syllabusBusy.value) return      // 识别中,忽略并发上传
   syllabusError.value = ''
   syllabusBusy.value = true
   syllabusDraft.value = null
