@@ -30,6 +30,7 @@ public class ExtractionMetricsCalculator {
     }
 
     private ExtractionMetrics.MetricSet nodeMetrics(List<NodeItem> ai, List<NodeItem> fin) {
+        // 假设：AI 草稿节点 id 唯一；重复 id 会被 put 去重而少计 aiCount（演示场景可接受）
         Map<String, NodeItem> aiMap = new HashMap<>();
         for (NodeItem n : ai) {
             if (n.getId() != null) aiMap.put(n.getId(), n);
@@ -59,12 +60,15 @@ public class ExtractionMetricsCalculator {
     }
 
     private ExtractionMetrics.MetricSet edgeMetrics(List<EdgeItem> ai, List<EdgeItem> fin) {
+        // 假设：AI 草稿边 (source, target, type) 唯一；重复会被 put 去重而少计 aiCount
         Map<String, EdgeItem> aiMap = new HashMap<>();
         for (EdgeItem e : ai) {
+            if (e.getSource() == null || e.getTarget() == null || e.getType() == null) continue;
             aiMap.put(edgeKey(e), e);
         }
         int kept = 0, modified = 0, added = 0, finalCount = 0;
         for (EdgeItem f : fin) {
+            if (f.getSource() == null || f.getTarget() == null || f.getType() == null) continue;
             finalCount++;
             EdgeItem a = aiMap.get(edgeKey(f));
             if (a == null) {

@@ -84,4 +84,22 @@ class ExtractionMetricsCalculatorTest {
         assertNull(n.getPrecision());
         assertEquals(0, n.getFinalCount());
     }
+
+    @Test
+    void edges_noteChange_countsModified_andEmptyEdgeRatiosNull() {
+        EdgeItem a = edge("A", "B", "前置");
+        a.setNote("原备注");
+        EdgeItem a2 = edge("A", "B", "前置");
+        a2.setNote("改后备注");
+        GraphImportRequest ai = graph(new ArrayList<>(), new ArrayList<>(List.of(a)));
+        GraphImportRequest fin = graph(new ArrayList<>(), new ArrayList<>(List.of(a2)));
+
+        ExtractionMetrics.MetricSet e = calc.calculate(ai, fin).getEdge();
+        assertEquals(1, e.getKeptCount());
+        assertEquals(1, e.getModifiedCount());
+
+        GraphImportRequest empty = graph(new ArrayList<>(), new ArrayList<>());
+        assertNull(calc.calculate(empty, empty).getEdge().getRecall());
+        assertNull(calc.calculate(empty, empty).getEdge().getPrecision());
+    }
 }
