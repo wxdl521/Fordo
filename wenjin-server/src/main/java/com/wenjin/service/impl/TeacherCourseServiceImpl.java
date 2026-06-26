@@ -67,7 +67,13 @@ public class TeacherCourseServiceImpl implements TeacherCourseService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long courseId) {
-        throw new UnsupportedOperationException("Task 2");
+        Course c = courseMapper.selectById(courseId);
+        if (c == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "课程不存在：" + courseId);
+        }
+        edgeMapper.delete(new LambdaQueryWrapper<KgEdge>().eq(KgEdge::getCourseId, courseId));
+        nodeMapper.delete(new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId));
+        courseMapper.deleteById(courseId);
     }
 
     private String generateUniqueCode() {

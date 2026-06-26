@@ -10,6 +10,7 @@ import com.wenjin.service.impl.TeacherCourseServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -20,6 +21,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -83,5 +85,26 @@ class TeacherCourseServiceImplTest {
         ArgumentCaptor<Course> cap = ArgumentCaptor.forClass(Course.class);
         verify(courseMapper).insert(cap.capture());
         assertThat(cap.getValue().getTeacherId()).isEqualTo(1L);
+    }
+
+    @Test
+    void delete_removesEdgesThenNodesThenCourse() {
+        Course c = new Course();
+        c.setId(5L);
+        when(courseMapper.selectById(5L)).thenReturn(c);
+
+        service.delete(5L);
+
+        InOrder order = inOrder(edgeMapper, nodeMapper, courseMapper);
+        order.verify(edgeMapper).delete(any());
+        order.verify(nodeMapper).delete(any());
+        order.verify(courseMapper).deleteById(5L);
+    }
+
+    @Test
+    void delete_missingCourse_throws() {
+        when(courseMapper.selectById(404L)).thenReturn(null);
+        assertThatThrownBy(() -> service.delete(404L))
+                .isInstanceOf(BusinessException.class);
     }
 }
