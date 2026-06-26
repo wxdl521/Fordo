@@ -266,6 +266,32 @@ CREATE TABLE `companion_message` (
     KEY `idx_conversation_time` (`conversation_id`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='伴侣会话消息';
 
+DROP TABLE IF EXISTS `extraction_review`;
+CREATE TABLE `extraction_review` (
+    `id`                  BIGINT       NOT NULL AUTO_INCREMENT COMMENT '记录ID',
+    `course_code`         VARCHAR(64)  NOT NULL                COMMENT '课程业务编码',
+    `course_id`           BIGINT       DEFAULT NULL            COMMENT '课程(逻辑外键→course.id)',
+    `node_ai_count`       INT          NOT NULL DEFAULT 0      COMMENT '节点:AI产出数',
+    `node_kept_count`     INT          NOT NULL DEFAULT 0      COMMENT '节点:保留数',
+    `node_deleted_count`  INT          NOT NULL DEFAULT 0      COMMENT '节点:删除数',
+    `node_added_count`    INT          NOT NULL DEFAULT 0      COMMENT '节点:新增数',
+    `node_modified_count` INT          NOT NULL DEFAULT 0      COMMENT '节点:修改数',
+    `node_final_count`    INT          NOT NULL DEFAULT 0      COMMENT '节点:最终总数',
+    `node_recall`         DECIMAL(5,4) DEFAULT NULL            COMMENT '节点召回率 kept/final',
+    `node_precision`      DECIMAL(5,4) DEFAULT NULL            COMMENT '节点精确率 kept/ai',
+    `edge_ai_count`       INT          NOT NULL DEFAULT 0      COMMENT '边:AI产出数',
+    `edge_kept_count`     INT          NOT NULL DEFAULT 0      COMMENT '边:保留数',
+    `edge_deleted_count`  INT          NOT NULL DEFAULT 0      COMMENT '边:删除数',
+    `edge_added_count`    INT          NOT NULL DEFAULT 0      COMMENT '边:新增数',
+    `edge_modified_count` INT          NOT NULL DEFAULT 0      COMMENT '边:修改数',
+    `edge_final_count`    INT          NOT NULL DEFAULT 0      COMMENT '边:最终总数',
+    `edge_recall`         DECIMAL(5,4) DEFAULT NULL            COMMENT '边召回率',
+    `edge_precision`      DECIMAL(5,4) DEFAULT NULL            COMMENT '边精确率',
+    `created_at`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_course_time` (`course_code`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='课程标准抽取审核指标记录';
+
 -- ───────────────────────────── 演示种子数据 ─────────────────────────────
 -- 本阶段不做登录与权限，写死一个演示教师 + 演示课程。
 -- 固定 course.id=1，前端染色地图默认按 courseId=1 查询；导入接口按 code 找到此行后全量替换图谱。
