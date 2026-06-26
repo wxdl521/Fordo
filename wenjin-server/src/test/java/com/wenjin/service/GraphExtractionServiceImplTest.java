@@ -28,21 +28,24 @@ class GraphExtractionServiceImplTest {
     @InjectMocks GraphExtractionServiceImpl service;
 
     @Test
-    void imageFlow_runsPipelineAndReturnsDraft() {
+    void imageFlow_tilesEachAndJoinsMarkdown() {
         byte[] raw = {1, 2, 3};
-        byte[] jpeg = {9};
+        byte[] t1 = {9};
+        byte[] t2 = {8};
         MockMultipartFile f = new MockMultipartFile("file", "a.png", "image/png", raw);
-        when(pre.compress(raw)).thenReturn(jpeg);
-        when(vision.toMarkdown(jpeg)).thenReturn("# md");
+        when(pre.compressTiles(raw)).thenReturn(java.util.List.of(t1, t2));
+        when(vision.toMarkdown(t1)).thenReturn("# part1");
+        when(vision.toMarkdown(t2)).thenReturn("## part2");
         GraphImportRequest draft = new GraphImportRequest();
-        when(syllabus.extract("# md")).thenReturn(draft);
+        when(syllabus.extract("# part1\n\n## part2")).thenReturn(draft);
 
         GraphImportRequest result = service.extract("C1", f);
 
         assertThat(result).isSameAs(draft);
-        verify(pre).compress(raw);
-        verify(vision).toMarkdown(jpeg);
-        verify(syllabus).extract("# md");
+        verify(pre).compressTiles(raw);
+        verify(vision).toMarkdown(t1);
+        verify(vision).toMarkdown(t2);
+        verify(syllabus).extract("# part1\n\n## part2");
     }
 
     @Test

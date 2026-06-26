@@ -53,7 +53,18 @@ public class GraphExtractionServiceImpl implements GraphExtractionService {
             } catch (IOException e) {
                 throw new BusinessException(ResultCode.BAD_REQUEST, "读取图片失败：" + e.getMessage());
             }
-            text = imageToMarkdownAiClient.toMarkdown(imagePreprocessor.compress(raw));
+            // 竖长文档会被切成多片(保持宽度可读),逐片转写后拼接;短图即单片。
+            StringBuilder sb = new StringBuilder();
+            for (byte[] tile : imagePreprocessor.compressTiles(raw)) {
+                String md = imageToMarkdownAiClient.toMarkdown(tile);
+                if (StringUtils.hasText(md)) {
+                    if (sb.length() > 0) {
+                        sb.append("\n\n");
+                    }
+                    sb.append(md.trim());
+                }
+            }
+            text = sb.toString();
         } else if (DOC_EXT.contains(ext)) {
             text = documentTextExtractor.extract(file);
         } else {
