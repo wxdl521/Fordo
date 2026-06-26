@@ -13,6 +13,7 @@ const MobileMap = () => import('../views/MobileMap.vue')
 const TeacherGraphReview = () => import('../views/TeacherGraphReview.vue')
 const TeacherQuestionPool = () => import('../views/TeacherQuestionPool.vue')
 const TeacherDashboard = () => import('../views/TeacherDashboard.vue')
+const GraphExtractReview = () => import('../views/GraphExtractReview.vue')
 
 const routes = [
   { path: '/', name: 'login', component: Login, meta: { title: '登录 / 课程选择' } },
@@ -26,7 +27,8 @@ const routes = [
   { path: '/mobile', name: 'mobile', component: MobileMap, meta: { title: '移动端地图' } },
   { path: '/teacher/graph', name: 'teacher-graph', component: TeacherGraphReview, meta: { title: '图谱审核工作台' } },
   { path: '/teacher/questions', name: 'teacher-questions', component: TeacherQuestionPool, meta: { title: '题目审核池' } },
-  { path: '/teacher/dashboard', name: 'teacher-dashboard', component: TeacherDashboard, meta: { title: '学情看板' } }
+  { path: '/teacher/dashboard', name: 'teacher-dashboard', component: TeacherDashboard, meta: { title: '学情看板' } },
+  { path: '/teacher/graph-extract-review', name: 'teacher-graph-extract-review', component: GraphExtractReview, meta: { title: '抽取审核' } },
 ]
 
 export const router = createRouter({
