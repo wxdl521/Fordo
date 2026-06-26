@@ -28,9 +28,10 @@ public class OpenAiCompatibleGraphSvgAiClient implements GraphSvgAiClient {
 
     public OpenAiCompatibleGraphSvgAiClient(AiProperties properties) {
         this.properties = properties;
+        // 视觉/推理模型出整张 SVG 可能较慢，读超时给足，避免单轮被过早掐断走兜底。
         ClientHttpRequestFactorySettings settings = ClientHttpRequestFactorySettings.DEFAULTS
                 .withConnectTimeout(Duration.ofSeconds(10))
-                .withReadTimeout(Duration.ofSeconds(60));
+                .withReadTimeout(Duration.ofSeconds(180));
         this.restClient = RestClient.builder()
                 .requestFactory(ClientHttpRequestFactories.get(settings))
                 .build();

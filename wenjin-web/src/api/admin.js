@@ -98,10 +98,13 @@ export function importGraphExcel(courseCode, file, onUploadProgress) {
 export function extractGraphFromFile(courseCode, file, onUploadProgress) {
   const form = new FormData()
   form.append('file', file)
+  // 竖长图会被后端切成多片(compressTiles),逐片串行做视觉转写(每片读超时 120s),
+  // 之后再做一次图谱抽取(读超时 120s)。多片相加很容易超过 3 分钟,故给足 10 分钟,
+  // 避免前端先报"timeout exceeded"而后端仍在出图。(Vite 代理 proxyTimeout 同步放宽)
   return http.post('/admin/graph/extract', form, {
     params: { courseCode },
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 180000,
+    timeout: 600000,
     onUploadProgress
   })
 }
