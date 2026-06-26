@@ -9,22 +9,48 @@
         </div>
         <span>{{ progressText }}</span>
         <button @click="toggleLinkMode" :style="linkMode ? linkBtnActiveStyle : linkBtnStyle">连线模式</button>
-        <select :value="currentCourse?.id" @change="switchCourse($event.target.value)" :style="courseSelectStyle" :disabled="!currentCourse">
-          <option v-if="courses.length === 0" :value="''">（暂无课程）</option>
-          <option v-for="c in courses" :key="c.id" :value="c.id">{{ c.name }}</option>
-        </select>
-        <button @click="showCourseForm = true" :style="importBtnHeaderStyle">+ 新增课程</button>
-        <button @click="removeCourse" :disabled="!currentCourse" :style="importBtnHeaderStyle">删除当前课程</button>
-        <button @click="showImportModal = true" :style="importBtnHeaderStyle">导入图谱</button>
-        <button @click="openPreview" :style="importBtnHeaderStyle">生成预览图</button>
-        <button @click="openHistory" :style="importBtnHeaderStyle">抽取历史</button>
-        <label :style="{ ...importBtnHeaderStyle, cursor: 'pointer' }">
-          从课程标准生成
-          <input type="file" accept="image/png,image/jpeg,image/webp,image/bmp,.pdf,.docx"
-                 style="display:none" @change="handleSyllabusImage" />
-        </label>
-        <span v-if="syllabusBusy" :style="{ marginLeft: '8px', fontSize: '13px', color: 'var(--text-mut)' }">识别中…</span>
-        <span v-if="syllabusError" :style="{ marginLeft: '8px', fontSize: '13px', color: 'var(--accent)' }">{{ syllabusError }}</span>
+        <!-- 课程切换下拉（自定义，样式与下方两个菜单一致） -->
+        <div :style="dropdownWrapStyle">
+          <button data-testid="course-switch" @click.stop="currentCourse && toggleMenu('switch')"
+                  :disabled="!currentCourse" :style="courseSwitchBtnStyle">
+            <span :style="courseSwitchNameStyle">{{ currentCourse?.name || '（暂无课程）' }}</span>
+            <span :style="{ opacity: 0.7 }">▾</span>
+          </button>
+          <div v-if="openMenu === 'switch'" data-testid="course-menu"
+               :style="{ ...dropdownMenuStyle, left: 0, right: 'auto', maxHeight: '320px', overflowY: 'auto' }" @click.stop>
+            <div v-for="c in courses" :key="c.id"
+                 :style="c.id === currentCourse?.id ? dropdownItemActiveStyle : dropdownItemStyle"
+                 @click="pickCourse(c.id)">{{ c.name }}</div>
+            <div v-if="courses.length === 0" :style="dropdownItemDisabledStyle">（暂无课程）</div>
+          </div>
+        </div>
+
+        <!-- 课程管理下拉：新增 / 删除 -->
+        <div :style="dropdownWrapStyle">
+          <button @click.stop="toggleMenu('course')" :style="importBtnHeaderStyle">课程管理 ▾</button>
+          <div v-if="openMenu === 'course'" :style="dropdownMenuStyle" @click.stop>
+            <div :style="dropdownItemStyle" @click="menuAction('addCourse')">+ 新增课程</div>
+            <div :style="currentCourse ? dropdownItemStyle : dropdownItemDisabledStyle"
+                 @click="currentCourse && menuAction('removeCourse')">删除当前课程</div>
+          </div>
+        </div>
+
+        <!-- 图谱操作下拉：导入 / 抽取 / 预览 / 历史 -->
+        <div :style="dropdownWrapStyle">
+          <button @click.stop="toggleMenu('graph')" :style="importBtnHeaderStyle">图谱操作 ▾</button>
+          <div v-if="openMenu === 'graph'" :style="dropdownMenuStyle" @click.stop>
+            <div :style="dropdownItemStyle" @click="menuAction('import')">导入图谱</div>
+            <div :style="dropdownItemStyle" @click="menuAction('syllabus')">从课程标准生成</div>
+            <div :style="dropdownItemStyle" @click="menuAction('preview')">生成预览图</div>
+            <div :style="dropdownItemStyle" @click="menuAction('history')">抽取历史</div>
+          </div>
+        </div>
+
+        <!-- 隐藏文件输入：常驻于工具栏，菜单关闭后仍可被 menuAction('syllabus') 触发 -->
+        <input ref="syllabusInput" type="file" accept="image/png,image/jpeg,image/webp,image/bmp,.pdf,.docx"
+               style="display:none" @change="handleSyllabusImage" />
+        <span v-if="syllabusBusy" :style="{ fontSize: '13px', color: 'var(--text-mut)' }">识别中…</span>
+        <span v-if="syllabusError" :style="{ fontSize: '13px', color: 'var(--accent)' }">{{ syllabusError }}</span>
       </div>
     </div>
 
@@ -381,6 +407,38 @@ const courses = ref([])
 const currentCourse = ref(null) // { id, code, name }
 const showCourseForm = ref(false)
 const newCourseName = ref('')
+
+// ── 工具栏下拉菜单（课程管理 / 图谱操作）──
+const openMenu = ref(null)          // 'course' | 'graph' | null
+const syllabusInput = ref(null)     // 常驻隐藏文件输入，供「从课程标准生成」触发
+
+function toggleMenu(name) {
+  openMenu.value = openMenu.value === name ? null : name
+}
+
+// 课程切换：选中后收起菜单并重载图谱
+function pickCourse(id) {
+  openMenu.value = null
+  switchCourse(id)
+}
+
+// 统一菜单项分发：先收起菜单，再执行动作
+function menuAction(name) {
+  openMenu.value = null
+  switch (name) {
+    case 'addCourse': showCourseForm.value = true; break
+    case 'removeCourse': removeCourse(); break
+    case 'import': showImportModal.value = true; break
+    case 'syllabus': syllabusInput.value && syllabusInput.value.click(); break
+    case 'preview': openPreview(); break
+    case 'history': openHistory(); break
+  }
+}
+
+// 点击菜单外部收起（冒泡阶段；触发器与菜单体已 @click.stop，不会误关）
+function closeDropdowns() {
+  if (openMenu.value) openMenu.value = null
+}
 
 const chartEl = ref(null)
 const graph = ref(null)
@@ -855,6 +913,7 @@ function closeMenus() {
 
 function handleKeydown(e) {
   if (e.key === 'Escape') {
+    if (openMenu.value) { openMenu.value = null; return }
     if (edgeTypePopup.value.visible) { edgeTypePopup.value = { visible: false, x: 0, y: 0 }; return }
     if (contextMenu.value.visible) { contextMenu.value = { visible: false, x: 0, y: 0, node: null }; return }
     if (linkMode.value) { exitLinkMode(); return }
@@ -1030,6 +1089,7 @@ onMounted(async () => {
   window.addEventListener('resize', onResize)
   window.addEventListener('keydown', handleKeydown)
   document.addEventListener('click', closeMenus, true)
+  document.addEventListener('click', closeDropdowns)
 
   if (import.meta.env.DEV) {
     window.__wjTeacherGraph = {
@@ -1049,6 +1109,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   window.removeEventListener('keydown', handleKeydown)
   document.removeEventListener('click', closeMenus, true)
+  document.removeEventListener('click', closeDropdowns)
   if (chart) chart.dispose()
 })
 
@@ -1420,15 +1481,60 @@ const importBtnHeaderStyle = {
   fontWeight: 500
 }
 
-const courseSelectStyle = {
-  fontSize: '13px',
-  color: 'var(--text)',
+// ── 工具栏下拉菜单样式 ──
+const dropdownWrapStyle = {
+  position: 'relative',
+  display: 'inline-block'
+}
+
+// 课程切换触发按钮：与「课程管理 / 图谱操作」同款描边按钮，内含课程名 + ▾
+const courseSwitchBtnStyle = {
+  ...importBtnHeaderStyle,
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '8px',
+  maxWidth: '220px'
+}
+
+const courseSwitchNameStyle = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap'
+}
+
+const dropdownMenuStyle = {
+  position: 'absolute',
+  top: 'calc(100% + 6px)',
+  right: 0,
   background: 'var(--panel)',
   border: '1px solid var(--line)',
-  borderRadius: '8px',
-  padding: '5px 10px',
+  borderRadius: '10px',
+  padding: '6px 0',
+  minWidth: '150px',
+  boxShadow: '0 6px 20px rgba(0,0,0,0.25)',
+  zIndex: 2000,
+  whiteSpace: 'nowrap'
+}
+
+const dropdownItemStyle = {
+  padding: '8px 16px',
+  fontSize: '13px',
+  color: 'var(--text)',
   cursor: 'pointer',
-  maxWidth: '220px'
+  transition: 'background 0.15s'
+}
+
+const dropdownItemActiveStyle = {
+  ...dropdownItemStyle,
+  color: 'var(--accent)',
+  fontWeight: 600
+}
+
+const dropdownItemDisabledStyle = {
+  ...dropdownItemStyle,
+  color: 'var(--text-mut)',
+  opacity: 0.45,
+  cursor: 'not-allowed'
 }
 
 const importModalStyle = {
