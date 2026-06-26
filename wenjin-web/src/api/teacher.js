@@ -41,3 +41,14 @@ export function generateGraphPreviewSvg(courseId) {
   // AI 出 SVG 最坏 2 轮 LLM（每轮读超时 60s），给足超时避免前端先放弃
   return http.post('/teacher/graph/preview-svg', null, { params: { courseId }, timeout: 180000 })
 }
+
+// ── 课程管理（多课程切换）──
+export function fetchTeacherCourses() {
+  return http.get('/teacher/courses')
+}
+export function createTeacherCourse(name) {
+  return http.post('/teacher/courses', { name })
+}
+export function deleteTeacherCourse(id) {
+  return http.delete(`/teacher/courses/${id}`)
+}
