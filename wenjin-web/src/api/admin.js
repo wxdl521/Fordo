@@ -89,11 +89,11 @@ export function importGraphExcel(courseCode, file, onUploadProgress) {
 }
 
 /**
- * 从课程标准(图片/文档)抽取图谱草稿(不落库)
+ * 从课程标准(图片/文档)抽取图谱草稿并暂存(返回 draftId,不落库)
  * @param {string} courseCode
- * @param {File} file  图片(或后续文档)
+ * @param {File} file
  * @param {function} [onUploadProgress]
- * @returns {Promise<{nodes:Array, edges:Array}>} 图谱草稿
+ * @returns {Promise<{draftId:string, draft:{nodes:Array, edges:Array}}>}
  */
 export function extractGraphFromFile(courseCode, file, onUploadProgress) {
   const form = new FormData()
@@ -104,4 +104,32 @@ export function extractGraphFromFile(courseCode, file, onUploadProgress) {
     timeout: 180000,
     onUploadProgress
   })
+}
+
+/**
+ * 按 draftId 拉取暂存草稿(审核页刷新用)
+ * @param {string} draftId
+ * @returns {Promise<{nodes:Array, edges:Array}>}
+ */
+export function fetchExtractDraft(draftId) {
+  return http.get(`/admin/graph/extract/${draftId}`)
+}
+
+/**
+ * 提交审核结果:全量替换导入并返回指标
+ * @param {string} draftId
+ * @param {object} finalGraph  { nodes:[], edges:[] }
+ * @returns {Promise<{ importResult:object, metrics:object }>}
+ */
+export function commitExtractDraft(draftId, finalGraph) {
+  return http.post(`/admin/graph/extract/${draftId}/commit`, finalGraph)
+}
+
+/**
+ * 抽取审核指标历史(倒序)
+ * @param {string} courseCode
+ * @returns {Promise<Array>}
+ */
+export function fetchExtractionReviews(courseCode) {
+  return http.get('/admin/graph/extract/reviews', { params: { courseCode } })
 }
