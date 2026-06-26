@@ -15,7 +15,7 @@
       <button @click="goBack" :style="{ ...ghostBtn, marginLeft: '10px' }">返回重新上传</button>
     </div>
 
-    <template v-else>
+    <div v-else :style="scrollAreaStyle">
       <!-- 全量替换警示 -->
       <div :style="warnStyle">⚠ 提交将<b>全量替换</b>当前课程图谱(现有节点与边被覆盖,不可撤销)</div>
 
@@ -81,7 +81,7 @@
         </table>
         <button @click="addEdge" :style="addBtn">+ 新增边</button>
       </div>
-    </template>
+    </div>
 
     <!-- 指标卡 -->
     <div v-if="metrics" :style="overlayStyle">
@@ -192,8 +192,9 @@ function goBack() { router.push('/teacher/graph') }
 function pct(v) { return v == null ? '—' : (Number(v) * 100).toFixed(1) + '%' }
 
 // ── 样式 ──
-const pageStyle = { minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)', padding: '0 0 40px' }
-const barStyle = { display: 'flex', alignItems: 'center', gap: '12px', padding: '14px 20px', borderBottom: '1px solid var(--line)', fontSize: '14px' }
+const pageStyle = { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)', color: 'var(--text)' }
+const barStyle = { flexShrink: 0, display: 'flex', alignItems: 'center', gap: '12px', padding: '14px 20px', borderBottom: '1px solid var(--line)', fontSize: '14px' }
+const scrollAreaStyle = { flex: 1, minHeight: 0, overflowY: 'auto', paddingBottom: '40px' }
 const hintStyle = { padding: '40px 20px', textAlign: 'center', color: 'var(--text-mut)' }
 const warnStyle = { margin: '12px 20px', padding: '10px 12px', border: '1px solid var(--line)', borderRadius: '8px', color: 'var(--accent)', fontSize: '13px' }
 const tabBarStyle = { display: 'flex', gap: '8px', padding: '0 20px' }
