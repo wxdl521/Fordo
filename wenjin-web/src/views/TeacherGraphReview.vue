@@ -11,6 +11,7 @@
         <button @click="toggleLinkMode" :style="linkMode ? linkBtnActiveStyle : linkBtnStyle">连线模式</button>
         <button @click="showImportModal = true" :style="importBtnHeaderStyle">导入图谱</button>
         <button @click="openPreview" :style="importBtnHeaderStyle">生成预览图</button>
+        <button @click="openHistory" :style="importBtnHeaderStyle">抽取历史</button>
         <label :style="{ ...importBtnHeaderStyle, cursor: 'pointer' }">
           从课程标准生成
           <input type="file" accept="image/png,image/jpeg,image/webp,image/bmp,.pdf,.docx"
@@ -19,18 +20,6 @@
         <span v-if="syllabusBusy" :style="{ marginLeft: '8px', fontSize: '13px', color: 'var(--text-mut)' }">识别中…</span>
         <span v-if="syllabusError" :style="{ marginLeft: '8px', fontSize: '13px', color: 'var(--accent)' }">{{ syllabusError }}</span>
       </div>
-    </div>
-
-    <!-- 课程标准草稿预览 -->
-    <div v-if="syllabusDraft" :style="{ margin: '10px 16px', padding: '12px', border: '1px solid var(--line)', borderRadius: '8px', background: 'var(--panel)' }">
-      <div :style="{ fontSize: '13px', color: 'var(--text)', marginBottom: '10px' }">
-        草稿:节点 {{ syllabusDraft.nodes?.length || 0 }} 个 · 边 {{ syllabusDraft.edges?.length || 0 }} 条(推断关系将进入待复核)
-      </div>
-      <div :style="{ fontSize: '12.5px', color: 'var(--accent)', marginBottom: '10px' }">
-        ⚠ 确认导入将<b>全量替换</b>当前课程图谱（现有节点与边会被覆盖,不可撤销）
-      </div>
-      <button :disabled="syllabusBusy" @click="confirmSyllabusImport" :style="importBtnHeaderStyle">确认导入</button>
-      <button @click="syllabusDraft = null" :style="{ ...cancelBtnStyle, marginLeft: '8px' }">取消</button>
     </div>
 
     <!-- 主体 -->
@@ -307,6 +296,32 @@
       <div :style="ctxMenuItemStyle" @click="confirmEdgeType('包含')">包含</div>
       <div :style="ctxMenuItemStyle" @click="confirmEdgeType('相关')">相关</div>
     </div>
+
+    <!-- 抽取历史弹层 -->
+    <div v-if="showHistory" :style="histOverlayStyle" @click.self="showHistory = false">
+      <div :style="histCardStyle">
+        <h3 :style="{ margin: '0 0 12px' }">抽取审核历史</h3>
+        <div v-if="reviews.length === 0" :style="{ color: 'var(--text-mut)', fontSize: '13px' }">暂无记录</div>
+        <table v-else :style="{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px' }">
+          <thead>
+            <tr>
+              <th :style="histTh">时间</th><th :style="histTh">节点召回</th><th :style="histTh">节点精确</th>
+              <th :style="histTh">保留/删/增</th><th :style="histTh">边召回</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(r, i) in reviews" :key="i">
+              <td :style="histTd">{{ (r.createdAt || '').replace('T', ' ').slice(0, 16) }}</td>
+              <td :style="histTd">{{ histPct(r.nodeRecall) }}</td>
+              <td :style="histTd">{{ histPct(r.nodePrecision) }}</td>
+              <td :style="histTd">{{ r.nodeKeptCount }}/{{ r.nodeDeletedCount }}/{{ r.nodeAddedCount }}</td>
+              <td :style="histTd">{{ histPct(r.edgeRecall) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <button @click="showHistory = false" :style="{ ...importBtnHeaderStyle, marginTop: '14px' }">关闭</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -324,8 +339,10 @@ import {
   generateGraphPreviewSvg
 } from '../api/teacher.js'
 import { renderGraphSvg } from '../utils/graphSvgRenderer.js'
-import { importGraphJson, importGraphExcel, extractGraphFromFile } from '../api/admin.js'
+import { importGraphJson, importGraphExcel, extractGraphFromFile, fetchExtractionReviews } from '../api/admin.js'
+import { useRouter } from 'vue-router'
 
+const router = useRouter()
 const COURSE_ID = 1
 
 const chartEl = ref(null)
@@ -356,9 +373,23 @@ const importError = ref(null)
 const fileInput = ref(null)
 
 // ── 课程标准图片抽取状态 ──
-const syllabusDraft = ref(null)      // 抽取出的草稿 {nodes, edges}
 const syllabusBusy = ref(false)
 const syllabusError = ref('')
+
+// ── 抽取历史 ──
+const showHistory = ref(false)
+const reviews = ref([])
+async function openHistory() {
+  showHistory.value = true
+  try { reviews.value = await fetchExtractionReviews('52015CC4B4') }
+  catch { reviews.value = [] }
+}
+function histPct(v) { return v == null ? '—' : (Number(v) * 100).toFixed(1) + '%' }
+
+const histOverlayStyle = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 }
+const histCardStyle = { width: '560px', maxWidth: '92vw', maxHeight: '80vh', overflow: 'auto', padding: '20px', background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: '12px' }
+const histTh = { textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid var(--line)', color: 'var(--text-mut)', whiteSpace: 'nowrap' }
+const histTd = { padding: '6px 8px', borderBottom: '1px solid var(--line)', whiteSpace: 'nowrap' }
 
 // ── 预览图状态 ──
 const showPreview = ref(false)
@@ -816,32 +847,17 @@ function downloadPreview() {
 // ── 课程标准图片抽取 ──
 async function handleSyllabusImage(event) {
   const file = event.target.files && event.target.files[0]
-  event.target.value = ''            // 允许重复选同一文件
+  event.target.value = ''
   if (!file) return
-  if (syllabusBusy.value) return      // 识别中,忽略并发上传
+  if (syllabusBusy.value) return
   syllabusError.value = ''
   syllabusBusy.value = true
-  syllabusDraft.value = null
   try {
     const courseCode = '52015CC4B4'
-    syllabusDraft.value = await extractGraphFromFile(courseCode, file)
+    const { draftId } = await extractGraphFromFile(courseCode, file)
+    router.push({ path: '/teacher/graph-extract-review', query: { draftId, courseCode } })
   } catch (e) {
     syllabusError.value = e.message || '识别失败'
-  } finally {
-    syllabusBusy.value = false
-  }
-}
-
-async function confirmSyllabusImport() {
-  if (!syllabusDraft.value) return
-  syllabusBusy.value = true
-  try {
-    const courseCode = '52015CC4B4'
-    await importGraphJson(courseCode, syllabusDraft.value)
-    syllabusDraft.value = null
-    await reload()
-  } catch (e) {
-    syllabusError.value = e.message || '导入失败'
   } finally {
     syllabusBusy.value = false
   }
