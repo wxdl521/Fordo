@@ -9,6 +9,12 @@
         </div>
         <span>{{ progressText }}</span>
         <button @click="toggleLinkMode" :style="linkMode ? linkBtnActiveStyle : linkBtnStyle">连线模式</button>
+        <select :value="currentCourse?.id" @change="switchCourse($event.target.value)" :style="courseSelectStyle" :disabled="!currentCourse">
+          <option v-if="courses.length === 0" :value="''">（暂无课程）</option>
+          <option v-for="c in courses" :key="c.id" :value="c.id">{{ c.name }}</option>
+        </select>
+        <button @click="showCourseForm = true" :style="importBtnHeaderStyle">+ 新增课程</button>
+        <button @click="removeCourse" :disabled="!currentCourse" :style="importBtnHeaderStyle">删除当前课程</button>
         <button @click="showImportModal = true" :style="importBtnHeaderStyle">导入图谱</button>
         <button @click="openPreview" :style="importBtnHeaderStyle">生成预览图</button>
         <button @click="openHistory" :style="importBtnHeaderStyle">抽取历史</button>
@@ -170,6 +176,28 @@
           <button @click="submitUpdate" :style="submitBtnStyle">保存</button>
           <button @click="confirmDelete" :style="deleteBtnStyle">删除</button>
           <button @click="showEditForm = false" :style="cancelBtnStyle">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 新增课程弹窗 -->
+    <div v-if="showCourseForm" :style="modalOverlayStyle" @click.self="showCourseForm = false">
+      <div :style="modalStyle">
+        <div :style="modalHeadStyle">
+          <h3 :style="{ margin: 0, fontSize: '15px' }">新增课程</h3>
+          <button @click="showCourseForm = false" :style="closeBtnStyle">×</button>
+        </div>
+        <div :style="modalBodyStyle">
+          <div :style="formRowStyle">
+            <label :style="labelStyle">课程名称</label>
+            <input v-model="newCourseName" :style="inputStyle" placeholder="例：软件工程"
+                   @keyup.enter="addCourse" />
+          </div>
+          <div :style="{ fontSize: '12px', color: 'var(--text-mut)' }">课程编码将自动生成，可直接导入/抽取课程标准。</div>
+        </div>
+        <div :style="modalFooterStyle">
+          <button @click="addCourse" :style="submitBtnStyle">创建</button>
+          <button @click="showCourseForm = false" :style="cancelBtnStyle">取消</button>
         </div>
       </div>
     </div>
@@ -336,14 +364,23 @@ import {
   createNode,
   updateNode,
   deleteNode,
-  generateGraphPreviewSvg
+  generateGraphPreviewSvg,
+  fetchTeacherCourses,
+  createTeacherCourse,
+  deleteTeacherCourse
 } from '../api/teacher.js'
 import { renderGraphSvg } from '../utils/graphSvgRenderer.js'
 import { importGraphJson, importGraphExcel, extractGraphFromFile, fetchExtractionReviews } from '../api/admin.js'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
-const COURSE_ID = 1
+
+// ── 多课程切换 ──
+const LS_KEY = 'wj.teacher.currentCourseId'
+const courses = ref([])
+const currentCourse = ref(null) // { id, code, name }
+const showCourseForm = ref(false)
+const newCourseName = ref('')
 
 const chartEl = ref(null)
 const graph = ref(null)
@@ -380,8 +417,9 @@ const syllabusError = ref('')
 const showHistory = ref(false)
 const reviews = ref([])
 async function openHistory() {
+  if (!currentCourse.value) return
   showHistory.value = true
-  try { reviews.value = await fetchExtractionReviews('52015CC4B4') }
+  try { reviews.value = await fetchExtractionReviews(currentCourse.value.code) }
   catch { reviews.value = [] }
 }
 function histPct(v) { return v == null ? '—' : (Number(v) * 100).toFixed(1) + '%' }
@@ -444,13 +482,63 @@ function readColors() {
   }
 }
 
+async function loadCourses(preferId) {
+  const list = await fetchTeacherCourses()
+  courses.value = Array.isArray(list) ? list : []
+  if (courses.value.length === 0) {
+    currentCourse.value = null
+    graph.value = { nodes: [], edges: [] }
+    pending.value = []
+    if (chart) chart.clear()
+    return
+  }
+  const saved = preferId ?? Number(localStorage.getItem(LS_KEY))
+  currentCourse.value = courses.value.find(c => c.id === saved) || courses.value[0]
+  localStorage.setItem(LS_KEY, String(currentCourse.value.id))
+}
+
+async function switchCourse(id) {
+  const c = courses.value.find(x => x.id === Number(id))
+  if (!c || (currentCourse.value && c.id === currentCourse.value.id)) return
+  currentCourse.value = c
+  localStorage.setItem(LS_KEY, String(c.id))
+  await reload()
+}
+
+async function addCourse() {
+  const name = (newCourseName.value || '').trim()
+  if (!name) { alert('请输入课程名'); return }
+  try {
+    const created = await createTeacherCourse(name)
+    showCourseForm.value = false
+    newCourseName.value = ''
+    await loadCourses(created.id)
+    await reload()
+  } catch (e) {
+    alert('新增失败：' + (e.message || '网络错误'))
+  }
+}
+
+async function removeCourse() {
+  if (!currentCourse.value) return
+  if (!confirm(`确定删除课程「${currentCourse.value.name}」及其全部图谱节点与边吗？此操作不可撤销。`)) return
+  try {
+    await deleteTeacherCourse(currentCourse.value.id)
+    await loadCourses()        // 切到列表里下一门或空态
+    if (currentCourse.value) await reload()
+  } catch (e) {
+    alert('删除失败：' + (e.message || '网络错误'))
+  }
+}
+
 async function reload() {
+  if (!currentCourse.value) { loading.value = false; return }
   loading.value = true
   error.value = null
   try {
     const [g, p] = await Promise.all([
-      fetchTeacherGraph(COURSE_ID),
-      fetchPendingEdges(COURSE_ID)
+      fetchTeacherGraph(currentCourse.value.id),
+      fetchPendingEdges(currentCourse.value.id)
     ])
 
     // 提取 .data（接口返回 Result 信封）
@@ -638,7 +726,7 @@ async function submitCreate() {
     return
   }
   try {
-    await createNode(COURSE_ID, nodeForm.value)
+    await createNode(currentCourse.value.id, nodeForm.value)
     showNodeForm.value = false
     nodeForm.value = { nodeCode: '', name: '', chapter: '', difficulty: 3, isKey: false, description: '', note: '', x: null, y: null }
     await reload()
@@ -811,7 +899,7 @@ async function openPreview() {
   previewSource.value = ''
   previewIssues.value = []
   try {
-    const res = await generateGraphPreviewSvg(COURSE_ID) // http 拦截器已拆 Result 信封
+    const res = await generateGraphPreviewSvg(currentCourse.value.id) // http 拦截器已拆 Result 信封
     if (res && res.valid && res.svg) {
       previewSvg.value = res.svg
       previewSource.value = res.source || 'ai'
@@ -837,7 +925,7 @@ function downloadPreview() {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `知识图谱预览-${COURSE_ID}.svg`
+  a.download = `知识图谱预览-${currentCourse.value?.code || 'graph'}.svg`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -849,11 +937,12 @@ async function handleSyllabusImage(event) {
   const file = event.target.files && event.target.files[0]
   event.target.value = ''
   if (!file) return
+  const courseCode = currentCourse.value?.code
+  if (!courseCode) { alert('请先选择或新增课程'); return }
   if (syllabusBusy.value) return
   syllabusError.value = ''
   syllabusBusy.value = true
   try {
-    const courseCode = '52015CC4B4'
     const { draftId } = await extractGraphFromFile(courseCode, file)
     router.push({ path: '/teacher/graph-extract-review', query: { draftId, courseCode } })
   } catch (e) {
@@ -895,13 +984,17 @@ async function doImport(file) {
     return
   }
 
+  const courseCode = currentCourse.value?.code
+  if (!courseCode) {
+    importError.value = '请先选择或新增课程'
+    return
+  }
+
   importFile.value = file
   importUploading.value = true
   importProgress.value = 0
   importResult.value = null
   importError.value = null
-
-  const courseCode = '52015CC4B4'
 
   try {
     let res
@@ -932,6 +1025,7 @@ function onResize() {
 
 onMounted(async () => {
   readColors()
+  await loadCourses()
   await reload()
   window.addEventListener('resize', onResize)
   window.addEventListener('keydown', handleKeydown)
@@ -945,6 +1039,8 @@ onMounted(async () => {
       openImport: () => { showImportModal.value = true },
       state: () => ({ pending: pending.value, edges: graph.value?.edges }),
       openPreview: () => { openPreview() },
+      switchCourse,
+      addCourse: () => { showCourseForm.value = true },
     }
   }
 })
@@ -1322,6 +1418,17 @@ const importBtnHeaderStyle = {
   cursor: 'pointer',
   transition: 'opacity 0.2s',
   fontWeight: 500
+}
+
+const courseSelectStyle = {
+  fontSize: '13px',
+  color: 'var(--text)',
+  background: 'var(--panel)',
+  border: '1px solid var(--line)',
+  borderRadius: '8px',
+  padding: '5px 10px',
+  cursor: 'pointer',
+  maxWidth: '220px'
 }
 
 const importModalStyle = {
