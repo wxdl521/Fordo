@@ -54,6 +54,18 @@ class GraphAdminControllerExtractReviewTest {
 
         mvc.perform(get("/api/admin/graph/extract/reviews").param("courseCode", "C1"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
                 .andExpect(jsonPath("$.data[0].courseCode").value("C1"));
+    }
+
+    @Test
+    void getDraft_returnsDraft() throws Exception {
+        com.wenjin.dto.GraphImportRequest draft = new com.wenjin.dto.GraphImportRequest();
+        draft.setNodes(java.util.List.of());
+        when(svc.getDraft("draft-1")).thenReturn(draft);
+
+        mvc.perform(get("/api/admin/graph/extract/draft-1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0));
     }
 }

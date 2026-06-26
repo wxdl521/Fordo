@@ -54,7 +54,7 @@ public class ExtractionMetricsCalculator {
         return !Objects.equals(a.getName(), b.getName())
                 || !Objects.equals(a.getChapter(), b.getChapter())
                 || !Objects.equals(a.getDifficulty(), b.getDifficulty())
-                || !Objects.equals(a.getIsKey(), b.getIsKey())
+                || (Boolean.TRUE.equals(a.getIsKey()) != Boolean.TRUE.equals(b.getIsKey()))
                 || !Objects.equals(a.getBloom(), b.getBloom())
                 || !Objects.equals(a.getDescription(), b.getDescription());
     }

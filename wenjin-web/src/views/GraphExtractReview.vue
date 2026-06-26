@@ -4,7 +4,7 @@
     <div :style="barStyle">
       <span>课程标准抽取审核 · 节点 <b>{{ nodes.length }}</b> · 边 <b>{{ edges.length }}</b></span>
       <div :style="{ marginLeft: 'auto', display: 'flex', gap: '10px' }">
-        <button :disabled="busy || expired" @click="submit" :style="primaryBtn">提交并生成图谱</button>
+        <button :disabled="busy || expired || loading" @click="submit" :style="primaryBtn">提交并生成图谱</button>
         <button @click="goBack" :style="ghostBtn">取消返回</button>
       </div>
     </div>
@@ -158,10 +158,10 @@ function addEdge() {
 function removeEdge(i) { edges.value.splice(i, 1) }
 
 function validate() {
-  const ids = nodes.value.map(n => (n.id || '').trim())
-  if (ids.some(id => !id)) return '存在 ID 为空的节点'
-  if (new Set(ids).size !== ids.length) return '存在重复的节点 ID'
-  const idSet = new Set(ids)
+  const rawIds = nodes.value.map(n => n.id)
+  if (rawIds.some(id => !(id || '').trim())) return '存在 ID 为空的节点'
+  if (new Set(rawIds).size !== rawIds.length) return '存在重复的节点 ID'
+  const idSet = new Set(rawIds)
   for (const e of edges.value) {
     if (!idSet.has(e.source) || !idSet.has(e.target)) return `边 ${e.source}→${e.target} 引用了不存在的节点`
   }

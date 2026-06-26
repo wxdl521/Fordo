@@ -86,6 +86,21 @@ class ExtractionMetricsCalculatorTest {
     }
 
     @Test
+    void node_isKeyNullVsFalse_notModified_butNullVsTrueIsModified() {
+        GraphImportRequest.NodeItem aiNull = node("A", "甲"); // isKey 默认 null
+        GraphImportRequest.NodeItem finFalse = node("A", "甲");
+        finFalse.setIsKey(false);
+        GraphImportRequest ai = graph(new ArrayList<>(List.of(aiNull)), new ArrayList<>());
+        GraphImportRequest fin = graph(new ArrayList<>(List.of(finFalse)), new ArrayList<>());
+        assertEquals(0, calc.calculate(ai, fin).getNode().getModifiedCount());
+
+        GraphImportRequest.NodeItem finTrue = node("A", "甲");
+        finTrue.setIsKey(true);
+        GraphImportRequest fin2 = graph(new ArrayList<>(List.of(finTrue)), new ArrayList<>());
+        assertEquals(1, calc.calculate(ai, fin2).getNode().getModifiedCount());
+    }
+
+    @Test
     void edges_noteChange_countsModified_andEmptyEdgeRatiosNull() {
         EdgeItem a = edge("A", "B", "前置");
         a.setNote("原备注");

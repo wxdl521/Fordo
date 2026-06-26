@@ -10,6 +10,7 @@ import com.wenjin.entity.ExtractionReview;
 import com.wenjin.mapper.ExtractionReviewMapper;
 import com.wenjin.support.GraphDraftStore;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
@@ -47,6 +48,8 @@ public class GraphExtractReviewService {
         return draftStore.get(draftId).draft;
     }
 
+    /** 全量替换导入与指标落库同事务：insert 失败则图谱替换一并回滚。 */
+    @Transactional
     public ExtractCommitResult commit(String draftId, GraphImportRequest finalGraph) {
         GraphDraftStore.Entry entry = draftStore.get(draftId);
         ExtractionMetrics metrics = metricsCalculator.calculate(entry.draft, finalGraph);
