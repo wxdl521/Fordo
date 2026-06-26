@@ -44,7 +44,7 @@ wenjin:
     enabled: ${WENJIN_AI_ENABLED:true}
     base-url: ${WENJIN_AI_BASE_URL:https://api.deepseek.com}
     api-key: ${WENJIN_AI_API_KEY:}
-    model: ${WENJIN_AI_MODEL:deepseek-chat}
+    model: ${WENJIN_AI_MODEL:deepseek-v4-pro}
     temperature: 0.4
     vision:                                       # 多模态仅识图,可换更强模型;key 经环境变量注入勿硬编码
       enabled: ${WENJIN_AI_VISION_ENABLED:true}
