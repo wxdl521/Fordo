@@ -55,7 +55,7 @@ export function computeLayeredLayout(data) {
   // —— 3. 适配到 1480×740 画布（等比缩放 + 垂直真居中）——
   const gw = g.graph().width || 1, gh = g.graph().height || 1
   const availW = CANVAS_W - 2 * FIT_MARGIN
-  const availH = CANVAS_H - 2 * FIT_MARGIN          // 不再扣 TITLE_BAND
+  const availH = CANVAS_H - 2 * FIT_MARGIN          // 不再为顶部标题带保留高度
   const s = Math.min(availW / gw, availH / gh, 1.4)   // 别放太大，1.4 上限
   const tx = (CANVAS_W - gw * s) / 2
   const ty = (CANVAS_H - gh * s) / 2                  // 垂直真居中，不再沉底
