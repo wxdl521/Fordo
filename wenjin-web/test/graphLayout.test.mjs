@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { computeAnchors, ANCHORS, computeLayout } from '../src/utils/graphLayout.js'
+import { computeAnchors, ANCHORS, computeLayout, computeLayeredLayout } from '../src/utils/graphLayout.js'
 import { renderGraphSvg } from '../src/utils/graphSvgRenderer.js'
 
 // 1) SE 全命中 → 返回手调表坐标
@@ -86,6 +86,88 @@ import { renderGraphSvg } from '../src/utils/graphSvgRenderer.js'
   for (const id of ['X1', 'X2']) {
     assert.ok(Number.isFinite(L.pos[id][0]) && Number.isFinite(L.pos[id][1]), `${id} 坐标应有限(非 NaN)`)
   }
+}
+
+// ————— computeLayeredLayout 新增 6 条断言 —————
+
+const layeredSample = {
+  nodes: [
+    { id: 'N1',   name: '甲节点',   chapter: '甲', difficulty: 3, is_key: false },
+    { id: 'N2',   name: '乙节点',   chapter: '乙', difficulty: 3, is_key: true  },
+    { id: 'N3',   name: '丙节点',   chapter: '丙', difficulty: 3, is_key: false },
+    { id: 'N2-1', name: '乙子概念', chapter: '乙', difficulty: 3, is_key: false }
+  ],
+  edges: [
+    { source: 'N1', target: 'N2',   type: '前置' },  // 跨章 甲→乙
+    { source: 'N2', target: 'N3',   type: '前置' },  // 跨章 乙→丙
+    { source: 'N2', target: 'N2-1', type: '包含' },  // 子概念
+    { source: 'N1', target: 'N3',   type: '相关' },  // 不进 dagre
+    { source: 'N1', target: 'N2',   type: '应用' }   // 未知/正式第4类，不进 dagre
+  ]
+}
+
+// 9) 层序正确：每条前置边满足 pos[source][0] < pos[target][0]（LR 下 source 在左）
+{
+  const L = computeLayeredLayout(layeredSample)
+  const n1x = L.pos['N1'][0], n2x = L.pos['N2'][0], n3x = L.pos['N3'][0]
+  assert.ok(n1x < n2x, `前置 N1→N2：N1.x(${n1x}) 应 < N2.x(${n2x})`)
+  assert.ok(n2x < n3x, `前置 N2→N3：N2.x(${n2x}) 应 < N3.x(${n3x})`)
+}
+
+// 10) 包含子概念不掉队：N2-1.x 不等于全图最小 x
+{
+  const L = computeLayeredLayout(layeredSample)
+  const allXs = Object.values(L.pos).map(p => p[0])
+  const minX = Math.min(...allXs)
+  assert.ok(L.pos['N2-1'][0] !== minX, `包含子概念 N2-1 不应在最左列(minX=${minX},N2-1.x=${L.pos['N2-1'][0]})`)
+}
+
+// 11) 相关/未知不影响定位：去掉相关+应用边，坐标完全相同
+{
+  const sampleNoExtra = {
+    nodes: layeredSample.nodes,
+    edges: layeredSample.edges.filter(e => e.type !== '相关' && e.type !== '应用')
+  }
+  const L1 = computeLayeredLayout(layeredSample)
+  const L2 = computeLayeredLayout(sampleNoExtra)
+  for (const id of ['N1', 'N2', 'N3', 'N2-1']) {
+    assert.deepEqual(L1.pos[id], L2.pos[id], `${id} 坐标不受相关/应用边影响`)
+  }
+}
+
+// 12) 无 NaN：所有 pos 值与 edgePaths 路由点坐标均有限
+{
+  const L = computeLayeredLayout(layeredSample)
+  for (const [id, p] of Object.entries(L.pos)) {
+    assert.ok(Number.isFinite(p[0]) && Number.isFinite(p[1]), `pos[${id}] 坐标应有限`)
+  }
+  for (const [k, pts] of Object.entries(L.edgePaths)) {
+    for (const [x, y] of pts) {
+      assert.ok(Number.isFinite(x) && Number.isFinite(y), `edgePaths[${k}] 路由点坐标应有限`)
+    }
+  }
+}
+
+// 13) 标题置顶：每个 chapterLabel.y 小于该章所有节点的最小 pos[id][1]
+{
+  const L = computeLayeredLayout(layeredSample)
+  for (const label of L.chapterLabels) {
+    const nodeYs = layeredSample.nodes
+      .filter(n => (n.chapter || '') === label.name)
+      .map(n => L.pos[n.id][1])
+    const minNodeY = Math.min(...nodeYs)
+    assert.ok(label.y < minNodeY, `章节标题"${label.name}".y(${label.y}) 应 < 该章最小节点 y(${minNodeY})`)
+  }
+}
+
+// 14) 回归保护：computeLayout 仍返回原 8 个 key
+{
+  const L = computeLayout(layeredSample)
+  const expected = ['byId', 'hasKids', 'parentOf', 'inEdges', 'pos', 'radius', 'labelPos', 'stars']
+  for (const key of expected) {
+    assert.ok(key in L, `computeLayout 应仍含 key: ${key}`)
+  }
+  assert.deepEqual(Object.keys(L).sort(), expected.slice().sort(), 'computeLayout 返回的 key 集合不变')
 }
 
 console.log('graphLayout.test.mjs: 全部通过')
