@@ -1,11 +1,9 @@
 package com.wenjin.controller;
 
 import com.wenjin.common.Result;
-import com.wenjin.dto.GraphPreviewResult;
 import com.wenjin.dto.NodeUpsertRequest;
 import com.wenjin.dto.PendingEdgeVO;
 import com.wenjin.dto.TeacherGraphVO;
-import com.wenjin.service.GraphPreviewService;
 import com.wenjin.service.TeacherGraphService;
 import org.springframework.web.bind.annotation.*;
 
@@ -19,12 +17,9 @@ import java.util.List;
 public class TeacherGraphController {
 
     private final TeacherGraphService teacherGraphService;
-    private final GraphPreviewService graphPreviewService;
 
-    public TeacherGraphController(TeacherGraphService teacherGraphService,
-                                  GraphPreviewService graphPreviewService) {
+    public TeacherGraphController(TeacherGraphService teacherGraphService) {
         this.teacherGraphService = teacherGraphService;
-        this.graphPreviewService = graphPreviewService;
     }
 
     /**
@@ -33,14 +28,6 @@ public class TeacherGraphController {
     @GetMapping
     public Result<TeacherGraphVO> getGraph(@RequestParam Long courseId) {
         return Result.ok(teacherGraphService.getGraph(courseId));
-    }
-
-    /**
-     * 生成图谱预览 SVG（AI + 校验 + 修复重试；前端按 valid 决定是否兜底）。
-     */
-    @PostMapping("/preview-svg")
-    public Result<GraphPreviewResult> previewSvg(@RequestParam Long courseId) {
-        return Result.ok(graphPreviewService.generatePreviewSvg(courseId));
     }
 
     /**
