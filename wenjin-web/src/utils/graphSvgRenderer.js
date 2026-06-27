@@ -2,7 +2,8 @@
 // 知识图谱 → 独立 SVG 字符串（兜底渲染，复刻染色地图暗色风格）。
 // 与 ColorMap.vue 视觉一致，但内联字面色（导出 SVG 不依赖 CSS 变量）。
 // ════════════════════════════════════════════════════════════
-import { computeLayeredLayout, shortName } from './graphLayout.js'
+import { shortName } from './graphLayout.js'
+import { computeLayeredLayout } from './graphLayeredLayout.js'
 
 const PAL = {
   bg: '#121317',

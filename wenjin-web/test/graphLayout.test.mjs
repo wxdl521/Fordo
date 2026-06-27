@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { computeAnchors, ANCHORS, computeLayout, computeLayeredLayout } from '../src/utils/graphLayout.js'
+import { computeAnchors, ANCHORS, computeLayout } from '../src/utils/graphLayout.js'
+import { computeLayeredLayout } from '../src/utils/graphLayeredLayout.js'
 import { renderGraphSvg } from '../src/utils/graphSvgRenderer.js'
 
 // 1) SE 全命中 → 返回手调表坐标
