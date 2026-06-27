@@ -36,13 +36,6 @@ export function fetchDashboard(courseId) {
   return http.get('/teacher/dashboard', { params: { courseId } })
 }
 
-// ── 图谱预览 SVG（AI 生成，长任务）──
-export function generateGraphPreviewSvg(courseId) {
-  // AI 出 SVG 最坏 2 轮 LLM（每轮读超时 180s），前端给足 600s（与 vite 代理 proxyTimeout 一致），
-  // 否则前端先于后端放弃，拿到 "timeout of …ms exceeded" 误走兜底渲染。
-  return http.post('/teacher/graph/preview-svg', null, { params: { courseId }, timeout: 600000 })
-}
-
 // ── 课程管理（多课程切换）──
 export function fetchTeacherCourses() {
   return http.get('/teacher/courses')

@@ -302,27 +302,14 @@
           <button @click="closePreview" :style="closeBtnStyle">×</button>
         </div>
         <div :style="previewBodyStyle">
-          <div v-if="previewLoading" :style="{ padding: '60px', textAlign: 'center', color: 'var(--text-mut)' }">
-            正在生成预览图，AI 出图较慢请稍候…
+          <div v-if="previewSvg" :style="previewCanvasStyle" v-html="previewSvg"></div>
+          <div v-else :style="{ padding: '40px', textAlign: 'center', color: 'var(--accent)' }">
+            生成失败，请重试。
+            <button @click="openPreview" :style="retryBtnStyle">重试</button>
           </div>
-          <template v-else>
-            <div :style="previewMetaStyle">
-              <span v-if="previewSource === 'ai'" :style="previewBadgeOk">AI 生成</span>
-              <span v-else-if="previewSource === 'ai-repaired'" :style="previewBadgeOk">AI 生成（修复后）</span>
-              <span v-else-if="previewSource === 'fallback'" :style="previewBadgeFallback">兜底生成</span>
-              <span v-if="previewIssues.length" :style="{ fontSize: '11.5px', color: 'var(--text-mut)' }">
-                （AI 未达标：{{ previewIssues.join('；') }}）
-              </span>
-            </div>
-            <div v-if="previewSvg" :style="previewCanvasStyle" v-html="previewSvg"></div>
-            <div v-else :style="{ padding: '40px', textAlign: 'center', color: 'var(--accent)' }">
-              生成失败，请重试。
-              <button @click="openPreview" :style="retryBtnStyle">重试</button>
-            </div>
-          </template>
         </div>
         <div :style="modalFooterStyle">
-          <button v-if="previewSvg && !previewLoading" @click="downloadPreview" :style="submitBtnStyle">下载 .svg</button>
+          <button v-if="previewSvg" @click="downloadPreview" :style="submitBtnStyle">下载 .svg</button>
           <button @click="closePreview" :style="cancelBtnStyle">关闭</button>
         </div>
       </div>
@@ -390,7 +377,6 @@ import {
   createNode,
   updateNode,
   deleteNode,
-  generateGraphPreviewSvg,
   fetchTeacherCourses,
   createTeacherCourse,
   deleteTeacherCourse
@@ -489,10 +475,7 @@ const histTd = { padding: '6px 8px', borderBottom: '1px solid var(--line)', whit
 
 // ── 预览图状态 ──
 const showPreview = ref(false)
-const previewLoading = ref(false)
 const previewSvg = ref('')
-const previewSource = ref('')   // 'ai' | 'ai-repaired' | 'fallback'
-const previewIssues = ref([])
 
 let chart = null
 let C = {}
@@ -939,37 +922,12 @@ function graphToLayoutData() {
   }
 }
 
-function fallbackPreview(issues) {
+function openPreview() {
+  showPreview.value = true
   try {
     previewSvg.value = renderGraphSvg(graphToLayoutData())
-    previewSource.value = 'fallback'
-    previewIssues.value = issues || []
   } catch (e) {
     previewSvg.value = ''
-    previewSource.value = ''
-    previewIssues.value = ['兜底渲染失败：' + (e.message || e)]
-  }
-}
-
-async function openPreview() {
-  showPreview.value = true
-  previewLoading.value = true
-  previewSvg.value = ''
-  previewSource.value = ''
-  previewIssues.value = []
-  try {
-    const res = await generateGraphPreviewSvg(currentCourse.value.id) // http 拦截器已拆 Result 信封
-    if (res && res.valid && res.svg) {
-      previewSvg.value = res.svg
-      previewSource.value = res.source || 'ai'
-      previewIssues.value = []
-    } else {
-      fallbackPreview(res ? res.issues : [])
-    }
-  } catch (e) {
-    fallbackPreview(['AI 调用失败：' + (e.message || '网络错误')])
-  } finally {
-    previewLoading.value = false
   }
 }
 
@@ -1565,35 +1523,11 @@ const previewBodyStyle = {
   padding: '16px 20px'
 }
 
-const previewMetaStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '10px',
-  marginBottom: '12px'
-}
-
 const previewCanvasStyle = {
   width: '100%',
   background: '#121317',
   borderRadius: '10px',
   overflow: 'hidden'
-}
-
-const previewBadgeOk = {
-  fontSize: '12px',
-  color: '#fff',
-  background: 'var(--mastered)',
-  borderRadius: '999px',
-  padding: '2px 10px'
-}
-
-const previewBadgeFallback = {
-  fontSize: '12px',
-  color: 'var(--text)',
-  background: 'var(--panel-2)',
-  border: '1px solid var(--line)',
-  borderRadius: '999px',
-  padding: '2px 10px'
 }
 
 function dropZoneStyle(dragging) {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { computeAnchors, ANCHORS, computeLayout } from '../src/utils/graphLayout.js'
+import { renderGraphSvg } from '../src/utils/graphSvgRenderer.js'
 
 // 1) SE 全命中 → 返回手调表坐标
 {
@@ -52,6 +53,15 @@ import { computeAnchors, ANCHORS, computeLayout } from '../src/utils/graphLayout
   const xs = data.nodes.map((n) => L.pos[n.id][0])
   const spread = Math.max(...xs) - Math.min(...xs)
   assert.ok(spread > 300, `非 SE 节点最终 x 应铺开,实测 spread=${spread}`)
+}
+
+// 6) renderGraphSvg 冒烟:确定性路径产出合法 SVG 字符串
+{
+  const svg = renderGraphSvg({
+    nodes: [{ id: 'A1', name: 'a', chapter: 'X', difficulty: 3, is_key: false }],
+    edges: []
+  })
+  assert.ok(typeof svg === 'string' && svg.startsWith('<svg'), 'renderGraphSvg 返回 SVG 字符串')
 }
 
 console.log('graphLayout.test.mjs: 全部通过')
