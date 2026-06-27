@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { computeAnchors, ANCHORS } from '../src/utils/graphLayout.js'
+import { computeAnchors, ANCHORS, computeLayout } from '../src/utils/graphLayout.js'
 
 // 1) SE 全命中 → 返回手调表坐标
 {
@@ -37,4 +37,21 @@ import { computeAnchors, ANCHORS } from '../src/utils/graphLayout.js'
   assert.equal(Object.keys(a).length, 3, '去重后 3 个章节')
 }
 
-console.log('graphLayout.test.mjs: Task1 通过')
+// 5) computeLayout 端到端:非 SE 课节点最终 x 分布跨度显著(不竖挤)
+{
+  const data = {
+    nodes: [
+      { id: 'A1', name: 'a', chapter: 'Java概述', difficulty: 3, is_key: false },
+      { id: 'B1', name: 'b', chapter: '语言程序基础', difficulty: 3, is_key: false },
+      { id: 'C1', name: 'c', chapter: '面向对象', difficulty: 3, is_key: false },
+      { id: 'D1', name: 'd', chapter: '常用类库及JDBC', difficulty: 3, is_key: false }
+    ],
+    edges: []
+  }
+  const L = computeLayout(data)
+  const xs = data.nodes.map((n) => L.pos[n.id][0])
+  const spread = Math.max(...xs) - Math.min(...xs)
+  assert.ok(spread > 300, `非 SE 节点最终 x 应铺开,实测 spread=${spread}`)
+}
+
+console.log('graphLayout.test.mjs: 全部通过')

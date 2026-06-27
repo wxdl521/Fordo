@@ -82,19 +82,27 @@ export function computeLayout(data) {
     }
   })
 
+  const chapters = []
+  const seenCh = new Set()
+  data.nodes.forEach((n) => {
+    const ch = n.chapter || ''
+    if (!seenCh.has(ch)) { seenCh.add(ch); chapters.push(ch) }
+  })
+  const anchors = computeAnchors(chapters)
+
   let seed = 9
   const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647 }
   const pos = {}
   data.nodes.forEach((n) => {
     if (n.id.indexOf('-') === -1) {
-      const a = ANCHORS[n.chapter] || [700, 360]
+      const a = anchors[n.chapter] || [700, 360]
       pos[n.id] = [a[0] + (rnd() - 0.5) * 240, a[1] + (rnd() - 0.5) * 200]
     }
   })
   data.nodes.forEach((n) => {
     if (n.id.indexOf('-') !== -1) {
       let p = parentOf[n.id] && pos[parentOf[n.id]]
-      if (!p) { p = ANCHORS[n.chapter] || [700, 360] }
+      if (!p) { p = anchors[n.chapter] || [700, 360] }
       pos[n.id] = [p[0] + (rnd() - 0.5) * 150, p[1] + (rnd() - 0.5) * 150]
     }
   })
@@ -130,7 +138,7 @@ export function computeLayout(data) {
       f[e.target][0] -= (dx / d) * pull * 60; f[e.target][1] -= (dy / d) * pull * 60
     })
     data.nodes.forEach((n) => {
-      const a = ANCHORS[n.chapter]
+      const a = anchors[n.chapter]
       if (!a) return
       f[n.id][0] += (a[0] - pos[n.id][0]) * 0.014 * 60
       f[n.id][1] += (a[1] - pos[n.id][1]) * 0.014 * 60
