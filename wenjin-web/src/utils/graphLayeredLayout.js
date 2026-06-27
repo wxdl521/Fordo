@@ -3,7 +3,11 @@ import { radiusOf, shortName } from './graphLayout.js'
 
 const CANVAS_W = 1480, CANVAS_H = 740
 const FIT_MARGIN = 48        // 适配画布留白
-const TITLE_BAND = 46        // 顶部章节标题带高度（布局整体下移这么多）
+const TITLE_BAND = 70        // 顶部章节标题带高度（容纳最多 2 行标题，布局整体下移这么多）
+const TITLE_ROW0 = FIT_MARGIN + 16   // 第一行标题基线 y
+const TITLE_ROW_H = 26               // 标题行距
+const MAX_TITLE_LANES = 2            // 标题最多 2 行（再多会贴到节点上沿）
+const TITLE_CHAR_W = 28              // 标题字宽估算（font-size 21 + letter-spacing 7，CJK 偏大兜底）
 
 export function computeLayeredLayout(data) {
   // —— 复用既有派生信息（与 computeLayout 同口径，但不调用它）——
@@ -63,7 +67,10 @@ export function computeLayeredLayout(data) {
   const edgePaths = {}
   Object.entries(rawEdgePaths).forEach(([k, pts]) => { edgePaths[k] = pts.map(fit) })
 
-  // —— 4. 章节标题置顶：x = 该章节点 x 区间中点，y 固定在标题带 ——
+  // —— 4. 章节标题置顶：x = 该章节点 x 区间中点；y 用车道分配避免横向叠字 ——
+  // dagre 按依赖排序而非章节，章节在 x 轴可能交错 → 标题中点会撞。
+  // 按 x 排序后做行（lane）分配：放不下当前行就落下一行（最多 2 行），
+  // 行满则塞进右边界最小的行（最不挤），保留各标题 x（位置含义）只在 y 上错开。
   const chAgg = {}
   data.nodes.forEach(n => {
     const ch = n.chapter || ''; const p = pos[n.id]
@@ -72,15 +79,43 @@ export function computeLayeredLayout(data) {
     chAgg[ch].minX = Math.min(chAgg[ch].minX, p[0])
     chAgg[ch].maxX = Math.max(chAgg[ch].maxX, p[0])
   })
-  const chapterLabels = Object.entries(chAgg).map(([name, a]) => ({
-    name, x: (a.minX + a.maxX) / 2, y: FIT_MARGIN + TITLE_BAND * 0.55
-  }))
+  const rawLabels = Object.entries(chAgg)
+    .map(([name, a]) => ({ name, x: (a.minX + a.maxX) / 2, hw: Math.max(1, name.length) * TITLE_CHAR_W / 2 }))
+    .sort((p, q) => p.x - q.x)
+  const laneRight = []   // 每行当前最右占用边界
+  const chapterLabels = rawLabels.map(L => {
+    let lane = laneRight.findIndex(right => L.x - L.hw >= right + 10)
+    if (lane === -1) {
+      if (laneRight.length < MAX_TITLE_LANES) { lane = laneRight.length; laneRight.push(-Infinity) }
+      else { lane = laneRight.indexOf(Math.min(...laneRight)) }   // 行满 → 最不挤的行
+    }
+    laneRight[lane] = L.x + L.hw
+    return { name: L.name, x: L.x, y: TITLE_ROW0 + lane * TITLE_ROW_H }
+  })
 
-  // —— 5. 标签位：分层图节点稀疏，直接放节点正下方即可（不用贪心避让）——
+  // —— 5. 标签位：贪心放置（候选 下/上/右/左），避开所有节点圆与已放标签 ——
+  // 与 computeLayout 同款：密集 rank 列里"一律正下方"会与下方节点/相邻标签重叠。
+  const ids = data.nodes.map(n => n.id).filter(id => pos[id])
+  const boxes = []
+  ids.forEach(id => {
+    const p = pos[id]; const r = radius[id] + 5
+    boxes.push([p[0] - r, p[1] - r, p[0] + r, p[1] + r])
+  })
+  const hit = (b) => boxes.some(o => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1])
   const labelPos = {}
-  data.nodes.forEach(n => {
-    const p = pos[n.id]; if (!p) return
-    labelPos[n.id] = { x: p[0], y: p[1] + radius[n.id] + 15, a: 'middle' }
+  const order = ids.slice().sort((a, b) => radius[b] - radius[a])
+  order.forEach(id => {
+    const n = byId[id]; const p = pos[id]; const r = radius[id]
+    const w = shortName(n).length * 12.5; const h = 15
+    const cands = [
+      { b: [p[0] - w / 2, p[1] + r + 5, p[0] + w / 2, p[1] + r + 5 + h], x: p[0], y: p[1] + r + 17, a: 'middle' },
+      { b: [p[0] - w / 2, p[1] - r - 5 - h, p[0] + w / 2, p[1] - r - 5], x: p[0], y: p[1] - r - 9, a: 'middle' },
+      { b: [p[0] + r + 7, p[1] - h / 2, p[0] + r + 7 + w, p[1] + h / 2], x: p[0] + r + 9, y: p[1] + 4, a: 'start' },
+      { b: [p[0] - r - 7 - w, p[1] - h / 2, p[0] - r - 7, p[1] + h / 2], x: p[0] - r - 9, y: p[1] + 4, a: 'end' }
+    ]
+    const pick = cands.find(c => !hit(c.b)) || cands[0]
+    labelPos[id] = pick
+    boxes.push(pick.b)
   })
 
   // —— 6. 星点（保留品牌暗色质感，少量即可；确定性种子）——

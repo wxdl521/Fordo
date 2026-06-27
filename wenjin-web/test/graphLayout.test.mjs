@@ -180,4 +180,44 @@ const layeredSample = {
   assert.ok(svg.includes('stroke-dasharray'), '用例15: 含包含虚线 stroke-dasharray')
 }
 
+// 16) 章节标题去叠：横向区间重叠的章节标题被分配到不同行（不同 y），避免叠字
+{
+  const collide = {
+    nodes: [
+      { id: 'P1', name: '甲一', chapter: '甲章节名称', difficulty: 3, is_key: false },
+      { id: 'Q1', name: '乙一', chapter: '乙章节名称', difficulty: 3, is_key: false },
+      { id: 'P2', name: '甲二', chapter: '甲章节名称', difficulty: 3, is_key: false },
+      { id: 'Q2', name: '乙二', chapter: '乙章节名称', difficulty: 3, is_key: false }
+    ],
+    edges: []   // 无边 → dagre 同列堆叠 → 两章 x 区间重合，标题中点会撞
+  }
+  const L = computeLayeredLayout(collide)
+  assert.equal(L.chapterLabels.length, 2, '用例16: 两个章节两个标题')
+  const [a, b] = L.chapterLabels
+  const xClose = Math.abs(a.x - b.x) < (a.name.length + b.name.length) * 7
+  assert.ok(xClose, `用例16: 构造的两章标题 x 应接近(a.x=${a.x},b.x=${b.x})`)
+  assert.ok(a.y !== b.y, `用例16: 横向重叠的章节标题应分配到不同行(a.y=${a.y},b.y=${b.y})`)
+}
+
+// 17) 节点标签避让：labelPos 走贪心避让（含盒 b），标签不压住其它节点圆
+{
+  const L = computeLayeredLayout(layeredSample)
+  const ids = layeredSample.nodes.map(n => n.id)
+  const nodeBox = {}
+  ids.forEach(id => {
+    const p = L.pos[id]; const r = L.radius[id]
+    nodeBox[id] = [p[0] - r, p[1] - r, p[0] + r, p[1] + r]
+  })
+  for (const id of ids) {
+    const lp = L.labelPos[id]
+    assert.ok(Array.isArray(lp.b) && lp.b.every(Number.isFinite), `用例17: ${id} 标签应带有限避让盒 b`)
+    for (const other of ids) {
+      if (other === id) continue
+      const o = nodeBox[other]; const b = lp.b
+      const overlap = b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]
+      assert.ok(!overlap, `用例17: ${id} 的标签不应压住节点 ${other}`)
+    }
+  }
+}
+
 console.log('graphLayout.test.mjs: 全部通过')
