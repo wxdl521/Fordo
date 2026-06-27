@@ -64,4 +64,13 @@ import { renderGraphSvg } from '../src/utils/graphSvgRenderer.js'
   assert.ok(typeof svg === 'string' && svg.startsWith('<svg'), 'renderGraphSvg 返回 SVG 字符串')
 }
 
+// 7) SE 章节 + 一个空 chapter 节点：SE 特例不被空串破坏，手调坐标仍生效
+{
+  const se = Object.keys(ANCHORS)
+  const a = computeAnchors([...se, ''])
+  for (const ch of se) {
+    assert.deepEqual(a[ch], ANCHORS[ch], `SE+空章节下 ${ch} 仍用手调锚点`)
+  }
+}
+
 console.log('graphLayout.test.mjs: 全部通过')

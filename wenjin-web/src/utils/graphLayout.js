@@ -24,10 +24,11 @@ export function computeAnchors(chapters) {
     const ch = c == null ? '' : c
     if (!seen.has(ch)) { seen.add(ch); uniq.push(ch) }
   }
-  if (uniq.length > 0 && uniq.every((c) => ANCHORS[c])) {
+  const nonEmpty = uniq.filter((c) => c !== '')
+  if (nonEmpty.length > 0 && nonEmpty.every((c) => ANCHORS[c])) {
     const out = {}
-    uniq.forEach((c) => { out[c] = ANCHORS[c] })
-    return out
+    nonEmpty.forEach((c) => { out[c] = ANCHORS[c] })
+    return out   // '' 不映射 → computeLayout 回退 [700,360]，与旧版一致
   }
   const n = uniq.length
   const cols = Math.max(1, Math.ceil(Math.sqrt(n)))
