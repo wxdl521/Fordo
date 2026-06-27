@@ -16,6 +16,35 @@ export const ANCHORS = {
   部署与维护: [1350, 150]
 }
 
+// 通用章节自动布锚：SE 全命中手调表则原样，否则自适应网格铺满安全区。
+export function computeAnchors(chapters) {
+  const uniq = []
+  const seen = new Set()
+  for (const c of chapters) {
+    const ch = c == null ? '' : c
+    if (!seen.has(ch)) { seen.add(ch); uniq.push(ch) }
+  }
+  if (uniq.length > 0 && uniq.every((c) => ANCHORS[c])) {
+    const out = {}
+    uniq.forEach((c) => { out[c] = ANCHORS[c] })
+    return out
+  }
+  const n = uniq.length
+  const cols = Math.max(1, Math.ceil(Math.sqrt(n)))
+  const rows = Math.max(1, Math.ceil(n / cols))
+  const X0 = 140, X1 = 1340, Y0 = 120, Y1 = 620
+  const out = {}
+  uniq.forEach((c, i) => {
+    const col = i % cols
+    const row = Math.floor(i / cols)
+    out[c] = [
+      X0 + (col + 0.5) * ((X1 - X0) / cols),
+      Y0 + (row + 0.5) * ((Y1 - Y0) / rows)
+    ]
+  })
+  return out
+}
+
 export const SHORT = {
   KT01: '软工概念与生命周期', KT02: '传统过程模型', KT03: '现代过程模型',
   KT04: '需求概念与目标', KT05: '业务流程分析', KT06: '团队组织管理',
