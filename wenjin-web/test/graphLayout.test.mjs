@@ -170,4 +170,13 @@ const layeredSample = {
   assert.deepEqual(Object.keys(L).sort(), expected.slice().sort(), 'computeLayout 返回的 key 集合不变')
 }
 
+// 15) renderGraphSvg 含前置+包含边：折线路由（<path>）、箭头、虚线
+{
+  const svg = renderGraphSvg(layeredSample)
+  assert.ok(typeof svg === 'string' && svg.startsWith('<svg'), '用例15: 返回以 <svg 开头的字符串')
+  assert.ok(svg.includes('<path'), '用例15: 含 <path（dagre 折线路由）')
+  assert.ok(svg.includes('marker-end="url(#arrow)"'), '用例15: 含前置箭头 marker-end')
+  assert.ok(svg.includes('stroke-dasharray'), '用例15: 含包含虚线 stroke-dasharray')
+}
+
 console.log('graphLayout.test.mjs: 全部通过')
