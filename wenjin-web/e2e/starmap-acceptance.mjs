@@ -41,11 +41,14 @@ async function openPreview() {
 
 async function svgStats() {
   return await page.evaluate(() => {
-    const svg = document.querySelector('svg')
     const nodes = Array.from(document.querySelectorAll('circle.wj-node'))
+    let svg = document.querySelector('svg')
+    if (nodes.length > 0) {
+      svg = nodes[0].closest('svg') || svg
+    }
     const cx = nodes.map((c) => parseFloat(c.getAttribute('cx')))
     const cy = nodes.map((c) => parseFloat(c.getAttribute('cy')))
-    const rect = document.querySelector('svg rect')
+    const rect = svg ? svg.querySelector('rect') : document.querySelector('svg rect')
     const bgFill = rect ? rect.getAttribute('fill') : null
     const halos = Array.from(document.querySelectorAll('circle[opacity="0.10"]')).length
     const lines = document.querySelectorAll('svg line').length
