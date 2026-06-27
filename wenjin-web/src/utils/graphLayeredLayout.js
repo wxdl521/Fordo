@@ -3,11 +3,9 @@ import { radiusOf, shortName } from './graphLayout.js'
 
 const CANVAS_W = 1480, CANVAS_H = 740
 const FIT_MARGIN = 48        // 适配画布留白
-const TITLE_BAND = 70        // 顶部章节标题带高度（容纳最多 2 行标题，布局整体下移这么多）
-const TITLE_ROW0 = FIT_MARGIN + 16   // 第一行标题基线 y
-const TITLE_ROW_H = 26               // 标题行距
-const MAX_TITLE_LANES = 2            // 标题最多 2 行（再多会贴到节点上沿）
-const TITLE_CHAR_W = 28              // 标题字宽估算（font-size 21 + letter-spacing 7，CJK 偏大兜底）
+const TITLE_CHAR_W = 28      // 标题字宽估算（font-size 21 + letter-spacing 7，CJK 偏大兜底）
+const CH_LABEL_GAP = 30      // 章节标题距其节点簇顶的间距
+const CH_ROW_H = 24          // 标题同高重叠时上移错开的行高
 
 export function computeLayeredLayout(data) {
   // —— 复用既有派生信息（与 computeLayout 同口径，但不调用它）——
@@ -54,43 +52,50 @@ export function computeLayeredLayout(data) {
     if (ge && ge.points) rawEdgePaths[`${e.source}->${e.target}`] = ge.points.map(p => [p.x, p.y])
   })
 
-  // —— 3. 适配到 1480×740 画布（等比缩放 + 居中 + 顶部留标题带）——
+  // —— 3. 适配到 1480×740 画布（等比缩放 + 垂直真居中）——
   const gw = g.graph().width || 1, gh = g.graph().height || 1
   const availW = CANVAS_W - 2 * FIT_MARGIN
-  const availH = CANVAS_H - 2 * FIT_MARGIN - TITLE_BAND
+  const availH = CANVAS_H - 2 * FIT_MARGIN          // 不再扣 TITLE_BAND
   const s = Math.min(availW / gw, availH / gh, 1.4)   // 别放太大，1.4 上限
   const tx = (CANVAS_W - gw * s) / 2
-  const ty = FIT_MARGIN + TITLE_BAND + (availH - gh * s) / 2
+  const ty = (CANVAS_H - gh * s) / 2                  // 垂直真居中，不再沉底
   const fit = ([x, y]) => [x * s + tx, y * s + ty]
 
   const pos = {}; Object.entries(rawPos).forEach(([id, p]) => { pos[id] = fit(p) })
   const edgePaths = {}
   Object.entries(rawEdgePaths).forEach(([k, pts]) => { edgePaths[k] = pts.map(fit) })
 
-  // —— 4. 章节标题置顶：x = 该章节点 x 区间中点；y 用车道分配避免横向叠字 ——
-  // dagre 按依赖排序而非章节，章节在 x 轴可能交错 → 标题中点会撞。
-  // 按 x 排序后做行（lane）分配：放不下当前行就落下一行（最多 2 行），
-  // 行满则塞进右边界最小的行（最不挤），保留各标题 x（位置含义）只在 y 上错开。
+  // —— 4. 章节标题贴各自节点簇顶：y = 簇 minY 上方 CH_LABEL_GAP；
+  // 若两标题 x 区间重叠且纵向太近 → 靠右那个上移一行错开（上移只增大与节点间距，不压节点）——
   const chAgg = {}
   data.nodes.forEach(n => {
     const ch = n.chapter || ''; const p = pos[n.id]
     if (!ch || !p) return
-    if (!chAgg[ch]) chAgg[ch] = { minX: Infinity, maxX: -Infinity }
+    if (!chAgg[ch]) chAgg[ch] = { minX: Infinity, maxX: -Infinity, minY: Infinity }
     chAgg[ch].minX = Math.min(chAgg[ch].minX, p[0])
     chAgg[ch].maxX = Math.max(chAgg[ch].maxX, p[0])
+    chAgg[ch].minY = Math.min(chAgg[ch].minY, p[1])
   })
   const rawLabels = Object.entries(chAgg)
-    .map(([name, a]) => ({ name, x: (a.minX + a.maxX) / 2, hw: Math.max(1, name.length) * TITLE_CHAR_W / 2 }))
+    .map(([name, a]) => ({
+      name, x: (a.minX + a.maxX) / 2,
+      baseY: Math.max(a.minY - CH_LABEL_GAP, 24),
+      hw: Math.max(1, name.length) * TITLE_CHAR_W / 2
+    }))
     .sort((p, q) => p.x - q.x)
-  const laneRight = []   // 每行当前最右占用边界
+  const placed = []
   const chapterLabels = rawLabels.map(L => {
-    let lane = laneRight.findIndex(right => L.x - L.hw >= right + 10)
-    if (lane === -1) {
-      if (laneRight.length < MAX_TITLE_LANES) { lane = laneRight.length; laneRight.push(-Infinity) }
-      else { lane = laneRight.indexOf(Math.min(...laneRight)) }   // 行满 → 最不挤的行
+    let y = L.baseY
+    let bumped = true, guard = 0
+    while (bumped && guard++ < 8) {
+      bumped = false
+      for (const p of placed) {
+        if (Math.abs(L.x - p.x) < (L.hw + p.hw + 8) && Math.abs(y - p.y) < CH_ROW_H) { y -= CH_ROW_H; bumped = true; break }
+      }
     }
-    laneRight[lane] = L.x + L.hw
-    return { name: L.name, x: L.x, y: TITLE_ROW0 + lane * TITLE_ROW_H }
+    y = Math.max(y, 18)
+    placed.push({ x: L.x, y, hw: L.hw })
+    return { name: L.name, x: L.x, y }
   })
 
   // —— 5. 标签位：贪心放置（候选 下/上/右/左），避开所有节点圆与已放标签 ——

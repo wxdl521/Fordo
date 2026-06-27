@@ -220,4 +220,26 @@ const layeredSample = {
   }
 }
 
+// 18) 章节标题贴簇顶：每个标题 y 落在其簇 minY 上方有限距离内（证明是簇相对，而非固定顶部带）
+{
+  const L = computeLayeredLayout(layeredSample)
+  for (const label of L.chapterLabels) {
+    const nodeYs = layeredSample.nodes
+      .filter(n => (n.chapter || '') === label.name)
+      .map(n => L.pos[n.id][1])
+    const minNodeY = Math.min(...nodeYs)
+    const dist = minNodeY - label.y
+    assert.ok(dist > 0, `用例18: 标题"${label.name}"应在簇上方(dist=${dist})`)
+    assert.ok(dist <= 30 + 3 * 24 + 20, `用例18: 标题"${label.name}"应贴近簇顶而非飘在固定顶部带(dist=${dist})`)
+  }
+}
+
+// 19) 垂直真居中：所有节点 y 的中点接近画布竖直中心 370（旧版沉底会远大于 370）
+{
+  const L = computeLayeredLayout(layeredSample)
+  const ys = Object.values(L.pos).map(p => p[1])
+  const mid = (Math.min(...ys) + Math.max(...ys)) / 2
+  assert.ok(Math.abs(mid - 370) < 50, `用例19: 内容应垂直居中(节点 y 中点=${mid}, 期望≈370)`)
+}
+
 console.log('graphLayout.test.mjs: 全部通过')
