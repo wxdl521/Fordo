@@ -73,4 +73,19 @@ import { renderGraphSvg } from '../src/utils/graphSvgRenderer.js'
   }
 }
 
+// 8) 未知边类型(应用)不致 NaN：力导向对词典外类型兜底，全部坐标有限
+{
+  const data = {
+    nodes: [
+      { id: 'X1', name: 'x', chapter: '甲', difficulty: 3, is_key: false },
+      { id: 'X2', name: 'y', chapter: '甲', difficulty: 3, is_key: false }
+    ],
+    edges: [{ source: 'X1', target: 'X2', type: '应用' }]
+  }
+  const L = computeLayout(data)
+  for (const id of ['X1', 'X2']) {
+    assert.ok(Number.isFinite(L.pos[id][0]) && Number.isFinite(L.pos[id][1]), `${id} 坐标应有限(非 NaN)`)
+  }
+}
+
 console.log('graphLayout.test.mjs: 全部通过')

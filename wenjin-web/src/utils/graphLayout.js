@@ -134,7 +134,9 @@ export function computeLayout(data) {
       if (!a || !b) return
       const dx = b[0] - a[0]; const dy = b[1] - a[1]
       const d = Math.sqrt(dx * dx + dy * dy) + 0.01
-      const pull = (d - rest[e.type]) * kk[e.type]
+      const er = rest[e.type] ?? rest['相关']
+      const ek = kk[e.type] ?? kk['相关']
+      const pull = (d - er) * ek
       f[e.source][0] += (dx / d) * pull * 60; f[e.source][1] += (dy / d) * pull * 60
       f[e.target][0] -= (dx / d) * pull * 60; f[e.target][1] -= (dy / d) * pull * 60
     })
