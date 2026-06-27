@@ -918,7 +918,10 @@ function graphToLayoutData() {
       id: n.nodeCode, name: n.name, chapter: n.chapter || '',
       difficulty: n.difficulty ?? 3, is_key: !!n.isKey
     })),
-    edges: (g.edges || []).map((e) => ({ source: e.source, target: e.target, type: e.type }))
+    edges: (g.edges || []).map((e) => ({
+      source: e.source, target: e.target, type: e.type,
+      pending: !!e.pending, confidence: e.confidence ?? 0
+    }))
   }
 }
 
@@ -1525,7 +1528,7 @@ const previewBodyStyle = {
 
 const previewCanvasStyle = {
   width: '100%',
-  background: '#121317',
+  background: '#f7f3ec',
   borderRadius: '10px',
   overflow: 'hidden'
 }

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { computeAnchors, ANCHORS, computeLayout } from '../src/utils/graphLayout.js'
-import { computeLayeredLayout } from '../src/utils/graphLayeredLayout.js'
 import { renderGraphSvg } from '../src/utils/graphSvgRenderer.js'
 
 // 1) SE 全命中 → 返回手调表坐标
@@ -89,9 +88,9 @@ import { renderGraphSvg } from '../src/utils/graphSvgRenderer.js'
   }
 }
 
-// ————— computeLayeredLayout 新增 6 条断言 —————
+// ————— renderGraphSvg 力导向星图渲染（退役 dagre）—————
 
-const layeredSample = {
+const sample = {
   nodes: [
     { id: 'N1',   name: '甲节点',   chapter: '甲', difficulty: 3, is_key: false },
     { id: 'N2',   name: '乙节点',   chapter: '乙', difficulty: 3, is_key: true  },
@@ -99,147 +98,94 @@ const layeredSample = {
     { id: 'N2-1', name: '乙子概念', chapter: '乙', difficulty: 3, is_key: false }
   ],
   edges: [
-    { source: 'N1', target: 'N2',   type: '前置' },  // 跨章 甲→乙
-    { source: 'N2', target: 'N3',   type: '前置' },  // 跨章 乙→丙
-    { source: 'N2', target: 'N2-1', type: '包含' },  // 子概念
-    { source: 'N1', target: 'N3',   type: '相关' },  // 不进 dagre
-    { source: 'N1', target: 'N2',   type: '应用' }   // 未知/正式第4类，不进 dagre
+    { source: 'N1', target: 'N2',   type: '前置', pending: true },      // 待复核
+    { source: 'N2', target: 'N3',   type: '前置', confidence: 85 },     // 已采纳
+    { source: 'N2', target: 'N2-1', type: '包含' },                     // 已确认（包含,无箭头）
+    { source: 'N1', target: 'N3',   type: '相关' },                     // 已确认（相关）
+    { source: 'N3', target: 'N1',   type: '应用' }                      // 已确认（未知类型,验无 NaN）
   ]
 }
 
-// 9) 层序正确：每条前置边满足 pos[source][0] < pos[target][0]（LR 下 source 在左）
+// 9) 力导向直线边：边以 <line> 渲染,无 dagre 折线 <path fill="none">
 {
-  const L = computeLayeredLayout(layeredSample)
-  const n1x = L.pos['N1'][0], n2x = L.pos['N2'][0], n3x = L.pos['N3'][0]
-  assert.ok(n1x < n2x, `前置 N1→N2：N1.x(${n1x}) 应 < N2.x(${n2x})`)
-  assert.ok(n2x < n3x, `前置 N2→N3：N2.x(${n2x}) 应 < N3.x(${n3x})`)
+  const svg = renderGraphSvg(sample)
+  assert.ok(svg.includes('<line '), '用例9: 边应以 <line> 直线渲染')
+  assert.ok(!svg.includes('fill="none"'), '用例9: 不应残留 dagre 折线路由 fill="none"')
 }
 
-// 10) 包含子概念不掉队：N2-1.x 不等于全图最小 x
+// 10) 暖纸底色：背景 rect 填充暖纸色 #f7f3ec
 {
-  const L = computeLayeredLayout(layeredSample)
-  const allXs = Object.values(L.pos).map(p => p[0])
-  const minX = Math.min(...allXs)
-  assert.ok(L.pos['N2-1'][0] !== minX, `包含子概念 N2-1 不应在最左列(minX=${minX},N2-1.x=${L.pos['N2-1'][0]})`)
+  const svg = renderGraphSvg(sample)
+  assert.ok(svg.includes('fill="#f7f3ec"'), '用例10: 暖纸底色 #f7f3ec')
 }
 
-// 11) 相关/未知不影响定位：去掉相关+应用边，坐标完全相同
+// 11) 节点辉光halo：含两层半透明同色圆（opacity 0.10 / 0.18）
 {
-  const sampleNoExtra = {
-    nodes: layeredSample.nodes,
-    edges: layeredSample.edges.filter(e => e.type !== '相关' && e.type !== '应用')
-  }
-  const L1 = computeLayeredLayout(layeredSample)
-  const L2 = computeLayeredLayout(sampleNoExtra)
-  for (const id of ['N1', 'N2', 'N3', 'N2-1']) {
-    assert.deepEqual(L1.pos[id], L2.pos[id], `${id} 坐标不受相关/应用边影响`)
-  }
+  const svg = renderGraphSvg(sample)
+  assert.ok(svg.includes('opacity="0.10"'), '用例11: 外层辉光 halo')
+  assert.ok(svg.includes('opacity="0.18"'), '用例11: 内层辉光 halo')
 }
 
-// 12) 无 NaN：所有 pos 值与 edgePaths 路由点坐标均有限
+// 12) 边按状态上色 + 三色箭头 marker
 {
-  const L = computeLayeredLayout(layeredSample)
-  for (const [id, p] of Object.entries(L.pos)) {
-    assert.ok(Number.isFinite(p[0]) && Number.isFinite(p[1]), `pos[${id}] 坐标应有限`)
-  }
-  for (const [k, pts] of Object.entries(L.edgePaths)) {
-    for (const [x, y] of pts) {
-      assert.ok(Number.isFinite(x) && Number.isFinite(y), `edgePaths[${k}] 路由点坐标应有限`)
-    }
-  }
+  const svg = renderGraphSvg(sample)
+  assert.ok(svg.includes('stroke="#b4422e"'), '用例12: 朱砂（待复核）色存在')
+  assert.ok(svg.includes('stroke="#3d7a5e"'), '用例12: 绿（已采纳）色存在')
+  assert.ok(svg.includes('stroke="#6f6759"'), '用例12: 灰（已确认）色存在')
+  assert.ok(svg.includes('id="arrow-pending"'), '用例12: 待复核箭头 marker')
+  assert.ok(svg.includes('id="arrow-adopted"'), '用例12: 已采纳箭头 marker')
+  assert.ok(svg.includes('id="arrow-confirm"'), '用例12: 已确认箭头 marker')
 }
 
-// 13) 标题置顶：每个 chapterLabel.y 小于该章所有节点的最小 pos[id][1]
+// 13) 待复核边虚线 + 前置边带状态色箭头 + 非前置边无箭头
 {
-  const L = computeLayeredLayout(layeredSample)
-  for (const label of L.chapterLabels) {
-    const nodeYs = layeredSample.nodes
-      .filter(n => (n.chapter || '') === label.name)
-      .map(n => L.pos[n.id][1])
-    const minNodeY = Math.min(...nodeYs)
-    assert.ok(label.y < minNodeY, `章节标题"${label.name}".y(${label.y}) 应 < 该章最小节点 y(${minNodeY})`)
-  }
+  const svg = renderGraphSvg(sample)
+  const lines = svg.split('\n').filter((l) => l.startsWith('<line'))
+  const pendingLine = lines.find((l) => l.includes('stroke="#b4422e"'))
+  assert.ok(pendingLine, '用例13: 待复核边存在')
+  assert.ok(pendingLine.includes('stroke-dasharray'), '用例13: 待复核边为虚线')
+  assert.ok(pendingLine.includes('marker-end="url(#arrow-pending)"'), '用例13: 待复核前置边带朱砂箭头')
+  const adoptedLine = lines.find((l) => l.includes('stroke="#3d7a5e"'))
+  assert.ok(adoptedLine && adoptedLine.includes('marker-end="url(#arrow-adopted)"'), '用例13: 已采纳前置边带绿箭头')
+  const grayLines = lines.filter((l) => l.includes('stroke="#6f6759"'))
+  assert.ok(grayLines.some((l) => !l.includes('marker-end')), '用例13: 包含/相关等非前置边无箭头')
 }
 
-// 14) 回归保护：computeLayout 仍返回原 8 个 key
+// 14) 回归保护：computeLayout 仍返回原 8 个 key（graphLayout.js 未受渲染层改动影响）
 {
-  const L = computeLayout(layeredSample)
+  const L = computeLayout(sample)
   const expected = ['byId', 'hasKids', 'parentOf', 'inEdges', 'pos', 'radius', 'labelPos', 'stars']
-  for (const key of expected) {
-    assert.ok(key in L, `computeLayout 应仍含 key: ${key}`)
-  }
-  assert.deepEqual(Object.keys(L).sort(), expected.slice().sort(), 'computeLayout 返回的 key 集合不变')
+  assert.ok(expected.every((k) => k in L), '用例14: computeLayout 仍含 8 key')
+  assert.deepEqual(Object.keys(L).sort(), expected.slice().sort(), '用例14: computeLayout key 集合不变')
 }
 
-// 15) renderGraphSvg 含前置+包含边：折线路由（<path>）、箭头、虚线
+// 15) 章节水印：数据中每个非空章节产出一条 serif font-size=21 水印
 {
-  const svg = renderGraphSvg(layeredSample)
-  assert.ok(typeof svg === 'string' && svg.startsWith('<svg'), '用例15: 返回以 <svg 开头的字符串')
-  assert.ok(svg.includes('<path'), '用例15: 含 <path（dagre 折线路由）')
-  assert.ok(svg.includes('marker-end="url(#arrow)"'), '用例15: 含前置箭头 marker-end')
-  assert.ok(svg.includes('stroke-dasharray'), '用例15: 含包含虚线 stroke-dasharray')
+  const svg = renderGraphSvg(sample)
+  const titles = (svg.match(/font-size="21"/g) || []).length
+  assert.equal(titles, 3, `用例15: 3 个章节应有 3 条水印,实测 ${titles}`)
 }
 
-// 16) 章节标题去叠：横向区间重叠的章节标题被分配到不同行（不同 y），避免叠字
+// 16) 图例：SVG 含 "待复核"/"已采纳"/"已确认" 文案
 {
-  const collide = {
-    nodes: [
-      { id: 'P1', name: '甲一', chapter: '甲章节名称', difficulty: 3, is_key: false },
-      { id: 'Q1', name: '乙一', chapter: '乙章节名称', difficulty: 3, is_key: false },
-      { id: 'P2', name: '甲二', chapter: '甲章节名称', difficulty: 3, is_key: false },
-      { id: 'Q2', name: '乙二', chapter: '乙章节名称', difficulty: 3, is_key: false }
-    ],
-    edges: []   // 无边 → dagre 同列堆叠 → 两章 x 区间重合，标题中点会撞
-  }
-  const L = computeLayeredLayout(collide)
-  assert.equal(L.chapterLabels.length, 2, '用例16: 两个章节两个标题')
-  const [a, b] = L.chapterLabels
-  const xClose = Math.abs(a.x - b.x) < (a.name.length + b.name.length) * 7
-  assert.ok(xClose, `用例16: 构造的两章标题 x 应接近(a.x=${a.x},b.x=${b.x})`)
-  assert.ok(a.y !== b.y, `用例16: 横向重叠的章节标题应分配到不同行(a.y=${a.y},b.y=${b.y})`)
+  const svg = renderGraphSvg(sample)
+  assert.ok(svg.includes('待复核'), '用例16: 图例含 待复核')
+  assert.ok(svg.includes('已采纳'), '用例16: 图例含 已采纳')
+  assert.ok(svg.includes('已确认'), '用例16: 图例含 已确认')
 }
 
-// 17) 节点标签避让：labelPos 走贪心避让（含盒 b），标签不压住其它节点圆
+// 17) 无 NaN：渲染产物不含 NaN 字面量
 {
-  const L = computeLayeredLayout(layeredSample)
-  const ids = layeredSample.nodes.map(n => n.id)
-  const nodeBox = {}
-  ids.forEach(id => {
-    const p = L.pos[id]; const r = L.radius[id]
-    nodeBox[id] = [p[0] - r, p[1] - r, p[0] + r, p[1] + r]
-  })
-  for (const id of ids) {
-    const lp = L.labelPos[id]
-    assert.ok(Array.isArray(lp.b) && lp.b.every(Number.isFinite), `用例17: ${id} 标签应带有限避让盒 b`)
-    for (const other of ids) {
-      if (other === id) continue
-      const o = nodeBox[other]; const b = lp.b
-      const overlap = b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]
-      assert.ok(!overlap, `用例17: ${id} 的标签不应压住节点 ${other}`)
-    }
-  }
+  const svg = renderGraphSvg(sample)
+  assert.ok(!svg.includes('NaN'), '用例17: SVG 不含 NaN')
 }
 
-// 18) 章节标题贴簇顶：每个标题 y 落在其簇 minY 上方有限距离内（证明是簇相对，而非固定顶部带）
+// 18) 空图与单节点不抛错且产出合法 SVG
 {
-  const L = computeLayeredLayout(layeredSample)
-  for (const label of L.chapterLabels) {
-    const nodeYs = layeredSample.nodes
-      .filter(n => (n.chapter || '') === label.name)
-      .map(n => L.pos[n.id][1])
-    const minNodeY = Math.min(...nodeYs)
-    const dist = minNodeY - label.y
-    assert.ok(dist > 0, `用例18: 标题"${label.name}"应在簇上方(dist=${dist})`)
-    assert.ok(dist <= 30 + 3 * 24 + 20, `用例18: 标题"${label.name}"应贴近簇顶而非飘在固定顶部带(dist=${dist})`)
-  }
-}
-
-// 19) 垂直真居中：所有节点 y 的中点接近画布竖直中心 370（旧版沉底会远大于 370）
-{
-  const L = computeLayeredLayout(layeredSample)
-  const ys = Object.values(L.pos).map(p => p[1])
-  const mid = (Math.min(...ys) + Math.max(...ys)) / 2
-  assert.ok(Math.abs(mid - 370) < 50, `用例19: 内容应垂直居中(节点 y 中点=${mid}, 期望≈370)`)
+  const empty = renderGraphSvg({ nodes: [], edges: [] })
+  assert.ok(empty.startsWith('<svg') && empty.includes('</svg>'), '用例18: 空图产出合法 SVG')
+  const single = renderGraphSvg({ nodes: [{ id: 'A', name: 'a', chapter: 'X', difficulty: 3, is_key: false }], edges: [] })
+  assert.ok(single.startsWith('<svg'), '用例18: 单节点产出合法 SVG')
 }
 
 console.log('graphLayout.test.mjs: 全部通过')
