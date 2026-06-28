@@ -74,7 +74,7 @@ class CourseServiceImplTest {
 
         assertThatThrownBy(() -> service.enroll(2L, 1L))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("课程已停用");
+                .hasMessageContaining("课程未发布");
     }
 
     @Test
@@ -107,6 +107,7 @@ class CourseServiceImplTest {
         course.setCode("SE01");
         course.setName("软件工程");
         course.setDescription("desc");
+        course.setStatus(1);
         when(courseMapper.selectBatchIds(anyList()))
                 .thenReturn(Collections.singletonList(course));
 
@@ -155,6 +156,7 @@ class CourseServiceImplTest {
         course.setId(1L);
         course.setCode("SE01");
         course.setName("软件工程");
+        course.setStatus(1);
         when(courseMapper.selectBatchIds(anyList()))
                 .thenReturn(Collections.singletonList(course));
 
@@ -167,6 +169,29 @@ class CourseServiceImplTest {
         assertThat(result.get(0).getMasteredCount()).isEqualTo(0L);
         assertThat(result.get(0).getWeakCount()).isEqualTo(0L);
         assertThat(result.get(0).getUnlearnedCount()).isEqualTo(0L);
+    }
+
+    @Test
+    void getMyCourses_hidesUnpublishedCourse() {
+        StudentCourse sc = new StudentCourse();
+        sc.setStudentId(2L);
+        sc.setCourseId(1L);
+        when(studentCourseMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Collections.singletonList(sc));
+
+        Course course = new Course();
+        course.setId(1L);
+        course.setCode("SE01");
+        course.setName("软件工程");
+        course.setStatus(0); // 未发布
+        when(courseMapper.selectBatchIds(anyList()))
+                .thenReturn(Collections.singletonList(course));
+        when(studentMasteryMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Collections.emptyList());
+
+        List<CourseWithMasteryVO> result = service.getMyCourses(2L);
+
+        assertThat(result).isEmpty();
     }
 
     // ---- getAvailableCourses ----

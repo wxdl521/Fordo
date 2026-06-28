@@ -45,7 +45,7 @@ public class CourseServiceImpl implements CourseService {
             throw new BusinessException(ResultCode.NOT_FOUND, "课程不存在");
         }
         if (course.getStatus() != null && course.getStatus() == 0) {
-            throw new BusinessException(ResultCode.BAD_REQUEST, "课程已停用");
+            throw new BusinessException(ResultCode.BAD_REQUEST, "课程未发布");
         }
 
         // 检查是否已选
@@ -98,7 +98,7 @@ public class CourseServiceImpl implements CourseService {
         return courseIds.stream()
                 .map(courseId -> {
                     Course c = courseMap.get(courseId);
-                    if (c == null) return null;
+                    if (c == null || c.getStatus() == null || c.getStatus() != 1) return null;
 
                     CourseWithMasteryVO vo = new CourseWithMasteryVO();
                     vo.setCourseId(c.getId());
