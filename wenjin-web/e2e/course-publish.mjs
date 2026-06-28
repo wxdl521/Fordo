@@ -33,10 +33,10 @@ try {
   await page.goto(base, { waitUntil: 'networkidle' })
 
   // 登录拿到教师/学生 id
-  const tLogin = await api('POST', '/user/login', null, { username: 'demo_teacher', password: 'demo' })
+  const tLogin = await api('POST', '/login', null, { username: 'demo_teacher', password: 'demo' })
   const teacherId = tLogin.body?.data?.id
   check('教师登录成功', !!teacherId, `id=${teacherId}`)
-  const sLogin = await api('POST', '/user/login', null, { username: 'demo_student', password: 'demo' })
+  const sLogin = await api('POST', '/login', null, { username: 'demo_student', password: 'demo' })
   const studentId = sLogin.body?.data?.id
   check('学生登录成功', !!studentId, `id=${studentId}`)
 
