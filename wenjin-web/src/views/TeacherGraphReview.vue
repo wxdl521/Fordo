@@ -590,7 +590,7 @@ async function togglePublish() {
   const next = !currentCourse.value.published
   try {
     await setTeacherCourseStatus(currentCourse.value.id, next)
-    await reload()
+    await loadCourses(currentCourse.value.id)
   } catch (e) {
     alert(e.message || '操作失败')
   }
