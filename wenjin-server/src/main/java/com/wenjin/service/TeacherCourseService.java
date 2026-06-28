@@ -9,4 +9,7 @@ public interface TeacherCourseService {
     List<TeacherCourseVO> list();
     TeacherCourseVO create(String name, Long teacherId);
     void delete(Long courseId);
+
+    /** 发布(true)/下架(false)课程，落到 course.status 1/0。 */
+    void setPublished(Long courseId, boolean published);
 }

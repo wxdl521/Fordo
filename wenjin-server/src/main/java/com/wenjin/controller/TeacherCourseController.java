@@ -35,4 +35,11 @@ public class TeacherCourseController {
         teacherCourseService.delete(id);
         return Result.ok();
     }
+
+    @PatchMapping("/{id}/status")
+    public Result<Void> setStatus(@PathVariable Long id,
+                                  @RequestBody com.wenjin.dto.UpdateCourseStatusRequest req) {
+        teacherCourseService.setPublished(id, Boolean.TRUE.equals(req.getPublished()));
+        return Result.ok();
+    }
 }

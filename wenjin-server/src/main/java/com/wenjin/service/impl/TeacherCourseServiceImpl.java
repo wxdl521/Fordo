@@ -76,6 +76,16 @@ public class TeacherCourseServiceImpl implements TeacherCourseService {
         courseMapper.deleteById(courseId);
     }
 
+    @Override
+    public void setPublished(Long courseId, boolean published) {
+        Course c = courseMapper.selectById(courseId);
+        if (c == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "课程不存在：" + courseId);
+        }
+        c.setStatus(published ? 1 : 0);
+        courseMapper.updateById(c);
+    }
+
     private String generateUniqueCode() {
         for (int i = 0; i < 20; i++) {
             String code = randomCode();

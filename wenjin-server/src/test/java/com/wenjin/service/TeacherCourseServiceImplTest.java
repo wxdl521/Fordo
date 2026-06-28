@@ -111,4 +111,37 @@ class TeacherCourseServiceImplTest {
         assertThatThrownBy(() -> service.delete(404L))
                 .isInstanceOf(BusinessException.class);
     }
+
+    @Test
+    void setPublished_true_setsStatus1() {
+        Course c = new Course();
+        c.setId(5L); c.setStatus(0);
+        when(courseMapper.selectById(5L)).thenReturn(c);
+
+        service.setPublished(5L, true);
+
+        ArgumentCaptor<Course> cap = ArgumentCaptor.forClass(Course.class);
+        verify(courseMapper).updateById(cap.capture());
+        assertThat(cap.getValue().getStatus()).isEqualTo(1);
+    }
+
+    @Test
+    void setPublished_false_setsStatus0() {
+        Course c = new Course();
+        c.setId(5L); c.setStatus(1);
+        when(courseMapper.selectById(5L)).thenReturn(c);
+
+        service.setPublished(5L, false);
+
+        ArgumentCaptor<Course> cap = ArgumentCaptor.forClass(Course.class);
+        verify(courseMapper).updateById(cap.capture());
+        assertThat(cap.getValue().getStatus()).isEqualTo(0);
+    }
+
+    @Test
+    void setPublished_missingCourse_throws() {
+        when(courseMapper.selectById(404L)).thenReturn(null);
+        assertThatThrownBy(() -> service.setPublished(404L, true))
+                .isInstanceOf(BusinessException.class);
+    }
 }

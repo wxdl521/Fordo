@@ -24,6 +24,7 @@ class TeacherCourseControllerTest {
                 return new TeacherCourseVO(1L, "ABCDEF0123", name);
             }
             public void delete(Long courseId) {}
+            public void setPublished(Long courseId, boolean published) {}
         };
         TeacherCourseController controller = new TeacherCourseController(fake);
 
@@ -43,11 +44,34 @@ class TeacherCourseControllerTest {
             public List<TeacherCourseVO> list() { return List.of(); }
             public TeacherCourseVO create(String name, Long teacherId) { return null; }
             public void delete(Long courseId) { deleted.set(courseId); }
+            public void setPublished(Long courseId, boolean published) {}
         };
         TeacherCourseController controller = new TeacherCourseController(fake);
 
         controller.delete(3L);
 
         assertThat(deleted.get()).isEqualTo(3L);
+    }
+
+    @Test
+    void setStatus_delegatesIdAndPublished() {
+        AtomicReference<Long> seenId = new AtomicReference<>();
+        AtomicReference<Boolean> seenPub = new AtomicReference<>();
+        TeacherCourseService fake = new TeacherCourseService() {
+            public List<TeacherCourseVO> list() { return List.of(); }
+            public TeacherCourseVO create(String name, Long teacherId) { return null; }
+            public void delete(Long courseId) {}
+            public void setPublished(Long courseId, boolean published) {
+                seenId.set(courseId); seenPub.set(published);
+            }
+        };
+        TeacherCourseController controller = new TeacherCourseController(fake);
+
+        com.wenjin.dto.UpdateCourseStatusRequest req = new com.wenjin.dto.UpdateCourseStatusRequest();
+        req.setPublished(Boolean.TRUE);
+        controller.setStatus(7L, req);
+
+        assertThat(seenId.get()).isEqualTo(7L);
+        assertThat(seenPub.get()).isTrue();
     }
 }
