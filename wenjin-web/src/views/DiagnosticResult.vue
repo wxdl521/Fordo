@@ -159,9 +159,8 @@ async function goPath() {
   }
 }
 
-watch(courseId, (id) => {
-  if (id) load()
-}, { immediate: true })
+// 无条件 load:courseId 为空时由 load 内部守卫给出选课引导(不静默回落课程1)
+watch(courseId, () => load(), { immediate: true })
 
 onMounted(() => {
   if (import.meta.env.DEV) {
