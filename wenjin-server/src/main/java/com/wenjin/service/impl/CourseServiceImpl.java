@@ -16,7 +16,6 @@ import org.springframework.stereotype.Service;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -124,29 +123,4 @@ public class CourseServiceImpl implements CourseService {
                         .eq(Course::getStatus, 1));
     }
 
-    @Override
-    public void autoEnrollAll(Long studentId) {
-        List<Course> available = getAvailableCourses();
-        if (available.isEmpty()) {
-            return;
-        }
-
-        // 查已选课程 ID
-        Set<Long> enrolledIds = studentCourseMapper.selectList(
-                new LambdaQueryWrapper<StudentCourse>()
-                        .eq(StudentCourse::getStudentId, studentId))
-                .stream()
-                .map(StudentCourse::getCourseId)
-                .collect(Collectors.toSet());
-
-        // 批量插入未选课程
-        for (Course course : available) {
-            if (!enrolledIds.contains(course.getId())) {
-                StudentCourse sc = new StudentCourse();
-                sc.setStudentId(studentId);
-                sc.setCourseId(course.getId());
-                studentCourseMapper.insert(sc);
-            }
-        }
-    }
 }

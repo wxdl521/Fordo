@@ -8,7 +8,6 @@ import com.wenjin.dto.RegisterRequest;
 import com.wenjin.dto.UserVO;
 import com.wenjin.entity.SysUser;
 import com.wenjin.mapper.SysUserMapper;
-import com.wenjin.service.CourseService;
 import com.wenjin.service.UserService;
 import org.springframework.stereotype.Service;
 
@@ -19,11 +18,9 @@ import org.springframework.stereotype.Service;
 public class UserServiceImpl implements UserService {
 
     private final SysUserMapper userMapper;
-    private final CourseService courseService;
 
-    public UserServiceImpl(SysUserMapper userMapper, CourseService courseService) {
+    public UserServiceImpl(SysUserMapper userMapper) {
         this.userMapper = userMapper;
-        this.courseService = courseService;
     }
 
     @Override
@@ -42,11 +39,6 @@ public class UserServiceImpl implements UserService {
         user.setRole(request.getRole());
         user.setStatus(1);
         userMapper.insert(user);
-
-        // 学生注册后自动选课
-        if (user.getRole() != null && user.getRole() == 2) {
-            courseService.autoEnrollAll(user.getId());
-        }
 
         return toVO(user);
     }

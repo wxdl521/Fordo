@@ -33,11 +33,4 @@ public interface CourseService {
      */
     List<Course> getAvailableCourses();
 
-    /**
-     * 为学生自动选课：将所有可用课程（status=1）批量注册给该学生。
-     * 已选课程跳过（INSERT IGNORE / 唯一键冲突跳过）。
-     *
-     * @param studentId 学生 ID
-     */
-    void autoEnrollAll(Long studentId);
 }
