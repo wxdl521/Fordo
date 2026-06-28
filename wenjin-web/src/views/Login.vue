@@ -106,9 +106,28 @@
             </div>
           </template>
 
-          <div v-else :style="{ textAlign: 'center', padding: '48px 0' }">
+          <div v-else-if="availableCourses.length === 0" :style="{ textAlign: 'center', padding: '48px 0' }">
             <div :style="{ fontSize: '14px', color: 'var(--mut)', marginBottom: '8px' }">暂无课程</div>
-            <div :style="{ fontSize: '12.5px', color: 'var(--mut)' }">请联系教师为你分配课程。</div>
+            <div :style="{ fontSize: '12.5px', color: 'var(--mut)' }">还没有已发布的课程，请联系教师发布课程。</div>
+          </div>
+
+          <!-- 可选课程（已发布、未选） -->
+          <div v-if="availableCourses.length > 0" data-testid="course-plaza" :style="{ marginBottom: '22px' }">
+            <div :style="{ fontSize: '12.5px', color: 'var(--mut)', margin: '4px 0 12px' }">可选课程</div>
+            <div
+              v-for="(c, idx) in availableCourses"
+              :key="c.id"
+              class="wj-course-card"
+              :style="{ ...courseCard, marginBottom: idx === availableCourses.length - 1 ? '0' : '14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }"
+            >
+              <span :style="{ fontFamily: serif, fontSize: '15.5px', fontWeight: 600 }">{{ c.name }}</span>
+              <button
+                :data-testid="'enroll-course-' + c.id"
+                @click="handleEnroll(c.id)"
+                class="wj-btn-acc"
+                :style="{ height: '36px', padding: '0 18px', background: 'var(--acc)', border: 'none', borderRadius: '9px', color: '#FFFDF8', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }"
+              >选课</button>
+            </div>
           </div>
 
           <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px' }">
@@ -130,7 +149,7 @@ import { ref, computed, onMounted } from 'vue'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import { useViewport } from '../composables/useViewport.js'
 import { login as apiLogin, register as apiRegister } from '../api/user.js'
-import { getMyCourses } from '../api/course.js'
+import { getMyCourses, getAvailableCourses, enroll } from '../api/course.js'
 
 const serif = "'Noto Serif SC', serif"
 const { width } = useViewport()
@@ -151,6 +170,7 @@ const regError = ref('')
 // 登录后存储的用户信息
 const currentUser = ref(null)
 const courses = ref([])
+const availableCourses = ref([])
 const courseLoading = ref(false)
 
 const displayName = computed(() => {
@@ -285,10 +305,24 @@ async function loadCourses() {
   courseLoading.value = true
   try {
     courses.value = await getMyCourses(currentUser.value.id)
+    const all = await getAvailableCourses()
+    const enrolledIds = new Set((courses.value || []).map(c => c.courseId))
+    availableCourses.value = (all || []).filter(c => !enrolledIds.has(c.id))
   } catch {
     courses.value = []
+    availableCourses.value = []
   } finally {
     courseLoading.value = false
+  }
+}
+
+async function handleEnroll(courseId) {
+  if (!currentUser.value) return
+  try {
+    await enroll(currentUser.value.id, courseId)
+    await loadCourses()
+  } catch (e) {
+    alert(e.message || '选课失败')
   }
 }
 
