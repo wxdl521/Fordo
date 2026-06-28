@@ -31,7 +31,7 @@
     </div>
 
     <!-- 画布 -->
-    <div :style="{ flex: 1, position: 'relative', overflow: 'hidden' }">
+    <div ref="canvasRef" class="wj-canvas-container" :style="{ flex: 1, position: 'relative', overflow: 'hidden', touchAction: 'none' }">
 
       <!-- 未登录提示 -->
       <div v-if="!currentUser" :style="{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', color: 'var(--mut)', zIndex: 5 }">
@@ -40,7 +40,7 @@
         <button @click="router.push('/')" class="wj-btn-acc" :style="{ height: '40px', padding: '0 28px', background: 'var(--acc)', border: 'none', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, cursor: 'pointer' }">去登录</button>
       </div>
 
-      <svg v-else-if="layout" width="100%" height="100%" :style="{ position: 'absolute', inset: 0, display: 'block', cursor: spaceHeld ? 'grab' : (isPanning ? 'grabbing' : 'default'), transform: mapIn ? 'scale(1)' : 'scale(0.96)', transformOrigin: '50% 50%', transition: 'transform 1.2s cubic-bezier(0.22,1,0.36,1)', userSelect: 'none' }" @wheel.prevent="onWheel" @pointerdown="onSvgPointerDown" @pointermove="onSvgPointerMove" @pointerup="onSvgPointerUp" @pointercancel="onSvgPointerUp">
+      <svg v-else-if="layout" width="100%" height="100%" :style="{ position: 'absolute', inset: 0, display: 'block', cursor: isPanning ? 'grabbing' : 'grab', transform: mapIn ? 'scale(1)' : 'scale(0.96)', transformOrigin: '50% 50%', transition: 'transform 1.2s cubic-bezier(0.22,1,0.36,1)', userSelect: 'none' }" @wheel.prevent="onWheel" @pointerdown="onSvgPointerDown" @pointermove="onSvgPointerMove" @pointerup="onSvgPointerUp" @pointercancel="onSvgPointerUp">
 
         <!-- 可变换的内容层 -->
         <g :transform="`translate(${panX}, ${panY}) scale(${zoom})`">
@@ -96,7 +96,7 @@
         <span :style="{ minWidth: '44px', textAlign: 'center', fontSize: '12px', color: 'var(--mut)', fontWeight: 500, userSelect: 'none' }">{{ zoomPct }}%</span>
         <button @click="zoomOut" class="wj-zoom-btn" :style="{ width: '32px', height: '32px', border: 'none', background: 'transparent', color: 'var(--ink)', fontSize: '17px', cursor: 'pointer', borderRadius: '7px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }">-</button>
         <div :style="{ width: '1px', height: '20px', background: 'var(--line)', margin: '0 2px' }"></div>
-        <button @click="fitAll" class="wj-zoom-btn" :style="{ width: '32px', height: '32px', border: 'none', background: 'transparent', color: 'var(--mut)', fontSize: '11px', cursor: 'pointer', borderRadius: '7px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, fontWeight: 600 }" title="适合全部">Fit</button>
+        <button @click="fitAll" class="wj-zoom-btn" :style="{ width: '32px', height: '32px', border: 'none', background: 'transparent', color: 'var(--mut)', fontSize: '11px', cursor: 'pointer', borderRadius: '7px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, fontWeight: 600 }" title="适应窗口">⊡</button>
       </div>
 
       <!-- 缩略图 -->
@@ -144,7 +144,8 @@
         <div :style="{ fontSize: '11.5px', color: 'var(--mut)' }">已掌握 {{ stats.ok }} · 薄弱 {{ stats.warn }} · 未学 {{ stats.dim }}</div>
       </div>
 
-      <div v-show="width >= 640" :style="{ position: 'absolute', right: '20px', bottom: '20px', fontSize: '12px', color: 'var(--mut)', opacity: 0.75, zIndex: 10 }">悬停节点查看前置链 · 点击查看详情</div>
+      <div v-show="width >= 640 && layout && currentUser" :style="{ position: 'absolute', left: '20px', bottom: '20px', fontSize: '12px', color: 'var(--mut)', opacity: 0.75, zIndex: 10, maxWidth: '420px', lineHeight: 1.6 }">滚轮缩放 · 拖动画布平移 · 右下角缩略图导航</div>
+      <div v-show="width >= 640" :style="{ position: 'absolute', right: '20px', bottom: width >= 900 && layout && currentUser ? '128px' : '20px', fontSize: '12px', color: 'var(--mut)', opacity: 0.75, zIndex: 10 }">悬停节点查看前置链 · 点击查看详情</div>
 
       <!-- 抽屉 -->
       <div v-if="sel" :style="{ position: 'absolute', right: '16px', top: '16px', bottom: '16px', width: drawerW, boxSizing: 'border-box', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '14px', display: 'flex', flexDirection: 'column', zIndex: 30, boxShadow: '0 12px 36px rgba(0,0,0,0.16)', animation: 'wjDrawerIn 0.34s cubic-bezier(0.22,1,0.36,1) both', transition: 'background-color 0.35s, border-color 0.35s' }">
@@ -204,6 +205,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from '../composables/useTheme.js'
 import { useViewport } from '../composables/useViewport.js'
 import { useGraphData, resetGraphData } from '../composables/useGraphData.js'
+import { useStudentCourse } from '../composables/useStudentCourse.js'
 import { computeLayout, shortName, radiusOf } from '../utils/graphLayout.js'
 
 const serif = "'Noto Serif SC', serif"
@@ -217,10 +219,8 @@ function readUser() {
   try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
 }
 const currentUser = ref(readUser())
-const courseId = computed(() => {
-  const q = Number(route.query.courseId)
-  return q > 0 ? q : 1
-})
+const { courseId: studentCourseId } = useStudentCourse()
+const courseId = computed(() => studentCourseId.value || 1)
 
 // 每次进入页面都重新加载（诊断后 mastery 会更新）
 const { data } = useGraphData(courseId.value, currentUser.value?.id, true)
@@ -273,20 +273,79 @@ const dragStartPos = ref({ x: 0, y: 0 })
 const wasDragged = ref(false)
 const spaceHeld = ref(false)
 const dragTick = ref(0) // 拖拽时递增，强制 nodeList 重新计算
-const svgRef = ref(null)
+const canvasRef = ref(null)
 
 const GRAPH_W = 1480
 const GRAPH_H = 740
+const ZOOM_MIN = 0.15
+const ZOOM_MAX = 4
 
 const zoomPct = computed(() => Math.round(zoom.value * 100))
 
-// 缩放工具栏
-function zoomIn() { zoomTo(zoom.value * 1.25) }
-function zoomOut() { zoomTo(zoom.value / 1.25) }
-function fitAll() { zoom.value = 1; panX.value = 0; panY.value = 0 }
+function getContainerSize() {
+  const el = canvasRef.value
+  if (el) return { w: el.clientWidth, h: el.clientHeight }
+  return {
+    w: typeof window !== 'undefined' ? window.innerWidth : GRAPH_W,
+    h: typeof window !== 'undefined' ? Math.max(320, window.innerHeight - 108) : GRAPH_H
+  }
+}
+
+function clampZoom(z) {
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z))
+}
+
+// 缩放工具栏（以视口中心为锚点）
+function zoomIn() {
+  const { w, h } = getContainerSize()
+  zoomTo(zoom.value * 1.25, w / 2, h / 2)
+}
+function zoomOut() {
+  const { w, h } = getContainerSize()
+  zoomTo(zoom.value / 1.25, w / 2, h / 2)
+}
+
+function fitAll() {
+  if (!layout.value || !data.value?.nodes?.length) {
+    zoom.value = 1
+    panX.value = 0
+    panY.value = 0
+    return
+  }
+  const L = layout.value
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const n of data.value.nodes) {
+    const p = L.pos[n.id]
+    if (!p) continue
+    const pad = radiusOf(n) + 28
+    minX = Math.min(minX, p[0] - pad)
+    minY = Math.min(minY, p[1] - pad)
+    maxX = Math.max(maxX, p[0] + pad)
+    maxY = Math.max(maxY, p[1] + pad)
+  }
+  if (!Number.isFinite(minX)) {
+    zoom.value = 1
+    panX.value = 0
+    panY.value = 0
+    return
+  }
+  const graphW = Math.max(1, maxX - minX)
+  const graphH = Math.max(1, maxY - minY)
+  const { w: cw, h: ch } = getContainerSize()
+  const margin = 56
+  const newZoom = clampZoom(Math.min((cw - margin * 2) / graphW, (ch - margin * 2) / graphH))
+  const cx = (minX + maxX) / 2
+  const cy = (minY + maxY) / 2
+  zoom.value = newZoom
+  panX.value = cw / 2 - cx * newZoom
+  panY.value = ch / 2 - cy * newZoom
+}
 
 function zoomTo(newZoom, cx, cy) {
-  newZoom = Math.max(0.3, Math.min(3, newZoom))
+  newZoom = clampZoom(newZoom)
   if (cx !== undefined && cy !== undefined) {
     panX.value = cx - (cx - panX.value) * newZoom / zoom.value
     panY.value = cy - (cy - panY.value) * newZoom / zoom.value
@@ -301,17 +360,16 @@ function onWheel(e) {
   const rect = svg.getBoundingClientRect()
   const mx = e.clientX - rect.left
   const my = e.clientY - rect.top
-  const newZoom = Math.max(0.3, Math.min(3, zoom.value * factor))
+  const newZoom = clampZoom(zoom.value * factor)
   panX.value = mx - (mx - panX.value) * newZoom / zoom.value
   panY.value = my - (my - panY.value) * newZoom / zoom.value
   zoom.value = newZoom
 }
 
-// SVG pointer down — 平移开始
+// SVG pointer down — 空白处拖动画布平移（节点 pointerdown 已 stop，不会误触）
 function onSvgPointerDown(e) {
   if (draggingNode.value) return
-  // 中键或 Space+左键
-  if (e.button === 1 || (e.button === 0 && spaceHeld.value)) {
+  if (e.button === 0 || e.button === 1) {
     isPanning.value = true
     panStart.value = { x: e.clientX, y: e.clientY }
     panStartPan.value = { x: panX.value, y: panY.value }
@@ -384,9 +442,7 @@ function onMiniMapClick(e) {
   const graphX = mx / (150 / GRAPH_W)
   const graphY = my / (100 / GRAPH_H)
   // 计算需要的 pan 使该点居中于视口
-  const container = svg.closest('.wj-canvas-container') || svg.parentElement
-  const cw = container.clientWidth
-  const ch2 = container.clientHeight
+  const { w: cw, h: ch2 } = getContainerSize()
   panX.value = cw / 2 - graphX * zoom.value
   panY.value = ch2 / 2 - graphY * zoom.value
 }
@@ -394,9 +450,7 @@ function onMiniMapClick(e) {
 // 缩略图视口矩形
 const miniView = computed(() => {
   if (!layout.value) return { x: 0, y: 0, w: 150, h: 100 }
-  // 获取容器尺寸（近似用 window）
-  const cw = typeof window !== 'undefined' ? window.innerWidth : 1480
-  const ch2 = typeof window !== 'undefined' ? window.innerHeight - 48 : 740
+  const { w: cw, h: ch2 } = getContainerSize()
   // 视口在图谱坐标中的范围
   const left = -panX.value / zoom.value
   const top = -panY.value / zoom.value
@@ -417,6 +471,7 @@ const miniView = computed(() => {
 function onKeyDown(e) {
   if (e.code === 'Space' && !e.repeat) {
     spaceHeld.value = true
+    e.preventDefault()
   }
   if (e.key === '0') { fitAll() }
   if (e.key === '+' || e.key === '=') { zoomIn() }
@@ -631,7 +686,10 @@ onUnmounted(() => {
 
 function buildLayout() {
   layout.value = computeLayout(data.value)
-  setTimeout(() => { mapIn.value = true }, 60)
+  setTimeout(() => {
+    mapIn.value = true
+    requestAnimationFrame(() => fitAll())
+  }, 60)
 }
 
 // ── 章节标签 ──

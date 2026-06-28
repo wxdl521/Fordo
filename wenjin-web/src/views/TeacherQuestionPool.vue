@@ -2,6 +2,7 @@
   <div :style="pageStyle">
     <!-- 工具条 -->
     <div :style="toolbarStyle">
+      <span v-if="currentCourse" :style="courseStyle">{{ currentCourse.name }}</span>
       <div :style="tabGroupStyle">
         <button v-for="t in tabDefs" :key="t.key" @click="setTab(t.key)" :style="tabBtnStyle(tab === t.key)">
           {{ t.label }}
@@ -25,6 +26,15 @@
         </select>
       </div>
       <span :style="infoStyle" v-if="data">共 {{ data.total }} 题</span>
+      <button
+        v-if="tab === 0 && pendingCount > 0"
+        @click="handleApproveAll"
+        :disabled="approveAllLoading"
+        :style="approveAllBtnStyle"
+      >
+        {{ approveAllLoading ? '审批中…' : `一键全部通过 (${pendingCount})` }}
+      </button>
+      <span v-if="approveAllMessage" :style="approveAllMsgStyle">{{ approveAllMessage }}</span>
       <button @click="showTools = !showTools" :style="toolsToggleStyle">
         {{ showTools ? '收起工具' : '批量工具' }}
       </button>
@@ -35,14 +45,17 @@
       <!-- AI 出题 -->
       <div :style="toolBlockStyle">
         <div :style="toolTitleStyle">AI 出题</div>
+
+        <!-- 单节点 -->
+        <div :style="toolSubTitleStyle">单节点出题</div>
         <div :style="toolRowStyle">
-          <select v-model="genNodeCode" :style="selectStyle">
+          <select v-model="genNodeCode" :disabled="batchLoading" :style="selectStyle">
             <option v-for="node in graphNodes" :key="node.nodeCode" :value="node.nodeCode">
               {{ node.nodeCode }} · {{ node.name }}
             </option>
           </select>
-          <input v-model.number="genCount" type="number" min="1" max="20" :style="numInputStyle" />
-          <button @click="handleGenerate" :disabled="genLoading" :style="toolBtnStyle">
+          <input v-model.number="genCount" type="number" min="1" max="20" :disabled="batchLoading" :style="numInputStyle" />
+          <button @click="handleGenerate" :disabled="genLoading || batchLoading || !genNodeCode || !courseId" :style="toolBtnStyle">
             {{ genLoading ? '生成中…' : '生成' }}
           </button>
         </div>
@@ -51,6 +64,42 @@
           <span v-if="genResult.message" :style="{ marginLeft: '8px', color: 'var(--text-mut)' }">{{ genResult.message }}</span>
         </div>
         <div v-if="genError" :style="toolErrorStyle">{{ genError }}</div>
+
+        <div :style="toolDividerStyle"></div>
+
+        <!-- 全节点批量 -->
+        <div :style="toolSubTitleStyle">全节点批量 · 共 {{ graphNodes.length }} 个知识点</div>
+        <div :style="toolRowStyle">
+          <span :style="filterLabelStyle">每节点</span>
+          <input v-model.number="batchCountPerNode" type="number" min="1" max="20" :disabled="batchLoading || genLoading" :style="numInputStyle" />
+          <span :style="filterLabelStyle">题</span>
+          <button @click="handleBatchGenerate" :disabled="batchLoading || genLoading || !graphNodes.length || !courseId" :style="toolBtnStyle">
+            {{ batchLoading ? '批量生成中…' : '一键全节点生成' }}
+          </button>
+          <button v-if="batchLoading" @click="cancelBatchGenerate" :style="batchCancelBtnStyle">取消</button>
+        </div>
+        <div v-if="batchProgress" :style="toolResultStyle">
+          进度 <strong>{{ batchProgress.index }}</strong> / {{ batchProgress.total }}
+          · {{ batchProgress.nodeCode }} · {{ batchProgress.nodeName }}
+        </div>
+        <div v-if="batchResult" :style="toolResultStyle">
+          合计生成 <strong>{{ batchResult.generated }}</strong> 题 · 去重 <strong>{{ batchResult.duplicated }}</strong> · 丢弃 <strong>{{ batchResult.dropped }}</strong>
+          <span v-if="batchResult.failed.length > 0" :style="{ marginLeft: '8px', color: '#e0a33e' }">
+            · {{ batchResult.failed.length }} 个节点失败
+          </span>
+          <span v-if="batchResult.cancelled" :style="{ marginLeft: '8px', color: 'var(--text-mut)' }">（已取消）</span>
+        </div>
+        <div v-if="batchResult && batchResult.failed.length > 0" :style="batchFailListStyle">
+          <div v-for="f in batchResult.failed" :key="f.nodeCode">{{ f.nodeCode }} · {{ f.name }}：{{ f.error }}</div>
+        </div>
+        <div v-if="batchError" :style="toolErrorStyle">{{ batchError }}</div>
+
+        <div v-if="graphNodes.length === 0 && courseId" :style="toolErrorStyle">
+          当前课程暂无图谱节点，请先在「图谱审核」页导入或生成图谱。
+        </div>
+        <div v-if="!courseId" :style="toolErrorStyle">
+          暂无课程，请先在「图谱审核」页新增课程。
+        </div>
       </div>
 
       <!-- 导入题库 -->
@@ -172,11 +221,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { fetchQuestions, reviewQuestions, fetchTeacherGraph } from '../api/teacher.js'
 import { generateQuestions, annotateQuestions, importQuestionJson, importQuestionExcel } from '../api/admin.js'
+import { useTeacherCourse } from '../composables/useTeacherCourse.js'
 
-const COURSE_ID = 1
+const { currentCourse, courseId } = useTeacherCourse()
 const optionKeys = ['A', 'B', 'C', 'D']
 
 // ── 状态 ──
@@ -204,6 +254,12 @@ const genCount = ref(5)
 const genLoading = ref(false)
 const genError = ref('')
 const genResult = ref(null)
+const batchCountPerNode = ref(3)
+const batchLoading = ref(false)
+const batchProgress = ref(null)
+const batchResult = ref(null)
+const batchError = ref('')
+let batchAbort = false
 const importLoading = ref(false)
 const importError = ref('')
 const importResult = ref(null)
@@ -213,8 +269,16 @@ const annotateJson = ref('{\n  "items": [\n    {\n      "stem": "题目内容",\
 const annotateLoading = ref(false)
 const annotateError = ref('')
 const annotateResult = ref(null)
+const approveAllLoading = ref(false)
+const approveAllMessage = ref('')
 
 // ── 计算属性 ──
+const pendingCount = computed(() => {
+  if (tab.value !== 0 || !data.value) return 0
+  return data.value.total
+})
+
+const hasReviewFilter = computed(() => Boolean(conf.value || nodeCode.value))
 const tabDefs = computed(() => {
   const counts = data.value?.counts || { pending: 0, passed: 0, rejected: 0 }
   return [
@@ -252,10 +316,14 @@ const totalPages = computed(() => {
 
 // ── 数据加载 ──
 async function load() {
+  if (!courseId.value) {
+    data.value = null
+    return
+  }
   loading.value = true
   try {
     const res = await fetchQuestions({
-      courseId: COURSE_ID,
+      courseId: courseId.value,
       status: tab.value,
       conf: conf.value || undefined,
       nodeCode: nodeCode.value || undefined,
@@ -272,31 +340,111 @@ async function load() {
 
 // ── 加载图谱节点 ──
 async function loadGraphNodes() {
+  if (!courseId.value) {
+    graphNodes.value = []
+    genNodeCode.value = ''
+    return
+  }
   try {
-    const graph = await fetchTeacherGraph(COURSE_ID)
+    const graph = await fetchTeacherGraph(courseId.value)
     graphNodes.value = (graph.nodes || []).sort((a, b) => a.nodeCode.localeCompare(b.nodeCode))
-    if (graphNodes.value.length > 0 && !genNodeCode.value) {
-      genNodeCode.value = graphNodes.value[0].nodeCode
+    if (graphNodes.value.length > 0) {
+      const stillValid = graphNodes.value.some(n => n.nodeCode === genNodeCode.value)
+      if (!stillValid) genNodeCode.value = graphNodes.value[0].nodeCode
+    } else {
+      genNodeCode.value = ''
     }
   } catch (err) {
     console.error('加载图谱节点失败', err)
+    graphNodes.value = []
+    genNodeCode.value = ''
   }
 }
 
-// ── AI 出题 ──
+function clampCount(n, fallback = 5) {
+  const v = Number(n)
+  if (!Number.isFinite(v)) return fallback
+  return Math.min(20, Math.max(1, Math.round(v)))
+}
+
+// ── AI 出题（单节点）──
 async function handleGenerate() {
-  if (!genNodeCode.value) return
+  if (!courseId.value) {
+    genError.value = '请先在「图谱审核」页选择或新增课程'
+    return
+  }
+  if (!genNodeCode.value) {
+    genError.value = '请先选择知识点'
+    return
+  }
   genLoading.value = true
   genError.value = ''
   genResult.value = null
   try {
-    genResult.value = await generateQuestions(COURSE_ID, genNodeCode.value, genCount.value)
-    await load() // 刷新题目列表
+    genResult.value = await generateQuestions(courseId.value, genNodeCode.value, clampCount(genCount.value))
+    await load()
   } catch (e) {
     genError.value = e.message || '出题失败'
   } finally {
     genLoading.value = false
   }
+}
+
+// ── AI 出题（全节点批量）──
+async function handleBatchGenerate() {
+  if (!courseId.value) {
+    batchError.value = '请先在「图谱审核」页选择或新增课程'
+    return
+  }
+  if (graphNodes.value.length === 0) {
+    batchError.value = '当前课程暂无图谱节点'
+    return
+  }
+
+  const count = clampCount(batchCountPerNode.value, 3)
+  const total = graphNodes.value.length
+  if (!confirm(`将对全部 ${total} 个节点各生成 ${count} 道题，耗时可能较长，是否继续？`)) return
+
+  batchLoading.value = true
+  batchAbort = false
+  batchError.value = ''
+  batchResult.value = { generated: 0, dropped: 0, duplicated: 0, failed: [], cancelled: false }
+  genResult.value = null
+  genError.value = ''
+
+  for (let i = 0; i < graphNodes.value.length; i++) {
+    if (batchAbort) {
+      batchResult.value.cancelled = true
+      break
+    }
+    const node = graphNodes.value[i]
+    batchProgress.value = {
+      index: i + 1,
+      total,
+      nodeCode: node.nodeCode,
+      nodeName: node.name
+    }
+    try {
+      const res = await generateQuestions(courseId.value, node.nodeCode, count)
+      batchResult.value.generated += res.generated || 0
+      batchResult.value.dropped += res.dropped || 0
+      batchResult.value.duplicated += res.duplicated || 0
+    } catch (e) {
+      batchResult.value.failed.push({
+        nodeCode: node.nodeCode,
+        name: node.name,
+        error: e.message || '出题失败'
+      })
+    }
+  }
+
+  batchProgress.value = null
+  batchLoading.value = false
+  await load()
+}
+
+function cancelBatchGenerate() {
+  batchAbort = true
 }
 
 // ── 导入题库 ──
@@ -319,9 +467,9 @@ async function handleImportFile() {
   try {
     const isExcel = /\.(xlsx?|xls)$/i.test(importFile.value.name)
     if (isExcel) {
-      importResult.value = await importQuestionExcel(COURSE_ID, importFile.value)
+      importResult.value = await importQuestionExcel(courseId.value, importFile.value)
     } else {
-      importResult.value = await importQuestionJson(COURSE_ID, importFile.value)
+      importResult.value = await importQuestionJson(courseId.value, importFile.value)
     }
     await load()
   } catch (e) {
@@ -345,7 +493,7 @@ async function handleAnnotate() {
     return
   }
   try {
-    annotateResult.value = await annotateQuestions(COURSE_ID, parsed)
+    annotateResult.value = await annotateQuestions(courseId.value, parsed)
     await load()
   } catch (e) {
     annotateError.value = e.message || '标注失败'
@@ -359,12 +507,14 @@ function setTab(t) {
   tab.value = t
   checked.value = {}
   page.value = 1
+  approveAllMessage.value = ''
 }
 
 function setConf(c) {
   conf.value = c
   checked.value = {}
   page.value = 1
+  approveAllMessage.value = ''
 }
 
 function toggleOne(q) {
@@ -388,11 +538,68 @@ function clearChecked() {
 
 async function review(ids, action) {
   try {
-    await reviewQuestions(COURSE_ID, ids, action)
+    await reviewQuestions(courseId.value, ids, action)
     checked.value = {}
     await load()
   } catch (err) {
     console.error('审核失败', err)
+  }
+}
+
+async function fetchAllPendingIds() {
+  const ids = []
+  let p = 1
+  const pageSize = 100
+  while (true) {
+    const res = await fetchQuestions({
+      courseId: courseId.value,
+      status: 0,
+      conf: conf.value || undefined,
+      nodeCode: nodeCode.value || undefined,
+      page: p,
+      size: pageSize
+    })
+    const items = res?.items || []
+    ids.push(...items.map(q => q.id))
+    if (items.length < pageSize || ids.length >= (res?.total || 0)) break
+    p++
+  }
+  return ids
+}
+
+async function reviewInChunks(ids, action) {
+  const chunkSize = 200
+  let affected = 0
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize)
+    const n = await reviewQuestions(courseId.value, chunk, action)
+    affected += typeof n === 'number' ? n : chunk.length
+  }
+  return affected
+}
+
+async function handleApproveAll() {
+  if (!courseId.value || pendingCount.value === 0) return
+
+  const scope = hasReviewFilter.value ? '当前筛选条件下' : '全部'
+  if (!confirm(`确定将${scope}的 ${pendingCount.value} 道待审核题目全部通过吗？`)) return
+
+  approveAllLoading.value = true
+  approveAllMessage.value = ''
+  try {
+    const ids = await fetchAllPendingIds()
+    if (ids.length === 0) {
+      approveAllMessage.value = '没有可审批的题目'
+      return
+    }
+    const affected = await reviewInChunks(ids, 'pass')
+    checked.value = {}
+    await load()
+    approveAllMessage.value = `已通过 ${affected} 题`
+  } catch (e) {
+    approveAllMessage.value = e.message || '批量审批失败'
+  } finally {
+    approveAllLoading.value = false
   }
 }
 
@@ -433,13 +640,16 @@ function formatDate(ts) {
 
 // ── 监听 ──
 watch([tab, conf, nodeCode, page], () => {
+  approveAllMessage.value = ''
   load()
 })
 
-onMounted(() => {
-  load()
-  loadGraphNodes()
-})
+watch(courseId, (id) => {
+  if (id) {
+    load()
+    loadGraphNodes()
+  }
+}, { immediate: true })
 
 // ── DEV 钩子 ──
 if (import.meta.env.DEV) {
@@ -453,6 +663,26 @@ if (import.meta.env.DEV) {
 }
 
 // ── 样式 ──
+const approveAllBtnStyle = {
+  height: '32px',
+  padding: '0 16px',
+  background: 'var(--accent)',
+  border: 'none',
+  borderRadius: '8px',
+  color: '#fff',
+  fontSize: '12.5px',
+  fontWeight: 500,
+  cursor: 'pointer',
+  transition: 'opacity 0.2s',
+  whiteSpace: 'nowrap'
+}
+
+const approveAllMsgStyle = {
+  fontSize: '12px',
+  color: 'var(--mastered)',
+  whiteSpace: 'nowrap'
+}
+
 const toolsToggleStyle = {
   marginLeft: 'auto',
   height: '32px',
@@ -489,6 +719,37 @@ const toolTitleStyle = {
   fontWeight: 600,
   marginBottom: '10px',
   color: 'var(--text)'
+}
+
+const toolSubTitleStyle = {
+  fontSize: '12px',
+  fontWeight: 500,
+  color: 'var(--text-mut)',
+  marginBottom: '8px'
+}
+
+const toolDividerStyle = {
+  height: '1px',
+  background: 'var(--line)',
+  margin: '14px 0'
+}
+
+const batchCancelBtnStyle = {
+  height: '32px',
+  padding: '0 14px',
+  background: 'transparent',
+  border: '1px solid var(--line)',
+  borderRadius: '8px',
+  color: 'var(--text-mut)',
+  fontSize: '12.5px',
+  cursor: 'pointer'
+}
+
+const batchFailListStyle = {
+  fontSize: '12px',
+  color: 'var(--text-mut)',
+  marginTop: '6px',
+  lineHeight: 1.6
 }
 
 const toolRowStyle = {

@@ -56,11 +56,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, computed, watch, onMounted } from 'vue'
 import { fetchCurrentPath, completeItem } from '../api/path.js'
+import { useStudentCourse } from '../composables/useStudentCourse.js'
 
-const route = useRoute()
+const { courseId } = useStudentCourse()
 
 // 从 localStorage 读取当前登录用户
 function readUser() {
@@ -68,11 +68,6 @@ function readUser() {
 }
 const currentUser = readUser()
 const DEMO_STUDENT_ID = currentUser?.id || 2
-const DEMO_COURSE_ID = (() => {
-  const q = Number(route.query.courseId)
-  return q > 0 ? q : 1
-})()
-
 const data = ref(null)
 const loading = ref(false)
 const error = ref('')
@@ -120,7 +115,11 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchCurrentPath(DEMO_STUDENT_ID, DEMO_COURSE_ID)
+    if (!courseId.value) {
+      error.value = '请先从首页选择一门课程'
+      return
+    }
+    data.value = await fetchCurrentPath(DEMO_STUDENT_ID, courseId.value)
   } catch (e) {
     error.value = e.message || '未知错误'
   } finally {
@@ -141,8 +140,11 @@ async function markDone(itemId) {
   }
 }
 
-onMounted(async () => {
-  await load()
+watch(courseId, (id) => {
+  if (id) load()
+}, { immediate: true })
+
+onMounted(() => {
   if (import.meta.env.DEV) {
     window.__wjPath = { data, loading, error, completingId, load, markDone }
   }

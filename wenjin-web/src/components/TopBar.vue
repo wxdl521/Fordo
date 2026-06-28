@@ -41,7 +41,7 @@
         <router-link
           v-for="link in studentLinks"
           :key="link.to"
-          :to="link.to"
+          :to="{ path: link.to, query: link.query }"
           :style="navLinkStyle($route.path === link.to)"
         >{{ link.label }}</router-link>
       </template>
@@ -64,6 +64,7 @@
 import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import ThemeToggle from './ThemeToggle.vue'
+import { useStudentCourse } from '../composables/useStudentCourse.js'
 
 const router = useRouter()
 const route = useRoute()
@@ -77,15 +78,20 @@ defineProps({
 // 判断是否教师端
 const isTeacher = computed(() => route.path.startsWith('/teacher'))
 
-// 学生端导航
-const studentLinks = [
-  { to: '/map', label: '染色地图' },
-  { to: '/diagnostic', label: '入口诊断' },
-  { to: '/result', label: '诊断结果' },
-  { to: '/path', label: '学习路径' },
-  { to: '/companion', label: 'AI 伴侣' },
-  { to: '/growth', label: '成长档案' }
-]
+const { courseId: studentCourseId } = useStudentCourse()
+
+// 学生端导航（携带当前课程，避免误用默认课程 1）
+const studentLinks = computed(() => {
+  const query = studentCourseId.value ? { courseId: studentCourseId.value } : {}
+  return [
+    { to: '/map', label: '染色地图', query },
+    { to: '/diagnostic', label: '入口诊断', query },
+    { to: '/result', label: '诊断结果', query },
+    { to: '/path', label: '学习路径', query },
+    { to: '/companion', label: 'AI 伴侣', query },
+    { to: '/growth', label: '成长档案', query }
+  ]
+})
 
 // 教师端导航
 const teacherLinks = [

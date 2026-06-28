@@ -100,8 +100,8 @@
               </div>
               <div :style="{ display: 'flex', alignItems: 'center', gap: '12px' }">
                 <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" :to="{ path: '/map', query: { courseId: c.courseId } }" class="wj-btn-acc" :style="{ height: '40px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', padding: '0 24px', background: 'var(--acc)', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, textDecoration: 'none' }">进入课程</router-link>
-                <router-link v-else to="/diagnostic" class="wj-hover-card2" :style="{ height: '40px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', padding: '0 20px', border: '1px solid var(--line)', borderRadius: '9px', color: 'var(--ink)', fontSize: '13px', textDecoration: 'none' }">开始入口诊断</router-link>
-                <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" to="/growth" class="wj-underline" :style="{ fontSize: '12.5px', color: 'var(--mut)', textDecoration: 'underline', textUnderlineOffset: '3px' }">成长档案</router-link>
+                <router-link v-else :to="{ path: '/diagnostic', query: { courseId: c.courseId } }" class="wj-hover-card2" :style="{ height: '40px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', padding: '0 20px', border: '1px solid var(--line)', borderRadius: '9px', color: 'var(--ink)', fontSize: '13px', textDecoration: 'none' }">开始入口诊断</router-link>
+                <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" :to="{ path: '/growth', query: { courseId: c.courseId } }" class="wj-underline" :style="{ fontSize: '12.5px', color: 'var(--mut)', textDecoration: 'underline', textUnderlineOffset: '3px' }">成长档案</router-link>
               </div>
             </div>
           </template>

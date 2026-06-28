@@ -9,7 +9,7 @@
     <div v-else-if="data && !data.hasWeakness" class="rs-center">
       <div class="rs-title">暂无明显卡点</div>
       <div class="rs-sub">当前没有检测到薄弱知识点。先去做一次入口诊断，或在地图上继续探索。</div>
-      <router-link to="/diagnostic" class="rs-btn-acc rs-btn-link">去诊断</router-link>
+      <router-link :to="diagnosticLink" class="rs-btn-acc rs-btn-link">去诊断</router-link>
     </div>
 
     <div v-else-if="data" class="rs-wrap">
@@ -75,7 +75,7 @@
             <div class="rs-dist-head"><span>{{ d.label }}</span><span class="rs-dist-cnt">{{ d.count }} 个</span></div>
             <div class="rs-dist-track"><div class="rs-dist-fill" :style="{ width: d.w, background: d.color }"></div></div>
           </div>
-          <router-link to="/diagnostic" class="rs-btn-ghost rs-redo">重新诊断</router-link>
+          <router-link :to="diagnosticLink" class="rs-btn-ghost rs-redo">重新诊断</router-link>
         </section>
       </div>
     </div>
@@ -83,12 +83,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { ref, computed, watch, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { fetchResult } from '../api/diagnostic.js'
 import { generatePath } from '../api/path.js'
+import { useStudentCourse } from '../composables/useStudentCourse.js'
 
-const route = useRoute()
+const { courseId } = useStudentCourse()
 
 // 从 localStorage 读取当前登录用户
 function readUser() {
@@ -96,17 +97,17 @@ function readUser() {
 }
 const currentUser = readUser()
 const DEMO_STUDENT_ID = currentUser?.id || 2
-const DEMO_COURSE_ID = (() => {
-  const q = Number(route.query.courseId)
-  return q > 0 ? q : 1
-})()
-
 const router = useRouter()
 const data = ref(null)
 const loading = ref(false)
 const error = ref('')
 const generating = ref(false)
 const genError = ref('')
+
+const diagnosticLink = computed(() => ({
+  path: '/diagnostic',
+  query: courseId.value ? { courseId: courseId.value } : {}
+}))
 
 function levelColor(level) {
   return level === 2 ? 'var(--ok)' : level === 1 ? 'var(--warn)' : 'var(--dim)'
@@ -132,7 +133,11 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchResult(DEMO_STUDENT_ID, DEMO_COURSE_ID)
+    if (!courseId.value) {
+      error.value = '请先从首页选择一门课程'
+      return
+    }
+    data.value = await fetchResult(DEMO_STUDENT_ID, courseId.value)
   } catch (e) {
     error.value = e.message || '未知错误'
   } finally {
@@ -145,8 +150,8 @@ async function goPath() {
   generating.value = true
   genError.value = ''
   try {
-    await generatePath({ studentId: DEMO_STUDENT_ID, courseId: DEMO_COURSE_ID })
-    router.push('/path')
+    await generatePath({ studentId: DEMO_STUDENT_ID, courseId: courseId.value })
+    router.push({ path: '/path', query: { courseId: courseId.value } })
   } catch (e) {
     genError.value = e.message || '未知错误'
   } finally {
@@ -154,8 +159,11 @@ async function goPath() {
   }
 }
 
-onMounted(async () => {
-  await load()
+watch(courseId, (id) => {
+  if (id) load()
+}, { immediate: true })
+
+onMounted(() => {
   if (import.meta.env.DEV) {
     window.__wjResult = { data, loading, error, generating, genError, load, goPath }
   }

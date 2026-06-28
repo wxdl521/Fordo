@@ -93,11 +93,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { listConversations, fetchConversation, deleteConversation, chatStream } from '../api/companion.js'
+import { useStudentCourse } from '../composables/useStudentCourse.js'
 
-const route = useRoute()
+const { courseId } = useStudentCourse()
 
 // 从 localStorage 读取当前登录用户
 function readUser() {
@@ -105,11 +106,6 @@ function readUser() {
 }
 const currentUser = readUser()
 const DEMO_STUDENT_ID = currentUser?.id || 2
-const DEMO_COURSE_ID = (() => {
-  const q = Number(route.query.courseId)
-  return q > 0 ? q : 1
-})()
-
 const router = useRouter()
 
 // 状态
@@ -141,7 +137,8 @@ const lastAiIdx = computed(() => {
 // 加载会话列表
 async function loadConversations() {
   try {
-    const data = await listConversations(DEMO_STUDENT_ID, DEMO_COURSE_ID)
+    if (!courseId.value) return
+    const data = await listConversations(DEMO_STUDENT_ID, courseId.value)
     conversations.value = data || []
   } catch (e) {
     console.error('Failed to load conversations:', e)
@@ -203,7 +200,7 @@ async function sendText() {
 
   const payload = {
     studentId: DEMO_STUDENT_ID,
-    courseId: DEMO_COURSE_ID,
+    courseId: courseId.value,
     message: text
   }
 
@@ -282,8 +279,11 @@ function formatTime(ts) {
   return d.toLocaleDateString('zh-CN')
 }
 
+watch(courseId, (id) => {
+  if (id) loadConversations()
+}, { immediate: true })
+
 onMounted(async () => {
-  await loadConversations()
 
   // DEV 钩子
   if (import.meta.env.DEV) {

@@ -87,9 +87,13 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchGraph } from '../api/graph.js'
+import { useStudentCourse } from '../composables/useStudentCourse.js'
 
-const DEMO_STUDENT_ID = 2
-const DEMO_COURSE_ID = 1
+function readUser() {
+  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
+}
+const DEMO_STUDENT_ID = readUser()?.id || 2
+const { courseId } = useStudentCourse()
 
 const route = useRoute()
 const router = useRouter()
@@ -161,7 +165,11 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const data = await fetchGraph(DEMO_COURSE_ID, DEMO_STUDENT_ID)
+    if (!courseId.value) {
+      error.value = '请先从首页选择一门课程'
+      return
+    }
+    const data = await fetchGraph(courseId.value, DEMO_STUDENT_ID)
     graph.value = data
   } catch (e) {
     error.value = e.message || '未知错误'

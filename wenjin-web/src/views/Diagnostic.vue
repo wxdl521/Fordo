@@ -8,7 +8,7 @@
       <span v-show="width >= 560" class="diag-subtitle">入口诊断</span>
       <div style="margin-left:auto;display:flex;align-items:center;gap:10px;">
         <span v-show="width >= 480" class="diag-meta">已答 {{ answeredCount }} · 跳过 {{ skippedCount }}</span>
-        <router-link to="/map" class="diag-exit-btn">保存并退出</router-link>
+        <router-link :to="mapLink" class="diag-exit-btn">保存并退出</router-link>
       </div>
     </div>
 
@@ -30,7 +30,10 @@
 
     <!-- 题库为空 -->
     <div v-else-if="questions.length === 0" class="diag-center-state">
-      <div class="diag-empty-msg">题库为空，请先在<router-link to="/admin" class="diag-link">管理页</router-link>导入题库。</div>
+      <div class="diag-empty-msg">
+        当前课程暂无可用题目。请确认教师已在「题目审核」中审批通过，且你从首页选择了对应课程。
+        <router-link to="/" class="diag-link">返回选课</router-link>
+      </div>
     </div>
 
     <!-- 答题区 -->
@@ -95,36 +98,38 @@
       <button class="diag-btn-acc" @click="submitAnswers">重新提交</button>
     </div>
 
-    <!-- 完成态：内联结果 -->
+    <!-- 完成态：内联结果（可滚动，避免逐题列表把底部按钮顶出视口） -->
     <div v-else class="diag-done">
-      <div class="diag-done-icon">✓</div>
-      <div class="diag-done-title" :style="{ fontSize: doneTitleSize }">诊断完成</div>
-      <div v-if="result" class="diag-done-score">
-        答对 <strong>{{ result.correctCount }}</strong> / 共 <strong>{{ result.total }}</strong> 题
-      </div>
-      <div class="diag-done-sub">
-        你答了 {{ answeredCount }} 题，跳过 {{ skippedCount }} 题。
-        问津会沿知识图谱回溯每一处失分，找到真正的根因。
-      </div>
-
-      <!-- 逐题对错列表（可选，使用 result.grades） -->
-      <div v-if="result && result.grades && result.grades.length" class="diag-grades">
-        <div
-          v-for="(g, i) in result.grades"
-          :key="g.questionId"
-          class="diag-grade-row"
-          :class="{ correct: g.correct, wrong: !g.correct }"
-        >
-          <span class="diag-grade-num">第 {{ i + 1 }} 题</span>
-          <span class="diag-grade-mark">{{ g.correct ? '✓ 正确' : '✗ 错误' }}</span>
-          <span v-if="!g.correct" class="diag-grade-key">正确答案：{{ g.correctKey }}</span>
+      <div class="diag-done-inner">
+        <div class="diag-done-icon">✓</div>
+        <div class="diag-done-title" :style="{ fontSize: doneTitleSize }">诊断完成</div>
+        <div v-if="result" class="diag-done-score">
+          答对 <strong>{{ result.correctCount }}</strong> / 共 <strong>{{ result.total }}</strong> 题
         </div>
-      </div>
+        <div class="diag-done-sub">
+          你答了 {{ answeredCount }} 题，跳过 {{ skippedCount }} 题。
+          问津会沿知识图谱回溯每一处失分，找到真正的根因。
+        </div>
 
-      <div class="diag-done-actions">
-        <router-link to="/result" class="diag-btn-acc diag-btn-link">查看诊断结果</router-link>
-        <router-link to="/map" class="diag-btn-restart-link">查看染色地图</router-link>
-        <button class="diag-btn-restart" @click="restart">重新作答</button>
+        <!-- 逐题对错列表（可选，使用 result.grades） -->
+        <div v-if="result && result.grades && result.grades.length" class="diag-grades">
+          <div
+            v-for="(g, i) in result.grades"
+            :key="g.questionId"
+            class="diag-grade-row"
+            :class="{ correct: g.correct, wrong: !g.correct }"
+          >
+            <span class="diag-grade-num">第 {{ i + 1 }} 题</span>
+            <span class="diag-grade-mark">{{ g.correct ? '✓ 正确' : '✗ 错误' }}</span>
+            <span v-if="!g.correct" class="diag-grade-key">正确答案：{{ g.correctKey }}</span>
+          </div>
+        </div>
+
+        <div class="diag-done-actions">
+          <router-link :to="resultLink" class="diag-btn-acc diag-btn-link">查看诊断结果</router-link>
+          <router-link :to="mapLink" class="diag-btn-restart-link">查看染色地图</router-link>
+          <button class="diag-btn-restart" @click="restart">重新作答</button>
+        </div>
       </div>
     </div>
 
@@ -132,12 +137,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { fetchPaper, submitPaper } from '../api/diagnostic.js'
-import { useRoute } from 'vue-router'
+import { useStudentCourse } from '../composables/useStudentCourse.js'
 
 // ─── 常量 ──────────────────────────────────────────────────────────────────
-const route = useRoute()
+const { courseId } = useStudentCourse()
 const letters = ['A', 'B', 'C', 'D']
 
 // 从 localStorage 读取当前登录用户
@@ -146,10 +151,10 @@ function readUser() {
 }
 const currentUser = readUser()
 const DEMO_STUDENT_ID = currentUser?.id || 2
-const DEMO_COURSE_ID = (() => {
-  const q = Number(route.query.courseId)
-  return q > 0 ? q : 1
-})()
+
+const courseQuery = computed(() => (courseId.value ? { courseId: courseId.value } : {}))
+const mapLink = computed(() => ({ path: '/map', query: courseQuery.value }))
+const resultLink = computed(() => ({ path: '/result', query: courseQuery.value }))
 
 // ─── 响应式视口宽度（替代 useViewport） ──────────────────────────────────────
 const width = ref(typeof window !== 'undefined' ? window.innerWidth : 1024)
@@ -202,10 +207,16 @@ const doneTitleSize = computed(() => (narrow.value ? '24px' : '30px'))
 
 // ─── 数据加载 ────────────────────────────────────────────────────────────────
 async function load() {
+  if (!courseId.value) {
+    questions.value = []
+    total.value = 0
+    error.value = '请先从首页选择一门课程'
+    return
+  }
   loading.value = true
   error.value = ''
   try {
-    const paper = await fetchPaper(DEMO_COURSE_ID)
+    const paper = await fetchPaper(courseId.value)
     // 将后端 PaperQuestionVO 映射为组件内部格式，保留 questionId 和 optionKeys 用于提交
     questions.value = (paper.questions || []).map((pq) => ({
       questionId: pq.questionId,
@@ -264,7 +275,7 @@ async function submitAnswers() {
   // 构建 answers 数组：仅含实际选了答案的题（跳过的不传）
   const payload = {
     studentId: DEMO_STUDENT_ID,
-    courseId: DEMO_COURSE_ID,
+    courseId: courseId.value,
     answers: Object.entries(answers.value).map(([idxStr, optIdx]) => {
       const q = questions.value[Number(idxStr)]
       return {
@@ -295,10 +306,13 @@ function restart() {
   result.value = null
 }
 
+watch(courseId, (id) => {
+  if (id) load()
+}, { immediate: true })
+
 // ─── 生命周期 ────────────────────────────────────────────────────────────────
-onMounted(async () => {
+onMounted(() => {
   window.addEventListener('resize', onResize)
-  await load()
 
   /**
    * DEV 测试钩子（Playwright / T10 用）：
@@ -438,6 +452,8 @@ onBeforeUnmount(() => {
 /* ── 答题主区 ────────────────────────────────────────────────────── */
 .diag-main {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   width: 100%;
   max-width: 720px;
   margin: 0 auto;
@@ -631,6 +647,14 @@ onBeforeUnmount(() => {
 /* ── 完成态 ──────────────────────────────────────────────────────── */
 .diag-done {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.diag-done-inner {
+  min-height: 100%;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: center;

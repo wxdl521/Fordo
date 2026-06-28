@@ -141,11 +141,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, computed, watch, onMounted } from 'vue'
 import { fetchGrowth } from '../api/growth.js'
+import { useStudentCourse } from '../composables/useStudentCourse.js'
 
-const route = useRoute()
+const { courseId } = useStudentCourse()
 
 // 从 localStorage 读取当前登录用户
 function readUser() {
@@ -153,11 +153,6 @@ function readUser() {
 }
 const currentUser = readUser()
 const DEMO_STUDENT_ID = currentUser?.id || 2
-const DEMO_COURSE_ID = (() => {
-  const q = Number(route.query.courseId)
-  return q > 0 ? q : 1
-})()
-
 // 状态
 const data = ref(null)
 const loading = ref(false)
@@ -275,7 +270,11 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    data.value = await fetchGrowth(DEMO_STUDENT_ID, DEMO_COURSE_ID)
+    if (!courseId.value) {
+      error.value = '请先从首页选择一门课程'
+      return
+    }
+    data.value = await fetchGrowth(DEMO_STUDENT_ID, courseId.value)
   } catch (e) {
     error.value = e.message || '加载失败'
     console.error('Growth load error:', e)
@@ -284,10 +283,11 @@ async function load() {
   }
 }
 
-// 生命周期
+watch(courseId, (id) => {
+  if (id) load()
+}, { immediate: true })
+
 onMounted(() => {
-  load()
-  // DEV 钩子
   if (typeof window !== 'undefined') {
     window.__wjGrowth = { data, load }
   }

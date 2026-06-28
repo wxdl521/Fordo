@@ -107,8 +107,9 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import * as echarts from 'echarts'
 import { fetchDashboard } from '../api/teacher.js'
 import { useGraphStore } from '../store/graph.js'
+import { useTeacherCourse } from '../composables/useTeacherCourse.js'
 
-const COURSE_ID = 1
+const { courseId } = useTeacherCourse()
 
 const store = useGraphStore()
 const chartEl = ref(null)
@@ -388,14 +389,19 @@ function onResize() {
 
 // 加载数据
 async function loadData() {
+  if (!courseId.value) {
+    loading.value = false
+    dashboard.value = null
+    return
+  }
   loading.value = true
   error.value = ''
 
   try {
     // 并行加载图谱结构和聚合数据
     await Promise.all([
-      store.load(COURSE_ID),
-      fetchDashboard(COURSE_ID).then(data => {
+      store.load(courseId.value),
+      fetchDashboard(courseId.value).then(data => {
         dashboard.value = data
         buildStatMap(data.nodes)
       })
@@ -414,8 +420,11 @@ watch([() => dashboard.value, () => store.nodes], () => {
   }
 })
 
-onMounted(async () => {
-  await loadData()
+watch(courseId, (id) => {
+  if (id) loadData()
+}, { immediate: true })
+
+onMounted(() => {
   window.addEventListener('resize', onResize)
 
   // DEV 钩子
