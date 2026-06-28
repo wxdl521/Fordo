@@ -14,6 +14,12 @@
           <button data-testid="course-switch" @click.stop="currentCourse && toggleMenu('switch')"
                   :disabled="!currentCourse" :style="courseSwitchBtnStyle">
             <span :style="courseSwitchNameStyle">{{ currentCourse?.name || '（暂无课程）' }}</span>
+            <span v-if="currentCourse" :style="{ marginLeft: '8px', fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
+                     color: currentCourse.published ? 'var(--ok, #2e7d32)' : 'var(--mut)',
+                     background: currentCourse.published ? 'var(--okSoft, #eaf5ea)' : 'transparent',
+                     border: currentCourse.published ? 'none' : '1px solid var(--line)' }">
+              {{ currentCourse.published ? '已发布' : '未发布' }}
+            </span>
             <span :style="{ opacity: 0.7 }">▾</span>
           </button>
           <div v-if="openMenu === 'switch'" data-testid="course-menu"
@@ -30,6 +36,11 @@
           <button @click.stop="toggleMenu('course')" :style="importBtnHeaderStyle">课程管理 ▾</button>
           <div v-if="openMenu === 'course'" :style="dropdownMenuStyle" @click.stop>
             <div :style="dropdownItemStyle" @click="menuAction('addCourse')">+ 新增课程</div>
+            <div :style="currentCourse ? dropdownItemStyle : dropdownItemDisabledStyle"
+                 data-testid="course-publish-toggle"
+                 @click="currentCourse && menuAction('togglePublish')">
+              {{ currentCourse?.published ? '下架（对学生隐藏）' : '发布（学生可见）' }}
+            </div>
             <div :style="currentCourse ? dropdownItemStyle : dropdownItemDisabledStyle"
                  @click="currentCourse && menuAction('removeCourse')">删除当前课程</div>
           </div>
@@ -379,7 +390,8 @@ import {
   deleteNode,
   fetchTeacherCourses,
   createTeacherCourse,
-  deleteTeacherCourse
+  deleteTeacherCourse,
+  setTeacherCourseStatus
 } from '../api/teacher.js'
 import { renderGraphSvg } from '../utils/graphSvgRenderer.js'
 import { importGraphJson, importGraphExcel, extractGraphFromFile, fetchExtractionReviews } from '../api/admin.js'
@@ -414,6 +426,7 @@ function menuAction(name) {
   switch (name) {
     case 'addCourse': showCourseForm.value = true; break
     case 'removeCourse': removeCourse(); break
+    case 'togglePublish': togglePublish(); break
     case 'import': showImportModal.value = true; break
     case 'syllabus': syllabusInput.value && syllabusInput.value.click(); break
     case 'preview': openPreview(); break
@@ -569,6 +582,17 @@ async function removeCourse() {
     if (currentCourse.value) await reload()
   } catch (e) {
     alert('删除失败：' + (e.message || '网络错误'))
+  }
+}
+
+async function togglePublish() {
+  if (!currentCourse.value) return
+  const next = !currentCourse.value.published
+  try {
+    await setTeacherCourseStatus(currentCourse.value.id, next)
+    await reload()
+  } catch (e) {
+    alert(e.message || '操作失败')
   }
 }
 

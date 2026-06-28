@@ -46,3 +46,6 @@ export function createTeacherCourse(name) {
 export function deleteTeacherCourse(id) {
   return http.delete(`/teacher/courses/${id}`)
 }
+export function setTeacherCourseStatus(id, published) {
+  return http.patch(`/teacher/courses/${id}/status`, { published })
+}
