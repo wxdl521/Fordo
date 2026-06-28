@@ -34,17 +34,20 @@ class TeacherCourseServiceImplTest {
     @InjectMocks TeacherCourseServiceImpl service;
 
     @Test
-    void list_mapsCourseToVo() {
-        Course c = new Course();
-        c.setId(7L); c.setCode("AABBCCDDEE"); c.setName("测试课");
-        when(courseMapper.selectList(any())).thenReturn(List.of(c));
+    void list_includesDraftsAndMapsPublished() {
+        Course published = new Course();
+        published.setId(7L); published.setCode("AABBCCDDEE"); published.setName("已发布课"); published.setStatus(1);
+        Course draft = new Course();
+        draft.setId(8L); draft.setCode("FFEEDDCCBB"); draft.setName("草稿课"); draft.setStatus(0);
+        when(courseMapper.selectList(any())).thenReturn(List.of(published, draft));
 
         List<TeacherCourseVO> out = service.list();
 
-        assertThat(out).hasSize(1);
+        assertThat(out).hasSize(2);
         assertThat(out.get(0).getId()).isEqualTo(7L);
-        assertThat(out.get(0).getCode()).isEqualTo("AABBCCDDEE");
-        assertThat(out.get(0).getName()).isEqualTo("测试课");
+        assertThat(out.get(0).isPublished()).isTrue();
+        assertThat(out.get(1).getId()).isEqualTo(8L);
+        assertThat(out.get(1).isPublished()).isFalse();
     }
 
     @Test
@@ -62,10 +65,11 @@ class TeacherCourseServiceImplTest {
         Course saved = cap.getValue();
         assertThat(saved.getName()).isEqualTo("软件工程");
         assertThat(saved.getTeacherId()).isEqualTo(9L);
-        assertThat(saved.getStatus()).isEqualTo(1);
+        assertThat(saved.getStatus()).isEqualTo(0);
         assertThat(saved.getCode()).matches("[0-9A-F]{10}");
         assertThat(vo.getId()).isEqualTo(42L);
         assertThat(vo.getName()).isEqualTo("软件工程");
+        assertThat(vo.isPublished()).isFalse();
     }
 
     @Test

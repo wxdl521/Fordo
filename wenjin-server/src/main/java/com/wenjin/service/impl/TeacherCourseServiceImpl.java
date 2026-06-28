@@ -43,10 +43,10 @@ public class TeacherCourseServiceImpl implements TeacherCourseService {
     public List<TeacherCourseVO> list() {
         return courseMapper.selectList(
                         new LambdaQueryWrapper<Course>()
-                                .eq(Course::getStatus, 1)
                                 .orderByAsc(Course::getId))
                 .stream()
-                .map(c -> new TeacherCourseVO(c.getId(), c.getCode(), c.getName()))
+                .map(c -> new TeacherCourseVO(c.getId(), c.getCode(), c.getName(),
+                        c.getStatus() != null && c.getStatus() == 1))
                 .collect(Collectors.toList());
     }
 
@@ -59,9 +59,9 @@ public class TeacherCourseServiceImpl implements TeacherCourseService {
         c.setCode(generateUniqueCode());
         c.setName(name.trim());
         c.setTeacherId(teacherId != null ? teacherId : demoTeacherId);
-        c.setStatus(1);
+        c.setStatus(0);
         courseMapper.insert(c);
-        return new TeacherCourseVO(c.getId(), c.getCode(), c.getName());
+        return new TeacherCourseVO(c.getId(), c.getCode(), c.getName(), false);
     }
 
     @Override
