@@ -305,11 +305,14 @@ async function loadCourses() {
   courseLoading.value = true
   try {
     courses.value = await getMyCourses(currentUser.value.id)
+  } catch {
+    courses.value = []
+  }
+  try {
     const all = await getAvailableCourses()
     const enrolledIds = new Set((courses.value || []).map(c => c.courseId))
     availableCourses.value = (all || []).filter(c => !enrolledIds.has(c.id))
   } catch {
-    courses.value = []
     availableCourses.value = []
   } finally {
     courseLoading.value = false
