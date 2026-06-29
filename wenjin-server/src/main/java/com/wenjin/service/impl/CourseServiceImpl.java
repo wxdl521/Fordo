@@ -123,4 +123,24 @@ public class CourseServiceImpl implements CourseService {
                         .eq(Course::getStatus, 1));
     }
 
+    @Override
+    public void assertAccessibleByStudent(Long studentId, Long courseId) {
+        Course course = courseMapper.selectById(courseId);
+        if (course == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "课程不存在");
+        }
+        if (course.getStatus() == null || course.getStatus() != 1) {
+            throw new BusinessException(ResultCode.FORBIDDEN, "课程未发布");
+        }
+        if (studentId != null) {
+            Long count = studentCourseMapper.selectCount(
+                    new LambdaQueryWrapper<StudentCourse>()
+                            .eq(StudentCourse::getStudentId, studentId)
+                            .eq(StudentCourse::getCourseId, courseId));
+            if (count == null || count == 0) {
+                throw new BusinessException(ResultCode.FORBIDDEN, "未选该课程");
+            }
+        }
+    }
+
 }

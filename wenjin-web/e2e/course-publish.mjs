@@ -77,6 +77,10 @@ try {
   const myNames = (my.body?.data || []).map(c => c.name)
   check('选课后进入我的课程', myNames.includes(cname))
 
+  // deep-link 守卫:已选 + 已发布 → 学生数据端点放行(code=0)
+  const g1 = await api('GET', `/graph/${courseId}?studentId=${studentId}`, studentId)
+  check('已选已发布课:图谱数据放行', g1.status === 200 && g1.body?.code === 0, `code=${g1.body?.code}`)
+
   // 教师下架
   const unpub = await api('PATCH', `/teacher/courses/${courseId}/status`, teacherId, { published: false })
   check('下架端点返回成功', unpub.status === 200 && unpub.body?.code === 0)
@@ -88,6 +92,12 @@ try {
   const avail3 = await api('GET', '/course/available', studentId)
   const names3 = (avail3.body?.data || []).map(c => c.name)
   check('下架后广场消失', !names3.includes(cname))
+
+  // deep-link 守卫核心:下架后,即便此前已选,用缓存 courseId 直连数据端点也被拒(code=403)
+  const g2 = await api('GET', `/graph/${courseId}?studentId=${studentId}`, studentId)
+  check('下架后图谱 deep-link 被拒', g2.body?.code === 403, `code=${g2.body?.code} msg=${g2.body?.message}`)
+  const p2 = await api('GET', `/diagnostic/paper?courseId=${courseId}`, studentId)
+  check('下架后诊断卷 deep-link 被拒', p2.body?.code === 403, `code=${p2.body?.code}`)
 
   // 清理:删除验收课
   await api('DELETE', `/teacher/courses/${courseId}`, teacherId)

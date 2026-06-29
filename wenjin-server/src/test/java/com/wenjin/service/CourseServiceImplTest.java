@@ -194,6 +194,78 @@ class CourseServiceImplTest {
         assertThat(result).isEmpty();
     }
 
+    // ---- assertAccessibleByStudent（学生侧 deep-link 守卫） ----
+
+    @Test
+    void assertAccessible_courseNotFound_throwsNotFound() {
+        when(courseMapper.selectById(99L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.assertAccessibleByStudent(2L, 99L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("课程不存在");
+    }
+
+    @Test
+    void assertAccessible_draftCourse_throwsForbidden() {
+        Course course = new Course();
+        course.setId(1L);
+        course.setStatus(0); // 草稿
+        when(courseMapper.selectById(1L)).thenReturn(course);
+
+        assertThatThrownBy(() -> service.assertAccessibleByStudent(2L, 1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("课程未发布");
+    }
+
+    @Test
+    void assertAccessible_nullStatus_throwsForbidden() {
+        Course course = new Course();
+        course.setId(1L);
+        course.setStatus(null); // 历史脏数据：视作未发布
+        when(courseMapper.selectById(1L)).thenReturn(course);
+
+        assertThatThrownBy(() -> service.assertAccessibleByStudent(2L, 1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("课程未发布");
+    }
+
+    @Test
+    void assertAccessible_publishedButNotEnrolled_throwsForbidden() {
+        Course course = new Course();
+        course.setId(1L);
+        course.setStatus(1);
+        when(courseMapper.selectById(1L)).thenReturn(course);
+        when(studentCourseMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
+
+        assertThatThrownBy(() -> service.assertAccessibleByStudent(2L, 1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("未选该课程");
+    }
+
+    @Test
+    void assertAccessible_publishedAndEnrolled_passes() {
+        Course course = new Course();
+        course.setId(1L);
+        course.setStatus(1);
+        when(courseMapper.selectById(1L)).thenReturn(course);
+        when(studentCourseMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(1L);
+
+        service.assertAccessibleByStudent(2L, 1L); // 不抛
+    }
+
+    @Test
+    void assertAccessible_nullStudent_publishGateOnly_noEnrollmentCheck() {
+        Course course = new Course();
+        course.setId(1L);
+        course.setStatus(1);
+        when(courseMapper.selectById(1L)).thenReturn(course);
+
+        service.assertAccessibleByStudent(null, 1L); // 不抛
+
+        // studentId 为空时不应查选课表
+        verify(studentCourseMapper, never()).selectCount(any(LambdaQueryWrapper.class));
+    }
+
     // ---- getAvailableCourses ----
 
     @Test

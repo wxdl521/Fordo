@@ -5,6 +5,7 @@ import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.PaperVO;
 import com.wenjin.dto.SubmitRequest;
 import com.wenjin.dto.SubmitResult;
+import com.wenjin.service.CourseService;
 import com.wenjin.service.DiagnosticResultService;
 import com.wenjin.service.DiagnosticService;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,11 +24,14 @@ public class DiagnosticController {
 
     private final DiagnosticService diagnosticService;
     private final DiagnosticResultService diagnosticResultService;
+    private final CourseService courseService;
 
     public DiagnosticController(DiagnosticService diagnosticService,
-                               DiagnosticResultService diagnosticResultService) {
+                               DiagnosticResultService diagnosticResultService,
+                               CourseService courseService) {
         this.diagnosticService = diagnosticService;
         this.diagnosticResultService = diagnosticResultService;
+        this.courseService = courseService;
     }
 
     /**
@@ -36,6 +40,7 @@ public class DiagnosticController {
      */
     @GetMapping("/paper")
     public Result<PaperVO> paper(@RequestParam("courseId") Long courseId) {
+        courseService.assertAccessibleByStudent(null, courseId);
         return Result.ok(diagnosticService.composePaper(courseId));
     }
 
@@ -45,6 +50,7 @@ public class DiagnosticController {
      */
     @PostMapping("/submit")
     public Result<SubmitResult> submit(@RequestBody SubmitRequest req) {
+        courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
         return Result.ok(diagnosticService.submit(req));
     }
 
@@ -55,6 +61,7 @@ public class DiagnosticController {
     @GetMapping("/result")
     public Result<DiagnosticResultVO> result(@RequestParam("studentId") Long studentId,
                                              @RequestParam("courseId") Long courseId) {
+        courseService.assertAccessibleByStudent(studentId, courseId);
         return Result.ok(diagnosticResultService.getResult(studentId, courseId));
     }
 }
