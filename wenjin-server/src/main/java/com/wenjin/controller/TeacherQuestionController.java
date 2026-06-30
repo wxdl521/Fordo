@@ -2,6 +2,7 @@ package com.wenjin.controller;
 
 import com.wenjin.common.Result;
 import com.wenjin.dto.QuestionReviewRequest;
+import com.wenjin.dto.ReviewAllRequest;
 import com.wenjin.dto.TeacherQuestionPageVO;
 import com.wenjin.service.TeacherQuestionService;
 import lombok.RequiredArgsConstructor;
@@ -55,6 +56,23 @@ public class TeacherQuestionController {
             @RequestBody QuestionReviewRequest req
     ) {
         int affected = teacherQuestionService.review(courseId, req);
+        return Result.ok(affected);
+    }
+
+    /**
+     * T6: 服务端全量审批（按筛选条件单事务批量通过/驳回）。
+     * 取代前端"拉全量 id 再分块回传"方案，避免并发分页漂移导致漏审/重审。
+     *
+     * @param courseId 课程 ID
+     * @param req      全量审批请求（status/conf/nodeCode 筛选 + action: pass/reject）
+     * @return 受影响行数
+     */
+    @PostMapping("/review-all")
+    public Result<Integer> reviewAll(
+            @RequestParam Long courseId,
+            @RequestBody ReviewAllRequest req
+    ) {
+        int affected = teacherQuestionService.reviewAll(courseId, req);
         return Result.ok(affected);
     }
 }

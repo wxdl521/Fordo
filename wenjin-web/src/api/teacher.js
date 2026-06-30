@@ -30,6 +30,10 @@ export function fetchQuestions({ courseId, status, nodeCode, conf, page, size })
 export function reviewQuestions(courseId, ids, action) {
   return http.post('/teacher/questions/review', { ids, action }, { params: { courseId } })
 }
+/** T6: 服务端全量审批 — 单次请求替代前端"拉全量id→分块回传"方案 */
+export function reviewAllQuestions(courseId, { status, conf, nodeCode, action }) {
+  return http.post('/teacher/questions/review-all', { status, conf, nodeCode, action }, { params: { courseId } })
+}
 
 // ── 学情看板 ──
 export function fetchDashboard(courseId) {

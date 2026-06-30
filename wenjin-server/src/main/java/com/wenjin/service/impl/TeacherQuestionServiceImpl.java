@@ -3,6 +3,7 @@ package com.wenjin.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wenjin.dto.QuestionReviewRequest;
+import com.wenjin.dto.ReviewAllRequest;
 import com.wenjin.dto.TeacherQuestionPageVO;
 import com.wenjin.dto.TeacherQuestionVO;
 import com.wenjin.entity.KgNode;
@@ -19,6 +20,7 @@ import com.wenjin.mapper.QuestionOptionMapper;
 import com.wenjin.service.TeacherQuestionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -49,44 +51,16 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
             throw new IllegalArgumentException("status 无效（0=待审/1=通过/2=驳回）: " + status);
         }
 
-        LambdaQueryWrapper<Question> w = new LambdaQueryWrapper<>();
-        w.eq(Question::getCourseId, courseId);
+        // T6: 使用抽取的私有方法解析 nodeCode 过滤 id 集合
+        Set<Long> nodeFilterQids = resolveNodeFilterQids(courseId, nodeCode);
 
-        if (status != null) {
-            w.eq(Question::getStatus, status);
+        // nodeCode 指定但无匹配主考点题目 → 早退空页（外部行为不变）
+        if (nodeCode != null && !nodeCode.trim().isEmpty() && nodeFilterQids != null && nodeFilterQids.isEmpty()) {
+            return emptyPage(page, size, courseId);
         }
 
-        // Node filter: if nodeCode specified, find questions where it's the main point
-        Set<Long> nodeFilterQids = new HashSet<>();
-        if (nodeCode != null && !nodeCode.trim().isEmpty()) {
-            KgNode kn = nodeMapper.selectOne(
-                    new LambdaQueryWrapper<KgNode>()
-                            .eq(KgNode::getCourseId, courseId)
-                            .eq(KgNode::getNodeCode, nodeCode)
-            );
-
-            if (kn != null) {
-                List<QuestionNode> qns = questionNodeMapper.selectList(
-                        new LambdaQueryWrapper<QuestionNode>()
-                                .eq(QuestionNode::getNodeId, kn.getId())
-                                .eq(QuestionNode::getWeight, MAIN_POINT_WEIGHT)
-                );
-                for (QuestionNode qn : qns) {
-                    nodeFilterQids.add(qn.getQuestionId());
-                }
-            }
-
-            if (nodeFilterQids.isEmpty()) {
-                return emptyPage(page, size, courseId);
-            }
-
-            w.in(Question::getId, nodeFilterQids);
-        }
-
-        // Confidence filter
-        if (conf != null && !conf.trim().isEmpty()) {
-            applyConf(w, conf);
-        }
+        // T6: 使用抽取的私有方法构建筛选 wrapper
+        LambdaQueryWrapper<Question> w = buildFilter(courseId, status, conf, nodeFilterQids);
 
         List<Question> filtered = questionMapper.selectList(w);
 
@@ -159,6 +133,119 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
                 .in("id", req.getIds());
 
         return questionMapper.update(null, uw);
+    }
+
+    /**
+     * T6: 服务端全量审批，select+update 同一事务，避免前端分页漂移漏审/重审问题。
+     * 复用私有方法 resolveNodeFilterQids/buildFilter 与 list() 共享筛选逻辑（DRY）。
+     */
+    @Override
+    @Transactional
+    public int reviewAll(Long courseId, ReviewAllRequest req) {
+        if (courseId == null || courseId <= 0) {
+            throw new IllegalArgumentException("courseId 无效: " + courseId);
+        }
+        if (req == null) {
+            throw new IllegalArgumentException("request 不能为空");
+        }
+        if (req.getAction() == null || req.getAction().trim().isEmpty()) {
+            throw new IllegalArgumentException("action 不能为空");
+        }
+
+        int target;
+        switch (req.getAction().toLowerCase()) {
+            case "pass":
+                target = QuestionStatus.APPROVED;
+                break;
+            case "reject":
+                target = QuestionStatus.REJECTED;
+                break;
+            default:
+                throw new IllegalArgumentException("action 无效: " + req.getAction() + " (必须是 pass 或 reject)");
+        }
+
+        // T6: 复用私有方法解析 nodeCode 过滤 id 集合
+        Set<Long> nodeFilterQids = resolveNodeFilterQids(courseId, req.getNodeCode());
+
+        // nodeCode 指定但无匹配主考点题目 → 直接返回 0，不发 update
+        if (req.getNodeCode() != null && !req.getNodeCode().trim().isEmpty()
+                && nodeFilterQids != null && nodeFilterQids.isEmpty()) {
+            return 0;
+        }
+
+        // T6: 复用私有方法构建筛选 wrapper，取出待更新 id 列表
+        LambdaQueryWrapper<Question> w = buildFilter(courseId, req.getStatus(), req.getConf(), nodeFilterQids);
+        List<Question> toUpdate = questionMapper.selectList(w);
+        if (toUpdate.isEmpty()) {
+            return 0;
+        }
+
+        List<Long> ids = toUpdate.stream().map(Question::getId).collect(Collectors.toList());
+
+        // 沿用 review() 的字符串列名 UpdateWrapper，规避 Lambda.set() 反射问题
+        UpdateWrapper<Question> uw = new UpdateWrapper<>();
+        uw.set("status", target)
+                .eq("course_id", courseId)
+                .in("id", ids);
+
+        return questionMapper.update(null, uw);
+    }
+
+    /**
+     * T6: 抽取私有方法 — 解析 nodeCode 过滤 id 集合。
+     * nodeCode 为空 → 返回 null（不过滤）；
+     * 非空 → 查 KgNode → 查主考点 QuestionNode → 返回 questionId 集合（可能为空集，表示无匹配）。
+     * list() 与 reviewAll() 共同调用，消除重复的 nodeCode 解析逻辑。
+     */
+    private Set<Long> resolveNodeFilterQids(Long courseId, String nodeCode) {
+        if (nodeCode == null || nodeCode.trim().isEmpty()) {
+            return null; // null 表示不按 nodeCode 过滤
+        }
+
+        KgNode kn = nodeMapper.selectOne(
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .eq(KgNode::getNodeCode, nodeCode)
+        );
+
+        Set<Long> qids = new HashSet<>();
+        if (kn != null) {
+            List<QuestionNode> qns = questionNodeMapper.selectList(
+                    new LambdaQueryWrapper<QuestionNode>()
+                            .eq(QuestionNode::getNodeId, kn.getId())
+                            .eq(QuestionNode::getWeight, MAIN_POINT_WEIGHT)
+            );
+            for (QuestionNode qn : qns) {
+                qids.add(qn.getQuestionId());
+            }
+        }
+        // 返回集合（可能为空集，表示 nodeCode 有效但无对应主考点题目）
+        return qids;
+    }
+
+    /**
+     * T6: 抽取私有方法 — 构建题目筛选 LambdaQueryWrapper。
+     * courseId 必须；status 非 null 时 eq；nodeFilterQids 非 null 时 in；conf 非空时 applyConf。
+     * list() 与 reviewAll() 共同调用，消除重复的 wrapper 构建逻辑。
+     */
+    private LambdaQueryWrapper<Question> buildFilter(Long courseId, Integer status, String conf,
+                                                      Set<Long> nodeFilterQids) {
+        LambdaQueryWrapper<Question> w = new LambdaQueryWrapper<>();
+        w.eq(Question::getCourseId, courseId);
+
+        if (status != null) {
+            w.eq(Question::getStatus, status);
+        }
+
+        if (nodeFilterQids != null) {
+            w.in(Question::getId, nodeFilterQids);
+        }
+
+        if (conf != null && !conf.trim().isEmpty()) {
+            applyConf(w, conf);
+        }
+
+        return w;
     }
 
     private void applyConf(LambdaQueryWrapper<Question> w, String conf) {

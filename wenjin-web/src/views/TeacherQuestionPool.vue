@@ -222,7 +222,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { fetchQuestions, reviewQuestions, fetchTeacherGraph } from '../api/teacher.js'
+import { fetchQuestions, reviewQuestions, fetchTeacherGraph, reviewAllQuestions } from '../api/teacher.js'
 import { generateQuestions, annotateQuestions, importQuestionJson, importQuestionExcel } from '../api/admin.js'
 import { useTeacherCourse } from '../composables/useTeacherCourse.js'
 
@@ -546,38 +546,7 @@ async function review(ids, action) {
   }
 }
 
-async function fetchAllPendingIds() {
-  const ids = []
-  let p = 1
-  const pageSize = 100
-  while (true) {
-    const res = await fetchQuestions({
-      courseId: courseId.value,
-      status: 0,
-      conf: conf.value || undefined,
-      nodeCode: nodeCode.value || undefined,
-      page: p,
-      size: pageSize
-    })
-    const items = res?.items || []
-    ids.push(...items.map(q => q.id))
-    if (items.length < pageSize || ids.length >= (res?.total || 0)) break
-    p++
-  }
-  return ids
-}
-
-async function reviewInChunks(ids, action) {
-  const chunkSize = 200
-  let affected = 0
-  for (let i = 0; i < ids.length; i += chunkSize) {
-    const chunk = ids.slice(i, i + chunkSize)
-    const n = await reviewQuestions(courseId.value, chunk, action)
-    affected += typeof n === 'number' ? n : chunk.length
-  }
-  return affected
-}
-
+// T6: 服务端全量审批 — 单次请求，避免前端分页漂移漏审/重审
 async function handleApproveAll() {
   if (!courseId.value || pendingCount.value === 0) return
 
@@ -587,12 +556,13 @@ async function handleApproveAll() {
   approveAllLoading.value = true
   approveAllMessage.value = ''
   try {
-    const ids = await fetchAllPendingIds()
-    if (ids.length === 0) {
-      approveAllMessage.value = '没有可审批的题目'
-      return
-    }
-    const affected = await reviewInChunks(ids, 'pass')
+    // http 拦截器已剥 Result 信封，affected 直接是数字
+    const affected = await reviewAllQuestions(courseId.value, {
+      status: 0,
+      conf: conf.value || undefined,
+      nodeCode: nodeCode.value || undefined,
+      action: 'pass'
+    })
     checked.value = {}
     await load()
     approveAllMessage.value = `已通过 ${affected} 题`
