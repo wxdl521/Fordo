@@ -12,10 +12,12 @@ import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.LearningPathVO;
 import com.wenjin.entity.CompanionConversation;
 import com.wenjin.entity.CompanionMessage;
+import com.wenjin.entity.Course;
 import com.wenjin.entity.KgNode;
 import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.CompanionConversationMapper;
 import com.wenjin.mapper.CompanionMessageMapper;
+import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import lombok.RequiredArgsConstructor;
@@ -44,6 +46,7 @@ public class CompanionServiceImpl implements CompanionService {
     private final CompanionMessageMapper messageMapper;
     private final KgNodeMapper nodeMapper;
     private final StudentMasteryMapper masteryMapper;
+    private final CourseMapper courseMapper;
     private final PathService pathService;
     private final DiagnosticResultService diagnosticResultService;
     private final CompanionAiClient aiClient;
@@ -323,14 +326,22 @@ public class CompanionServiceImpl implements CompanionService {
             }
         }
 
-        return buildSystemPrompt(whitelist, weakPoints, targetNode, currentStep,
+        // 5. 课程名（供 prompt 首句及对话规则动态展示，查不到时传 null，让 buildSystemPrompt 内回退到"课程"）
+        Course course = courseMapper.selectById(courseId);
+        String courseName = (course != null && course.getName() != null && !course.getName().isBlank())
+                ? course.getName() : null;
+
+        return buildSystemPrompt(courseName, whitelist, weakPoints, targetNode, currentStep,
                 focusNodeCode, focusNodeName, diagnostic);
     }
 
     /**
      * 静态方法：构建系统提示（可测试）。diagnostic 为可空的诊断回溯结果，存在非自身根因时注入"诊断根因"段。
+     *
+     * @param courseName 课程名；null 或空白时回退到字面量「课程」，不写死任何具体课程名
      */
     public static String buildSystemPrompt(
+        String courseName,
         List<String> whitelist,
         List<String> weakPoints,
         LearningPathVO.NodeRef targetNode,
@@ -339,9 +350,12 @@ public class CompanionServiceImpl implements CompanionService {
         String focusNodeName,
         DiagnosticResultVO diagnostic
     ) {
+        // courseName 为 null 或空白时回退到"课程"，避免再次写死任何具体课程名
+        String cn = (courseName == null || courseName.isBlank()) ? "课程" : courseName;
+
         StringBuilder sb = new StringBuilder();
 
-        sb.append("你是「问津」的 AI 学习伴侣，专注于帮助学生理解和掌握《软件工程》课程的知识点。\n\n");
+        sb.append("你是「问津」的 AI 学习伴侣，专注于帮助学生理解和掌握《").append(cn).append("》课程的知识点。\n\n");
 
         // 诊断根因（产品灵魂）：仅当有薄弱点且根因为前置点（非卡点自身）时注入，放在最前以提示优先级
         appendRootCauseSection(sb, diagnostic);
@@ -383,7 +397,7 @@ public class CompanionServiceImpl implements CompanionService {
 
         // 引导：启发式教学 + 聊天气泡风格
         sb.append("## 对话规则\n");
-        sb.append("- 只回答《软件工程》课程范围内的问题；超出范围时礼貌地把话题引导回当前焦点节点或学习路径目标。\n");
+        sb.append("- 只回答《").append(cn).append("》课程范围内的问题；超出范围时礼貌地把话题引导回当前焦点节点或学习路径目标。\n");
         sb.append("- 采用启发式教学：不要一次性给出完整答案。先一句话点出关键，再反问一个小问题确认理解；"
                 + "学生卡住时再分步提示，逐步逼近答案。\n");
         sb.append("- 关注优先级：诊断根因 > 学生薄弱点 > 当前学习路径。\n");

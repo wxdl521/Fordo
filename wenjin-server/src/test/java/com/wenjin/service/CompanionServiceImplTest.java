@@ -13,6 +13,7 @@ import com.wenjin.entity.KgNode;
 import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.CompanionConversationMapper;
 import com.wenjin.mapper.CompanionMessageMapper;
+import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,6 +30,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.function.Consumer;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -51,6 +53,9 @@ class CompanionServiceImplTest {
 
     @Mock
     private StudentMasteryMapper masteryMapper;
+
+    @Mock
+    private CourseMapper courseMapper;
 
     @Mock
     private PathService pathService;
@@ -176,7 +181,7 @@ class CompanionServiceImplTest {
         currentStep.setName("二次函数基础");
 
         String prompt = CompanionServiceImpl.buildSystemPrompt(
-            whitelist, weakPoints, targetNode, currentStep, "KT12", "二次函数基础", null
+            null, whitelist, weakPoints, targetNode, currentStep, "KT12", "二次函数基础", null
         );
 
         // 验证包含白名单
@@ -321,7 +326,7 @@ class CompanionServiceImplTest {
         diag.setChain(Arrays.asList(c1, c2));
 
         String prompt = CompanionServiceImpl.buildSystemPrompt(
-            Arrays.asList("需求分析", "软件测试"), Arrays.asList(),
+            null, Arrays.asList("需求分析", "软件测试"), Arrays.asList(),
             null, null, null, null, diag);
 
         assertTrue(prompt.contains("## 诊断根因"));  // 段标题（区别于对话规则里的"诊断根因"关键词）
@@ -347,11 +352,50 @@ class CompanionServiceImplTest {
         diag.setRootCause(rc);
 
         String selfPrompt = CompanionServiceImpl.buildSystemPrompt(
-            Arrays.asList("软件测试"), Arrays.asList(), null, null, null, null, diag);
+            null, Arrays.asList("软件测试"), Arrays.asList(), null, null, null, null, diag);
         assertFalse(selfPrompt.contains("## 诊断根因"));  // 段标题不出现（规则里的关键词不算）
 
         String nullPrompt = CompanionServiceImpl.buildSystemPrompt(
-            Arrays.asList("软件测试"), Arrays.asList(), null, null, null, null, null);
+            null, Arrays.asList("软件测试"), Arrays.asList(), null, null, null, null, null);
         assertFalse(nullPrompt.contains("## 诊断根因"));
+    }
+
+    /**
+     * 测试 7：buildSystemPrompt 传入具名课程名时，prompt 首句及对话规则均含该名称。
+     */
+    @Test
+    void buildPromptUsesProvidedCourseName() {
+        String prompt = CompanionServiceImpl.buildSystemPrompt(
+            "数据结构",
+            Arrays.asList("链表", "二叉树"),
+            Arrays.asList(),
+            null, null, null, null, null
+        );
+
+        assertThat(prompt).contains("《数据结构》");
+    }
+
+    /**
+     * 测试 8：buildSystemPrompt 传 null 或空白课程名时，prompt 回退为「课程」且不含「软件工程」。
+     */
+    @Test
+    void buildPromptFallsBackToCourseWhenNameNullOrBlank() {
+        String promptNull = CompanionServiceImpl.buildSystemPrompt(
+            null,
+            Arrays.asList("链表"),
+            Arrays.asList(),
+            null, null, null, null, null
+        );
+        assertThat(promptNull).contains("《课程》");
+        assertThat(promptNull).doesNotContain("软件工程");
+
+        String promptBlank = CompanionServiceImpl.buildSystemPrompt(
+            "",
+            Arrays.asList("链表"),
+            Arrays.asList(),
+            null, null, null, null, null
+        );
+        assertThat(promptBlank).contains("《课程》");
+        assertThat(promptBlank).doesNotContain("软件工程");
     }
 }

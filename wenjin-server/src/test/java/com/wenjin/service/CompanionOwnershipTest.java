@@ -44,10 +44,10 @@ class CompanionOwnershipTest {
     // ─── 工厂方法 ────────────────────────────────────────────────────────────
 
     private CompanionServiceImpl service() {
-        // 其余依赖不涉及：传 null 不会被触达
+        // 其余依赖不涉及：传 null 不会被触达（courseMapper 亦不会被触达，传 null）
         return new CompanionServiceImpl(
                 conversationMapper, messageMapper,
-                null, null, null, null, null);
+                null, null, null, null, null, null);
     }
 
     private CompanionConversation conv(long convId, long ownerStudentId) {
