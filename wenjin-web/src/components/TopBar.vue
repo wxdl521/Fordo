@@ -132,6 +132,7 @@ const logoutBtnStyle = {
 // 退出登录
 function handleLogout() {
   localStorage.removeItem('wj_user')
+  localStorage.removeItem('wj_token')
   router.push('/')
 }
 </script>

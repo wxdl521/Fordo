@@ -242,9 +242,10 @@ async function handleLogin() {
     return
   }
   try {
-    const user = await apiLogin({ username: sid.value, password: pwd.value })
-    currentUser.value = user
-    localStorage.setItem('wj_user', JSON.stringify(user))
+    const data = await apiLogin({ username: sid.value, password: pwd.value })
+    currentUser.value = data.user
+    localStorage.setItem('wj_token', data.token)
+    localStorage.setItem('wj_user', JSON.stringify(data.user))
     step.value = 'course'
     loadCourses()
   } catch (e) {
@@ -254,9 +255,10 @@ async function handleLogin() {
 
 function handleDemoLogin() {
   apiLogin({ username: 'demo_student', password: 'demo' })
-    .then(user => {
-      currentUser.value = user
-      localStorage.setItem('wj_user', JSON.stringify(user))
+    .then(data => {
+      currentUser.value = data.user
+      localStorage.setItem('wj_token', data.token)
+      localStorage.setItem('wj_user', JSON.stringify(data.user))
       step.value = 'course'
       loadCourses()
     })
@@ -276,14 +278,17 @@ async function handleRegister() {
     return
   }
   try {
-    const user = await apiRegister({
+    await apiRegister({
       username: regUsername.value,
       password: regPassword.value,
       realName: regRealName.value,
       role: regRole.value
     })
-    currentUser.value = user
-    localStorage.setItem('wj_user', JSON.stringify(user))
+    // 注册不发令牌，紧接着用同一凭据登录拿令牌（保持"注册即进入"的体验）
+    const data = await apiLogin({ username: regUsername.value, password: regPassword.value })
+    currentUser.value = data.user
+    localStorage.setItem('wj_token', data.token)
+    localStorage.setItem('wj_user', JSON.stringify(data.user))
     step.value = 'course'
     loadCourses()
   } catch (e) {
@@ -294,6 +299,7 @@ async function handleRegister() {
 function handleLogout() {
   currentUser.value = null
   courses.value = []
+  localStorage.removeItem('wj_token')
   localStorage.removeItem('wj_user')
   sid.value = ''
   pwd.value = ''
