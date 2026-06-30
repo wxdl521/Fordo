@@ -116,10 +116,10 @@ class QuestionBankImportServiceImplTest {
         when(graphQueryService.codeToId(COURSE_ID))
                 .thenReturn(Map.of("KT07", 70L, "KT05", 50L));
         stubInsertAutoId();
-        // 首题查到已存在 → skip；次题查不到 → import
-        when(questionMapper.selectList(any()))
-                .thenReturn(List.of(new Question()))
-                .thenReturn(new ArrayList<>());
+        // 批前一次性查出已有题干集合，首题题干已在其中 → skip；次题题干不在 → import
+        Question existing = new Question();
+        existing.setStem("已存在的题干？");
+        when(questionMapper.selectList(any())).thenReturn(List.of(existing));
 
         QuestionBankFile bank = bankFile(
                 bankQuestion("已存在的题干？", "KT07"),

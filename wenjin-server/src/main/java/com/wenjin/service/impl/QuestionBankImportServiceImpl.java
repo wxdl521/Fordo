@@ -38,6 +38,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 题库导入服务实现（JSON / Excel 上传）。
@@ -192,6 +193,13 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
         // 课程图谱白名单：所有 kg_node 的 nodeCode（复用 code→id 映射的键集，避免额外查询）
         Set<String> validCodes = codeToId.keySet();
 
+        // 批前一次性载入题干集合，避免逐题 N+1 查重
+        // 注：不加 .select(stem) 以兼容纯 Mockito 单测（lambda cache 未初始化时 select 会抛）；
+        // 全字段拉取的额外开销远小于 N 次往返。
+        Set<String> existingStems = questionMapper.selectList(
+                new LambdaQueryWrapper<Question>().eq(Question::getCourseId, courseId)
+        ).stream().map(Question::getStem).collect(Collectors.toSet());
+
         // 逐题：题干为空/nodeCode 非法/题干已存在则跳过，否则落库
         for (QuestionBankFile.BankQuestion bq : bank.getQuestions()) {
             String stem = bq.getStem() == null ? null : bq.getStem().trim();
@@ -208,11 +216,12 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
                         nodeCode, stemPreview(stem));
                 continue;
             }
-            if (existsStem(courseId, stem)) {
+            if (existingStems.contains(stem)) {
                 result.setSkipped(result.getSkipped() + 1);
                 continue;
             }
             persistBankQuestion(courseId, stem, bq, codeToId);
+            existingStems.add(stem); // 同批内防止相同题干被双插
             result.setImported(result.getImported() + 1);
         }
         log.info("题库导入完成 courseId={} -> imported={} skipped={}（其中 nodeCode 非法 {}）aiCleaned={}",
@@ -289,13 +298,6 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
             return "";
         }
         return stem.length() > 20 ? stem.substring(0, 20) : stem;
-    }
-
-    /** 同课程下该 trim 后的题干是否已存在。 */
-    private boolean existsStem(Long courseId, String stem) {
-        return !questionMapper.selectList(new LambdaQueryWrapper<Question>()
-                .eq(Question::getCourseId, courseId)
-                .eq(Question::getStem, stem)).isEmpty();
     }
 
     // ============================ Excel 解析 ============================
