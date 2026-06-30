@@ -1,6 +1,7 @@
 package com.wenjin.controller;
 
 import com.wenjin.common.Result;
+import com.wenjin.config.AccessGuard;
 import com.wenjin.dto.GraphDataVO;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.GraphService;
@@ -32,6 +33,10 @@ public class GraphController {
     @GetMapping("/{courseId}")
     public Result<GraphDataVO> getGraph(@PathVariable("courseId") Long courseId,
                                         @RequestParam(value = "studentId", required = false) Long studentId) {
+        // studentId 为 null 表示匿名看图（统一 unlearned 染色），不校验归属
+        if (studentId != null) {
+            AccessGuard.assertSelf(studentId);
+        }
         courseService.assertAccessibleByStudent(studentId, courseId);
         return Result.ok(graphService.getGraph(courseId, studentId));
     }

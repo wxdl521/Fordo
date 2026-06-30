@@ -1,6 +1,7 @@
 package com.wenjin.controller;
 
 import com.wenjin.common.Result;
+import com.wenjin.config.AccessGuard;
 import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.PaperVO;
 import com.wenjin.dto.SubmitRequest;
@@ -61,6 +62,7 @@ public class DiagnosticController {
     @GetMapping("/result")
     public Result<DiagnosticResultVO> result(@RequestParam("studentId") Long studentId,
                                              @RequestParam("courseId") Long courseId) {
+        AccessGuard.assertSelf(studentId);
         courseService.assertAccessibleByStudent(studentId, courseId);
         return Result.ok(diagnosticResultService.getResult(studentId, courseId));
     }

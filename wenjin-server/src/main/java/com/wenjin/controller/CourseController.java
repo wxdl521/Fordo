@@ -1,6 +1,7 @@
 package com.wenjin.controller;
 
 import com.wenjin.common.Result;
+import com.wenjin.config.AccessGuard;
 import com.wenjin.dto.CourseWithMasteryVO;
 import com.wenjin.dto.EnrollRequest;
 import com.wenjin.entity.Course;
@@ -44,6 +45,7 @@ public class CourseController {
     @GetMapping("/my")
     public Result<List<CourseWithMasteryVO>> getMyCourses(
             @RequestParam("studentId") Long studentId) {
+        AccessGuard.assertSelf(studentId);
         return Result.ok(courseService.getMyCourses(studentId));
     }
 

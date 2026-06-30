@@ -1,6 +1,7 @@
 package com.wenjin.controller;
 
 import com.wenjin.common.Result;
+import com.wenjin.config.AccessGuard;
 import com.wenjin.dto.LearningPathVO;
 import com.wenjin.dto.PathGenerateRequest;
 import com.wenjin.service.CourseService;
@@ -38,6 +39,7 @@ public class PathController {
     @GetMapping("/current")
     public Result<LearningPathVO> current(@RequestParam("studentId") Long studentId,
                                           @RequestParam("courseId") Long courseId) {
+        AccessGuard.assertSelf(studentId);
         courseService.assertAccessibleByStudent(studentId, courseId);
         return Result.ok(pathService.getCurrent(studentId, courseId));
     }

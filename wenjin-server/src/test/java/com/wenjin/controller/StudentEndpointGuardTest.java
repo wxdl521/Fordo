@@ -2,6 +2,7 @@ package com.wenjin.controller;
 
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.CourseWithMasteryVO;
 import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.GraphDataVO;
@@ -20,6 +21,7 @@ import com.wenjin.service.GraphService;
 import com.wenjin.service.GrowthService;
 import com.wenjin.service.PathService;
 import com.wenjin.vo.GrowthVO;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -90,10 +92,17 @@ class StudentEndpointGuardTest {
         public GrowthVO getGrowth(Long studentId, Long courseId) { called = true; return null; }
     }
 
+    /** 每次测试后清除 CurrentUser，防止 ThreadLocal 泄漏影响其它用例。 */
+    @AfterEach
+    void clearCurrentUser() {
+        CurrentUser.clear();
+    }
+
     // ---- GraphController /api/graph/{courseId} ----
 
     @Test
     void graph_invokesGuardWithStudentAndCourse() {
+        CurrentUser.set(2L); // assertSelf(2L) 需要当前用户 == studentId
         GuardSpy guard = new GuardSpy();
         GraphServiceFake graph = new GraphServiceFake();
         new GraphController(graph, guard).getGraph(5L, 2L);
@@ -105,6 +114,7 @@ class StudentEndpointGuardTest {
 
     @Test
     void graph_guardRejection_shortCircuits() {
+        CurrentUser.set(2L); // assertSelf(2L) 先放行，再由 GuardSpy.reject 抛 FORBIDDEN
         GuardSpy guard = new GuardSpy(true);
         GraphServiceFake graph = new GraphServiceFake();
         GraphController c = new GraphController(graph, guard);
@@ -129,6 +139,7 @@ class StudentEndpointGuardTest {
 
     @Test
     void diagnosticResult_guardsWithStudentAndCourse_shortCircuitsOnReject() {
+        CurrentUser.set(2L); // assertSelf(2L) 放行，再由 GuardSpy.reject 短路
         GuardSpy guard = new GuardSpy(true);
         DiagnosticResultServiceFake result = new DiagnosticResultServiceFake();
         DiagnosticController c = new DiagnosticController(new DiagnosticServiceFake(), result, guard);
@@ -155,6 +166,7 @@ class StudentEndpointGuardTest {
 
     @Test
     void pathCurrent_guardsWithStudentAndCourse() {
+        CurrentUser.set(2L); // assertSelf(2L) 通过
         GuardSpy guard = new GuardSpy();
         PathServiceFake path = new PathServiceFake();
         new PathController(path, guard).current(2L, 5L);
@@ -181,6 +193,7 @@ class StudentEndpointGuardTest {
 
     @Test
     void growth_guardsWithStudentAndCourse() {
+        CurrentUser.set(2L); // assertSelf(2L) 通过
         GuardSpy guard = new GuardSpy();
         GrowthServiceFake growth = new GrowthServiceFake();
         new GrowthController(growth, guard).getGrowth(2L, 5L);

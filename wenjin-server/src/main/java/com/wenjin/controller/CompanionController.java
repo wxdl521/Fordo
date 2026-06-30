@@ -1,6 +1,7 @@
 package com.wenjin.controller;
 
 import com.wenjin.common.Result;
+import com.wenjin.config.AccessGuard;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
@@ -64,6 +65,8 @@ public class CompanionController {
      */
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chat(@RequestBody CompanionChatRequest req) {
+        // 必须在请求线程（此处）校验——CurrentUser 是 ThreadLocal，进入 executor 后不可见
+        AccessGuard.assertSelf(req.getStudentId());
         SseEmitter emitter = new SseEmitter(180_000L); // 3 minutes timeout
 
         executor.execute(() -> {
@@ -119,6 +122,7 @@ public class CompanionController {
     public Result<List<CompanionConversationVO>> listConversations(
             @RequestParam("studentId") Long studentId,
             @RequestParam("courseId") Long courseId) {
+        AccessGuard.assertSelf(studentId);
         return Result.ok(companionService.listConversations(studentId, courseId));
     }
 

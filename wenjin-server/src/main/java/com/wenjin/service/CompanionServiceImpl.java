@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.ai.CompanionAiClient;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
@@ -173,8 +174,25 @@ public class CompanionServiceImpl implements CompanionService {
         }).collect(Collectors.toList());
     }
 
+    /**
+     * 会话归属断言：操作者必须是该会话的创建学生，否则拒绝。
+     * 当前用户未登录 → UNAUTHORIZED；会话不存在或非属主 → FORBIDDEN（不暴露会话是否存在）。
+     */
+    private void assertConversationOwner(Long conversationId) {
+        Long currentUserId = CurrentUser.get();
+        if (currentUserId == null) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED, ResultCode.UNAUTHORIZED.getMessage());
+        }
+        CompanionConversation conv = conversationMapper.selectById(conversationId);
+        // 会话不存在或非属主，统一按"无权"处理，不暴露资源存在性
+        if (conv == null || !currentUserId.equals(conv.getStudentId())) {
+            throw new BusinessException(ResultCode.FORBIDDEN, "无权访问他人会话");
+        }
+    }
+
     @Override
     public List<CompanionMessageVO> getMessages(Long conversationId) {
+        assertConversationOwner(conversationId);
         List<CompanionMessage> messages = messageMapper.selectList(
             new LambdaQueryWrapper<CompanionMessage>()
                 .eq(CompanionMessage::getConversationId, conversationId)
@@ -193,6 +211,7 @@ public class CompanionServiceImpl implements CompanionService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteConversation(Long conversationId) {
+        assertConversationOwner(conversationId);
         // 先删消息，再删会话
         messageMapper.delete(
             new LambdaQueryWrapper<CompanionMessage>()
