@@ -36,12 +36,20 @@ export function deleteConversation(id) {
  */
 export async function chatStream(payload, { onMeta, onToken, onDone, onError }) {
   try {
+    // SSE 用原生 fetch，绕过了 http.js 的 axios 请求拦截器——必须在此手动补 X-User-Id，
+    // 否则后端 AccessGuard.assertSelf 取不到当前用户，整条流式对话会 401。
+    const headers = {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream'
+    }
+    try {
+      const user = JSON.parse(localStorage.getItem('wj_user'))
+      if (user && user.id != null) headers['X-User-Id'] = user.id
+    } catch { /* 未登录或解析失败：不带身份头，后端按匿名 401 处理 */ }
+
     const response = await fetch('/api/companion/chat', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream'
-      },
+      headers,
       body: JSON.stringify(payload)
     })
 
