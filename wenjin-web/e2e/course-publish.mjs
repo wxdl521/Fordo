@@ -67,8 +67,10 @@ try {
   check('发布后学生广场可见', names2.includes(cname))
 
   // 学生端 UI:登录后进课程页,广场出现该课并可选课
-  await page.evaluate((u) => localStorage.setItem('wj_user', JSON.stringify(u)),
-    { id: studentId, role: 2, name: 'demo_student' })
+  await page.evaluate(({ u, t }) => {
+    if (t) localStorage.setItem('wj_token', t)   // 令牌模型：UI 选课经 http.js 需带 Bearer
+    localStorage.setItem('wj_user', JSON.stringify(u))
+  }, { u: { id: studentId, role: 2, name: 'demo_student' }, t: studentToken })
   await page.goto(base + '/', { waitUntil: 'networkidle' })
   await page.waitForTimeout(900)
   const enrollBtn = page.locator(`[data-testid="enroll-course-${courseId}"]`)

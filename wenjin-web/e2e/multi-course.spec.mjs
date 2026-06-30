@@ -44,11 +44,23 @@ async function switchTo(label) {
 }
 
 try {
-  // 0. 模拟登录：demo_teacher(id=1, role=1) 写入 localStorage.wj_user
+  // 0. 真实登录 demo_teacher(id=1, role=1) 拿 Bearer 令牌，写 localStorage(wj_token + wj_user)
+  //    令牌模型下教师端 API 经 http.js 必须带 Authorization，仅写 wj_user 会全程 401
   await page.goto(base + '/', { waitUntil: 'domcontentloaded' })
-  await page.evaluate(() => {
-    localStorage.setItem('wj_user', JSON.stringify({ id: 1, username: 'demo_teacher', role: 1 }))
+  const teacherToken = await page.evaluate(async () => {
+    const resp = await (await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'demo_teacher', password: 'demo' })
+    })).json()
+    const data = resp?.data
+    if (data?.token) {
+      localStorage.setItem('wj_token', data.token)
+      localStorage.setItem('wj_user', JSON.stringify(data.user))
+    }
+    return data?.token
   })
+  check('教师登录拿到令牌', !!teacherToken)
 
   // 1. 进图谱页，应看到课程下拉，默认选中「软件工程」
   await page.goto(base + '/teacher/graph', { waitUntil: 'domcontentloaded' })
