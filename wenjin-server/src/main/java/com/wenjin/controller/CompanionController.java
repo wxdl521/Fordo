@@ -2,6 +2,7 @@ package com.wenjin.controller;
 
 import com.wenjin.common.Result;
 import com.wenjin.config.AccessGuard;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
@@ -36,7 +37,8 @@ public class CompanionController {
     private static final Logger log = LoggerFactory.getLogger(CompanionController.class);
 
     private final CompanionService companionService;
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    // 虚拟线程：每次 SSE 请求独立一个虚拟线程，避免 newCachedThreadPool 在高并发下无界扩张平台线程
+    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
     public CompanionController(CompanionService companionService) {
         this.companionService = companionService;
@@ -69,7 +71,12 @@ public class CompanionController {
         AccessGuard.assertSelf(req.getStudentId());
         SseEmitter emitter = new SseEmitter(180_000L); // 3 minutes timeout
 
+        // 在请求线程取出身份，透传给虚拟线程（ThreadLocal 不跨线程）
+        final Long uid = CurrentUser.get();
+
         executor.execute(() -> {
+            // 把请求线程的身份注入当前虚拟线程；finally 保证清理（虚拟线程每任务新建，清理是好习惯）
+            CurrentUser.set(uid);
             try {
                 // 1. 开始一轮对话，获取 conversationId
                 Long conversationId = companionService.startTurn(req);
@@ -108,6 +115,8 @@ public class CompanionController {
                     log.error("Failed to send error event via SSE", sendError);
                 }
                 emitter.complete(); // 用 complete() 而非 completeWithError()，避免触发全局异常处理
+            } finally {
+                CurrentUser.clear();
             }
         });
 
