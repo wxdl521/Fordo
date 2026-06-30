@@ -144,11 +144,10 @@ public class CompanionServiceImpl implements CompanionService {
             onToken.accept(token);
         });
 
-        // 7. 保存 AI 回复（单独事务）
+        // 7. 保存 AI 回复（单条 insert，autocommit）
         saveAiMessage(conversationId, fullReply.toString());
     }
 
-    @Transactional
     private void saveAiMessage(Long conversationId, String content) {
         CompanionMessage aiMessage = new CompanionMessage();
         aiMessage.setConversationId(conversationId);
