@@ -1,0 +1,23 @@
+# 仅写需要覆盖 application.yml 的项；其余沿用基线配置
+logging:
+  level:
+    root: warn
+    com.wenjin: info
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl   # 生产关闭 SQL 打印
+
+wenjin:
+  cors:
+    allowed-origin-patterns: ${WENJIN_CORS_ORIGINS:https://你的前端域名}
+
+# 仅在引入 actuator 后生效
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
