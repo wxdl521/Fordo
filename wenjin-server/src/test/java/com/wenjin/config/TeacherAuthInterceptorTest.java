@@ -49,7 +49,8 @@ class TeacherAuthInterceptorTest {
         MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/teacher/graph");
         assertThatThrownBy(() -> interceptor.preHandle(req, resp, new Object()))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("登录");
+                .hasMessageContaining("登录")
+                .extracting("code").isEqualTo(401);
     }
 
     @Test
@@ -58,7 +59,8 @@ class TeacherAuthInterceptorTest {
         MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/teacher/graph");
         when(userMapper.selectById(999L)).thenReturn(null);
         assertThatThrownBy(() -> interceptor.preHandle(req, resp, new Object()))
-                .isInstanceOf(BusinessException.class);
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(401);
     }
 
     @Test
@@ -68,7 +70,8 @@ class TeacherAuthInterceptorTest {
         when(userMapper.selectById(10L)).thenReturn(userWithRole(10L, 2));
         assertThatThrownBy(() -> interceptor.preHandle(req, resp, new Object()))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("教师");
+                .hasMessageContaining("教师")
+                .extracting("code").isEqualTo(403);
     }
 
     @Test

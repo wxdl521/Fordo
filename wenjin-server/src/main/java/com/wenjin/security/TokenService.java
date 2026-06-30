@@ -20,6 +20,12 @@ import java.util.Optional;
 @Component
 public class TokenService {
 
+    /**
+     * 默认开发密钥明文（公开在仓库）。
+     * {@link com.wenjin.security.AuthSecretGuard} 在生产 profile 下检测到此值时会中止启动。
+     */
+    public static final String DEFAULT_DEV_SECRET = "dev-secret-change-me-in-prod";
+
     /** 令牌载荷：用户 id、角色、过期时间（epoch 秒）。 */
     public record Claims(long uid, int role, long exp) {}
 
@@ -30,7 +36,7 @@ public class TokenService {
     private final byte[] secret;
     private final long ttlSeconds;
 
-    public TokenService(@Value("${wenjin.auth.secret:dev-secret-change-me-in-prod}") String secret,
+    public TokenService(@Value("${wenjin.auth.secret:" + DEFAULT_DEV_SECRET + "}") String secret,
                         @Value("${wenjin.auth.ttl-seconds:604800}") long ttlSeconds) {
         this.secret = secret.getBytes(StandardCharsets.UTF_8);
         this.ttlSeconds = ttlSeconds;

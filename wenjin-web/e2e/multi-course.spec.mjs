@@ -95,22 +95,28 @@ try {
   check('删除后切回其它课程', remaining >= 1 && afterDel?.includes('软件工程'))
   check('新课程已从下拉消失', uniqueGone)
 
-  // 5. 鉴权探针：未带/错误 X-User-Id 时 /api/teacher/courses 返回 401/403
-  const noId = await page.evaluate(async () => {
+  // 5. 鉴权探针：Bearer 令牌模型 → /api/teacher/courses 返回 401/403
+  const noToken = await page.evaluate(async () => {
     const r = await fetch('/api/teacher/courses')
     return await r.json()
   })
-  const badId = await page.evaluate(async () => {
-    const r = await fetch('/api/teacher/courses', { headers: { 'X-User-Id': 'abc' } })
+  const forgedToken = await page.evaluate(async () => {
+    const r = await fetch('/api/teacher/courses', { headers: { Authorization: 'Bearer forged.token.value' } })
     return await r.json()
   })
-  const student = await page.evaluate(async () => {
-    const r = await fetch('/api/teacher/courses', { headers: { 'X-User-Id': '2' } })
+  const studentToken = await page.evaluate(async () => {
+    const loginResp = await (await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'demo_student', password: 'demo' })
+    })).json()
+    const token = loginResp?.data?.token
+    const r = await fetch('/api/teacher/courses', { headers: { Authorization: 'Bearer ' + token } })
     return await r.json()
   })
-  check('无身份头 → 401', noId?.code === 401)
-  check('非数字身份头 → 401', badId?.code === 401)
-  check('学生身份 → 403', student?.code === 403)
+  check('无令牌 → 401', noToken?.code === 401)
+  check('伪造令牌 → 401', forgedToken?.code === 401)
+  check('学生令牌 → 403', studentToken?.code === 403)
 
   console.log('\n课程名(本次):', UNIQUE)
   log((fail.length === 0 ? '✓ 全部验收通过' : `✗ 失败项 ${fail.length}: ${fail.join(', ')}`))
