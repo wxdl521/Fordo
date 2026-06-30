@@ -1,50 +1,41 @@
 package com.wenjin.config;
 
-import com.wenjin.mapper.SysUserMapper;
+import com.wenjin.security.TokenService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
  * 轻量认证上下文拦截器，挂载 {@code /api/**}。
  *
- * <p>从请求头 {@code X-User-Id}（见 web 端 http.js）读取用户 ID，回查数据库确认用户存在后
- * 写入 {@link CurrentUser}；无头、解析失败、用户不存在时<strong>保持匿名不抛异常</strong>——
- * 是否拒绝由各端点的 {@link AccessGuard#assertSelf} 按业务需要决定。</p>
+ * <p>从 {@code Authorization: Bearer <token>} 校验令牌（{@link TokenService}），
+ * 通过则把令牌 uid 写入 {@link CurrentUser}；无头/伪造/过期一律保持匿名、不抛异常——
+ * 是否拒绝交由各端点的 {@code AccessGuard.assertSelf} 按需决定。</p>
  *
- * <p>{@code afterCompletion} 必须清除 {@link CurrentUser}，防止 ThreadLocal 泄漏到
- * 线程池复用的下一个请求。</p>
+ * <p>{@code afterCompletion} 清除 {@link CurrentUser}，防 ThreadLocal 泄漏到线程池复用的下一个请求。</p>
  */
 @Component
 public class AuthContextInterceptor implements HandlerInterceptor {
 
-    private final SysUserMapper userMapper;
+    private static final String BEARER = "Bearer ";
 
-    public AuthContextInterceptor(SysUserMapper userMapper) {
-        this.userMapper = userMapper;
+    private final TokenService tokenService;
+
+    public AuthContextInterceptor(TokenService tokenService) {
+        this.tokenService = tokenService;
     }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        // CORS 预检不查库，直接放行
         if (HttpMethod.OPTIONS.matches(request.getMethod())) {
             return true;
         }
-
-        String header = request.getHeader(TeacherAuthInterceptor.HEADER_USER_ID);
-        if (StringUtils.hasText(header)) {
-            try {
-                long id = Long.parseLong(header.trim());
-                // 回查数据库，确认用户真实存在（否则保持匿名）
-                if (userMapper.selectById(id) != null) {
-                    CurrentUser.set(id);
-                }
-            } catch (NumberFormatException ignored) {
-                // 非数字头，保持匿名——不抛，继续处理
-            }
+        String header = request.getHeader("Authorization");
+        if (header != null && header.startsWith(BEARER)) {
+            tokenService.verify(header.substring(BEARER.length()).trim())
+                    .ifPresent(claims -> CurrentUser.set(claims.uid()));
         }
         // 始终放行；鉴权拒绝由 AccessGuard.assertSelf 在各端点按需触发
         return true;

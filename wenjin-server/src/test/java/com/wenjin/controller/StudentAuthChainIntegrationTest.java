@@ -4,8 +4,7 @@ import com.wenjin.common.GlobalExceptionHandler;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.AuthContextInterceptor;
 import com.wenjin.config.CurrentUser;
-import com.wenjin.entity.SysUser;
-import com.wenjin.mapper.SysUserMapper;
+import com.wenjin.security.TokenService;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.DiagnosticResultService;
 import com.wenjin.service.DiagnosticService;
@@ -21,7 +20,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -40,29 +38,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @MockitoSettings(strictness = Strictness.LENIENT)
 class StudentAuthChainIntegrationTest {
 
-    @Mock SysUserMapper userMapper;
     @Mock DiagnosticService diagnosticService;
     @Mock DiagnosticResultService diagnosticResultService;
     @Mock CourseService courseService;
 
+    private final TokenService tokenService = new TokenService("test-secret", 3600);
     private MockMvc mvc;
-
-    private SysUser user(long id) {
-        SysUser u = new SysUser();
-        u.setId(id);
-        return u;
-    }
 
     @BeforeEach
     void setup() {
-        // 用户 2、9 均真实存在，供拦截器回查命中
-        when(userMapper.selectById(2L)).thenReturn(user(2L));
-        when(userMapper.selectById(9L)).thenReturn(user(9L));
-
         DiagnosticController controller =
                 new DiagnosticController(diagnosticService, diagnosticResultService, courseService);
         mvc = MockMvcBuilders.standaloneSetup(controller)
-                .addInterceptors(new AuthContextInterceptor(userMapper))
+                .addInterceptors(new AuthContextInterceptor(tokenService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -83,10 +71,19 @@ class StudentAuthChainIntegrationTest {
     }
 
     @Test
+    void getResult_forgedToken_returns401() throws Exception {
+        mvc.perform(get("/api/diagnostic/result")
+                        .header("Authorization", "Bearer forged.token.value")
+                        .param("studentId", "2").param("courseId", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
+    }
+
+    @Test
     void getResult_otherUsersStudentId_returns403() throws Exception {
         // 当前用户 9，却查 studentId=2 的学情 → FORBIDDEN
         mvc.perform(get("/api/diagnostic/result")
-                        .header("X-User-Id", "9")
+                        .header("Authorization", "Bearer " + tokenService.issue(9L, 2))
                         .param("studentId", "2").param("courseId", "5"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
@@ -96,7 +93,7 @@ class StudentAuthChainIntegrationTest {
     void getResult_ownStudentId_passes() throws Exception {
         // 当前用户 2 查自己的学情 → 放行（code=0）
         mvc.perform(get("/api/diagnostic/result")
-                        .header("X-User-Id", "2")
+                        .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .param("studentId", "2").param("courseId", "5"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
@@ -117,7 +114,7 @@ class StudentAuthChainIntegrationTest {
     @Test
     void submit_ownStudentId_passes() throws Exception {
         mvc.perform(post("/api/diagnostic/submit")
-                        .header("X-User-Id", "2")
+                        .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"courseId\":5,\"answers\":[]}"))
                 .andExpect(status().isOk())
