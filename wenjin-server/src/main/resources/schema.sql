@@ -8,7 +8,7 @@
 --    3. 所有表、字段均带中文 COMMENT。
 --    4. 外键为「逻辑外键」，不建物理约束（PRD §4.5.7 约定，应用层保证一致性），
 --       因此 DROP 顺序无依赖要求。
---    5. 脚本末尾写入演示种子数据（演示教师 + 演示课程，course.id=1）。
+--    5. 演示种子数据见 data.sql（本地开发需 schema.sql + data.sql；生产仅执行本脚本）。
 --
 --  本阶段（地基链路）仅 course / kg_node / kg_edge 三张表有业务逻辑，
 --  其余 11 张表按 PRD 一次性建好，后续阶段不再改表。
@@ -291,19 +291,3 @@ CREATE TABLE `extraction_review` (
     PRIMARY KEY (`id`),
     KEY `idx_course_time` (`course_code`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='课程标准抽取审核指标记录';
-
--- ───────────────────────────── 演示种子数据 ─────────────────────────────
--- 本阶段不做登录与权限，写死一个演示教师 + 演示课程。
--- 固定 course.id=1，前端染色地图默认按 courseId=1 查询；导入接口按 code 找到此行后全量替换图谱。
-
-INSERT INTO `sys_user` (`id`, `username`, `password`, `real_name`, `role`, `status`)
-VALUES (1, 'demo_teacher', 'demo', '演示教师', 1, 1);
-
-INSERT INTO `course` (`id`, `code`, `name`, `description`, `teacher_id`, `status`)
-VALUES (1, '52015CC4B4', '软件工程', '问津演示课程 · 软件工程知识图谱', 1, 1);
-
-INSERT INTO `sys_user` (`id`, `username`, `password`, `real_name`, `role`, `status`)
-VALUES (2, 'demo_student', 'demo', '演示学生', 2, 1);
-
-INSERT INTO `student_course` (`student_id`, `course_id`)
-VALUES (2, 1);

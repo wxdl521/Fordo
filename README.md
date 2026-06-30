@@ -130,8 +130,8 @@ Fordo/
 │   │   ├── config/                         # 拦截器：AuthContext / TeacherAuth / AccessGuard / CurrentUser
 │   │   ├── entity/ mapper/ dto/ common/    # 实体 / Mapper / DTO / Result·异常
 │   ├── src/main/resources/
-│   │   ├── schema.sql                      # 建库建表（18 张表，含演示账号/课程，可重复执行）
-│   │   ├── data.sql                        # 演示选课等增量种子
+│   │   ├── schema.sql                      # 建库建表（18 张表，可重复执行；生产仅用此脚本）
+│   │   ├── data.sql                        # 本地演示种子（账号/课程/选课；生产勿执行）
 │   │   └── application.yml                 # 端口/DB/AI/认证/诊断/掌握度 配置
 │   └── seed/                               # 图谱·题库 JSON 种子 + 各阶段增量迁移 SQL
 │       ├── 问津_软件工程图谱_v0.3.json       # 42 节点 / 53 边
@@ -176,13 +176,13 @@ Fordo/
 ### 1. 建库
 
 ```bash
-# 建全部 18 张表，并种入演示账号、演示课程（可重复执行）
+# 建全部 18 张表（可重复执行）
 mysql -u root -p < wenjin-server/src/main/resources/schema.sql
-# 演示选课等增量种子
+# 本地演示种子（账号/课程/选课；生产环境勿执行）
 mysql -u root -p wenjin < wenjin-server/src/main/resources/data.sql
 ```
 
-`schema.sql` 种入：演示教师 `demo_teacher`（id=1）、演示学生 `demo_student`（id=2），初始密码均为 **`demo`**（首次登录自动升级为 BCrypt）；演示课程「软件工程」（`course.id=1`，`code=52015CC4B4`，已发布）。
+本地开发需 **同时** 执行 `schema.sql` 与 `data.sql`。`data.sql` 种入：演示教师 `demo_teacher`（id=1）、演示学生 `demo_student`（id=2），初始密码均为 **`demo`**（首次登录自动升级为 BCrypt）；演示课程「软件工程」（`course.id=1`，`code=52015CC4B4`，已发布）。**生产环境仅执行 `schema.sql`，不要加载 `data.sql`。**
 
 ### 2. 配置（数据库 / AI / 认证）
 
