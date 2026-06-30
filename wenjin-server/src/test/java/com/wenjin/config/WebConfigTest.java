@@ -13,6 +13,7 @@ import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -39,11 +40,11 @@ class WebConfigTest {
     @BeforeEach
     void setUp() {
         webConfig = new WebConfig(teacherAuthInterceptor, authContextInterceptor);
-        when(corsRegistry.addMapping("/api/**")).thenReturn(corsRegistration);
-        when(corsRegistration.allowedOriginPatterns(any(String[].class))).thenReturn(corsRegistration);
-        when(corsRegistration.allowedMethods(any(String[].class))).thenReturn(corsRegistration);
-        when(corsRegistration.allowedHeaders(any(String.class))).thenReturn(corsRegistration);
-        when(corsRegistration.allowCredentials(anyBoolean())).thenReturn(corsRegistration);
+        lenient().when(corsRegistry.addMapping("/api/**")).thenReturn(corsRegistration);
+        lenient().when(corsRegistration.allowedOriginPatterns(any(String[].class))).thenReturn(corsRegistration);
+        lenient().when(corsRegistration.allowedMethods(any(String[].class))).thenReturn(corsRegistration);
+        lenient().when(corsRegistration.allowedHeaders(any(String.class))).thenReturn(corsRegistration);
+        lenient().when(corsRegistration.allowCredentials(anyBoolean())).thenReturn(corsRegistration);
     }
 
     @Test
