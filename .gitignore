@@ -31,6 +31,9 @@ test-output.txt
 .sdd/
 plans/
 
+# ───── Git worktrees（superpowers 隔离开发） ─────
+.worktrees/
+
 # ───── IDE / 系统 ─────
 .idea/
 *.iml
