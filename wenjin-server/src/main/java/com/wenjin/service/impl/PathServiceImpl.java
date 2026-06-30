@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wenjin.ai.QuestionAiClient;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.config.AccessGuard;
 import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.LearningPathVO;
 import com.wenjin.dto.LearningPathVO.NodeRef;
@@ -282,6 +283,10 @@ public class PathServiceImpl implements PathService {
         if (item == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "学习步骤不存在：itemId=" + itemId);
         }
+        // 归属校验：item 只带 itemId，须经 path 反查出属主 studentId，绑定当前登录用户，
+        // 否则任意登录者可标记他人路径步骤为完成。path 缺失按 null 处理 → assertSelf 抛 FORBIDDEN。
+        LearningPath path = learningPathMapper.selectById(item.getPathId());
+        AccessGuard.assertSelf(path == null ? null : path.getStudentId());
         if (item.getStatus() != null && item.getStatus() == ITEM_DONE) {
             return; // 幂等
         }

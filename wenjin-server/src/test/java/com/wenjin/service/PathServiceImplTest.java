@@ -3,6 +3,7 @@ package com.wenjin.service;
 import com.wenjin.ai.QuestionAiClient;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.LearningPathVO;
 import com.wenjin.dto.PathGenerateRequest;
@@ -17,6 +18,7 @@ import com.wenjin.mapper.LearningPathItemMapper;
 import com.wenjin.mapper.LearningPathMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.impl.PathServiceImpl;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -58,6 +60,18 @@ class PathServiceImplTest {
     @Mock QuestionAiClient questionAiClient;
 
     private static final Long S = 2L, C = 1L;
+
+    /** completeItem 现做归属校验（item→path→studentId vs 当前用户），每例后清 ThreadLocal。 */
+    @AfterEach
+    void clearCurrentUser() {
+        CurrentUser.clear();
+    }
+
+    private LearningPath path(long id, long studentId) {
+        LearningPath p = new LearningPath();
+        p.setId(id); p.setStudentId(studentId); p.setCourseId(C); p.setStatus(1);
+        return p;
+    }
 
     private PathServiceImpl impl() {
         PathServiceImpl impl = new PathServiceImpl(studentMasteryMapper, kgNodeMapper, kgEdgeMapper,
@@ -224,11 +238,13 @@ class PathServiceImplTest {
     }
 
     @Test
-    @DisplayName("G completeItem：未完成→置 status=1 + completed_at")
+    @DisplayName("G completeItem：属主未完成→置 status=1 + completed_at")
     void completeSetsStatus() {
+        CurrentUser.set(S); // 属主本人
         LearningPathItem item = new LearningPathItem();
-        item.setId(55L); item.setStatus(0); item.setCompletedAt(null);
+        item.setId(55L); item.setPathId(777L); item.setStatus(0); item.setCompletedAt(null);
         when(learningPathItemMapper.selectById(55L)).thenReturn(item);
+        when(learningPathMapper.selectById(777L)).thenReturn(path(777L, S));
 
         impl().completeItem(55L);
 
@@ -236,6 +252,38 @@ class PathServiceImplTest {
         verify(learningPathItemMapper, times(1)).updateById(cap.capture());
         assertThat(cap.getValue().getStatus()).isEqualTo(1);
         assertThat(cap.getValue().getCompletedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("G2 completeItem 归属：非属主→FORBIDDEN，不写库")
+    void completeItem_nonOwner_throwsForbidden_noWrite() {
+        CurrentUser.set(9L); // 当前用户 9，步骤属于 studentId=2
+        LearningPathItem item = new LearningPathItem();
+        item.setId(55L); item.setPathId(777L); item.setStatus(0);
+        when(learningPathItemMapper.selectById(55L)).thenReturn(item);
+        when(learningPathMapper.selectById(777L)).thenReturn(path(777L, S));
+
+        assertThatThrownBy(() -> impl().completeItem(55L))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.FORBIDDEN.getCode()));
+        verify(learningPathItemMapper, never()).updateById(any(LearningPathItem.class));
+    }
+
+    @Test
+    @DisplayName("G3 completeItem 匿名：未登录→UNAUTHORIZED，不写库")
+    void completeItem_anonymous_throwsUnauthorized_noWrite() {
+        // 不设 CurrentUser
+        LearningPathItem item = new LearningPathItem();
+        item.setId(55L); item.setPathId(777L); item.setStatus(0);
+        when(learningPathItemMapper.selectById(55L)).thenReturn(item);
+        when(learningPathMapper.selectById(777L)).thenReturn(path(777L, S));
+
+        assertThatThrownBy(() -> impl().completeItem(55L))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.UNAUTHORIZED.getCode()));
+        verify(learningPathItemMapper, never()).updateById(any(LearningPathItem.class));
     }
 
     @Test
@@ -265,11 +313,14 @@ class PathServiceImplTest {
     }
 
     @Test
-    @DisplayName("I completeItem 幂等：已完成再次调用→不写库、不覆盖时间")
+    @DisplayName("I completeItem 幂等：属主对已完成步骤再次调用→不写库、不覆盖时间")
     void completeAlreadyDoneIsIdempotent() {
+        CurrentUser.set(S); // 属主本人
         LearningPathItem done = new LearningPathItem();
-        done.setId(55L); done.setStatus(1); done.setCompletedAt(LocalDateTime.now().minusDays(1));
+        done.setId(55L); done.setPathId(777L); done.setStatus(1);
+        done.setCompletedAt(LocalDateTime.now().minusDays(1));
         when(learningPathItemMapper.selectById(55L)).thenReturn(done);
+        when(learningPathMapper.selectById(777L)).thenReturn(path(777L, S));
 
         impl().completeItem(55L);
 

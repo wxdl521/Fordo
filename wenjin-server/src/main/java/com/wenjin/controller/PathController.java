@@ -31,6 +31,8 @@ public class PathController {
     /** 生成（重算）学习路径。POST /api/path/generate */
     @PostMapping("/generate")
     public Result<LearningPathVO> generate(@RequestBody PathGenerateRequest req) {
+        // 重算路径会写 learning_path——必须绑定本人，否则可替他人重置学习路径
+        AccessGuard.assertSelf(req.getStudentId());
         courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
         return Result.ok(pathService.generate(req));
     }

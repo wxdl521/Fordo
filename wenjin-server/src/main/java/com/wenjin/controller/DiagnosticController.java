@@ -51,6 +51,8 @@ public class DiagnosticController {
      */
     @PostMapping("/submit")
     public Result<SubmitResult> submit(@RequestBody SubmitRequest req) {
+        // 交卷会写 answer_record / 掌握度——必须绑定本人，否则可替他人交卷污染其学情
+        AccessGuard.assertSelf(req.getStudentId());
         courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
         return Result.ok(diagnosticService.submit(req));
     }

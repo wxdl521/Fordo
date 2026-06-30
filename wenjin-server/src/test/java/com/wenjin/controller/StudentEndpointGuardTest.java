@@ -150,6 +150,7 @@ class StudentEndpointGuardTest {
 
     @Test
     void diagnosticSubmit_guardsWithBodyStudentAndCourse() {
+        CurrentUser.set(2L); // assertSelf(2L) 放行：交卷须绑定本人
         GuardSpy guard = new GuardSpy();
         DiagnosticServiceFake diag = new DiagnosticServiceFake();
         SubmitRequest req = new SubmitRequest();
@@ -160,6 +161,21 @@ class StudentEndpointGuardTest {
         assertThat(guard.seenStudentId).isEqualTo(2L);
         assertThat(guard.seenCourseId).isEqualTo(5L);
         assertThat(diag.submitCalled).isTrue();
+    }
+
+    @Test
+    void diagnosticSubmit_mismatchedUser_throwsForbidden_shortCircuits() {
+        CurrentUser.set(9L); // 当前用户 9，却给 studentId=2 交卷 → 越权
+        GuardSpy guard = new GuardSpy();
+        DiagnosticServiceFake diag = new DiagnosticServiceFake();
+        SubmitRequest req = new SubmitRequest();
+        req.setStudentId(2L);
+        req.setCourseId(5L);
+        DiagnosticController c = new DiagnosticController(diag, new DiagnosticResultServiceFake(), guard);
+
+        assertThatThrownBy(() -> c.submit(req)).isInstanceOf(BusinessException.class);
+        assertThat(guard.called).isFalse();     // assertSelf 先短路，未触达选课校验
+        assertThat(diag.submitCalled).isFalse(); // 更未触达落库
     }
 
     // ---- PathController ----
@@ -178,6 +194,7 @@ class StudentEndpointGuardTest {
 
     @Test
     void pathGenerate_guardsWithBodyStudentAndCourse_shortCircuitsOnReject() {
+        CurrentUser.set(2L); // assertSelf(2L) 放行，再由选课校验 reject 短路
         GuardSpy guard = new GuardSpy(true);
         PathServiceFake path = new PathServiceFake();
         PathController c = new PathController(path, guard);
@@ -186,6 +203,21 @@ class StudentEndpointGuardTest {
         req.setCourseId(5L);
 
         assertThatThrownBy(() -> c.generate(req)).isInstanceOf(BusinessException.class);
+        assertThat(path.generateCalled).isFalse();
+    }
+
+    @Test
+    void pathGenerate_mismatchedUser_throwsForbidden_shortCircuits() {
+        CurrentUser.set(9L); // 当前用户 9，却给 studentId=2 重算路径 → 越权
+        GuardSpy guard = new GuardSpy();
+        PathServiceFake path = new PathServiceFake();
+        PathController c = new PathController(path, guard);
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setStudentId(2L);
+        req.setCourseId(5L);
+
+        assertThatThrownBy(() -> c.generate(req)).isInstanceOf(BusinessException.class);
+        assertThat(guard.called).isFalse();
         assertThat(path.generateCalled).isFalse();
     }
 
