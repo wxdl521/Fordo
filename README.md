@@ -90,7 +90,7 @@
 
 ## 五、认证与权限
 
-身份模型为 **HMAC 签名 Bearer 令牌 + BCrypt 密码**（详见 `docs/superpowers/specs/2026-06-30-authentication-design.md`）：
+身份模型为 **HMAC 签名 Bearer 令牌 + BCrypt 密码**：
 
 - **登录**：`POST /api/login` 校验密码后签发两段式 HMAC-SHA256 令牌（`payloadB64.signatureB64`，载荷含 `uid/role/exp`），返回 `LoginVO { token, user }`。
 - **密码**：BCrypt 哈希；演示账号初始为明文，**首次登录时透明升级**为 BCrypt，无需迁移脚本。
@@ -284,7 +284,3 @@ npm run dev
   ```
 - **前端**：`npm run build` 构建校验；`wenjin-web/e2e/` 下 Playwright + 系统 Edge 真机验收脚本（多课程切换、课程发布闭环等，均真机双绿）。
 - **代码评审**：关键里程碑均经多角色子代理评审（spec 合规 + 代码质量 + 全分支安全复盘）后合入。
-
----
-
-> 详细设计与实施计划见 `docs/superpowers/specs/`、`docs/superpowers/plans/`。
