@@ -4,11 +4,14 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.dto.LoginRequest;
+import com.wenjin.dto.LoginVO;
 import com.wenjin.dto.RegisterRequest;
 import com.wenjin.dto.UserVO;
 import com.wenjin.entity.SysUser;
 import com.wenjin.mapper.SysUserMapper;
+import com.wenjin.security.TokenService;
 import com.wenjin.service.UserService;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 /**
@@ -18,9 +21,14 @@ import org.springframework.stereotype.Service;
 public class UserServiceImpl implements UserService {
 
     private final SysUserMapper userMapper;
+    private final PasswordEncoder passwordEncoder;
+    private final TokenService tokenService;
 
-    public UserServiceImpl(SysUserMapper userMapper) {
+    public UserServiceImpl(SysUserMapper userMapper, PasswordEncoder passwordEncoder,
+                           TokenService tokenService) {
         this.userMapper = userMapper;
+        this.passwordEncoder = passwordEncoder;
+        this.tokenService = tokenService;
     }
 
     @Override
@@ -34,7 +42,7 @@ public class UserServiceImpl implements UserService {
 
         SysUser user = new SysUser();
         user.setUsername(request.getUsername());
-        user.setPassword(request.getPassword());
+        user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setRealName(request.getRealName());
         user.setRole(request.getRole());
         user.setStatus(1);
@@ -44,18 +52,37 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public UserVO login(LoginRequest request) {
+    public LoginVO login(LoginRequest request) {
+        // 按用户名查（密码不再进 SQL 条件，改为应用层哈希比对）
         SysUser user = userMapper.selectOne(
                 new LambdaQueryWrapper<SysUser>()
-                        .eq(SysUser::getUsername, request.getUsername())
-                        .eq(SysUser::getPassword, request.getPassword()));
-        if (user == null) {
+                        .eq(SysUser::getUsername, request.getUsername()));
+        if (user == null || !passwordMatches(request.getPassword(), user)) {
             throw new BusinessException(ResultCode.LOGIN_FAIL, "用户名或密码错误");
         }
         if (user.getStatus() != null && user.getStatus() == 0) {
             throw new BusinessException(ResultCode.LOGIN_FAIL, "账号已被禁用");
         }
-        return toVO(user);
+        LoginVO vo = new LoginVO();
+        vo.setToken(tokenService.issue(user.getId(), user.getRole() == null ? 0 : user.getRole()));
+        vo.setUser(toVO(user));
+        return vo;
+    }
+
+    /**
+     * 密码比对：bcrypt 哈希走 encoder；遗留明文按相等比对，命中则顺手重哈希落库（透明升级）。
+     */
+    private boolean passwordMatches(String raw, SysUser user) {
+        String stored = user.getPassword();
+        if (stored != null && stored.startsWith("$2")) {
+            return passwordEncoder.matches(raw, stored);
+        }
+        boolean ok = raw != null && raw.equals(stored);
+        if (ok) {
+            user.setPassword(passwordEncoder.encode(raw));
+            userMapper.updateById(user);
+        }
+        return ok;
     }
 
     @Override

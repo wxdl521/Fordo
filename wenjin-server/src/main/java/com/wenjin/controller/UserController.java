@@ -2,6 +2,7 @@ package com.wenjin.controller;
 
 import com.wenjin.common.Result;
 import com.wenjin.dto.LoginRequest;
+import com.wenjin.dto.LoginVO;
 import com.wenjin.dto.RegisterRequest;
 import com.wenjin.dto.UserVO;
 import com.wenjin.service.UserService;
@@ -39,7 +40,7 @@ public class UserController {
      * POST /api/login
      */
     @PostMapping("/login")
-    public Result<UserVO> login(@RequestBody LoginRequest request) {
+    public Result<LoginVO> login(@RequestBody LoginRequest request) {
         return Result.ok(userService.login(request));
     }
 

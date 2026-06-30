@@ -1,6 +1,7 @@
 package com.wenjin.service;
 
 import com.wenjin.dto.LoginRequest;
+import com.wenjin.dto.LoginVO;
 import com.wenjin.dto.RegisterRequest;
 import com.wenjin.dto.UserVO;
 
@@ -21,9 +22,9 @@ public interface UserService {
      * 登录。
      *
      * @param request 登录信息
-     * @return 用户信息（不含密码）
+     * @return 令牌 + 用户信息（不含密码）
      */
-    UserVO login(LoginRequest request);
+    LoginVO login(LoginRequest request);
 
     /**
      * 按 ID 查询用户。
