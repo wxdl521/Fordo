@@ -5,6 +5,7 @@ import com.wenjin.common.ResultCode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -26,11 +27,8 @@ class AccessGuardTest {
         // 未设置 CurrentUser（匿名请求）
         assertThatThrownBy(() -> AccessGuard.assertSelf(2L))
                 .isInstanceOf(BusinessException.class)
-                .satisfies(ex -> {
-                    int code = ((BusinessException) ex).getCode();
-                    assert code == ResultCode.UNAUTHORIZED.getCode()
-                            : "期望 401，实际 " + code;
-                });
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.UNAUTHORIZED.getCode()));
     }
 
     @Test
@@ -38,11 +36,8 @@ class AccessGuardTest {
         CurrentUser.set(1L); // 当前用户是 1，但 studentId=2
         assertThatThrownBy(() -> AccessGuard.assertSelf(2L))
                 .isInstanceOf(BusinessException.class)
-                .satisfies(ex -> {
-                    int code = ((BusinessException) ex).getCode();
-                    assert code == ResultCode.FORBIDDEN.getCode()
-                            : "期望 403，实际 " + code;
-                });
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.FORBIDDEN.getCode()));
     }
 
     @Test
@@ -58,10 +53,7 @@ class AccessGuardTest {
         CurrentUser.set(2L);
         assertThatThrownBy(() -> AccessGuard.assertSelf(null))
                 .isInstanceOf(BusinessException.class)
-                .satisfies(ex -> {
-                    int code = ((BusinessException) ex).getCode();
-                    assert code == ResultCode.FORBIDDEN.getCode()
-                            : "期望 403，实际 " + code;
-                });
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.FORBIDDEN.getCode()));
     }
 }

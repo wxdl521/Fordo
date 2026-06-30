@@ -14,6 +14,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
@@ -65,11 +66,8 @@ class CompanionOwnershipTest {
 
         assertThatThrownBy(() -> service().getMessages(99L))
                 .isInstanceOf(BusinessException.class)
-                .satisfies(ex -> {
-                    int code = ((BusinessException) ex).getCode();
-                    assert code == ResultCode.FORBIDDEN.getCode()
-                            : "期望 403，实际 " + code;
-                });
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.FORBIDDEN.getCode()));
     }
 
     @Test
@@ -86,11 +84,8 @@ class CompanionOwnershipTest {
         // 未登录（CurrentUser 未设）
         assertThatThrownBy(() -> service().getMessages(99L))
                 .isInstanceOf(BusinessException.class)
-                .satisfies(ex -> {
-                    int code = ((BusinessException) ex).getCode();
-                    assert code == ResultCode.UNAUTHORIZED.getCode()
-                            : "期望 401，实际 " + code;
-                });
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.UNAUTHORIZED.getCode()));
     }
 
     @Test
@@ -100,11 +95,8 @@ class CompanionOwnershipTest {
 
         assertThatThrownBy(() -> service().getMessages(999L))
                 .isInstanceOf(BusinessException.class)
-                .satisfies(ex -> {
-                    int code = ((BusinessException) ex).getCode();
-                    assert code == ResultCode.FORBIDDEN.getCode()
-                            : "期望 403，实际 " + code;
-                });
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.FORBIDDEN.getCode()));
     }
 
     // ─── deleteConversation ──────────────────────────────────────────────────
@@ -116,11 +108,8 @@ class CompanionOwnershipTest {
 
         assertThatThrownBy(() -> service().deleteConversation(99L))
                 .isInstanceOf(BusinessException.class)
-                .satisfies(ex -> {
-                    int code = ((BusinessException) ex).getCode();
-                    assert code == ResultCode.FORBIDDEN.getCode()
-                            : "期望 403，实际 " + code;
-                });
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.FORBIDDEN.getCode()));
     }
 
     @Test
