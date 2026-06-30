@@ -26,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import org.mockito.ArgumentCaptor;
 
 /**
  * T6: reviewAll 服务层单元测试——沿用 TeacherQuestionServiceImplTest 的 mock/fake 搭法。
@@ -96,7 +97,15 @@ class ReviewAllTest {
         int affected = service.reviewAll(1L, req);
 
         assertThat(affected).isEqualTo(1);
-        verify(questionMapper).update(isNull(), any(UpdateWrapper.class));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<UpdateWrapper<Question>> captor = ArgumentCaptor.forClass(UpdateWrapper.class);
+        verify(questionMapper).update(isNull(), captor.capture());
+        UpdateWrapper<Question> wrapper = captor.getValue();
+        // 确认 status 列被 set（getSqlSet 含 "status="）
+        assertThat(wrapper.getSqlSet()).contains("status=");
+        // 确认实际写入值为 APPROVED（1），而非 REJECTED（2）——值存于 paramNameValuePairs
+        assertThat(wrapper.getParamNameValuePairs()).containsValue(QuestionStatus.APPROVED);
     }
 
     /** 带 nodeCode 过滤 → 只动该主考点匹配子集 */
@@ -180,7 +189,15 @@ class ReviewAllTest {
         int affected = service.reviewAll(1L, req);
 
         assertThat(affected).isEqualTo(1);
-        verify(questionMapper).update(isNull(), any(UpdateWrapper.class));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<UpdateWrapper<Question>> captor = ArgumentCaptor.forClass(UpdateWrapper.class);
+        verify(questionMapper).update(isNull(), captor.capture());
+        UpdateWrapper<Question> wrapper = captor.getValue();
+        // 确认 status 列被 set（getSqlSet 含 "status="）
+        assertThat(wrapper.getSqlSet()).contains("status=");
+        // 确认实际写入值为 REJECTED（2），而非 APPROVED（1）——值存于 paramNameValuePairs
+        assertThat(wrapper.getParamNameValuePairs()).containsValue(QuestionStatus.REJECTED);
     }
 
     /** courseId 无效（null / 0）→ 抛 IllegalArgumentException */
