@@ -1,6 +1,9 @@
 package com.wenjin.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
+
+import java.util.Arrays;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -13,7 +16,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
-    @org.springframework.beans.factory.annotation.Value("${wenjin.cors.allowed-origin-patterns:*}")
+    @Value("${wenjin.cors.allowed-origin-patterns:*}")
     private String corsAllowedOriginPatterns;
 
     private final TeacherAuthInterceptor teacherAuthInterceptor;
@@ -28,10 +31,20 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")
-                .allowedOriginPatterns(corsAllowedOriginPatterns.split(","))
+                .allowedOriginPatterns(parseOriginPatterns(corsAllowedOriginPatterns))
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(false);
+    }
+
+    static String[] parseOriginPatterns(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return new String[]{"*"};
+        }
+        return Arrays.stream(raw.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toArray(String[]::new);
     }
 
     @Override

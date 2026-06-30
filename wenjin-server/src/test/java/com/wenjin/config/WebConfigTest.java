@@ -69,4 +69,22 @@ class WebConfigTest {
         assertThat(originsCaptor.getValue()).containsExactly("https://example.com");
         verify(corsRegistration).allowCredentials(false);
     }
+
+    @Test
+    void multipleOrigins_splitsTrimsAndRegistersEach() {
+        ReflectionTestUtils.setField(webConfig, "corsAllowedOriginPatterns",
+                "https://a.com, https://b.com");
+
+        webConfig.addCorsMappings(corsRegistry);
+
+        ArgumentCaptor<String[]> originsCaptor = ArgumentCaptor.forClass(String[].class);
+        verify(corsRegistration).allowedOriginPatterns(originsCaptor.capture());
+        assertThat(originsCaptor.getValue()).containsExactly("https://a.com", "https://b.com");
+    }
+
+    @Test
+    void parseOriginPatterns_blankFallsBackToWildcard() {
+        assertThat(WebConfig.parseOriginPatterns("  ")).containsExactly("*");
+        assertThat(WebConfig.parseOriginPatterns("https://x.com,")).containsExactly("https://x.com");
+    }
 }
