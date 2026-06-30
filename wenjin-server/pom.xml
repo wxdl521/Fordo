@@ -30,6 +30,12 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!-- Actuator（生产健康检查 /actuator/health） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
         <!-- 参数校验 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
