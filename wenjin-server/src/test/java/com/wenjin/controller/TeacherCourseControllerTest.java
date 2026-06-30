@@ -1,9 +1,11 @@
 package com.wenjin.controller;
 
 import com.wenjin.common.Result;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.CreateCourseRequest;
 import com.wenjin.dto.TeacherCourseVO;
 import com.wenjin.service.TeacherCourseService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -13,8 +15,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class TeacherCourseControllerTest {
 
+    @AfterEach
+    void clear() { CurrentUser.clear(); }
+
     @Test
-    void create_passesNameAndHeaderTeacherId() {
+    void create_passesNameAndCurrentUserTeacherId() {
         AtomicReference<String> seenName = new AtomicReference<>();
         AtomicReference<Long> seenTeacher = new AtomicReference<>();
         TeacherCourseService fake = new TeacherCourseService() {
@@ -27,10 +32,11 @@ class TeacherCourseControllerTest {
             public void setPublished(Long courseId, boolean published) {}
         };
         TeacherCourseController controller = new TeacherCourseController(fake);
+        CurrentUser.set(9L);
 
         CreateCourseRequest req = new CreateCourseRequest();
         req.setName("新课");
-        Result<TeacherCourseVO> res = controller.create(req, 9L);
+        Result<TeacherCourseVO> res = controller.create(req);
 
         assertThat(seenName.get()).isEqualTo("新课");
         assertThat(seenTeacher.get()).isEqualTo(9L);

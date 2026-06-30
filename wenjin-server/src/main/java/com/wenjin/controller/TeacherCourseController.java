@@ -1,6 +1,7 @@
 package com.wenjin.controller;
 
 import com.wenjin.common.Result;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.CreateCourseRequest;
 import com.wenjin.dto.TeacherCourseVO;
 import com.wenjin.service.TeacherCourseService;
@@ -25,8 +26,9 @@ public class TeacherCourseController {
     }
 
     @PostMapping
-    public Result<TeacherCourseVO> create(@RequestBody CreateCourseRequest req,
-                                          @RequestHeader(value = "X-User-Id", required = false) Long teacherId) {
+    public Result<TeacherCourseVO> create(@RequestBody CreateCourseRequest req) {
+        // owner 取自已验证的当前用户（教师拦截器已确保是教师）
+        Long teacherId = CurrentUser.get();
         return Result.ok(teacherCourseService.create(req.getName(), teacherId));
     }
 
