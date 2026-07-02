@@ -80,17 +80,39 @@
         <div class="np-result-icon">{{ itemCompleted ? '✓' : '★' }}</div>
         <div class="np-result-title">练习完成</div>
 
-        <!-- 掌握度变化 -->
-        <div v-if="submitResult" class="np-mastery-row">
-          <span class="np-mastery-label">掌握度：</span>
-          <span class="np-mastery-before">{{ fmtPct(submitResult.masteryBefore) }}</span>
-          <span class="np-mastery-arrow"> → </span>
-          <span class="np-mastery-after" :style="{ color: masteryColor(submitResult.masteryLevel) }">
-            {{ fmtPct(submitResult.masteryAfter) }}
-          </span>
-          <span class="np-mastery-level" :style="{ color: masteryColor(submitResult.masteryLevel) }">
-            （{{ submitResult.masteryLevel || '未知' }}）
-          </span>
+        <!-- 掌握度变化动画（T10） -->
+        <div v-if="submitResult" class="np-mastery-block">
+          <div class="np-mastery-nums">
+            <!-- Δ≠0：显示 before → animated-after + 增量徽章 -->
+            <template v-if="masteryDelta !== 0">
+              <span class="np-mastery-before-num">{{ fmtPct(submitResult.masteryBefore) }}</span>
+              <span class="np-mastery-arr"> → </span>
+              <span class="np-mastery-after-num" :style="{ color: masteryColor(submitResult.masteryLevel) }">
+                {{ fmtPct(displayedMastery) }}
+              </span>
+              <span class="np-mastery-delta" :class="masteryDelta > 0 ? 'up' : 'down'">
+                {{ masteryDelta > 0 ? '+' : '' }}{{ Math.round(masteryDelta) }}
+              </span>
+            </template>
+            <!-- Δ=0（幂等重放）：只展示当前值，不显示「进步了 0」 -->
+            <template v-else>
+              <span class="np-mastery-after-num" :style="{ color: masteryColor(submitResult.masteryLevel) }">
+                {{ fmtPct(submitResult.masteryAfter) }}
+              </span>
+            </template>
+            <span
+              class="np-mastery-level-badge"
+              :style="{ color: masteryColor(submitResult.masteryLevel), borderColor: masteryColor(submitResult.masteryLevel) }"
+            >{{ submitResult.masteryLevel || '未知' }}</span>
+          </div>
+          <!-- 进度条 -->
+          <div class="np-mastery-track">
+            <div
+              class="np-mastery-fill"
+              :style="{ width: barWidth, background: masteryColor(submitResult.masteryLevel) }"
+            ></div>
+          </div>
+          <div class="np-mastery-bar-label">掌握度</div>
         </div>
 
         <!-- 路径步骤自动完成提示 -->
@@ -98,8 +120,27 @@
           该知识点掌握度已达标，学习路径步骤已自动标记完成。
         </div>
 
-        <!-- T10 预留位：分值变化动画 / 薄弱前置提示卡 / 路径重算引导 -->
-        <!-- [T10-PLACEHOLDER] enhanced results panel goes here -->
+        <!-- 薄弱前置提示卡（T10） -->
+        <div
+          v-if="submitResult && submitResult.weakPrerequisites && submitResult.weakPrerequisites.length"
+          class="np-weak-card"
+        >
+          <div class="np-weak-header">⚠ 发现薄弱前置</div>
+          <div
+            v-for="wp in submitResult.weakPrerequisites"
+            :key="wp.nodeCode"
+            class="np-weak-item"
+          >
+            错误多指向「{{ wp.name }}」<span v-if="wp.hitCount > 1" class="np-weak-count">×{{ wp.hitCount }}</span>
+          </div>
+          <div v-if="submitResult.pathRegenerated" class="np-weak-hint">已为你调整路径</div>
+        </div>
+
+        <!-- pathRegenerated 引导跳转（T10） -->
+        <div v-if="submitResult && submitResult.pathRegenerated" class="np-regen-bar">
+          <span class="np-regen-txt">学习路径已重新规划</span>
+          <router-link :to="backLink" class="np-regen-link">查看新路径 →</router-link>
+        </div>
 
         <!-- 逐题结果 -->
         <div v-if="submitResult && submitResult.graded && submitResult.graded.length" class="np-grades">
@@ -136,7 +177,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { startPractice, submitPractice } from '../api/practice.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
@@ -197,6 +238,57 @@ const skippedSet = ref({})
 /** PracticeSubmitVO */
 const submitResult = ref(null)
 const itemCompleted = ref(false)
+
+// ─── T10: 掌握度动画状态 ──────────────────────────────────────────────────────
+/** 正在展示的掌握度数值（计数动画中间值） */
+const displayedMastery = ref(0)
+/** 进度条宽度（CSS transition 驱动） */
+const barWidth = ref('0%')
+/** masteryAfter - masteryBefore；0 表示幂等重放 */
+const masteryDelta = computed(() => {
+  if (!submitResult.value) return 0
+  return (submitResult.value.masteryAfter ?? 0) - (submitResult.value.masteryBefore ?? 0)
+})
+
+/**
+ * 当 phase 切换到 'result' 时触发：
+ *   - 进度条：0% → masteryAfter%（CSS transition 0.7s）
+ *   - 数字计数器：masteryBefore → masteryAfter（rAF 700ms，Δ=0 时跳过）
+ */
+watch(phase, async (p) => {
+  if (p !== 'result' || !submitResult.value) return
+  const before = submitResult.value.masteryBefore ?? 0
+  const after  = submitResult.value.masteryAfter  ?? 0
+
+  // 初始化：数字从 before 开始，进度条先清零
+  displayedMastery.value = before
+  barWidth.value = '0%'
+
+  // 等 DOM 渲染完初始状态后再启动动画
+  await nextTick()
+  setTimeout(() => {
+    // CSS transition 驱动进度条填充
+    barWidth.value = Math.max(0, Math.min(100, after)) + '%'
+
+    if (before === after) {
+      // Δ=0：数字直接显示当前值，不计数
+      displayedMastery.value = after
+      return
+    }
+
+    // rAF 数字计数动画
+    const duration = 700
+    const startTs = Date.now()
+    function tick() {
+      const elapsed = Date.now() - startTs
+      const t = Math.min(elapsed / duration, 1)
+      const eased = 1 - Math.pow(1 - t, 3) // ease-out cubic
+      displayedMastery.value = Math.round(before + (after - before) * eased)
+      if (t < 1) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  }, 50)
+})
 
 // ─── 响应式布局 ───────────────────────────────────────────────────────────────
 const width = ref(typeof window !== 'undefined' ? window.innerWidth : 1024)
@@ -441,6 +533,8 @@ onMounted(() => {
       idx, singleAnswers, multiSelections, textAnswers, skippedSet,
       submitResult, itemCompleted,
       total, currentQ, isLast, hasSelection, currentSel, currentMultiSel, currentText,
+      // T10 动画状态
+      displayedMastery, barWidth, masteryDelta,
       startSession, onPick, onTextInput, goNext, goPrev, onSkip, restartPractice
     }
   }
@@ -640,22 +734,161 @@ onBeforeUnmount(() => {
   margin-bottom: 20px;
 }
 
-/* 掌握度变化 */
-.np-mastery-row {
+/* ── 掌握度动画块（T10） ─────────────────────────────────────────── */
+.np-mastery-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.np-mastery-nums {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 16px;
-  margin-bottom: 12px;
   flex-wrap: wrap;
   justify-content: center;
 }
 
-.np-mastery-label { color: var(--mut); font-size: 14px; }
-.np-mastery-before { color: var(--mut); }
-.np-mastery-arrow { color: var(--mut); }
-.np-mastery-after { font-weight: 600; font-size: 18px; }
-.np-mastery-level { font-size: 13px; }
+.np-mastery-before-num {
+  font-size: 15px;
+  color: var(--mut);
+}
+
+.np-mastery-arr {
+  font-size: 14px;
+  color: var(--mut);
+}
+
+.np-mastery-after-num {
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.5px;
+}
+
+.np-mastery-delta {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 20px;
+}
+.np-mastery-delta.up {
+  color: var(--ok);
+  background: rgba(61, 122, 94, 0.10);
+}
+.np-mastery-delta.down {
+  color: var(--acc);
+  background: rgba(180, 66, 46, 0.10);
+}
+
+.np-mastery-level-badge {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  border: 1px solid currentColor;
+  opacity: 0.85;
+}
+
+.np-mastery-track {
+  width: 100%;
+  height: 6px;
+  background: var(--card2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.np-mastery-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.7s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.np-mastery-bar-label {
+  font-size: 11px;
+  color: var(--mut);
+  opacity: 0.7;
+  align-self: flex-end;
+}
+
+/* ── 薄弱前置提示卡（T10） ───────────────────────────────────────── */
+.np-weak-card {
+  width: 100%;
+  max-width: 460px;
+  background: rgba(200, 134, 42, 0.10);
+  border: 1px solid var(--warn);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+  text-align: left;
+}
+
+.np-weak-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--warn);
+  margin-bottom: 8px;
+}
+
+.np-weak-item {
+  font-size: 13px;
+  color: var(--ink);
+  line-height: 1.75;
+}
+
+.np-weak-count {
+  font-size: 11.5px;
+  color: var(--mut);
+  margin-left: 4px;
+}
+
+.np-weak-hint {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--warn);
+  opacity: 0.85;
+}
+
+/* ── 路径重算引导（T10） ──────────────────────────────────────────── */
+.np-regen-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: rgba(61, 122, 94, 0.09);
+  border: 1px solid var(--ok);
+  border-radius: 10px;
+  margin-bottom: 14px;
+  width: 100%;
+  max-width: 460px;
+  flex-wrap: wrap;
+}
+
+.np-regen-txt {
+  font-size: 13px;
+  color: var(--ok);
+  flex: 1;
+  min-width: 140px;
+}
+
+.np-regen-link {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ok);
+  text-decoration: none;
+  padding: 4px 12px;
+  border: 1px solid var(--ok);
+  border-radius: 8px;
+  white-space: nowrap;
+  transition: background-color 0.15s, color 0.15s;
+}
+.np-regen-link:hover {
+  background: var(--ok);
+  color: #fff;
+}
 
 /* 自动完成提示 */
 .np-auto-done {
