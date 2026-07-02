@@ -11,14 +11,20 @@ import com.wenjin.entity.KgEdge;
 import com.wenjin.entity.KgNode;
 import com.wenjin.entity.LearningPath;
 import com.wenjin.entity.LearningPathItem;
+import com.wenjin.entity.Question;
+import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.LearningPathItemMapper;
 import com.wenjin.mapper.LearningPathMapper;
+import com.wenjin.mapper.QuestionMapper;
+import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.impl.PathServiceImpl;
+import com.wenjin.support.QuestionStatus;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -58,6 +64,8 @@ class PathServiceImplTest {
     @Mock LearningPathItemMapper learningPathItemMapper;
     @Mock DiagnosticResultService diagnosticResultService;
     @Mock QuestionAiClient questionAiClient;
+    @Mock QuestionNodeMapper questionNodeMapper;
+    @Mock QuestionMapper questionMapper;
 
     private static final Long S = 2L, C = 1L;
 
@@ -65,6 +73,16 @@ class PathServiceImplTest {
     @AfterEach
     void clearCurrentUser() {
         CurrentUser.clear();
+    }
+
+    /**
+     * 默认 stub：questionNodeMapper/questionMapper 返回空列表，令现有测试不因新增 buildAvailableCountMap 调用而 NPE。
+     * LENIENT 模式下未用到也不报错。
+     */
+    @BeforeEach
+    void stubAvailCountDefaults() {
+        when(questionNodeMapper.selectList(any())).thenReturn(List.of());
+        when(questionMapper.selectList(any())).thenReturn(List.of());
     }
 
     private LearningPath path(long id, long studentId) {
@@ -75,7 +93,8 @@ class PathServiceImplTest {
 
     private PathServiceImpl impl() {
         PathServiceImpl impl = new PathServiceImpl(studentMasteryMapper, kgNodeMapper, kgEdgeMapper,
-                learningPathMapper, learningPathItemMapper, diagnosticResultService, questionAiClient);
+                learningPathMapper, learningPathItemMapper, diagnosticResultService, questionAiClient,
+                questionNodeMapper, questionMapper);
         ReflectionTestUtils.setField(impl, "masteredThreshold", 75.0);
         return impl;
     }
@@ -380,5 +399,147 @@ class PathServiceImplTest {
         verify(diagnosticResultService, times(1)).getResult(S, C);
         assertThat(vo.getTargetNode().getNodeCode()).isEqualTo("T");
         assertThat(vo.getSteps()).extracting(LearningPathVO.StepVO::getNodeCode).containsExactly("T");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // M / N / O / P  — availableQuestionCount（T8）
+    // ═══════════════════════════════════════════════════════════════
+
+    /** 构造一个 QuestionNode 链接（nodeId → questionId）。 */
+    private QuestionNode link(long questionId, long nodeId) {
+        QuestionNode qn = new QuestionNode();
+        qn.setId(questionId * 100 + nodeId); // 随意唯一 id
+        qn.setQuestionId(questionId);
+        qn.setNodeId(nodeId);
+        qn.setWeight(1);
+        return qn;
+    }
+
+    /** 构造一个 APPROVED 题目。 */
+    private Question question(long id) {
+        Question q = new Question();
+        q.setId(id);
+        q.setStatus(QuestionStatus.APPROVED);
+        q.setStem("题干" + id);
+        return q;
+    }
+
+    /** 构造一个 PENDING（未审核）题目。 */
+    private Question pendingQuestion(long id) {
+        Question q = new Question();
+        q.setId(id);
+        q.setStatus(QuestionStatus.PENDING);
+        q.setStem("待审" + id);
+        return q;
+    }
+
+    @Test
+    @DisplayName("M generate(): availableQuestionCount 批量计算——questionNodeMapper/questionMapper 各调一次（防 N+1）")
+    void generate_availableCountBatchedNoN1() {
+        // 路径：A(未学)→T(卡点) — 两个节点
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(
+                node(1, "A", "甲"), node(2, "T", "卡点")));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of(prereq(1, 2)));
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(
+                mastery(1, "20.00", 0), mastery(2, "30.00", 0)));
+        stubInsertPathId();
+
+        // 节点 1(A) 有 2 道 APPROVED 题，节点 2(T) 有 1 道 APPROVED 题
+        when(questionNodeMapper.selectList(any())).thenReturn(List.of(
+                link(101L, 1L), link(102L, 1L), link(201L, 2L)));
+        when(questionMapper.selectList(any())).thenReturn(List.of(
+                question(101L), question(102L), question(201L)));
+
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setStudentId(S); req.setCourseId(C); req.setTargetNodeId(2L);
+
+        LearningPathVO vo = impl().generate(req);
+
+        // 断言 mapper 调用次数各为 1（不是 N 次）
+        verify(questionNodeMapper, times(1)).selectList(any());
+        verify(questionMapper, times(1)).selectList(any());
+
+        // 断言 VO 中每个步骤的 availableQuestionCount 正确
+        var countByCode = new java.util.HashMap<String, Integer>();
+        for (LearningPathVO.StepVO s : vo.getSteps()) {
+            countByCode.put(s.getNodeCode(), s.getAvailableQuestionCount());
+        }
+        assertThat(countByCode).containsEntry("A", 2).containsEntry("T", 1);
+    }
+
+    @Test
+    @DisplayName("N generate(): 只有 status=1 的题计入可用数，PENDING/REJECTED 不计")
+    void generate_availableCountOnlyApproved() {
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(node(1, "A", "甲")));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of());
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(mastery(1, "20.00", 0)));
+        stubInsertPathId();
+
+        // 节点 1 关联 3 道题：1 APPROVED + 1 PENDING + 1 REJECTED
+        when(questionNodeMapper.selectList(any())).thenReturn(List.of(
+                link(10L, 1L), link(20L, 1L), link(30L, 1L)));
+        // questionMapper 只返回 APPROVED 的那道（模拟 status=1 过滤）
+        when(questionMapper.selectList(any())).thenReturn(List.of(question(10L)));
+
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setStudentId(S); req.setCourseId(C); req.setTargetNodeId(1L);
+
+        LearningPathVO vo = impl().generate(req);
+
+        assertThat(vo.getSteps()).hasSize(1);
+        assertThat(vo.getSteps().get(0).getAvailableQuestionCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("O generate(): 无关联题的节点 availableQuestionCount=0")
+    void generate_noQuestionsNodeCountIsZero() {
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(node(1, "A", "甲")));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of());
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(mastery(1, "20.00", 0)));
+        stubInsertPathId();
+
+        // questionNodeMapper 返回空（无关联题）
+        when(questionNodeMapper.selectList(any())).thenReturn(List.of());
+
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setStudentId(S); req.setCourseId(C); req.setTargetNodeId(1L);
+
+        LearningPathVO vo = impl().generate(req);
+
+        assertThat(vo.getSteps()).hasSize(1);
+        assertThat(vo.getSteps().get(0).getAvailableQuestionCount()).isEqualTo(0);
+        // 无节点链接时 questionMapper 不应被调用
+        verify(questionMapper, never()).selectList(any());
+    }
+
+    @Test
+    @DisplayName("P getCurrent(): availableQuestionCount 同样批量计算——mapper 各调一次")
+    void getCurrent_availableCountBatched() {
+        LearningPath p = new LearningPath();
+        p.setId(777L); p.setStudentId(S); p.setCourseId(C); p.setTargetNodeId(3L); p.setStatus(1);
+        when(learningPathMapper.selectList(any())).thenReturn(List.of(p));
+        when(learningPathItemMapper.selectList(any())).thenReturn(List.of(
+                item(11L, 777L, 1L, 1, 0), item(12L, 777L, 3L, 2, 0)));
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(
+                node(1, "A", "甲"), node(3, "T", "卡点")));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of(prereq(1, 3)));
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(
+                mastery(1, "20.00", 0), mastery(3, "30.00", 0)));
+
+        // 节点 1 有 1 道 APPROVED 题，节点 3 有 0 道
+        when(questionNodeMapper.selectList(any())).thenReturn(List.of(link(50L, 1L)));
+        when(questionMapper.selectList(any())).thenReturn(List.of(question(50L)));
+
+        LearningPathVO vo = impl().getCurrent(S, C);
+
+        // 各调一次（批量 IN，不是每节点单独查）
+        verify(questionNodeMapper, times(1)).selectList(any());
+        verify(questionMapper, times(1)).selectList(any());
+
+        var countByCode = new java.util.HashMap<String, Integer>();
+        for (LearningPathVO.StepVO s : vo.getSteps()) {
+            countByCode.put(s.getNodeCode(), s.getAvailableQuestionCount());
+        }
+        assertThat(countByCode).containsEntry("A", 1).containsEntry("T", 0);
     }
 }

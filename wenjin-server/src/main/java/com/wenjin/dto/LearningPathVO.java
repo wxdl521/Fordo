@@ -36,6 +36,8 @@ public class LearningPathVO {
         private LocalDateTime completedAt;
         private String reason;
         private String role;           // root | prereq | stuck
+        /** 该节点当前可用练习题数（status=1 且经 question_node 关联，不扣除近期已答）。供前端决定是否显示"去练习"按钮。 */
+        private int availableQuestionCount;
     }
 
     @Data

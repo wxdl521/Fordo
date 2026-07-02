@@ -16,14 +16,19 @@ import com.wenjin.entity.KgEdge;
 import com.wenjin.entity.KgNode;
 import com.wenjin.entity.LearningPath;
 import com.wenjin.entity.LearningPathItem;
+import com.wenjin.entity.Question;
+import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.LearningPathItemMapper;
 import com.wenjin.mapper.LearningPathMapper;
+import com.wenjin.mapper.QuestionMapper;
+import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.DiagnosticResultService;
 import com.wenjin.service.PathService;
+import com.wenjin.support.QuestionStatus;
 import com.wenjin.support.RelationType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -40,6 +45,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 学习路径服务实现（PRD 8.3）。
@@ -63,6 +69,8 @@ public class PathServiceImpl implements PathService {
     private final LearningPathItemMapper learningPathItemMapper;
     private final DiagnosticResultService diagnosticResultService;
     private final QuestionAiClient questionAiClient;
+    private final QuestionNodeMapper questionNodeMapper;
+    private final QuestionMapper questionMapper;
 
     @Value("${wenjin.mastery.mastered-threshold:75}")
     private double masteredThreshold;
@@ -71,7 +79,9 @@ public class PathServiceImpl implements PathService {
                            KgEdgeMapper kgEdgeMapper, LearningPathMapper learningPathMapper,
                            LearningPathItemMapper learningPathItemMapper,
                            DiagnosticResultService diagnosticResultService,
-                           QuestionAiClient questionAiClient) {
+                           QuestionAiClient questionAiClient,
+                           QuestionNodeMapper questionNodeMapper,
+                           QuestionMapper questionMapper) {
         this.studentMasteryMapper = studentMasteryMapper;
         this.kgNodeMapper = kgNodeMapper;
         this.kgEdgeMapper = kgEdgeMapper;
@@ -79,6 +89,8 @@ public class PathServiceImpl implements PathService {
         this.learningPathItemMapper = learningPathItemMapper;
         this.diagnosticResultService = diagnosticResultService;
         this.questionAiClient = questionAiClient;
+        this.questionNodeMapper = questionNodeMapper;
+        this.questionMapper = questionMapper;
     }
 
     @Override
@@ -168,6 +180,8 @@ public class PathServiceImpl implements PathService {
         learningPathMapper.insert(path);
 
         String targetName = nodeById.get(targetId).getName();
+        // 批量查各节点可用题数（一次 IN，不 N+1）
+        Map<Long, Integer> availCountMap = buildAvailableCountMap(ordered);
         List<StepVO> steps = new ArrayList<>();
         int order = 1;
         for (Long id : ordered) {
@@ -182,7 +196,7 @@ public class PathServiceImpl implements PathService {
             item.setReason(reason);
             learningPathItemMapper.insert(item);
 
-            steps.add(toStep(item, nodeById.get(id), mById.get(id), role));
+            steps.add(toStep(item, nodeById.get(id), mById.get(id), role, availCountMap.getOrDefault(id, 0)));
             order++;
         }
 
@@ -249,11 +263,18 @@ public class PathServiceImpl implements PathService {
         }
         Set<Long> rootSet = rootNodeIds(setNodes, prereqMap);
 
+        // 批量查各节点可用题数（一次 IN，不 N+1）
+        List<Long> stepNodeIds = items.stream()
+                .map(LearningPathItem::getNodeId)
+                .collect(Collectors.toList());
+        Map<Long, Integer> availCountMap = buildAvailableCountMap(stepNodeIds);
+
         List<StepVO> steps = new ArrayList<>();
         int done = 0;
         for (LearningPathItem item : items) {
             String role = roleOf(item.getNodeId(), path.getTargetNodeId(), rootSet);
-            steps.add(toStep(item, nodeById.get(item.getNodeId()), mById.get(item.getNodeId()), role));
+            steps.add(toStep(item, nodeById.get(item.getNodeId()), mById.get(item.getNodeId()), role,
+                    availCountMap.getOrDefault(item.getNodeId(), 0)));
             if (item.getStatus() != null && item.getStatus() == ITEM_DONE) {
                 done++;
             }
@@ -410,7 +431,8 @@ public class PathServiceImpl implements PathService {
         return (m == null || m.getMasteryScore() == null) ? 0.0 : m.getMasteryScore().doubleValue();
     }
 
-    private StepVO toStep(LearningPathItem item, KgNode node, StudentMastery m, String role) {
+    private StepVO toStep(LearningPathItem item, KgNode node, StudentMastery m, String role,
+                          int availableQuestionCount) {
         StepVO s = new StepVO();
         s.setItemId(item.getId());
         if (node != null) {
@@ -425,7 +447,63 @@ public class PathServiceImpl implements PathService {
         s.setCompletedAt(item.getCompletedAt());
         s.setReason(item.getReason());
         s.setRole(role);
+        s.setAvailableQuestionCount(availableQuestionCount);
         return s;
+    }
+
+    /**
+     * 批量查询各节点的可用练习题数（防 N+1 核心方法）。
+     *
+     * <p>口径与 T3 组卷审核过滤一致：{@code question.status=1}（APPROVED）且经
+     * {@code question_node} 关联到该节点的题目数；不扣除"近期已答"（VO 字段只需"有题/无题"判断）。
+     *
+     * <p>实现路径：
+     * <ol>
+     *   <li>一次 IN 查询 {@code question_node}，取出所有与 {@code nodeIds} 关联的行；</li>
+     *   <li>提取唯一 questionId 后一次 IN 查询 {@code question}（过滤 status=1）；</li>
+     *   <li>Java 侧按 nodeId 去重计数（同题可能存在 weight=1 和 weight=2 两条链接，去重后只算一道）。</li>
+     * </ol>
+     *
+     * @param nodeIds 路径中所有节点 ID（可为空，返回空 Map）
+     * @return nodeId → 可用题数（无记录节点应通过 {@code getOrDefault(id, 0)} 取 0）
+     */
+    private Map<Long, Integer> buildAvailableCountMap(List<Long> nodeIds) {
+        if (nodeIds == null || nodeIds.isEmpty()) {
+            return Map.of();
+        }
+        // 第 1 次批量查：question_node（nodeId IN nodeIds）
+        List<QuestionNode> links = questionNodeMapper.selectList(
+                new LambdaQueryWrapper<QuestionNode>()
+                        .in(QuestionNode::getNodeId, nodeIds));
+        if (links.isEmpty()) {
+            return Map.of();
+        }
+        // 提取唯一 questionId 后第 2 次批量查：question（id IN ... AND status=1）
+        List<Long> questionIds = links.stream()
+                .map(QuestionNode::getQuestionId)
+                .distinct()
+                .collect(Collectors.toList());
+        List<Question> approved = questionMapper.selectList(
+                new LambdaQueryWrapper<Question>()
+                        .in(Question::getId, questionIds)
+                        .eq(Question::getStatus, QuestionStatus.APPROVED));
+        Set<Long> approvedIds = approved.stream()
+                .map(Question::getId)
+                .collect(Collectors.toSet());
+
+        // Java 侧按 nodeId 聚合：每个 (nodeId, questionId) 对只计一次（去重 weight=1/2 重复链接）
+        Map<Long, Set<Long>> nodeToApprovedQs = new HashMap<>();
+        for (QuestionNode link : links) {
+            if (approvedIds.contains(link.getQuestionId())) {
+                nodeToApprovedQs.computeIfAbsent(link.getNodeId(), k -> new HashSet<>())
+                        .add(link.getQuestionId());
+            }
+        }
+        Map<Long, Integer> countMap = new HashMap<>();
+        for (Map.Entry<Long, Set<Long>> e : nodeToApprovedQs.entrySet()) {
+            countMap.put(e.getKey(), e.getValue().size());
+        }
+        return countMap;
     }
 
     private LearningPathVO emptyPath() {
