@@ -6,13 +6,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 练习提交结果 VO（M1 练习闭环 T4）。
+ * 练习提交结果 VO（M1 练习闭环 T4–T6）。
  *
  * <p>字段分三类：
  * <ol>
  *   <li>T4 本任务填充：{@code graded}、{@code masteryBefore}、{@code masteryAfter}、
  *       {@code masteryLevel}。</li>
- *   <li>T5 填充（当前默认值）：{@code weakPrerequisites}、{@code itemCompleted}。</li>
+ *   <li>T5 填充：{@code weakPrerequisites}、{@code itemCompleted}。</li>
  *   <li>T6 填充（当前默认值）：{@code pathRegenerated}。</li>
  * </ol>
  */
@@ -31,11 +31,14 @@ public class PracticeSubmitVO {
     /** 提交后掌握等级文字（"已掌握" / "薄弱" / "未学"） */
     private String masteryLevel;
 
-    /** 路径步骤是否已完成（T5 填，当前默认 false） */
+    /** 路径步骤是否已完成（T5 填） */
     private boolean itemCompleted;
 
-    /** 薄弱前置知识点列表（T5 填，当前默认空列表） */
-    private List<Object> weakPrerequisites;
+    /**
+     * 薄弱前置知识点列表（T5 填）。
+     * 每项包含 nodeCode、name、hitCount（该前置被错选命中的次数）。
+     */
+    private List<WeakPrerequisiteVO> weakPrerequisites;
 
     /** 路径是否已重算（T6 填，当前默认 false） */
     private boolean pathRegenerated;
@@ -72,5 +75,23 @@ public class PracticeSubmitVO {
          * 单选/判断 = 单字母；多选 = 逗号分隔已排序串；简答 = {@code null}。
          */
         private String correctAnswer;
+    }
+
+    /**
+     * 薄弱前置知识点条目（distractor 归因聚合结果）。
+     *
+     * <p>命中次数 ≥ {@code wenjin.practice.distractor-threshold}（默认 2）才出现在列表中。
+     */
+    @Data
+    public static class WeakPrerequisiteVO {
+
+        /** 知识点业务编码（如 KT12） */
+        private String nodeCode;
+
+        /** 知识点名称 */
+        private String name;
+
+        /** 本次练习中该前置被错选命中的次数 */
+        private int hitCount;
     }
 }

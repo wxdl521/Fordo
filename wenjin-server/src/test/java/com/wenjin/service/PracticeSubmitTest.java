@@ -5,12 +5,15 @@ import com.wenjin.dto.GradedAnswer;
 import com.wenjin.dto.PracticeSubmitRequest;
 import com.wenjin.dto.PracticeSubmitVO;
 import com.wenjin.entity.AnswerRecord;
+import com.wenjin.entity.KgNode;
+import com.wenjin.entity.LearningPathItem;
 import com.wenjin.entity.PracticeSession;
 import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionOption;
 import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.AnswerRecordMapper;
 import com.wenjin.mapper.KgNodeMapper;
+import com.wenjin.mapper.LearningPathItemMapper;
 import com.wenjin.mapper.PracticeSessionMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
@@ -53,6 +56,11 @@ import static org.mockito.Mockito.when;
  *   <li>会话归属不符被拒（req.studentId ≠ session.studentId）</li>
  *   <li>多选题集合相等判分 + correctAnswer 排序逗号串</li>
  *   <li>answer_record 落库字段（scene=2/sessionId）与会话置 status=1</li>
+ *   <li>distractor 归因：命中 ≥2 次的前置出现，1 次不出现（T5）</li>
+ *   <li>自动通过判定：mastery ≥ 75 时路径 item 置完成（T5）</li>
+ *   <li>自动通过幂等：item 已完成不重复写（T5）</li>
+ *   <li>自由练习（pathItemId=null）不碰路径 item（T5）</li>
+ *   <li>幂等重放（status=1）：weakPreqs 纯读重算、itemCompleted 只读状态（T5）</li>
  * </ul>
  */
 @ExtendWith(MockitoExtension.class)
@@ -67,11 +75,13 @@ class PracticeSubmitTest {
     @Mock PracticeSessionMapper practiceSessionMapper;
     @Mock MasteryService masteryService;
     @Mock StudentMasteryMapper studentMasteryMapper;
+    @Mock LearningPathItemMapper learningPathItemMapper;
 
-    private static final Long STUDENT_ID = 2L;
-    private static final Long COURSE_ID  = 1L;
-    private static final Long NODE_ID    = 10L;
-    private static final Long SESSION_ID = 50L;
+    private static final Long STUDENT_ID  = 2L;
+    private static final Long COURSE_ID   = 1L;
+    private static final Long NODE_ID     = 10L;
+    private static final Long SESSION_ID  = 50L;
+    private static final Long PATH_ITEM_ID = 88L;
 
     // ── 构造 impl（注入所有依赖） ────────────────────────────────────────────
 
@@ -79,16 +89,22 @@ class PracticeSubmitTest {
         PracticeServiceImpl impl = new PracticeServiceImpl(
                 questionNodeMapper, questionMapper, answerRecordMapper,
                 kgNodeMapper, questionOptionMapper, practiceSessionMapper,
-                masteryService, studentMasteryMapper);
+                masteryService, studentMasteryMapper, learningPathItemMapper);
         ReflectionTestUtils.setField(impl, "defaultSize", 5);
-        ReflectionTestUtils.setField(impl, "maxSize",     10);
+        ReflectionTestUtils.setField(impl, "maxSize", 10);
         ReflectionTestUtils.setField(impl, "recencyDays", 7);
+        ReflectionTestUtils.setField(impl, "distractorThreshold", 2);
+        ReflectionTestUtils.setField(impl, "masteredThreshold", 75.0);
         return impl;
     }
 
     // ── fixture 工具方法 ──────────────────────────────────────────────────────
 
     private PracticeSession session(int status, String questionIds) {
+        return session(status, questionIds, null);
+    }
+
+    private PracticeSession session(int status, String questionIds, Long pathItemId) {
         PracticeSession ps = new PracticeSession();
         ps.setId(SESSION_ID);
         ps.setStudentId(STUDENT_ID);
@@ -96,6 +112,7 @@ class PracticeSubmitTest {
         ps.setNodeId(NODE_ID);
         ps.setQuestionIds(questionIds);
         ps.setStatus(status);
+        ps.setPathItemId(pathItemId);
         ps.setCreatedAt(LocalDateTime.now().minusMinutes(5));
         return ps;
     }
@@ -122,6 +139,38 @@ class PracticeSubmitTest {
         o.setOptionText("选项" + key);
         o.setIsCorrect(1);
         return o;
+    }
+
+    /**
+     * 错误选项，绑定 distractor → nodeCode 映射。
+     */
+    private QuestionOption wrongOpt(Long questionId, String key, String pointNodeCode) {
+        QuestionOption o = new QuestionOption();
+        o.setQuestionId(questionId);
+        o.setOptionKey(key);
+        o.setOptionText("选项" + key);
+        o.setIsCorrect(0);
+        o.setPointNodeCode(pointNodeCode);
+        return o;
+    }
+
+    private KgNode kgNode(String nodeCode, String name) {
+        KgNode n = new KgNode();
+        n.setId(99L);
+        n.setNodeCode(nodeCode);
+        n.setName(name);
+        n.setCourseId(COURSE_ID);
+        return n;
+    }
+
+    private LearningPathItem pathItem(Long id, int status) {
+        LearningPathItem item = new LearningPathItem();
+        item.setId(id);
+        item.setStatus(status);
+        item.setNodeId(NODE_ID);
+        item.setPathId(200L);
+        item.setStepOrder(1);
+        return item;
     }
 
     private PracticeSubmitRequest req(Long studentId, List<PracticeSubmitRequest.AnswerItem> answers) {
@@ -191,7 +240,7 @@ class PracticeSubmitTest {
         assertThat(vo.getMasteryBefore()).isEqualTo(50.0);
         assertThat(vo.getMasteryAfter()).isEqualTo(55.0);
         assertThat(vo.getMasteryLevel()).isEqualTo("薄弱");
-        // T5/T6 默认值
+        // T5/T6 默认值（自由练习无 pathItemId）
         assertThat(vo.isItemCompleted()).isFalse();
         assertThat(vo.getWeakPrerequisites()).isEmpty();
         assertThat(vo.isPathRegenerated()).isFalse();
@@ -450,5 +499,234 @@ class PracticeSubmitTest {
         verify(practiceSessionMapper).updateById(captor.capture());
         assertThat(captor.getValue().getStatus()).isEqualTo(1);
         assertThat(captor.getValue().getSubmittedAt()).isNotNull();
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // 用例 T5-A：distractor 归因——命中 ≥2 次出现，1 次不出现
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T5 distractor：同一前置被 2 题各错选一次(共 2 次)→ 出现；另一前置仅 1 次 → 不出现")
+    void submit_distractorAggregation_thresholdFilterWorks() {
+        // q1 答 B(错)，B→KT99；q2 答 B(错)，B→KT99；q3 答 B(错)，B→KT77（只命中 1 次）
+        when(practiceSessionMapper.selectById(SESSION_ID))
+                .thenReturn(session(0, "1,2,3"));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(
+                        question(1L, QuestionType.SINGLE),
+                        question(2L, QuestionType.SINGLE),
+                        question(3L, QuestionType.SINGLE)));
+        // 正确选项 A；错误选项 B 带 pointNodeCode
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(
+                        correctOpt(1L, "A"), wrongOpt(1L, "B", "KT99"),
+                        correctOpt(2L, "A"), wrongOpt(2L, "B", "KT99"),
+                        correctOpt(3L, "A"), wrongOpt(3L, "B", "KT77")));
+        when(studentMasteryMapper.selectOne(any()))
+                .thenReturn(mastery(50.0, 1))
+                .thenReturn(mastery(55.0, 1));
+        // KT99 节点名查询
+        when(kgNodeMapper.selectList(any()))
+                .thenReturn(List.of(kgNode("KT99", "先修知识99")));
+
+        // 全部答 B（答错）
+        PracticeSubmitVO vo = impl().submit(SESSION_ID,
+                req(STUDENT_ID, List.of(item(1L, "B"), item(2L, "B"), item(3L, "B"))));
+
+        assertThat(vo.getWeakPrerequisites()).hasSize(1);
+        PracticeSubmitVO.WeakPrerequisiteVO wp = vo.getWeakPrerequisites().get(0);
+        assertThat(wp.getNodeCode()).isEqualTo("KT99");
+        assertThat(wp.getName()).isEqualTo("先修知识99");
+        assertThat(wp.getHitCount()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("T5 distractor：所有题答对 → weakPrerequisites 为空")
+    void submit_distractorAggregation_noWrongAnswers_emptyWeakPreqs() {
+        when(practiceSessionMapper.selectById(SESSION_ID))
+                .thenReturn(session(0, "1,2"));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(question(1L, QuestionType.SINGLE), question(2L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(correctOpt(1L, "A"), correctOpt(2L, "B")));
+        when(studentMasteryMapper.selectOne(any()))
+                .thenReturn(mastery(80.0, 2))
+                .thenReturn(mastery(82.0, 2));
+
+        // 全部答对
+        PracticeSubmitVO vo = impl().submit(SESSION_ID,
+                req(STUDENT_ID, List.of(item(1L, "A"), item(2L, "B"))));
+
+        assertThat(vo.getWeakPrerequisites()).isEmpty();
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // 用例 T5-B：路径 item 自动通过（mastery ≥ 75，pathItemId 非 null）
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T5 自动通过：掌握度 ≥ 75 且 session.pathItemId 非 null → itemCompleted=true，item 置完成")
+    void submit_autoCompletePathItem_whenMasteredAndPathItemSet() {
+        when(practiceSessionMapper.selectById(SESSION_ID))
+                .thenReturn(session(0, "1", PATH_ITEM_ID));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(question(1L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(correctOpt(1L, "A")));
+        // 提交前 50，提交后 80（≥ 75）
+        when(studentMasteryMapper.selectOne(any()))
+                .thenReturn(mastery(50.0, 1))
+                .thenReturn(mastery(80.0, 2));
+        // 路径 item：当前 PENDING(0)
+        when(learningPathItemMapper.selectById(PATH_ITEM_ID))
+                .thenReturn(pathItem(PATH_ITEM_ID, 0));
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID,
+                req(STUDENT_ID, List.of(item(1L, "A"))));
+
+        assertThat(vo.isItemCompleted()).isTrue();
+        // item 被更新为 DONE
+        ArgumentCaptor<LearningPathItem> captor = ArgumentCaptor.forClass(LearningPathItem.class);
+        verify(learningPathItemMapper).updateById(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(1); // ITEM_DONE
+        assertThat(captor.getValue().getCompletedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("T5 自动通过：掌握度 < 75 时 itemCompleted=false，不更新 item")
+    void submit_autoCompletePathItem_notMastered_itemNotCompleted() {
+        when(practiceSessionMapper.selectById(SESSION_ID))
+                .thenReturn(session(0, "1", PATH_ITEM_ID));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(question(1L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(correctOpt(1L, "A")));
+        // 提交前 50，提交后 60（< 75）
+        when(studentMasteryMapper.selectOne(any()))
+                .thenReturn(mastery(50.0, 1))
+                .thenReturn(mastery(60.0, 1));
+        when(learningPathItemMapper.selectById(PATH_ITEM_ID))
+                .thenReturn(pathItem(PATH_ITEM_ID, 0));
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID,
+                req(STUDENT_ID, List.of(item(1L, "A"))));
+
+        assertThat(vo.isItemCompleted()).isFalse();
+        verify(learningPathItemMapper, never()).updateById(any(LearningPathItem.class));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // 用例 T5-C：item 已完成时自动通过幂等（不重复写）
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T5 幂等：item 已 DONE → itemCompleted=true，不重复调 updateById")
+    void submit_autoCompletePathItem_alreadyDone_idempotentNoRewrite() {
+        when(practiceSessionMapper.selectById(SESSION_ID))
+                .thenReturn(session(0, "1", PATH_ITEM_ID));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(question(1L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(correctOpt(1L, "A")));
+        when(studentMasteryMapper.selectOne(any()))
+                .thenReturn(mastery(50.0, 1))
+                .thenReturn(mastery(80.0, 2));
+        // item 已经是 DONE(1)
+        when(learningPathItemMapper.selectById(PATH_ITEM_ID))
+                .thenReturn(pathItem(PATH_ITEM_ID, 1));
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID,
+                req(STUDENT_ID, List.of(item(1L, "A"))));
+
+        assertThat(vo.isItemCompleted()).isTrue();
+        // 幂等：item 已完成，不再调 updateById
+        verify(learningPathItemMapper, never()).updateById(any(LearningPathItem.class));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // 用例 T5-D：自由练习（pathItemId=null）不碰路径 item
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T5 自由练习：pathItemId=null → itemCompleted=false，不调 learningPathItemMapper")
+    void submit_freePractice_noPathItemIdSet_itemCompletedFalse() {
+        // session.pathItemId = null（自由练习）
+        when(practiceSessionMapper.selectById(SESSION_ID))
+                .thenReturn(session(0, "1", null));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(question(1L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(correctOpt(1L, "A")));
+        when(studentMasteryMapper.selectOne(any()))
+                .thenReturn(mastery(50.0, 1))
+                .thenReturn(mastery(90.0, 2)); // 即使超 75 也不应完成 item
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID,
+                req(STUDENT_ID, List.of(item(1L, "A"))));
+
+        assertThat(vo.isItemCompleted()).isFalse();
+        // 不碰 learningPathItemMapper
+        verify(learningPathItemMapper, never()).selectById(any());
+        verify(learningPathItemMapper, never()).updateById(any(LearningPathItem.class));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // 用例 T5-E：幂等重放（status=1）weakPreqs 纯读重算、itemCompleted 只读状态
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T5 幂等重放：weakPreqs 从存档重算，itemCompleted 只读 item.status，不写库")
+    void submit_idempotentReplay_computesWeakPreqsAndReadsItemCompleted() {
+        // session 已提交（status=1），有 pathItemId
+        PracticeSession alreadySubmitted = session(1, "1,2", PATH_ITEM_ID);
+        alreadySubmitted.setSubmittedAt(LocalDateTime.now().minusMinutes(1));
+        when(practiceSessionMapper.selectById(SESSION_ID)).thenReturn(alreadySubmitted);
+
+        // 存档 answer_record：q1 答 B(错)，q2 答 B(错)，两题 B→KT99
+        AnswerRecord ar1 = new AnswerRecord();
+        ar1.setQuestionId(1L);
+        ar1.setStudentAnswer("B");
+        ar1.setIsCorrect(0);
+        ar1.setScene(2);
+        ar1.setSessionId(SESSION_ID);
+
+        AnswerRecord ar2 = new AnswerRecord();
+        ar2.setQuestionId(2L);
+        ar2.setStudentAnswer("B");
+        ar2.setIsCorrect(0);
+        ar2.setScene(2);
+        ar2.setSessionId(SESSION_ID);
+
+        when(answerRecordMapper.selectList(any())).thenReturn(List.of(ar1, ar2));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(question(1L, QuestionType.SINGLE), question(2L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(
+                        correctOpt(1L, "A"), wrongOpt(1L, "B", "KT99"),
+                        correctOpt(2L, "A"), wrongOpt(2L, "B", "KT99")));
+        when(studentMasteryMapper.selectOne(any())).thenReturn(mastery(80.0, 2));
+        // 节点名
+        when(kgNodeMapper.selectList(any()))
+                .thenReturn(List.of(kgNode("KT99", "先修知识99")));
+        // item 已完成
+        when(learningPathItemMapper.selectById(PATH_ITEM_ID))
+                .thenReturn(pathItem(PATH_ITEM_ID, 1));
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID,
+                req(STUDENT_ID, List.of(item(1L, "B"), item(2L, "B"))));
+
+        // 不写库、不调 applyAnswers
+        verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
+        verify(masteryService, never()).applyAnswers(any(), any(), any());
+        // 不写 item（只读）
+        verify(learningPathItemMapper, never()).updateById(any(LearningPathItem.class));
+
+        // weakPreqs 从存档重算：KT99 命中 2 次
+        assertThat(vo.getWeakPrerequisites()).hasSize(1);
+        assertThat(vo.getWeakPrerequisites().get(0).getNodeCode()).isEqualTo("KT99");
+        assertThat(vo.getWeakPrerequisites().get(0).getHitCount()).isEqualTo(2);
+
+        // itemCompleted 只读：item.status=1(DONE) → true
+        assertThat(vo.isItemCompleted()).isTrue();
     }
 }

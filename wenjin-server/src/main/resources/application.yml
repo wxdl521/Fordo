@@ -61,6 +61,7 @@ wenjin:
     size: 5                                      # 默认每会话题数
     max-size: 10                                 # 每会话最大题数上限（超出自动夹紧）
     recency-days: 7                              # 组卷近期排除窗口（天），同学生任意场景已答过的题在窗口内不再出现
+    distractor-threshold: 2                      # distractor 归因命中阈值（T5）：同一前置节点被错选命中次数 ≥ 此值才输出为薄弱前置
   auth:                                          # 令牌认证配置
     secret: ${WENJIN_AUTH_SECRET:dev-secret-change-me-in-prod}
     ttl-seconds: 604800                          # 令牌有效期 7 天

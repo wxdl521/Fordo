@@ -10,6 +10,7 @@ import com.wenjin.dto.PracticeSubmitRequest;
 import com.wenjin.dto.PracticeSubmitVO;
 import com.wenjin.entity.AnswerRecord;
 import com.wenjin.entity.KgNode;
+import com.wenjin.entity.LearningPathItem;
 import com.wenjin.entity.PracticeSession;
 import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionNode;
@@ -17,6 +18,7 @@ import com.wenjin.entity.QuestionOption;
 import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.AnswerRecordMapper;
 import com.wenjin.mapper.KgNodeMapper;
+import com.wenjin.mapper.LearningPathItemMapper;
 import com.wenjin.mapper.PracticeSessionMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
@@ -43,7 +45,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 节点练习服务实现（M1 练习闭环 T3 组卷 + T4 提交判分）。
+ * 节点练习服务实现（M1 练习闭环 T3 组卷 + T4 提交判分 + T5 distractor 归因 + 自动通过判定）。
  *
  * <h3>提交流程（submit，单事务）</h3>
  * <ol>
@@ -51,6 +53,10 @@ import java.util.stream.Collectors;
  *   <li>status=1 幂等重放：从 answer_record 重建上次结果，不重复写库/更掌握度；</li>
  *   <li>服务端判分（复用 {@link AnswerGrader}），简答 correct=null 不进 EWMA；</li>
  *   <li>写 answer_record（scene=2, session_id），调 MasteryService.applyAnswers；</li>
+ *   <li>distractor 归因：按错选项 pointNodeCode 聚合计数，命中 ≥ distractorThreshold 者
+ *       输出到 weakPrerequisites（T5）；</li>
+ *   <li>自动通过判定：若 session.pathItemId 非空且目标节点掌握度 ≥ masteredThreshold，
+ *       将路径步骤置完成（T5）；</li>
  *   <li>会话置 status=1，返回判分明细 + 目标节点掌握度变化。</li>
  * </ol>
  *
@@ -82,6 +88,8 @@ public class PracticeServiceImpl implements PracticeService {
     private static final int IS_CORRECT = 1;
     /** answer_record.is_correct：错误（简答亦写 0，对齐诊断侧"待 AI 判定"语义） */
     private static final int IS_WRONG = 0;
+    /** learning_path_item.status：已完成 */
+    private static final int ITEM_DONE = 1;
 
     private final QuestionNodeMapper questionNodeMapper;
     private final QuestionMapper questionMapper;
@@ -91,6 +99,7 @@ public class PracticeServiceImpl implements PracticeService {
     private final PracticeSessionMapper practiceSessionMapper;
     private final MasteryService masteryService;
     private final StudentMasteryMapper studentMasteryMapper;
+    private final LearningPathItemMapper learningPathItemMapper;
 
     /** 每会话默认题数（配置项 wenjin.practice.size）。 */
     @Value("${wenjin.practice.size:5}")
@@ -104,6 +113,20 @@ public class PracticeServiceImpl implements PracticeService {
     @Value("${wenjin.practice.recency-days:7}")
     private int recencyDays;
 
+    /**
+     * distractor 归因命中阈值（配置项 wenjin.practice.distractor-threshold）。
+     * 同一前置节点被错选命中次数 ≥ 此值才输出到 weakPrerequisites。
+     */
+    @Value("${wenjin.practice.distractor-threshold:2}")
+    private int distractorThreshold;
+
+    /**
+     * 掌握度"已掌握"判定阈值（配置项 wenjin.mastery.mastered-threshold，与 PathServiceImpl 共用同一配置项）。
+     * 提交后目标节点掌握度 ≥ 此值时，自动将路径步骤置完成。
+     */
+    @Value("${wenjin.mastery.mastered-threshold:75}")
+    private double masteredThreshold;
+
     public PracticeServiceImpl(QuestionNodeMapper questionNodeMapper,
                                QuestionMapper questionMapper,
                                AnswerRecordMapper answerRecordMapper,
@@ -111,7 +134,8 @@ public class PracticeServiceImpl implements PracticeService {
                                QuestionOptionMapper questionOptionMapper,
                                PracticeSessionMapper practiceSessionMapper,
                                MasteryService masteryService,
-                               StudentMasteryMapper studentMasteryMapper) {
+                               StudentMasteryMapper studentMasteryMapper,
+                               LearningPathItemMapper learningPathItemMapper) {
         this.questionNodeMapper = questionNodeMapper;
         this.questionMapper = questionMapper;
         this.answerRecordMapper = answerRecordMapper;
@@ -120,6 +144,7 @@ public class PracticeServiceImpl implements PracticeService {
         this.practiceSessionMapper = practiceSessionMapper;
         this.masteryService = masteryService;
         this.studentMasteryMapper = studentMasteryMapper;
+        this.learningPathItemMapper = learningPathItemMapper;
     }
 
     @Override
@@ -241,11 +266,15 @@ public class PracticeServiceImpl implements PracticeService {
                 .map(PracticeSubmitRequest.AnswerItem::getQuestionId)
                 .collect(Collectors.toList());
         Map<Long, Question> questionById = loadQuestions(questionIds);
-        Map<Long, Set<String>> correctKeysByQuestion = loadCorrectKeys(questionIds);
+        // 一次批量查所有选项，在 Java 层分别提取正确选项集合与 distractor 映射（避免 N+1 查询与双次 selectList）
+        List<QuestionOption> allOptions = loadAllOptions(questionIds);
+        Map<Long, Set<String>> correctKeysByQuestion = extractCorrectKeys(allOptions);
+        Map<Long, Map<String, String>> distractorMap = extractDistractorMap(allOptions);
 
         AnswerGrader grader = new AnswerGrader();
         List<PracticeSubmitVO.GradeItemVO> graded = new ArrayList<>(answers.size());
         List<GradedAnswer> gradedAnswers = new ArrayList<>(answers.size());
+        List<AnswerGrader.GradeResult> gradeResults = new ArrayList<>(answers.size());
         LocalDateTime now = LocalDateTime.now();
 
         for (PracticeSubmitRequest.AnswerItem item : answers) {
@@ -256,6 +285,7 @@ public class PracticeServiceImpl implements PracticeService {
             Set<String> correctKeys = correctKeysByQuestion.getOrDefault(questionId, Set.of());
 
             AnswerGrader.GradeResult result = grader.grade(type, studentAnswer, correctKeys);
+            gradeResults.add(result);
             boolean isCorrect = Boolean.TRUE.equals(result.correct());
 
             // 落库：每题一条答题记录（简答亦留痕，is_correct=0 对齐诊断侧）
@@ -285,7 +315,14 @@ public class PracticeServiceImpl implements PracticeService {
         StudentMastery after = queryMastery(
                 session.getStudentId(), session.getCourseId(), session.getNodeId());
 
-        // ── 8. 会话置 status=1，返回结构化结果 ────────────────────────────────
+        // ── 8. distractor 归因聚合（T5）──────────────────────────────────────
+        List<PracticeSubmitVO.WeakPrerequisiteVO> weakPreqs =
+                aggregateWeakPrerequisites(questionIds, gradeResults, distractorMap, session.getCourseId());
+
+        // ── 9. 自动通过判定（T5）────────────────────────────────────────────
+        boolean itemCompleted = maybeCompletePathItem(session, after);
+
+        // ── 10. 会话置 status=1，返回结构化结果 ──────────────────────────────
         session.setStatus(SESSION_SUBMITTED);
         session.setSubmittedAt(now);
         practiceSessionMapper.updateById(session);
@@ -295,7 +332,9 @@ public class PracticeServiceImpl implements PracticeService {
         vo.setMasteryBefore(scoreOf(before));
         vo.setMasteryAfter(scoreOf(after));
         vo.setMasteryLevel(levelText(after));
-        // itemCompleted / weakPrerequisites / pathRegenerated 保持构造器默认值（T5/T6 填充）
+        vo.setWeakPrerequisites(weakPreqs);
+        vo.setItemCompleted(itemCompleted);
+        // pathRegenerated 保持构造器默认值 false（T6 填充）
         return vo;
     }
 
@@ -305,6 +344,9 @@ public class PracticeServiceImpl implements PracticeService {
      * 幂等重放：会话已提交（status=1）时，从 answer_record（scene=2, session_id）
      * 重建上次判分结果——用存档的 studentAnswer 重新过一遍 AnswerGrader（纯函数，
      * 同输入必同输出），不写任何库表、不调 applyAnswers。
+     *
+     * <p>T5 增量：weakPrerequisites 从存档答案重新聚合（纯读）；
+     * itemCompleted 读路径 item 当前状态（不写）。
      *
      * <p>掌握度字段约定：重放时无法恢复"提交前"的分值（已被首次提交覆盖），
      * 故 masteryBefore = masteryAfter = 当前分值。
@@ -317,12 +359,19 @@ public class PracticeServiceImpl implements PracticeService {
                         .orderByAsc(AnswerRecord::getId));
 
         List<PracticeSubmitVO.GradeItemVO> graded = new ArrayList<>(records.size());
+        List<Long> questionIds = new ArrayList<>(records.size());
+        List<AnswerGrader.GradeResult> gradeResults = new ArrayList<>(records.size());
+
+        Map<Long, Map<String, String>> distractorMap = new HashMap<>();
         if (!records.isEmpty()) {
-            List<Long> questionIds = records.stream()
+            questionIds = records.stream()
                     .map(AnswerRecord::getQuestionId)
                     .collect(Collectors.toList());
             Map<Long, Question> questionById = loadQuestions(questionIds);
-            Map<Long, Set<String>> correctKeysByQuestion = loadCorrectKeys(questionIds);
+            // 一次批量查所有选项，在 Java 层分别提取正确选项集合与 distractor 映射
+            List<QuestionOption> allOptions = loadAllOptions(questionIds);
+            Map<Long, Set<String>> correctKeysByQuestion = extractCorrectKeys(allOptions);
+            distractorMap = extractDistractorMap(allOptions);
 
             AnswerGrader grader = new AnswerGrader();
             for (AnswerRecord r : records) {
@@ -330,9 +379,18 @@ public class PracticeServiceImpl implements PracticeService {
                 int type = typeOf(question);
                 Set<String> correctKeys = correctKeysByQuestion.getOrDefault(r.getQuestionId(), Set.of());
                 AnswerGrader.GradeResult result = grader.grade(type, r.getStudentAnswer(), correctKeys);
+                gradeResults.add(result);
                 graded.add(buildGradeItem(r.getQuestionId(), type, result, correctKeys, analysisOf(question)));
             }
         }
+
+        // distractor 归因（纯读重算，与首次提交逻辑一致）
+        List<PracticeSubmitVO.WeakPrerequisiteVO> weakPreqs = questionIds.isEmpty()
+                ? List.of()
+                : aggregateWeakPrerequisites(questionIds, gradeResults, distractorMap, session.getCourseId());
+
+        // 路径 item 完成状态（只读，不触发写操作）
+        boolean itemCompleted = readItemCompleted(session);
 
         StudentMastery current = queryMastery(
                 session.getStudentId(), session.getCourseId(), session.getNodeId());
@@ -342,8 +400,165 @@ public class PracticeServiceImpl implements PracticeService {
         vo.setMasteryBefore(scoreOf(current));
         vo.setMasteryAfter(scoreOf(current));
         vo.setMasteryLevel(levelText(current));
+        vo.setWeakPrerequisites(weakPreqs);
+        vo.setItemCompleted(itemCompleted);
         return vo;
     }
+
+    // ── distractor 归因（T5）──────────────────────────────────────────────────
+
+    /**
+     * 聚合 distractor 归因：收集所有错选项的 pointNodeCode，按 nodeCode 计数，
+     * 命中次数 ≥ {@link #distractorThreshold} 的前置节点即为"暴露的薄弱前置"。
+     *
+     * @param questionIds  按答题顺序排列的题目 ID（与 gradeResults 下标对应）
+     * @param gradeResults 对应的判分结果（含 wrongChosenKeys）
+     * @param distractorMap questionId → (optionKey → pointNodeCode) 映射（由 extractDistractorMap 提供）
+     * @param courseId     课程 ID（用于过滤 kg_node）
+     * @return 薄弱前置列表，按 hitCount 降序、nodeCode 升序排列
+     */
+    private List<PracticeSubmitVO.WeakPrerequisiteVO> aggregateWeakPrerequisites(
+            List<Long> questionIds,
+            List<AnswerGrader.GradeResult> gradeResults,
+            Map<Long, Map<String, String>> distractorMap,
+            Long courseId) {
+
+        // 按 nodeCode 聚合命中计数
+        Map<String, Integer> hitCount = new HashMap<>();
+        for (int i = 0; i < questionIds.size(); i++) {
+            Long questionId = questionIds.get(i);
+            Set<String> wrongKeys = gradeResults.get(i).wrongChosenKeys();
+            Map<String, String> optToNode = distractorMap.getOrDefault(questionId, Map.of());
+            for (String wrongKey : wrongKeys) {
+                String nodeCode = optToNode.get(wrongKey);
+                if (nodeCode != null) {
+                    hitCount.merge(nodeCode, 1, Integer::sum);
+                }
+            }
+        }
+
+        // 过滤低于阈值的，加载节点名称
+        List<String> weakNodeCodes = hitCount.entrySet().stream()
+                .filter(e -> e.getValue() >= distractorThreshold)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
+
+        if (weakNodeCodes.isEmpty()) {
+            return List.of();
+        }
+
+        List<KgNode> nodes = kgNodeMapper.selectList(
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .in(KgNode::getNodeCode, weakNodeCodes));
+        Map<String, String> codeToName = nodes.stream()
+                .collect(Collectors.toMap(KgNode::getNodeCode, KgNode::getName, (a, b) -> a));
+
+        return hitCount.entrySet().stream()
+                .filter(e -> e.getValue() >= distractorThreshold)
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed()
+                        .thenComparing(Map.Entry::getKey))
+                .map(e -> {
+                    PracticeSubmitVO.WeakPrerequisiteVO wp = new PracticeSubmitVO.WeakPrerequisiteVO();
+                    wp.setNodeCode(e.getKey());
+                    wp.setName(codeToName.getOrDefault(e.getKey(), e.getKey()));
+                    wp.setHitCount(e.getValue());
+                    return wp;
+                })
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 批量加载指定题目的所有选项（一次 IN 查询，供后续 Java 层分拣）。
+     */
+    private List<QuestionOption> loadAllOptions(List<Long> questionIds) {
+        return questionOptionMapper.selectList(
+                new LambdaQueryWrapper<QuestionOption>()
+                        .in(QuestionOption::getQuestionId, questionIds));
+    }
+
+    /**
+     * 从选项列表中提取正确选项集合（Java 层过滤 isCorrect=1）。
+     *
+     * @return questionId → Set&lt;optionKey&gt;（is_correct=1 的选项）
+     */
+    private Map<Long, Set<String>> extractCorrectKeys(List<QuestionOption> options) {
+        Map<Long, Set<String>> result = new HashMap<>();
+        for (QuestionOption opt : options) {
+            if (Integer.valueOf(IS_CORRECT).equals(opt.getIsCorrect())) {
+                result.computeIfAbsent(opt.getQuestionId(), k -> new HashSet<>())
+                      .add(opt.getOptionKey());
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 从选项列表中提取 distractor 映射（Java 层过滤 pointNodeCode 非空）。
+     *
+     * @return questionId → (optionKey → pointNodeCode)
+     */
+    private Map<Long, Map<String, String>> extractDistractorMap(List<QuestionOption> options) {
+        Map<Long, Map<String, String>> result = new HashMap<>();
+        for (QuestionOption opt : options) {
+            if (opt.getPointNodeCode() != null && !opt.getPointNodeCode().isBlank()) {
+                result.computeIfAbsent(opt.getQuestionId(), k -> new HashMap<>())
+                      .put(opt.getOptionKey(), opt.getPointNodeCode());
+            }
+        }
+        return result;
+    }
+
+    // ── 自动通过判定（T5）────────────────────────────────────────────────────
+
+    /**
+     * 自动通过判定（首次提交路径）：若 session.pathItemId 非空，读当前 item 状态；
+     * 已完成直接返回 true（幂等）；未完成且目标节点掌握度 ≥ masteredThreshold 则置完成。
+     *
+     * <p>不重复做 AccessGuard 鉴权（submit 入口已做会话归属校验）。
+     *
+     * @param session    练习会话
+     * @param afterMastery 提交后目标节点掌握度记录
+     * @return 路径步骤是否已完成
+     */
+    private boolean maybeCompletePathItem(PracticeSession session, StudentMastery afterMastery) {
+        if (session.getPathItemId() == null) {
+            return false; // 自由练习，无路径步骤
+        }
+        LearningPathItem item = learningPathItemMapper.selectById(session.getPathItemId());
+        if (item == null) {
+            return false;
+        }
+        if (item.getStatus() != null && item.getStatus() == ITEM_DONE) {
+            return true; // 幂等：已完成不重复写
+        }
+        double score = scoreOf(afterMastery);
+        if (score >= masteredThreshold) {
+            LearningPathItem upd = new LearningPathItem();
+            upd.setId(item.getId());
+            upd.setStatus(ITEM_DONE);
+            upd.setCompletedAt(LocalDateTime.now());
+            learningPathItemMapper.updateById(upd);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 只读路径 item 完成状态（幂等重放路径）：不触发任何写操作。
+     *
+     * @param session 练习会话（pathItemId 可空）
+     * @return 路径步骤是否已完成（pathItemId 为空或 item 不存在返回 false）
+     */
+    private boolean readItemCompleted(PracticeSession session) {
+        if (session.getPathItemId() == null) {
+            return false;
+        }
+        LearningPathItem item = learningPathItemMapper.selectById(session.getPathItemId());
+        return item != null && item.getStatus() != null && item.getStatus() == ITEM_DONE;
+    }
+
+    // ── submit 通用内部方法 ──────────────────────────────────────────────────
 
     /** 构造单题判分 VO（analysis = 题目自带解析文本 question.analysis，题库未提供时为 null）。 */
     private PracticeSubmitVO.GradeItemVO buildGradeItem(Long questionId, int type,
@@ -404,21 +619,6 @@ public class PracticeServiceImpl implements PracticeService {
     /** 题目解析文本（题目缺失或未提供解析时为 null）。 */
     private String analysisOf(Question question) {
         return question == null ? null : question.getAnalysis();
-    }
-
-    /** 批量查正确选项：questionId → 全部 is_correct=1 的 optionKey 集合。 */
-    private Map<Long, Set<String>> loadCorrectKeys(List<Long> questionIds) {
-        List<QuestionOption> correctOptions = questionOptionMapper.selectList(
-                new LambdaQueryWrapper<QuestionOption>()
-                        .in(QuestionOption::getQuestionId, questionIds)
-                        .eq(QuestionOption::getIsCorrect, IS_CORRECT));
-        Map<Long, Set<String>> correctKeysByQuestion = new HashMap<>();
-        for (QuestionOption opt : correctOptions) {
-            correctKeysByQuestion
-                    .computeIfAbsent(opt.getQuestionId(), k -> new HashSet<>())
-                    .add(opt.getOptionKey());
-        }
-        return correctKeysByQuestion;
     }
 
     /** 查目标节点当前掌握度（无记录返回 null=未学）。 */
