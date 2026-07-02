@@ -1,6 +1,8 @@
 package com.wenjin.service;
 
 import com.wenjin.dto.PracticeStartVO;
+import com.wenjin.dto.PracticeSubmitRequest;
+import com.wenjin.dto.PracticeSubmitVO;
 
 /**
  * 节点练习服务（M1 练习闭环）。
@@ -27,4 +29,16 @@ public interface PracticeService {
      * @return 会话 + 节点信息 + 脱敏题目列表
      */
     PracticeStartVO start(Long studentId, Long courseId, Long nodeId, Integer size);
+
+    /**
+     * 提交练习会话：服务端判分 + answer_record 落库 + 掌握度更新。
+     *
+     * <p>幂等保证：session.status=1 时直接重建上次结果，不重复写 answer_record、
+     * 不重复调 {@code MasteryService.applyAnswers}。
+     *
+     * @param sessionId 练习会话 ID
+     * @param req       提交请求（studentId + 作答列表）；不含 isCorrect/pointNodeCode/answer
+     * @return 判分明细 + 练习节点掌握度变化（itemCompleted/weakPrerequisites/pathRegenerated 由后续任务填充）
+     */
+    PracticeSubmitVO submit(Long sessionId, PracticeSubmitRequest req);
 }

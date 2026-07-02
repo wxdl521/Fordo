@@ -15,6 +15,7 @@ import com.wenjin.mapper.PracticeSessionMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.impl.PracticeServiceImpl;
 import com.wenjin.support.QuestionStatus;
 import org.junit.jupiter.api.DisplayName;
@@ -66,6 +67,8 @@ class PracticeServiceImplTest {
     @Mock KgNodeMapper kgNodeMapper;
     @Mock QuestionOptionMapper questionOptionMapper;
     @Mock PracticeSessionMapper practiceSessionMapper;
+    @Mock MasteryService masteryService;
+    @Mock StudentMasteryMapper studentMasteryMapper;
 
     private static final Long STUDENT_ID = 2L;
     private static final Long COURSE_ID = 1L;
@@ -76,7 +79,8 @@ class PracticeServiceImplTest {
     private PracticeServiceImpl impl() {
         PracticeServiceImpl impl = new PracticeServiceImpl(
                 questionNodeMapper, questionMapper, answerRecordMapper,
-                kgNodeMapper, questionOptionMapper, practiceSessionMapper);
+                kgNodeMapper, questionOptionMapper, practiceSessionMapper,
+                masteryService, studentMasteryMapper);
         ReflectionTestUtils.setField(impl, "defaultSize", 5);
         ReflectionTestUtils.setField(impl, "maxSize", 10);
         ReflectionTestUtils.setField(impl, "recencyDays", 7);

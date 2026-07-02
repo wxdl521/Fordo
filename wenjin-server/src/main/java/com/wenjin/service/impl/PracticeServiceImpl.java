@@ -3,22 +3,30 @@ package com.wenjin.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.dto.GradedAnswer;
 import com.wenjin.dto.PaperQuestionVO;
 import com.wenjin.dto.PracticeStartVO;
+import com.wenjin.dto.PracticeSubmitRequest;
+import com.wenjin.dto.PracticeSubmitVO;
 import com.wenjin.entity.AnswerRecord;
 import com.wenjin.entity.KgNode;
 import com.wenjin.entity.PracticeSession;
 import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
+import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.AnswerRecordMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.PracticeSessionMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.service.MasteryService;
 import com.wenjin.service.PracticeService;
+import com.wenjin.support.AnswerGrader;
 import com.wenjin.support.QuestionStatus;
+import com.wenjin.support.QuestionType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,14 +34,25 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 节点练习服务实现（M1 练习闭环 T3）。
+ * 节点练习服务实现（M1 练习闭环 T3 组卷 + T4 提交判分）。
+ *
+ * <h3>提交流程（submit，单事务）</h3>
+ * <ol>
+ *   <li>校验会话存在、归属（req.studentId = session.studentId）、题目 ⊆ 冻结 question_ids；</li>
+ *   <li>status=1 幂等重放：从 answer_record 重建上次结果，不重复写库/更掌握度；</li>
+ *   <li>服务端判分（复用 {@link AnswerGrader}），简答 correct=null 不进 EWMA；</li>
+ *   <li>写 answer_record（scene=2, session_id），调 MasteryService.applyAnswers；</li>
+ *   <li>会话置 status=1，返回判分明细 + 目标节点掌握度变化。</li>
+ * </ol>
  *
  * <h3>组卷策略</h3>
  * <ol>
@@ -55,6 +74,14 @@ public class PracticeServiceImpl implements PracticeService {
 
     /** practice_session.status：进行中 */
     private static final int SESSION_IN_PROGRESS = 0;
+    /** practice_session.status：已提交 */
+    private static final int SESSION_SUBMITTED = 1;
+    /** answer_record.scene：节点练习 */
+    private static final int SCENE_PRACTICE = 2;
+    /** answer_record.is_correct：正确 */
+    private static final int IS_CORRECT = 1;
+    /** answer_record.is_correct：错误（简答亦写 0，对齐诊断侧"待 AI 判定"语义） */
+    private static final int IS_WRONG = 0;
 
     private final QuestionNodeMapper questionNodeMapper;
     private final QuestionMapper questionMapper;
@@ -62,6 +89,8 @@ public class PracticeServiceImpl implements PracticeService {
     private final KgNodeMapper kgNodeMapper;
     private final QuestionOptionMapper questionOptionMapper;
     private final PracticeSessionMapper practiceSessionMapper;
+    private final MasteryService masteryService;
+    private final StudentMasteryMapper studentMasteryMapper;
 
     /** 每会话默认题数（配置项 wenjin.practice.size）。 */
     @Value("${wenjin.practice.size:5}")
@@ -80,13 +109,17 @@ public class PracticeServiceImpl implements PracticeService {
                                AnswerRecordMapper answerRecordMapper,
                                KgNodeMapper kgNodeMapper,
                                QuestionOptionMapper questionOptionMapper,
-                               PracticeSessionMapper practiceSessionMapper) {
+                               PracticeSessionMapper practiceSessionMapper,
+                               MasteryService masteryService,
+                               StudentMasteryMapper studentMasteryMapper) {
         this.questionNodeMapper = questionNodeMapper;
         this.questionMapper = questionMapper;
         this.answerRecordMapper = answerRecordMapper;
         this.kgNodeMapper = kgNodeMapper;
         this.questionOptionMapper = questionOptionMapper;
         this.practiceSessionMapper = practiceSessionMapper;
+        this.masteryService = masteryService;
+        this.studentMasteryMapper = studentMasteryMapper;
     }
 
     @Override
@@ -162,6 +195,245 @@ public class PracticeServiceImpl implements PracticeService {
         vo.setNode(nodeRef);
         vo.setQuestions(questionVOs);
         return vo;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public PracticeSubmitVO submit(Long sessionId, PracticeSubmitRequest req) {
+        // ── 1. 校验会话存在 ───────────────────────────────────────────────────
+        PracticeSession session = practiceSessionMapper.selectById(sessionId);
+        if (session == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND,
+                    "练习会话不存在：sessionId=" + sessionId);
+        }
+
+        // ── 1b. 校验会话归属（service 层防御；AccessGuard.assertSelf 由 T7 Controller 做） ──
+        if (req == null || req.getStudentId() == null
+                || !req.getStudentId().equals(session.getStudentId())) {
+            throw new BusinessException(ResultCode.FORBIDDEN,
+                    "会话归属校验失败：不能提交非本人的练习会话");
+        }
+
+        // ── 2. 幂等：已提交会话直接重建上次结果（不写库、不调 applyAnswers） ──
+        if (session.getStatus() != null && session.getStatus() == SESSION_SUBMITTED) {
+            return rebuildSubmittedResult(session);
+        }
+
+        // ── 3. 校验提交题目 ⊆ 冻结的 question_ids ────────────────────────────
+        List<PracticeSubmitRequest.AnswerItem> answers = req.getAnswers();
+        if (answers == null || answers.isEmpty()) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "作答列表不能为空");
+        }
+        Set<Long> frozenIds = parseFrozenIds(session.getQuestionIds());
+        for (PracticeSubmitRequest.AnswerItem item : answers) {
+            if (item.getQuestionId() == null || !frozenIds.contains(item.getQuestionId())) {
+                throw new BusinessException(ResultCode.BAD_REQUEST,
+                        "提交了会话外题目：questionId=" + item.getQuestionId());
+            }
+        }
+
+        // ── 4. 读目标节点提交前掌握度（applyAnswers 之前） ────────────────────
+        StudentMastery before = queryMastery(
+                session.getStudentId(), session.getCourseId(), session.getNodeId());
+
+        // ── 5. 服务端判分（复用 AnswerGrader）+ 写 answer_record（scene=2） ──
+        List<Long> questionIds = answers.stream()
+                .map(PracticeSubmitRequest.AnswerItem::getQuestionId)
+                .collect(Collectors.toList());
+        Map<Long, Integer> typeByQuestion = loadQuestionTypes(questionIds);
+        Map<Long, Set<String>> correctKeysByQuestion = loadCorrectKeys(questionIds);
+
+        AnswerGrader grader = new AnswerGrader();
+        List<PracticeSubmitVO.GradeItemVO> graded = new ArrayList<>(answers.size());
+        List<GradedAnswer> gradedAnswers = new ArrayList<>(answers.size());
+        LocalDateTime now = LocalDateTime.now();
+
+        for (PracticeSubmitRequest.AnswerItem item : answers) {
+            Long questionId = item.getQuestionId();
+            String studentAnswer = item.getStudentAnswer();
+            int type = typeByQuestion.getOrDefault(questionId, QuestionType.SINGLE);
+            Set<String> correctKeys = correctKeysByQuestion.getOrDefault(questionId, Set.of());
+
+            AnswerGrader.GradeResult result = grader.grade(type, studentAnswer, correctKeys);
+            boolean isCorrect = Boolean.TRUE.equals(result.correct());
+
+            // 落库：每题一条答题记录（简答亦留痕，is_correct=0 对齐诊断侧）
+            AnswerRecord record = new AnswerRecord();
+            record.setStudentId(session.getStudentId());
+            record.setCourseId(session.getCourseId());
+            record.setQuestionId(questionId);
+            record.setStudentAnswer(studentAnswer);
+            record.setIsCorrect(isCorrect ? IS_CORRECT : IS_WRONG);
+            record.setAnsweredAt(now);
+            record.setScene(SCENE_PRACTICE);
+            record.setSessionId(session.getId());
+            answerRecordMapper.insert(record);
+
+            graded.add(buildGradeItem(questionId, type, result, correctKeys));
+
+            // 简答（correct=null）不进 GradedAnswer → 不进 EWMA
+            if (result.isGradeable()) {
+                gradedAnswers.add(new GradedAnswer(questionId, isCorrect));
+            }
+        }
+
+        // ── 6. 掌握度更新：唯一入口 MasteryService.applyAnswers（同事务） ─────
+        masteryService.applyAnswers(session.getStudentId(), session.getCourseId(), gradedAnswers);
+
+        // ── 7. 读目标节点提交后掌握度 ─────────────────────────────────────────
+        StudentMastery after = queryMastery(
+                session.getStudentId(), session.getCourseId(), session.getNodeId());
+
+        // ── 8. 会话置 status=1，返回结构化结果 ────────────────────────────────
+        session.setStatus(SESSION_SUBMITTED);
+        session.setSubmittedAt(now);
+        practiceSessionMapper.updateById(session);
+
+        PracticeSubmitVO vo = new PracticeSubmitVO();
+        vo.setGraded(graded);
+        vo.setMasteryBefore(scoreOf(before));
+        vo.setMasteryAfter(scoreOf(after));
+        vo.setMasteryLevel(levelText(after));
+        // itemCompleted / weakPrerequisites / pathRegenerated 保持构造器默认值（T5/T6 填充）
+        return vo;
+    }
+
+    // ── submit 内部方法 ──────────────────────────────────────────────────────
+
+    /**
+     * 幂等重放：会话已提交（status=1）时，从 answer_record（scene=2, session_id）
+     * 重建上次判分结果——用存档的 studentAnswer 重新过一遍 AnswerGrader（纯函数，
+     * 同输入必同输出），不写任何库表、不调 applyAnswers。
+     *
+     * <p>掌握度字段约定：重放时无法恢复"提交前"的分值（已被首次提交覆盖），
+     * 故 masteryBefore = masteryAfter = 当前分值。
+     */
+    private PracticeSubmitVO rebuildSubmittedResult(PracticeSession session) {
+        List<AnswerRecord> records = answerRecordMapper.selectList(
+                new LambdaQueryWrapper<AnswerRecord>()
+                        .eq(AnswerRecord::getSessionId, session.getId())
+                        .eq(AnswerRecord::getScene, SCENE_PRACTICE)
+                        .orderByAsc(AnswerRecord::getId));
+
+        List<PracticeSubmitVO.GradeItemVO> graded = new ArrayList<>(records.size());
+        if (!records.isEmpty()) {
+            List<Long> questionIds = records.stream()
+                    .map(AnswerRecord::getQuestionId)
+                    .collect(Collectors.toList());
+            Map<Long, Integer> typeByQuestion = loadQuestionTypes(questionIds);
+            Map<Long, Set<String>> correctKeysByQuestion = loadCorrectKeys(questionIds);
+
+            AnswerGrader grader = new AnswerGrader();
+            for (AnswerRecord r : records) {
+                int type = typeByQuestion.getOrDefault(r.getQuestionId(), QuestionType.SINGLE);
+                Set<String> correctKeys = correctKeysByQuestion.getOrDefault(r.getQuestionId(), Set.of());
+                AnswerGrader.GradeResult result = grader.grade(type, r.getStudentAnswer(), correctKeys);
+                graded.add(buildGradeItem(r.getQuestionId(), type, result, correctKeys));
+            }
+        }
+
+        StudentMastery current = queryMastery(
+                session.getStudentId(), session.getCourseId(), session.getNodeId());
+
+        PracticeSubmitVO vo = new PracticeSubmitVO();
+        vo.setGraded(graded);
+        vo.setMasteryBefore(scoreOf(current));
+        vo.setMasteryAfter(scoreOf(current));
+        vo.setMasteryLevel(levelText(current));
+        return vo;
+    }
+
+    /** 构造单题判分 VO（analysis 由 T5 distractor 归因填充，当前为 null）。 */
+    private PracticeSubmitVO.GradeItemVO buildGradeItem(Long questionId, int type,
+                                                        AnswerGrader.GradeResult result,
+                                                        Set<String> correctKeys) {
+        PracticeSubmitVO.GradeItemVO item = new PracticeSubmitVO.GradeItemVO();
+        item.setQuestionId(questionId);
+        item.setCorrect(result.correct()); // 简答为 null
+        item.setAnalysis(null);            // T5 填充
+        item.setCorrectAnswer(buildCorrectAnswer(type, correctKeys));
+        return item;
+    }
+
+    /**
+     * 正确答案展示串：单选/判断为单字母；多选为按字典序排序的逗号串；
+     * 简答（或题库无正确项）为 null。
+     */
+    private String buildCorrectAnswer(int type, Set<String> correctKeys) {
+        if (type == QuestionType.SHORT_ANSWER || correctKeys.isEmpty()) {
+            return null;
+        }
+        return correctKeys.stream().sorted().collect(Collectors.joining(","));
+    }
+
+    /** 解析冻结的 question_ids 串（逗号分隔）为 ID 集合。 */
+    private Set<Long> parseFrozenIds(String questionIds) {
+        if (questionIds == null || questionIds.isBlank()) {
+            return Set.of();
+        }
+        Set<Long> ids = new LinkedHashSet<>();
+        for (String part : questionIds.split(",")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                ids.add(Long.parseLong(trimmed));
+            }
+        }
+        return ids;
+    }
+
+    /** 批量查题型：questionId → type。 */
+    private Map<Long, Integer> loadQuestionTypes(List<Long> questionIds) {
+        List<Question> questions = questionMapper.selectList(
+                new LambdaQueryWrapper<Question>().in(Question::getId, questionIds));
+        Map<Long, Integer> typeByQuestion = new HashMap<>();
+        for (Question q : questions) {
+            typeByQuestion.put(q.getId(), q.getType());
+        }
+        return typeByQuestion;
+    }
+
+    /** 批量查正确选项：questionId → 全部 is_correct=1 的 optionKey 集合。 */
+    private Map<Long, Set<String>> loadCorrectKeys(List<Long> questionIds) {
+        List<QuestionOption> correctOptions = questionOptionMapper.selectList(
+                new LambdaQueryWrapper<QuestionOption>()
+                        .in(QuestionOption::getQuestionId, questionIds)
+                        .eq(QuestionOption::getIsCorrect, IS_CORRECT));
+        Map<Long, Set<String>> correctKeysByQuestion = new HashMap<>();
+        for (QuestionOption opt : correctOptions) {
+            correctKeysByQuestion
+                    .computeIfAbsent(opt.getQuestionId(), k -> new HashSet<>())
+                    .add(opt.getOptionKey());
+        }
+        return correctKeysByQuestion;
+    }
+
+    /** 查目标节点当前掌握度（无记录返回 null=未学）。 */
+    private StudentMastery queryMastery(Long studentId, Long courseId, Long nodeId) {
+        return studentMasteryMapper.selectOne(
+                new LambdaQueryWrapper<StudentMastery>()
+                        .eq(StudentMastery::getStudentId, studentId)
+                        .eq(StudentMastery::getCourseId, courseId)
+                        .eq(StudentMastery::getNodeId, nodeId));
+    }
+
+    /** 掌握度分值（无记录=0.0）。 */
+    private Double scoreOf(StudentMastery mastery) {
+        if (mastery == null || mastery.getMasteryScore() == null) {
+            return 0.0;
+        }
+        return mastery.getMasteryScore().doubleValue();
+    }
+
+    /** 掌握等级文字：2=已掌握, 1=薄弱, 其余=未学。 */
+    private String levelText(StudentMastery mastery) {
+        if (mastery == null || mastery.getMasteryLevel() == null) {
+            return "未学";
+        }
+        return switch (mastery.getMasteryLevel()) {
+            case 2 -> "已掌握";
+            case 1 -> "薄弱";
+            default -> "未学";
+        };
     }
 
     // ── 内部方法 ─────────────────────────────────────────────────────────────
