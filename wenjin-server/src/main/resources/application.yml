@@ -57,6 +57,10 @@ wenjin:
     alpha: 0.3                                   # EWMA 平滑系数基准
     mastered-threshold: 75                       # 掌握度 ≥ 此值判为已掌握
     weak-threshold: 40                           # 掌握度 ≥ 此值判为薄弱，否则未学
+  practice:                                      # 节点练习组卷（M1 练习闭环 T3）
+    size: 5                                      # 默认每会话题数
+    max-size: 10                                 # 每会话最大题数上限（超出自动夹紧）
+    recency-days: 7                              # 组卷近期排除窗口（天），同学生任意场景已答过的题在窗口内不再出现
   auth:                                          # 令牌认证配置
     secret: ${WENJIN_AUTH_SECRET:dev-secret-change-me-in-prod}
     ttl-seconds: 604800                          # 令牌有效期 7 天
