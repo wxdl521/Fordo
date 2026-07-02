@@ -33,4 +33,10 @@ public class AnswerRecord {
     private Integer isCorrect;
 
     private LocalDateTime answeredAt;
+
+    /** 作答场景：1=诊断, 2=节点练习（M1补充） */
+    private Integer scene;
+
+    /** 练习会话ID（scene=2 时非空，逻辑外键→practice_session.id；M1补充） */
+    private Long sessionId;
 }

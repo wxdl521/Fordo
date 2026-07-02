@@ -175,6 +175,8 @@ CREATE TABLE `answer_record` (
     `student_answer` TEXT     DEFAULT NULL            COMMENT '学生作答内容',
     `is_correct`     TINYINT  DEFAULT NULL            COMMENT '是否正确：1=对, 0=错（简答可由AI判定）',
     `answered_at`    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '作答时间',
+    `scene`          TINYINT  NOT NULL DEFAULT 1      COMMENT '作答场景：1=诊断, 2=节点练习【M1补充】',
+    `session_id`     BIGINT   DEFAULT NULL            COMMENT '练习会话ID（scene=2 时非空，逻辑外键→practice_session.id）【M1补充】',
     PRIMARY KEY (`id`),
     KEY `idx_student_course` (`student_id`, `course_id`),
     KEY `idx_question` (`question_id`)
@@ -204,6 +206,21 @@ CREATE TABLE `learning_path_item` (
     PRIMARY KEY (`id`),
     KEY `idx_path` (`path_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学习路径明细表（路径中的每一步）';
+
+DROP TABLE IF EXISTS `practice_session`;
+CREATE TABLE `practice_session` (
+    `id`           BIGINT   NOT NULL AUTO_INCREMENT COMMENT '练习会话ID',
+    `student_id`   BIGINT   NOT NULL COMMENT '学生（逻辑外键→sys_user.id）',
+    `course_id`    BIGINT   NOT NULL COMMENT '课程（逻辑外键→course.id）',
+    `node_id`      BIGINT   NOT NULL COMMENT '目标知识点（逻辑外键→kg_node.id）',
+    `path_item_id` BIGINT   DEFAULT NULL COMMENT '来源路径步骤（可空=自由练习，逻辑外键→learning_path_item.id）',
+    `question_ids` VARCHAR(512) NOT NULL COMMENT '本会话题目ID列表，逗号分隔（组卷即冻结，防提交时偷换题目）',
+    `status`       TINYINT  NOT NULL DEFAULT 0 COMMENT '状态：0=进行中, 1=已提交',
+    `created_at`   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `submitted_at` DATETIME DEFAULT NULL COMMENT '提交时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_student_course_node` (`student_id`, `course_id`, `node_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='节点练习会话（M1 练习闭环）';
 
 -- ───────────────────────────── 组五：资源（全局共享，不带 course_id） ─────────────────────────────
 
