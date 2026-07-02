@@ -240,7 +240,7 @@ public class PracticeServiceImpl implements PracticeService {
         List<Long> questionIds = answers.stream()
                 .map(PracticeSubmitRequest.AnswerItem::getQuestionId)
                 .collect(Collectors.toList());
-        Map<Long, Integer> typeByQuestion = loadQuestionTypes(questionIds);
+        Map<Long, Question> questionById = loadQuestions(questionIds);
         Map<Long, Set<String>> correctKeysByQuestion = loadCorrectKeys(questionIds);
 
         AnswerGrader grader = new AnswerGrader();
@@ -251,7 +251,8 @@ public class PracticeServiceImpl implements PracticeService {
         for (PracticeSubmitRequest.AnswerItem item : answers) {
             Long questionId = item.getQuestionId();
             String studentAnswer = item.getStudentAnswer();
-            int type = typeByQuestion.getOrDefault(questionId, QuestionType.SINGLE);
+            Question question = questionById.get(questionId);
+            int type = typeOf(question);
             Set<String> correctKeys = correctKeysByQuestion.getOrDefault(questionId, Set.of());
 
             AnswerGrader.GradeResult result = grader.grade(type, studentAnswer, correctKeys);
@@ -269,7 +270,7 @@ public class PracticeServiceImpl implements PracticeService {
             record.setSessionId(session.getId());
             answerRecordMapper.insert(record);
 
-            graded.add(buildGradeItem(questionId, type, result, correctKeys));
+            graded.add(buildGradeItem(questionId, type, result, correctKeys, analysisOf(question)));
 
             // 简答（correct=null）不进 GradedAnswer → 不进 EWMA
             if (result.isGradeable()) {
@@ -320,15 +321,16 @@ public class PracticeServiceImpl implements PracticeService {
             List<Long> questionIds = records.stream()
                     .map(AnswerRecord::getQuestionId)
                     .collect(Collectors.toList());
-            Map<Long, Integer> typeByQuestion = loadQuestionTypes(questionIds);
+            Map<Long, Question> questionById = loadQuestions(questionIds);
             Map<Long, Set<String>> correctKeysByQuestion = loadCorrectKeys(questionIds);
 
             AnswerGrader grader = new AnswerGrader();
             for (AnswerRecord r : records) {
-                int type = typeByQuestion.getOrDefault(r.getQuestionId(), QuestionType.SINGLE);
+                Question question = questionById.get(r.getQuestionId());
+                int type = typeOf(question);
                 Set<String> correctKeys = correctKeysByQuestion.getOrDefault(r.getQuestionId(), Set.of());
                 AnswerGrader.GradeResult result = grader.grade(type, r.getStudentAnswer(), correctKeys);
-                graded.add(buildGradeItem(r.getQuestionId(), type, result, correctKeys));
+                graded.add(buildGradeItem(r.getQuestionId(), type, result, correctKeys, analysisOf(question)));
             }
         }
 
@@ -343,14 +345,15 @@ public class PracticeServiceImpl implements PracticeService {
         return vo;
     }
 
-    /** 构造单题判分 VO（analysis 由 T5 distractor 归因填充，当前为 null）。 */
+    /** 构造单题判分 VO（analysis = 题目自带解析文本 question.analysis，题库未提供时为 null）。 */
     private PracticeSubmitVO.GradeItemVO buildGradeItem(Long questionId, int type,
                                                         AnswerGrader.GradeResult result,
-                                                        Set<String> correctKeys) {
+                                                        Set<String> correctKeys,
+                                                        String analysis) {
         PracticeSubmitVO.GradeItemVO item = new PracticeSubmitVO.GradeItemVO();
         item.setQuestionId(questionId);
         item.setCorrect(result.correct()); // 简答为 null
-        item.setAnalysis(null);            // T5 填充
+        item.setAnalysis(analysis);
         item.setCorrectAnswer(buildCorrectAnswer(type, correctKeys));
         return item;
     }
@@ -381,15 +384,26 @@ public class PracticeServiceImpl implements PracticeService {
         return ids;
     }
 
-    /** 批量查题型：questionId → type。 */
-    private Map<Long, Integer> loadQuestionTypes(List<Long> questionIds) {
+    /** 批量查题目（一次 IN，题型与解析共用这次查询）：questionId → Question。 */
+    private Map<Long, Question> loadQuestions(List<Long> questionIds) {
         List<Question> questions = questionMapper.selectList(
                 new LambdaQueryWrapper<Question>().in(Question::getId, questionIds));
-        Map<Long, Integer> typeByQuestion = new HashMap<>();
+        Map<Long, Question> questionById = new HashMap<>();
         for (Question q : questions) {
-            typeByQuestion.put(q.getId(), q.getType());
+            questionById.put(q.getId(), q);
         }
-        return typeByQuestion;
+        return questionById;
+    }
+
+    /** 题型（题目缺失时默认单选，安全兜底，对齐诊断侧）。 */
+    private int typeOf(Question question) {
+        return (question == null || question.getType() == null)
+                ? QuestionType.SINGLE : question.getType();
+    }
+
+    /** 题目解析文本（题目缺失或未提供解析时为 null）。 */
+    private String analysisOf(Question question) {
+        return question == null ? null : question.getAnalysis();
     }
 
     /** 批量查正确选项：questionId → 全部 is_correct=1 的 optionKey 集合。 */

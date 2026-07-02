@@ -63,7 +63,7 @@ public class PracticeSubmitVO {
         private Boolean correct;
 
         /**
-         * 错误分析（T5 distractor 归因填充，当前为 {@code null}）。
+         * 题目解析文本（取自 {@code question.analysis}），题库未提供时为 {@code null}。
          */
         private String analysis;
 

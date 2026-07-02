@@ -101,12 +101,17 @@ class PracticeSubmitTest {
     }
 
     private Question question(Long id, int type) {
+        return question(id, type, null);
+    }
+
+    private Question question(Long id, int type, String analysis) {
         Question q = new Question();
         q.setId(id);
         q.setCourseId(COURSE_ID);
         q.setStem("题干" + id);
         q.setType(type);
         q.setDifficulty(3);
+        q.setAnalysis(analysis);
         return q;
     }
 
@@ -151,11 +156,13 @@ class PracticeSubmitTest {
     @Test
     @DisplayName("正常提交：单选答对→correct=true，答错→false，返回 masteryBefore/After/Level")
     void submit_normalCase_returnsGradedResult() {
-        // 两道单选题：q1 答对，q2 答错
+        // 两道单选题：q1 答对（题库带解析），q2 答错（题库无解析）
         when(practiceSessionMapper.selectById(SESSION_ID))
                 .thenReturn(session(0, "1,2"));
         when(questionMapper.selectList(any()))
-                .thenReturn(List.of(question(1L, QuestionType.SINGLE), question(2L, QuestionType.SINGLE)));
+                .thenReturn(List.of(
+                        question(1L, QuestionType.SINGLE, "q1 的解析文本"),
+                        question(2L, QuestionType.SINGLE)));
         // q1 正确答案 A，q2 正确答案 B
         when(questionOptionMapper.selectList(any()))
                 .thenReturn(List.of(correctOpt(1L, "A"), correctOpt(2L, "B")));
@@ -168,16 +175,18 @@ class PracticeSubmitTest {
                 req(STUDENT_ID, List.of(item(1L, "A"), item(2L, "C"))));
 
         assertThat(vo.getGraded()).hasSize(2);
-        // q1 答对
+        // q1 答对，analysis = 题库解析文本
         PracticeSubmitVO.GradeItemVO g1 = vo.getGraded().get(0);
         assertThat(g1.getQuestionId()).isEqualTo(1L);
         assertThat(g1.getCorrect()).isTrue();
         assertThat(g1.getCorrectAnswer()).isEqualTo("A");
-        // q2 答错
+        assertThat(g1.getAnalysis()).isEqualTo("q1 的解析文本");
+        // q2 答错，题库无解析 → analysis=null
         PracticeSubmitVO.GradeItemVO g2 = vo.getGraded().get(1);
         assertThat(g2.getQuestionId()).isEqualTo(2L);
         assertThat(g2.getCorrect()).isFalse();
         assertThat(g2.getCorrectAnswer()).isEqualTo("B");
+        assertThat(g2.getAnalysis()).isNull();
         // 掌握度字段
         assertThat(vo.getMasteryBefore()).isEqualTo(50.0);
         assertThat(vo.getMasteryAfter()).isEqualTo(55.0);
@@ -234,7 +243,9 @@ class PracticeSubmitTest {
 
         when(answerRecordMapper.selectList(any())).thenReturn(List.of(ar1, ar2));
         when(questionMapper.selectList(any()))
-                .thenReturn(List.of(question(1L, QuestionType.SINGLE), question(2L, QuestionType.SINGLE)));
+                .thenReturn(List.of(
+                        question(1L, QuestionType.SINGLE, "q1 的解析文本"),
+                        question(2L, QuestionType.SINGLE)));
         when(questionOptionMapper.selectList(any()))
                 .thenReturn(List.of(correctOpt(1L, "A"), correctOpt(2L, "B")));
         when(studentMasteryMapper.selectOne(any())).thenReturn(mastery(55.0, 1));
@@ -246,8 +257,10 @@ class PracticeSubmitTest {
         verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
         verify(masteryService, never()).applyAnswers(any(), any(), any());
 
-        // 重建了 graded（2 道题）
+        // 重建了 graded（2 道题），重放路径同样带 analysis
         assertThat(vo.getGraded()).hasSize(2);
+        assertThat(vo.getGraded().get(0).getAnalysis()).isEqualTo("q1 的解析文本");
+        assertThat(vo.getGraded().get(1).getAnalysis()).isNull();
     }
 
     // ══════════════════════════════════════════════════════════════════════════
