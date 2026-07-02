@@ -21,7 +21,9 @@ import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
 import com.wenjin.service.DiagnosticService;
 import com.wenjin.service.MasteryService;
+import com.wenjin.support.AnswerGrader;
 import com.wenjin.support.QuestionStatus;
+import com.wenjin.support.QuestionType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,9 +32,11 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -290,23 +294,37 @@ public class DiagnosticServiceImpl implements DiagnosticService {
 
         List<SubmitRequest.Answer> answers = req.getAnswers();
 
-        // ── 1. 批量查询正确答案（一次 IN 查询，避免 N+1） ───────────────
+        // ── 1. 批量查询题型 + 正确答案（各一次 IN 查询，避免 N+1） ─────────
         List<Long> questionIds = answers.stream()
                 .map(SubmitRequest.Answer::getQuestionId)
                 .collect(Collectors.toList());
 
+        // 题型：questionId → type（未找到时默认单选，安全兜底）
+        List<Question> questionList = questionMapper.selectList(
+                new LambdaQueryWrapper<Question>()
+                        .in(Question::getId, questionIds));
+        Map<Long, Integer> typeByQuestion = new HashMap<>();
+        for (Question q : questionList) {
+            typeByQuestion.put(q.getId(), q.getType());
+        }
+
+        // 正确选项：questionId → 全部 is_correct=1 选项 key 集合（支持多选题）
         List<QuestionOption> correctOptions = questionOptionMapper.selectList(
                 new LambdaQueryWrapper<QuestionOption>()
                         .in(QuestionOption::getQuestionId, questionIds)
                         .eq(QuestionOption::getIsCorrect, IS_CORRECT));
 
-        // questionId → 正确选项标识（多条时取首条）
-        Map<Long, String> correctKeyByQuestion = new HashMap<>();
+        Map<Long, Set<String>> correctKeysByQuestion = new HashMap<>();
+        Map<Long, String> firstCorrectKeyByQuestion = new HashMap<>();  // 用于 VO 中 correctKey 字段
         for (QuestionOption opt : correctOptions) {
-            correctKeyByQuestion.putIfAbsent(opt.getQuestionId(), opt.getOptionKey());
+            correctKeysByQuestion
+                    .computeIfAbsent(opt.getQuestionId(), k -> new HashSet<>())
+                    .add(opt.getOptionKey());
+            firstCorrectKeyByQuestion.putIfAbsent(opt.getQuestionId(), opt.getOptionKey());
         }
 
-        // ── 2. 逐题判分 + 写入 answer_record ─────────────────────────────
+        // ── 2. 逐题判分（委托 AnswerGrader） + 写入 answer_record ──────────
+        AnswerGrader grader = new AnswerGrader();
         List<QuestionGradeVO> grades = new ArrayList<>(answers.size());
         List<GradedAnswer> gradedAnswers = new ArrayList<>(answers.size());
         int correctCount = 0;
@@ -314,10 +332,15 @@ public class DiagnosticServiceImpl implements DiagnosticService {
         for (SubmitRequest.Answer answer : answers) {
             Long questionId = answer.getQuestionId();
             String chosen = answer.getOptionKey();
-            String correctKey = correctKeyByQuestion.get(questionId);
-            boolean isCorrect = correctKey != null && correctKey.equals(chosen);
+            int type = typeByQuestion.getOrDefault(questionId, QuestionType.SINGLE);
+            Set<String> correctKeys = correctKeysByQuestion.getOrDefault(questionId, Set.of());
+            String firstCorrectKey = firstCorrectKeyByQuestion.get(questionId);
 
-            // 落库：每道题一条答题记录
+            AnswerGrader.GradeResult gradeResult = grader.grade(type, chosen, correctKeys);
+            // null = 简答跳过；Boolean.TRUE.equals 对 null 安全返回 false
+            boolean isCorrect = Boolean.TRUE.equals(gradeResult.correct());
+
+            // 落库：每道题一条答题记录（简答题亦留痕，is_correct=0 待 AI 判定）
             AnswerRecord record = new AnswerRecord();
             record.setStudentId(req.getStudentId());
             record.setCourseId(req.getCourseId());
@@ -331,14 +354,15 @@ public class DiagnosticServiceImpl implements DiagnosticService {
             QuestionGradeVO grade = new QuestionGradeVO();
             grade.setQuestionId(questionId);
             grade.setCorrect(isCorrect);
-            grade.setCorrectKey(correctKey);
+            grade.setCorrectKey(firstCorrectKey);
             grades.add(grade);
 
-            // 收集掌握度计算输入
-            gradedAnswers.add(new GradedAnswer(questionId, isCorrect));
-
-            if (isCorrect) {
-                correctCount++;
+            // 简答题跳过对错统计和掌握度更新
+            if (gradeResult.isGradeable()) {
+                gradedAnswers.add(new GradedAnswer(questionId, isCorrect));
+                if (isCorrect) {
+                    correctCount++;
+                }
             }
         }
 
