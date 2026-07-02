@@ -26,6 +26,8 @@ public class LearningPathVO {
     @Data
     public static class StepVO {
         private Long itemId;
+        /** 节点数据库 ID（kg_node.id），供前端调用 /api/practice/start 使用。 */
+        private Long nodeId;
         private String nodeCode;
         private String name;
         private String chapter;

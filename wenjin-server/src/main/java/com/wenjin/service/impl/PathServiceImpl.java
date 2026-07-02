@@ -436,6 +436,7 @@ public class PathServiceImpl implements PathService {
         StepVO s = new StepVO();
         s.setItemId(item.getId());
         if (node != null) {
+            s.setNodeId(node.getId());
             s.setNodeCode(node.getNodeCode());
             s.setName(node.getName());
             s.setChapter(node.getChapter());

@@ -14,6 +14,7 @@ const TeacherGraphReview = () => import('../views/TeacherGraphReview.vue')
 const TeacherQuestionPool = () => import('../views/TeacherQuestionPool.vue')
 const TeacherDashboard = () => import('../views/TeacherDashboard.vue')
 const GraphExtractReview = () => import('../views/GraphExtractReview.vue')
+const NodePractice = () => import('../views/NodePractice.vue')
 
 const routes = [
   { path: '/', name: 'login', component: Login, meta: { title: '登录 / 课程选择' } },
@@ -29,6 +30,7 @@ const routes = [
   { path: '/teacher/questions', name: 'teacher-questions', component: TeacherQuestionPool, meta: { title: '题目审核池' } },
   { path: '/teacher/dashboard', name: 'teacher-dashboard', component: TeacherDashboard, meta: { title: '学情看板' } },
   { path: '/teacher/graph-extract-review', name: 'teacher-graph-extract-review', component: GraphExtractReview, meta: { title: '抽取审核' } },
+  { path: '/practice', name: 'practice', component: NodePractice, meta: { title: '节点练习' } },
 ]
 
 export const router = createRouter({

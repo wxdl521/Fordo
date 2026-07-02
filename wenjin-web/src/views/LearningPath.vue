@@ -42,8 +42,19 @@
             <div class="lp-reason"><span class="lp-reason-tag">为什么学这个</span> — {{ s.reason }}</div>
             <div class="lp-card-foot">
               <span class="lp-score" :style="{ color: levelColor(s.masteryLevel) }">掌握度 {{ pct(s.masteryScore) }}</span>
-              <button v-if="s.status !== 1" class="lp-btn-done" :disabled="completingId === s.itemId"
-                      @click="markDone(s.itemId)">
+              <!-- 有可练习题：显示"去练习"（隐藏手动"标记完成"） -->
+              <router-link
+                v-if="s.status !== 1 && s.availableQuestionCount > 0"
+                :to="practiceLink(s)"
+                class="lp-btn-practice"
+              >去练习</router-link>
+              <!-- 无可练题（阅读型/资源型）：保留手动完成 -->
+              <button
+                v-else-if="s.status !== 1"
+                class="lp-btn-done"
+                :disabled="completingId === s.itemId"
+                @click="markDone(s.itemId)"
+              >
                 {{ completingId === s.itemId ? '提交中…' : '标记完成' }}
               </button>
               <span v-else class="lp-done-at">已完成</span>
@@ -109,6 +120,13 @@ function stateColor(s) {
 }
 function isCurrentStep(s) {
   return data.value && data.value.steps.indexOf(s) === currentIdx.value
+}
+
+/** 构建"去练习"的路由目标（带 nodeId / pathItemId / courseId） */
+function practiceLink(step) {
+  const q = { nodeId: step.nodeId, pathItemId: step.itemId }
+  if (courseId.value) q.courseId = courseId.value
+  return { path: '/practice', query: q }
 }
 
 async function load() {
@@ -210,6 +228,13 @@ onMounted(() => {
   border-radius: 8px; color: #fffdf8; font-size: 13px; cursor: pointer; font-family: inherit;
 }
 .lp-btn-done:disabled { opacity: 0.6; cursor: default; }
+.lp-btn-practice {
+  margin-left: auto; height: 34px; padding: 0 18px; background: var(--acc); border: none;
+  border-radius: 8px; color: #fffdf8; font-size: 13px; cursor: pointer; font-family: inherit;
+  display: inline-flex; align-items: center; text-decoration: none;
+  transition: opacity 0.15s;
+}
+.lp-btn-practice:hover { opacity: 0.88; }
 .lp-done-at { margin-left: auto; font-size: 12px; color: var(--ok); }
 @media (max-width: 760px) { .lp-h2 { font-size: 23px; } }
 </style>

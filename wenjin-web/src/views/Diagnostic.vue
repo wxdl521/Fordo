@@ -42,49 +42,19 @@
       class="diag-main"
       :style="{ padding: mainPad }"
     >
-      <!-- 题号 + 章节标签 + 进度条 -->
-      <div class="diag-q-meta">
-        <span class="diag-q-num">第 {{ idx + 1 }} 题<span class="diag-q-of"> · 共 {{ total }} 题</span></span>
-        <span class="diag-chapter-tag">{{ q.c }}</span>
-      </div>
-
-      <div class="diag-inner-progress-track">
-        <div class="diag-inner-progress-fill" :style="{ width: progressPct }"></div>
-      </div>
-
-      <!-- 题干 -->
-      <div class="diag-stem" :style="{ fontSize: qSize }">{{ q.q }}</div>
-
-      <!-- 选项 -->
-      <div class="diag-options">
-        <div
-          v-for="(opt, i) in q.o"
-          :key="i"
-          class="diag-opt"
-          :class="{ selected: sel === i }"
-          @click="pick(i)"
-        >
-          <span class="diag-opt-letter" :class="{ selected: sel === i }">{{ letters[i] }}</span>
-          <span class="diag-opt-text">{{ opt }}</span>
-        </div>
-      </div>
-
-      <!-- 导航按钮 -->
-      <div class="diag-nav">
-        <button
-          class="diag-btn-ghost"
-          @click="goPrev"
-          :style="{ visibility: idx === 0 ? 'hidden' : 'visible' }"
-        >上一题</button>
-        <button class="diag-btn-skip" @click="skip">不确定，跳过</button>
-        <button
-          class="diag-btn-next"
-          :class="{ active: hasSel }"
-          @click="goNext"
-        >{{ last ? '完成诊断' : '下一题' }}</button>
-      </div>
-
-      <div class="diag-hint">这不是考试——答错不扣分，跳过也是有用的信号。</div>
+      <QuestionAnswerCard
+        :question="q"
+        :index="idx + 1"
+        :total="total"
+        :selected="sel"
+        :is-last="last"
+        last-label="完成诊断"
+        :has-selection="hasSel"
+        @pick="pick"
+        @prev="goPrev"
+        @next="goNext"
+        @skip="skip"
+      />
     </div>
 
     <!-- 提交中 -->
@@ -140,6 +110,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { fetchPaper, submitPaper } from '../api/diagnostic.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
+import QuestionAnswerCard from '../components/QuestionAnswerCard.vue'
 
 // ─── 常量 ──────────────────────────────────────────────────────────────────
 const { courseId } = useStudentCourse()
