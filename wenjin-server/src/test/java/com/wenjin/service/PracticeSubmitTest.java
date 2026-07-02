@@ -2,10 +2,12 @@ package com.wenjin.service;
 
 import com.wenjin.common.BusinessException;
 import com.wenjin.dto.GradedAnswer;
+import com.wenjin.dto.PathGenerateRequest;
 import com.wenjin.dto.PracticeSubmitRequest;
 import com.wenjin.dto.PracticeSubmitVO;
 import com.wenjin.entity.AnswerRecord;
 import com.wenjin.entity.KgNode;
+import com.wenjin.entity.LearningPath;
 import com.wenjin.entity.LearningPathItem;
 import com.wenjin.entity.PracticeSession;
 import com.wenjin.entity.Question;
@@ -14,6 +16,7 @@ import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.AnswerRecordMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.LearningPathItemMapper;
+import com.wenjin.mapper.LearningPathMapper;
 import com.wenjin.mapper.PracticeSessionMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
@@ -76,6 +79,8 @@ class PracticeSubmitTest {
     @Mock MasteryService masteryService;
     @Mock StudentMasteryMapper studentMasteryMapper;
     @Mock LearningPathItemMapper learningPathItemMapper;
+    @Mock PathService pathService;
+    @Mock LearningPathMapper learningPathMapper;
 
     private static final Long STUDENT_ID  = 2L;
     private static final Long COURSE_ID   = 1L;
@@ -89,12 +94,14 @@ class PracticeSubmitTest {
         PracticeServiceImpl impl = new PracticeServiceImpl(
                 questionNodeMapper, questionMapper, answerRecordMapper,
                 kgNodeMapper, questionOptionMapper, practiceSessionMapper,
-                masteryService, studentMasteryMapper, learningPathItemMapper);
+                masteryService, studentMasteryMapper, learningPathItemMapper,
+                pathService, learningPathMapper);
         ReflectionTestUtils.setField(impl, "defaultSize", 5);
         ReflectionTestUtils.setField(impl, "maxSize", 10);
         ReflectionTestUtils.setField(impl, "recencyDays", 7);
         ReflectionTestUtils.setField(impl, "distractorThreshold", 2);
         ReflectionTestUtils.setField(impl, "masteredThreshold", 75.0);
+        ReflectionTestUtils.setField(impl, "weakThreshold", 40.0);
         return impl;
     }
 
@@ -670,6 +677,43 @@ class PracticeSubmitTest {
         verify(learningPathItemMapper, never()).updateById(any(LearningPathItem.class));
     }
 
+    // ── T6 fixture helpers ────────────────────────────────────────────────────
+
+    /**
+     * 模拟 StudentMastery 记录（nodeId 参数化，供条件 (a) 中前置节点掌握度查询使用）。
+     */
+    private StudentMastery masteryForNode(Long nodeId, double score, int level) {
+        StudentMastery sm = new StudentMastery();
+        sm.setStudentId(STUDENT_ID);
+        sm.setCourseId(COURSE_ID);
+        sm.setNodeId(nodeId);
+        sm.setMasteryScore(BigDecimal.valueOf(score));
+        sm.setMasteryLevel(level);
+        return sm;
+    }
+
+    /** 有效学习路径（供条件 (b) "是否在当前路径中"查询使用）。 */
+    private LearningPath activeLearningPath(Long pathId) {
+        LearningPath lp = new LearningPath();
+        lp.setId(pathId);
+        lp.setStudentId(STUDENT_ID);
+        lp.setCourseId(COURSE_ID);
+        lp.setStatus(1); // active
+        lp.setGeneratedAt(LocalDateTime.now().minusHours(1));
+        return lp;
+    }
+
+    /** 路径步骤（nodeId 参数化，供 nodeInActivePath 检查使用）。 */
+    private LearningPathItem pathItemWithNode(Long pathId, Long nodeId) {
+        LearningPathItem item = new LearningPathItem();
+        item.setId(300L);
+        item.setPathId(pathId);
+        item.setNodeId(nodeId);
+        item.setStepOrder(1);
+        item.setStatus(0); // PENDING
+        return item;
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
     // 用例 T5-E：幂等重放（status=1）weakPreqs 纯读重算、itemCompleted 只读状态
     // ══════════════════════════════════════════════════════════════════════════
@@ -728,5 +772,201 @@ class PracticeSubmitTest {
 
         // itemCompleted 只读：item.status=1(DONE) → true
         assertThat(vo.isItemCompleted()).isTrue();
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // 用例 T6-A：路径重算条件 (a)——薄弱前置节点掌握等级 < 2 时触发
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T6 condA 触发：weakPreqs 存在命中≥2 且掌握等级<2 的前置→ pathRegenerated=true，PathService.generate 被调用")
+    void pathRegen_condA_triggers_whenWeakPreqLevelBelow2() {
+        // 2 道题，全部答错 B，B→KT99（命中 2 次 ≥ distractorThreshold）
+        when(practiceSessionMapper.selectById(SESSION_ID))
+                .thenReturn(session(0, "1,2"));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(question(1L, QuestionType.SINGLE), question(2L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(
+                        correctOpt(1L, "A"), wrongOpt(1L, "B", "KT99"),
+                        correctOpt(2L, "A"), wrongOpt(2L, "B", "KT99")));
+        // after mastery = 55.0（≥ 40，condB = false；只验 condA）
+        when(studentMasteryMapper.selectOne(any()))
+                .thenReturn(mastery(50.0, 1))
+                .thenReturn(mastery(55.0, 1));
+        // aggregateWeakPrerequisites 中第一次 kgNodeMapper.selectList → KT99 节点
+        // anyWeakPreqBelowLevel2 中第二次 kgNodeMapper.selectList → 同节点，id=99L
+        when(kgNodeMapper.selectList(any()))
+                .thenReturn(List.of(kgNode("KT99", "先修知识99")));
+        // KT99（nodeId=99L）当前掌握度为 0（未学），masteryLevel=0 < 2
+        when(studentMasteryMapper.selectList(any()))
+                .thenReturn(List.of(masteryForNode(99L, 0.0, 0)));
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID,
+                req(STUDENT_ID, List.of(item(1L, "B"), item(2L, "B"))));
+
+        assertThat(vo.isPathRegenerated()).isTrue();
+        // PathService.generate 被调用，参数：studentId=STUDENT_ID，courseId=COURSE_ID，targetNodeId=null
+        ArgumentCaptor<PathGenerateRequest> captor = ArgumentCaptor.forClass(PathGenerateRequest.class);
+        verify(pathService).generate(captor.capture());
+        PathGenerateRequest genReq = captor.getValue();
+        assertThat(genReq.getStudentId()).isEqualTo(STUDENT_ID);
+        assertThat(genReq.getCourseId()).isEqualTo(COURSE_ID);
+        assertThat(genReq.getTargetNodeId()).isNull();
+        assertThat(genReq.isUseAi()).isFalse();
+    }
+
+    @Test
+    @DisplayName("T6 condA 不触发：weakPreqs 存在但前置节点掌握等级=2（已掌握）→ pathRegenerated=false")
+    void pathRegen_condA_noTrigger_whenWeakPreqAllMastered() {
+        when(practiceSessionMapper.selectById(SESSION_ID))
+                .thenReturn(session(0, "1,2"));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(question(1L, QuestionType.SINGLE), question(2L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(
+                        correctOpt(1L, "A"), wrongOpt(1L, "B", "KT99"),
+                        correctOpt(2L, "A"), wrongOpt(2L, "B", "KT99")));
+        when(studentMasteryMapper.selectOne(any()))
+                .thenReturn(mastery(50.0, 1))
+                .thenReturn(mastery(55.0, 1));
+        when(kgNodeMapper.selectList(any()))
+                .thenReturn(List.of(kgNode("KT99", "先修知识99")));
+        // KT99（nodeId=99L）已掌握，masteryLevel=2
+        when(studentMasteryMapper.selectList(any()))
+                .thenReturn(List.of(masteryForNode(99L, 80.0, 2)));
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID,
+                req(STUDENT_ID, List.of(item(1L, "B"), item(2L, "B"))));
+
+        assertThat(vo.isPathRegenerated()).isFalse();
+        verify(pathService, never()).generate(any(PathGenerateRequest.class));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // 用例 T6-B：路径重算条件 (b)——练后掌握度 < weakThreshold 且目标节点不在当前路径中
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T6 condB 触发：练后掌握度<40 且目标节点不在当前路径中 → pathRegenerated=true")
+    void pathRegen_condB_triggers_whenLowMasteryNodeNotInPath() {
+        // 全部答对（weakPreqs 为空，condA=false），after mastery=25（<40）
+        when(practiceSessionMapper.selectById(SESSION_ID))
+                .thenReturn(session(0, "1"));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(question(1L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(correctOpt(1L, "A")));
+        when(studentMasteryMapper.selectOne(any()))
+                .thenReturn(mastery(20.0, 0))   // before
+                .thenReturn(mastery(25.0, 0));  // after = 25.0 < 40
+        // 无当前有效路径 → nodeInActivePath = false
+        when(learningPathMapper.selectList(any())).thenReturn(List.of());
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID,
+                req(STUDENT_ID, List.of(item(1L, "A"))));
+
+        assertThat(vo.isPathRegenerated()).isTrue();
+        ArgumentCaptor<PathGenerateRequest> captor = ArgumentCaptor.forClass(PathGenerateRequest.class);
+        verify(pathService).generate(captor.capture());
+        assertThat(captor.getValue().getStudentId()).isEqualTo(STUDENT_ID);
+        assertThat(captor.getValue().getCourseId()).isEqualTo(COURSE_ID);
+        assertThat(captor.getValue().getTargetNodeId()).isNull();
+    }
+
+    @Test
+    @DisplayName("T6 condB 不触发：练后掌握度<40 但目标节点已在当前路径中 → pathRegenerated=false")
+    void pathRegen_condB_noTrigger_whenLowMasteryNodeInActivePath() {
+        when(practiceSessionMapper.selectById(SESSION_ID))
+                .thenReturn(session(0, "1"));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(question(1L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(correctOpt(1L, "A")));
+        when(studentMasteryMapper.selectOne(any()))
+                .thenReturn(mastery(20.0, 0))
+                .thenReturn(mastery(25.0, 0));  // 25.0 < 40，但节点在路径中
+        // 有效路径存在
+        Long activePathId = 200L;
+        when(learningPathMapper.selectList(any()))
+                .thenReturn(List.of(activeLearningPath(activePathId)));
+        // 路径包含目标节点 NODE_ID=10L
+        when(learningPathItemMapper.selectList(any()))
+                .thenReturn(List.of(pathItemWithNode(activePathId, NODE_ID)));
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID,
+                req(STUDENT_ID, List.of(item(1L, "A"))));
+
+        assertThat(vo.isPathRegenerated()).isFalse();
+        verify(pathService, never()).generate(any(PathGenerateRequest.class));
+    }
+
+    @Test
+    @DisplayName("T6 condB 不触发：练后掌握度≥40 → pathRegenerated=false（不查路径）")
+    void pathRegen_condB_noTrigger_whenMasteryAboveWeakThreshold() {
+        when(practiceSessionMapper.selectById(SESSION_ID))
+                .thenReturn(session(0, "1"));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(question(1L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(correctOpt(1L, "A")));
+        // after mastery = 50.0（≥ 40），condB short-circuits
+        when(studentMasteryMapper.selectOne(any()))
+                .thenReturn(mastery(45.0, 1))
+                .thenReturn(mastery(50.0, 1));
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID,
+                req(STUDENT_ID, List.of(item(1L, "A"))));
+
+        assertThat(vo.isPathRegenerated()).isFalse();
+        verify(pathService, never()).generate(any(PathGenerateRequest.class));
+        // 不应查询路径（条件 (b) 因分数短路而跳过）
+        verify(learningPathMapper, never()).selectList(any());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // 用例 T6-C：幂等重放路径——pathRegenerated 恒 false
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T6 幂等重放：session.status=1 → pathRegenerated 恒 false，PathService.generate 不被调用")
+    void pathRegen_idempotentReplay_alwaysFalse() {
+        PracticeSession alreadySubmitted = session(1, "1,2");
+        alreadySubmitted.setSubmittedAt(LocalDateTime.now().minusMinutes(1));
+        when(practiceSessionMapper.selectById(SESSION_ID)).thenReturn(alreadySubmitted);
+
+        // 存档 answer_record（有 KT99 distractor，理论上 condA 可触发）
+        AnswerRecord ar1 = new AnswerRecord();
+        ar1.setQuestionId(1L);
+        ar1.setStudentAnswer("B");
+        ar1.setIsCorrect(0);
+        ar1.setScene(2);
+        ar1.setSessionId(SESSION_ID);
+        AnswerRecord ar2 = new AnswerRecord();
+        ar2.setQuestionId(2L);
+        ar2.setStudentAnswer("B");
+        ar2.setIsCorrect(0);
+        ar2.setScene(2);
+        ar2.setSessionId(SESSION_ID);
+        when(answerRecordMapper.selectList(any())).thenReturn(List.of(ar1, ar2));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(question(1L, QuestionType.SINGLE), question(2L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(
+                        correctOpt(1L, "A"), wrongOpt(1L, "B", "KT99"),
+                        correctOpt(2L, "A"), wrongOpt(2L, "B", "KT99")));
+        when(kgNodeMapper.selectList(any()))
+                .thenReturn(List.of(kgNode("KT99", "先修知识99")));
+        when(studentMasteryMapper.selectOne(any())).thenReturn(mastery(30.0, 0));
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID,
+                req(STUDENT_ID, List.of(item(1L, "B"), item(2L, "B"))));
+
+        // 重放路径：pathRegenerated 恒 false，generate 不被调用
+        assertThat(vo.isPathRegenerated()).isFalse();
+        verify(pathService, never()).generate(any(PathGenerateRequest.class));
+        // 且不写任何库表
+        verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
+        verify(masteryService, never()).applyAnswers(any(), any(), any());
     }
 }

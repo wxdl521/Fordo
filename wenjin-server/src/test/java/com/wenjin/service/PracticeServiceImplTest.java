@@ -12,6 +12,7 @@ import com.wenjin.entity.QuestionOption;
 import com.wenjin.mapper.AnswerRecordMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.LearningPathItemMapper;
+import com.wenjin.mapper.LearningPathMapper;
 import com.wenjin.mapper.PracticeSessionMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
@@ -71,6 +72,8 @@ class PracticeServiceImplTest {
     @Mock MasteryService masteryService;
     @Mock StudentMasteryMapper studentMasteryMapper;
     @Mock LearningPathItemMapper learningPathItemMapper;
+    @Mock PathService pathService;
+    @Mock LearningPathMapper learningPathMapper;
 
     private static final Long STUDENT_ID = 2L;
     private static final Long COURSE_ID = 1L;
@@ -82,12 +85,14 @@ class PracticeServiceImplTest {
         PracticeServiceImpl impl = new PracticeServiceImpl(
                 questionNodeMapper, questionMapper, answerRecordMapper,
                 kgNodeMapper, questionOptionMapper, practiceSessionMapper,
-                masteryService, studentMasteryMapper, learningPathItemMapper);
+                masteryService, studentMasteryMapper, learningPathItemMapper,
+                pathService, learningPathMapper);
         ReflectionTestUtils.setField(impl, "defaultSize", 5);
         ReflectionTestUtils.setField(impl, "maxSize", 10);
         ReflectionTestUtils.setField(impl, "recencyDays", 7);
         ReflectionTestUtils.setField(impl, "distractorThreshold", 2);
         ReflectionTestUtils.setField(impl, "masteredThreshold", 75.0);
+        ReflectionTestUtils.setField(impl, "weakThreshold", 40.0);
         return impl;
     }
 

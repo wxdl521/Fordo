@@ -5,11 +5,13 @@ import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.dto.GradedAnswer;
 import com.wenjin.dto.PaperQuestionVO;
+import com.wenjin.dto.PathGenerateRequest;
 import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.dto.PracticeSubmitRequest;
 import com.wenjin.dto.PracticeSubmitVO;
 import com.wenjin.entity.AnswerRecord;
 import com.wenjin.entity.KgNode;
+import com.wenjin.entity.LearningPath;
 import com.wenjin.entity.LearningPathItem;
 import com.wenjin.entity.PracticeSession;
 import com.wenjin.entity.Question;
@@ -19,12 +21,14 @@ import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.AnswerRecordMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.LearningPathItemMapper;
+import com.wenjin.mapper.LearningPathMapper;
 import com.wenjin.mapper.PracticeSessionMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.MasteryService;
+import com.wenjin.service.PathService;
 import com.wenjin.service.PracticeService;
 import com.wenjin.support.AnswerGrader;
 import com.wenjin.support.QuestionStatus;
@@ -90,6 +94,8 @@ public class PracticeServiceImpl implements PracticeService {
     private static final int IS_WRONG = 0;
     /** learning_path_item.status：已完成 */
     private static final int ITEM_DONE = 1;
+    /** learning_path.status：当前有效 */
+    private static final int PATH_ACTIVE = 1;
 
     private final QuestionNodeMapper questionNodeMapper;
     private final QuestionMapper questionMapper;
@@ -100,6 +106,8 @@ public class PracticeServiceImpl implements PracticeService {
     private final MasteryService masteryService;
     private final StudentMasteryMapper studentMasteryMapper;
     private final LearningPathItemMapper learningPathItemMapper;
+    private final PathService pathService;
+    private final LearningPathMapper learningPathMapper;
 
     /** 每会话默认题数（配置项 wenjin.practice.size）。 */
     @Value("${wenjin.practice.size:5}")
@@ -127,6 +135,13 @@ public class PracticeServiceImpl implements PracticeService {
     @Value("${wenjin.mastery.mastered-threshold:75}")
     private double masteredThreshold;
 
+    /**
+     * 掌握度"薄弱"下界（配置项 wenjin.mastery.weak-threshold，与 MasteryServiceImpl 共用同一配置项）。
+     * 路径重算条件 (b)：目标节点练后分值 &lt; 此值 且 不在当前路径中，则触发重算。
+     */
+    @Value("${wenjin.mastery.weak-threshold:40}")
+    private double weakThreshold;
+
     public PracticeServiceImpl(QuestionNodeMapper questionNodeMapper,
                                QuestionMapper questionMapper,
                                AnswerRecordMapper answerRecordMapper,
@@ -135,7 +150,9 @@ public class PracticeServiceImpl implements PracticeService {
                                PracticeSessionMapper practiceSessionMapper,
                                MasteryService masteryService,
                                StudentMasteryMapper studentMasteryMapper,
-                               LearningPathItemMapper learningPathItemMapper) {
+                               LearningPathItemMapper learningPathItemMapper,
+                               PathService pathService,
+                               LearningPathMapper learningPathMapper) {
         this.questionNodeMapper = questionNodeMapper;
         this.questionMapper = questionMapper;
         this.answerRecordMapper = answerRecordMapper;
@@ -145,6 +162,8 @@ public class PracticeServiceImpl implements PracticeService {
         this.masteryService = masteryService;
         this.studentMasteryMapper = studentMasteryMapper;
         this.learningPathItemMapper = learningPathItemMapper;
+        this.pathService = pathService;
+        this.learningPathMapper = learningPathMapper;
     }
 
     @Override
@@ -322,7 +341,10 @@ public class PracticeServiceImpl implements PracticeService {
         // ── 9. 自动通过判定（T5）────────────────────────────────────────────
         boolean itemCompleted = maybeCompletePathItem(session, after);
 
-        // ── 10. 会话置 status=1，返回结构化结果 ──────────────────────────────
+        // ── 10. 路径重算触发（T6）────────────────────────────────────────────
+        boolean pathRegenerated = maybeRegeneratePath(session, weakPreqs, after);
+
+        // ── 11. 会话置 status=1，返回结构化结果 ──────────────────────────────
         session.setStatus(SESSION_SUBMITTED);
         session.setSubmittedAt(now);
         practiceSessionMapper.updateById(session);
@@ -334,7 +356,7 @@ public class PracticeServiceImpl implements PracticeService {
         vo.setMasteryLevel(levelText(after));
         vo.setWeakPrerequisites(weakPreqs);
         vo.setItemCompleted(itemCompleted);
-        // pathRegenerated 保持构造器默认值 false（T6 填充）
+        vo.setPathRegenerated(pathRegenerated);
         return vo;
     }
 
@@ -556,6 +578,122 @@ public class PracticeServiceImpl implements PracticeService {
         }
         LearningPathItem item = learningPathItemMapper.selectById(session.getPathItemId());
         return item != null && item.getStatus() != null && item.getStatus() == ITEM_DONE;
+    }
+
+    // ── 路径重算触发（T6）────────────────────────────────────────────────────
+
+    /**
+     * 路径重算触发判定（§2.3 第 7 步）：满足以下任一条件即调 {@link PathService#generate} 重算路径：
+     * <ul>
+     *   <li>(a) weakPrerequisites 中存在当前掌握等级 &lt;2 的前置节点（命中次数已由 T5 过滤）；</li>
+     *   <li>(b) 目标节点练后 mastery_score &lt; wenjin.mastery.weak-threshold 且该节点不在当前有效路径中。</li>
+     * </ul>
+     *
+     * <p>重放路径（session.status=1）不调用此方法，pathRegenerated 恒 false（见 rebuildSubmittedResult）。
+     *
+     * @param session    练习会话（含 studentId/courseId/nodeId）
+     * @param weakPreqs  T5 聚合的薄弱前置列表（已过滤 hitCount &lt; threshold 项）
+     * @param after      练后目标节点掌握度记录（null=未学，视为 0 分）
+     * @return 是否触发了路径重算
+     */
+    private boolean maybeRegeneratePath(PracticeSession session,
+                                        List<PracticeSubmitVO.WeakPrerequisiteVO> weakPreqs,
+                                        StudentMastery after) {
+        // 条件 (a)：weakPreqs 中有掌握等级 < 2 的节点
+        if (!weakPreqs.isEmpty()
+                && anyWeakPreqBelowLevel2(weakPreqs, session.getStudentId(), session.getCourseId())) {
+            doRegenerate(session);
+            return true;
+        }
+        // 条件 (b)：练后掌握度 < weakThreshold 且目标节点不在当前路径中
+        if (scoreOf(after) < weakThreshold
+                && !nodeInActivePath(session.getStudentId(), session.getCourseId(), session.getNodeId())) {
+            doRegenerate(session);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 执行路径重算：构造 PathGenerateRequest（targetNodeId=null，沿用诊断卡点）并调 PathService.generate。
+     * 返回值不使用——PathService.generate 的副作用（旧路径失效、新路径写库）即为目标。
+     */
+    private void doRegenerate(PracticeSession session) {
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setStudentId(session.getStudentId());
+        req.setCourseId(session.getCourseId());
+        req.setTargetNodeId(null); // null = 沿用 DiagnosticResultService 推断的卡点
+        req.setUseAi(false);
+        pathService.generate(req);
+    }
+
+    /**
+     * 检查 weakPreqs 中是否有任意节点当前掌握等级 &lt;2（薄弱或未学）。
+     *
+     * <p>流程：nodeCode → kgNodeMapper 查 nodeId → studentMasteryMapper 批量查等级；
+     * 无掌握度记录的节点视为等级 0（未学），同样 &lt;2。
+     *
+     * @param weakPreqs 薄弱前置列表（不为空）
+     * @param studentId 学生 ID
+     * @param courseId  课程 ID
+     * @return 是否存在等级 &lt;2 的前置节点
+     */
+    private boolean anyWeakPreqBelowLevel2(List<PracticeSubmitVO.WeakPrerequisiteVO> weakPreqs,
+                                           Long studentId, Long courseId) {
+        List<String> nodeCodes = weakPreqs.stream()
+                .map(PracticeSubmitVO.WeakPrerequisiteVO::getNodeCode)
+                .collect(Collectors.toList());
+
+        List<KgNode> nodes = kgNodeMapper.selectList(
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .in(KgNode::getNodeCode, nodeCodes));
+        if (nodes.isEmpty()) {
+            return false; // 找不到节点，保守不触发
+        }
+
+        List<Long> nodeIds = nodes.stream().map(KgNode::getId).collect(Collectors.toList());
+
+        List<StudentMastery> masteries = studentMasteryMapper.selectList(
+                new LambdaQueryWrapper<StudentMastery>()
+                        .eq(StudentMastery::getStudentId, studentId)
+                        .eq(StudentMastery::getCourseId, courseId)
+                        .in(StudentMastery::getNodeId, nodeIds));
+
+        // 已掌握节点 ID 集合（masteryLevel >= 2）
+        Set<Long> masteredIds = masteries.stream()
+                .filter(m -> m.getMasteryLevel() != null && m.getMasteryLevel() >= 2)
+                .map(StudentMastery::getNodeId)
+                .collect(Collectors.toSet());
+
+        // 任意节点不在已掌握集合中 → 等级 < 2
+        return nodeIds.stream().anyMatch(id -> !masteredIds.contains(id));
+    }
+
+    /**
+     * 检查目标节点是否在当前有效学习路径（status=1）的步骤列表中。
+     *
+     * @param studentId 学生 ID
+     * @param courseId  课程 ID
+     * @param nodeId    目标节点 ID（练习节点 = session.nodeId）
+     * @return 目标节点是否在当前路径中
+     */
+    private boolean nodeInActivePath(Long studentId, Long courseId, Long nodeId) {
+        List<LearningPath> activePaths = learningPathMapper.selectList(
+                new LambdaQueryWrapper<LearningPath>()
+                        .eq(LearningPath::getStudentId, studentId)
+                        .eq(LearningPath::getCourseId, courseId)
+                        .eq(LearningPath::getStatus, PATH_ACTIVE));
+        if (activePaths.isEmpty()) {
+            return false;
+        }
+
+        List<Long> pathIds = activePaths.stream().map(LearningPath::getId).collect(Collectors.toList());
+        List<LearningPathItem> items = learningPathItemMapper.selectList(
+                new LambdaQueryWrapper<LearningPathItem>()
+                        .in(LearningPathItem::getPathId, pathIds)
+                        .eq(LearningPathItem::getNodeId, nodeId));
+        return !items.isEmpty();
     }
 
     // ── submit 通用内部方法 ──────────────────────────────────────────────────
