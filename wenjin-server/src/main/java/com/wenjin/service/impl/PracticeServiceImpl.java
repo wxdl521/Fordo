@@ -6,6 +6,7 @@ import com.wenjin.common.ResultCode;
 import com.wenjin.dto.GradedAnswer;
 import com.wenjin.dto.PaperQuestionVO;
 import com.wenjin.dto.PathGenerateRequest;
+import com.wenjin.dto.PracticeHistoryVO;
 import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.dto.PracticeSubmitRequest;
 import com.wenjin.dto.PracticeSubmitVO;
@@ -875,6 +876,69 @@ public class PracticeServiceImpl implements PracticeService {
     /** 难度 2–4 为"首选"范围，供排序优先级使用。 */
     private boolean inPreferredRange(Question q) {
         return q.getDifficulty() != null && q.getDifficulty() >= 2 && q.getDifficulty() <= 4;
+    }
+
+    // ── getHistory（T7 新增查询方法）────────────────────────────────────────
+
+    @Override
+    public List<PracticeHistoryVO> getHistory(Long studentId, Long courseId, Long nodeId) {
+        // 1. 查询该学生在课程/节点下的所有会话（按创建时间倒序）
+        List<PracticeSession> sessions = practiceSessionMapper.selectList(
+                new LambdaQueryWrapper<PracticeSession>()
+                        .eq(PracticeSession::getStudentId, studentId)
+                        .eq(PracticeSession::getCourseId, courseId)
+                        .eq(PracticeSession::getNodeId, nodeId)
+                        .orderByDesc(PracticeSession::getCreatedAt));
+
+        if (sessions.isEmpty()) {
+            return List.of();
+        }
+
+        // 2. 批量查已提交会话的答对数（一次 IN 查询，避免 N+1）
+        List<Long> submittedSessionIds = sessions.stream()
+                .filter(s -> s.getStatus() != null && s.getStatus() == SESSION_SUBMITTED)
+                .map(PracticeSession::getId)
+                .collect(Collectors.toList());
+
+        Map<Long, Long> correctCountBySession = new HashMap<>();
+        if (!submittedSessionIds.isEmpty()) {
+            List<AnswerRecord> correctRecords = answerRecordMapper.selectList(
+                    new LambdaQueryWrapper<AnswerRecord>()
+                            .in(AnswerRecord::getSessionId, submittedSessionIds)
+                            .eq(AnswerRecord::getScene, SCENE_PRACTICE)
+                            .eq(AnswerRecord::getIsCorrect, IS_CORRECT));
+            for (AnswerRecord r : correctRecords) {
+                correctCountBySession.merge(r.getSessionId(), 1L, Long::sum);
+            }
+        }
+
+        // 3. 加载知识点基本信息（用于 VO 展示）
+        KgNode node = kgNodeMapper.selectById(nodeId);
+        String nodeCode = node != null ? node.getNodeCode() : null;
+        String nodeName = node != null ? node.getName() : null;
+
+        // 4. 组装 VO
+        return sessions.stream().map(s -> {
+            PracticeHistoryVO vo = new PracticeHistoryVO();
+            vo.setSessionId(s.getId());
+            vo.setNodeId(nodeId);
+            vo.setNodeCode(nodeCode);
+            vo.setNodeName(nodeName);
+            vo.setTotalQuestions(countQuestionIds(s.getQuestionIds()));
+            vo.setCorrectCount(
+                    correctCountBySession.getOrDefault(s.getId(), 0L).intValue());
+            vo.setStatus(s.getStatus() != null ? s.getStatus() : SESSION_IN_PROGRESS);
+            vo.setCreatedAt(s.getCreatedAt());
+            return vo;
+        }).collect(Collectors.toList());
+    }
+
+    /** 统计逗号分隔 question_ids 串中的题目数（空串返回 0）。 */
+    private int countQuestionIds(String questionIds) {
+        if (questionIds == null || questionIds.isBlank()) {
+            return 0;
+        }
+        return questionIds.split(",").length;
     }
 
     /**

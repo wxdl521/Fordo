@@ -1,8 +1,11 @@
 package com.wenjin.service;
 
+import com.wenjin.dto.PracticeHistoryVO;
 import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.dto.PracticeSubmitRequest;
 import com.wenjin.dto.PracticeSubmitVO;
+
+import java.util.List;
 
 /**
  * 节点练习服务（M1 练习闭环）。
@@ -41,4 +44,17 @@ public interface PracticeService {
      * @return 判分明细 + 练习节点掌握度变化（itemCompleted/weakPrerequisites/pathRegenerated 由后续任务填充）
      */
     PracticeSubmitVO submit(Long sessionId, PracticeSubmitRequest req);
+
+    /**
+     * 查询学生在指定课程某知识点的近期练习历史（按创建时间倒序）。
+     *
+     * <p>供前端显示"上次练习 3/5"所需：每条记录包含题目总数、答对数、会话状态和创建时间。
+     * 鉴权由 Controller 层处理（assertSelf + assertAccessibleByStudent），此方法只做查询。</p>
+     *
+     * @param studentId 学生 ID
+     * @param courseId  课程 ID
+     * @param nodeId    知识点 ID（kg_node.id）
+     * @return 历史列表（最新在前，空列表 = 无练习记录）
+     */
+    List<PracticeHistoryVO> getHistory(Long studentId, Long courseId, Long nodeId);
 }

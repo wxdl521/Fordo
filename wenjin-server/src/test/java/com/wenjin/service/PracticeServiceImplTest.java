@@ -2,6 +2,7 @@ package com.wenjin.service;
 
 import com.wenjin.common.BusinessException;
 import com.wenjin.dto.PaperQuestionVO;
+import com.wenjin.dto.PracticeHistoryVO;
 import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.entity.AnswerRecord;
 import com.wenjin.entity.KgNode;
@@ -559,5 +560,101 @@ class PracticeServiceImplTest {
                         .findFirst().map(Question::getDifficulty).orElse(-1))
                 .collect(Collectors.toList());
         assertThat(difficulties).allSatisfy(d -> assertThat(d).isBetween(2, 4));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // getHistory — T7 新增 service 侧方法
+    // ══════════════════════════════════════════════════════════════════════
+
+    private PracticeSession sessionForHistory(Long id, int status, String questionIds) {
+        PracticeSession ps = new PracticeSession();
+        ps.setId(id);
+        ps.setStudentId(STUDENT_ID);
+        ps.setCourseId(COURSE_ID);
+        ps.setNodeId(NODE_ID);
+        ps.setQuestionIds(questionIds);
+        ps.setStatus(status);
+        ps.setCreatedAt(LocalDateTime.now().minusMinutes(id)); // 不同时间，供倒序验证
+        return ps;
+    }
+
+    private AnswerRecord correctRecord(Long sessionId, Long questionId) {
+        AnswerRecord r = new AnswerRecord();
+        r.setStudentId(STUDENT_ID);
+        r.setSessionId(sessionId);
+        r.setQuestionId(questionId);
+        r.setIsCorrect(1);
+        r.setScene(2);
+        r.setAnsweredAt(LocalDateTime.now());
+        return r;
+    }
+
+    @Test
+    @DisplayName("getHistory: 无练习记录时返回空列表")
+    void getHistory_noSessions_returnsEmptyList() {
+        when(practiceSessionMapper.selectList(any())).thenReturn(List.of());
+        List<PracticeHistoryVO> result = impl().getHistory(STUDENT_ID, COURSE_ID, NODE_ID);
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("getHistory: 返回会话列表，已提交会话含正确答对数、totalQuestions 正确")
+    void getHistory_submittedSessions_returnsCorrectCounts() {
+        // 会话 1：已提交，3 道题；会话 2：进行中，2 道题（无答题记录）
+        PracticeSession s1 = sessionForHistory(1L, 1, "10,11,12");  // submitted
+        PracticeSession s2 = sessionForHistory(2L, 0, "20,21");     // in progress
+        when(practiceSessionMapper.selectList(any())).thenReturn(List.of(s1, s2));
+
+        // 会话 1 的 answer_record：2 题答对（is_correct=1, scene=2）
+        AnswerRecord cr1 = correctRecord(1L, 10L);
+        AnswerRecord cr2 = correctRecord(1L, 11L);
+        when(answerRecordMapper.selectList(any())).thenReturn(List.of(cr1, cr2));
+
+        // 知识点信息
+        when(kgNodeMapper.selectById(NODE_ID)).thenReturn(kgNode(NODE_ID, "KT01", "知识点1"));
+
+        List<PracticeHistoryVO> result = impl().getHistory(STUDENT_ID, COURSE_ID, NODE_ID);
+
+        assertThat(result).hasSize(2);
+
+        // 会话 1（已提交）
+        PracticeHistoryVO v1 = result.get(0);
+        assertThat(v1.getSessionId()).isEqualTo(1L);
+        assertThat(v1.getTotalQuestions()).isEqualTo(3);
+        assertThat(v1.getCorrectCount()).isEqualTo(2);
+        assertThat(v1.getStatus()).isEqualTo(1); // SUBMITTED
+        assertThat(v1.getNodeCode()).isEqualTo("KT01");
+        assertThat(v1.getNodeName()).isEqualTo("知识点1");
+
+        // 会话 2（进行中：correctCount 应为 0，因为不查已提交会话以外的记录）
+        PracticeHistoryVO v2 = result.get(1);
+        assertThat(v2.getSessionId()).isEqualTo(2L);
+        assertThat(v2.getTotalQuestions()).isEqualTo(2);
+        assertThat(v2.getCorrectCount()).isEqualTo(0);
+        assertThat(v2.getStatus()).isEqualTo(0); // IN_PROGRESS
+    }
+
+    @Test
+    @DisplayName("getHistory: questionIds 为空串时 totalQuestions=0")
+    void getHistory_emptyQuestionIds_totalQuestionsZero() {
+        when(practiceSessionMapper.selectList(any()))
+                .thenReturn(List.of(sessionForHistory(1L, 1, "")));
+        when(answerRecordMapper.selectList(any())).thenReturn(List.of());
+        when(kgNodeMapper.selectById(NODE_ID)).thenReturn(kgNode(NODE_ID, "KT01", "节点1"));
+
+        List<PracticeHistoryVO> result = impl().getHistory(STUDENT_ID, COURSE_ID, NODE_ID);
+        assertThat(result.get(0).getTotalQuestions()).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("getHistory: 知识点不存在时 nodeCode/nodeName 为 null（容错）")
+    void getHistory_nodeNotFound_nodeInfoNull() {
+        when(practiceSessionMapper.selectList(any()))
+                .thenReturn(List.of(sessionForHistory(1L, 0, "1,2")));
+        when(kgNodeMapper.selectById(NODE_ID)).thenReturn(null);
+
+        List<PracticeHistoryVO> result = impl().getHistory(STUDENT_ID, COURSE_ID, NODE_ID);
+        assertThat(result.get(0).getNodeCode()).isNull();
+        assertThat(result.get(0).getNodeName()).isNull();
     }
 }
