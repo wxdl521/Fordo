@@ -1,9 +1,11 @@
 package com.wenjin.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.dto.GradedAnswer;
+import com.wenjin.dto.LearningPathVO;
 import com.wenjin.dto.PaperQuestionVO;
 import com.wenjin.dto.PathGenerateRequest;
 import com.wenjin.dto.PracticeHistoryVO;
@@ -34,6 +36,8 @@ import com.wenjin.service.PracticeService;
 import com.wenjin.support.AnswerGrader;
 import com.wenjin.support.QuestionStatus;
 import com.wenjin.support.QuestionType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -82,6 +86,8 @@ import java.util.stream.Collectors;
  */
 @Service
 public class PracticeServiceImpl implements PracticeService {
+
+    private static final Logger log = LoggerFactory.getLogger(PracticeServiceImpl.class);
 
     /** practice_session.status：进行中 */
     private static final int SESSION_IN_PROGRESS = 0;
@@ -169,14 +175,36 @@ public class PracticeServiceImpl implements PracticeService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public PracticeStartVO start(Long studentId, Long courseId, Long nodeId, Integer size) {
+    public PracticeStartVO start(Long studentId, Long courseId, Long nodeId, Long pathItemId, Integer size) {
         // ── 1. 解析 size：null 取默认值，超上限夹紧 ─────────────────────────
         int effectiveSize = (size == null) ? defaultSize : Math.min(size, maxSize);
 
-        // ── 2. 校验节点存在 ───────────────────────────────────────────────────
+        // ── 2. 校验节点存在且属于指定课程（防枚举跨课程 IDOR）────────────────
         KgNode node = kgNodeMapper.selectById(nodeId);
         if (node == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "知识点不存在：nodeId=" + nodeId);
+        }
+        if (!courseId.equals(node.getCourseId())) {
+            // 返回 NOT_FOUND 而非 FORBIDDEN，防止枚举其他课程节点 ID
+            throw new BusinessException(ResultCode.NOT_FOUND, "知识点不属于指定课程");
+        }
+
+        // ── 2b. pathItemId 归属校验（C1）────────────────────────────────────
+        if (pathItemId != null) {
+            LearningPathItem item = learningPathItemMapper.selectById(pathItemId);
+            if (item == null) {
+                throw new BusinessException(ResultCode.NOT_FOUND, "路径步骤不存在：pathItemId=" + pathItemId);
+            }
+            // 反查所属路径，校验属主 == 本人
+            LearningPath path = learningPathMapper.selectById(item.getPathId());
+            if (path == null || !studentId.equals(path.getStudentId())) {
+                throw new BusinessException(ResultCode.FORBIDDEN, "无权访问该路径步骤");
+            }
+            // 校验步骤对应节点与请求节点一致
+            if (!nodeId.equals(item.getNodeId())) {
+                throw new BusinessException(ResultCode.BAD_REQUEST,
+                        "pathItemId 对应节点与 nodeId 不匹配");
+            }
         }
 
         // ── 3. 查询该学生近期（recencyDays 天内）已答题 ID 集合 ──────────────
@@ -204,7 +232,23 @@ public class PracticeServiceImpl implements PracticeService {
             }
         }
 
-        // ── 6. 0 题可用 → 抛业务异常 ─────────────────────────────────────────
+        // ── 5b. 最终放宽档：recency 排除后可用为 0 → 允许重复近期题（I3 修复）──
+        //    复练场景：学生 7 天内把该节点全做了一遍，再来时不应被拦死
+        if (pool.isEmpty()) {
+            List<Question> fullW1 = fetchApprovedPool(nodeId, 1, Set.of());
+            Set<Long> fullIds = fullW1.stream().map(Question::getId).collect(Collectors.toSet());
+            if (fullW1.size() < effectiveSize) {
+                List<Question> fullW2 = fetchApprovedPool(nodeId, 2, Set.of());
+                for (Question q : fullW2) {
+                    if (fullIds.add(q.getId())) {
+                        fullW1.add(q);
+                    }
+                }
+            }
+            pool = fullW1;
+        }
+
+        // ── 6. 无任何 APPROVED 题 → 抛业务异常 ──────────────────────────────
         if (pool.isEmpty()) {
             throw new BusinessException(ResultCode.BAD_REQUEST,
                     "题库不足，该知识点暂无可用题目（已过滤未审核与近期已答）");
@@ -222,6 +266,7 @@ public class PracticeServiceImpl implements PracticeService {
         session.setStudentId(studentId);
         session.setCourseId(courseId);
         session.setNodeId(nodeId);
+        session.setPathItemId(pathItemId); // C1: 写入 path_item_id（null=自由练习）
         session.setQuestionIds(questionIds);
         session.setStatus(SESSION_IN_PROGRESS);
         session.setCreatedAt(LocalDateTime.now());
@@ -259,8 +304,21 @@ public class PracticeServiceImpl implements PracticeService {
                     "会话归属校验失败：不能提交非本人的练习会话");
         }
 
-        // ── 2. 幂等：已提交会话直接重建上次结果（不写库、不调 applyAnswers） ──
+        // ── 2. 快速幂等检查：in-memory status=1 直接重放（无需再做 CAS）──────
         if (session.getStatus() != null && session.getStatus() == SESSION_SUBMITTED) {
+            return rebuildSubmittedResult(session);
+        }
+
+        // ── 2b. 抢占式 CAS：防并发重复提交（I2 修复）──────────────────────────
+        //    UPDATE practice_session SET status=1 WHERE id=? AND status=0
+        //    影响行数 = 0：另一线程已抢先提交（status 已被别的线程改为 1）→ 重放分支
+        //    影响行数 = 1：本线程赢得锁，继续完整判分流程
+        int affected = practiceSessionMapper.update(null, new UpdateWrapper<PracticeSession>()
+                .eq("id", session.getId())
+                .eq("status", SESSION_IN_PROGRESS)
+                .set("status", SESSION_SUBMITTED));
+        if (affected == 0) {
+            // 幂等：另一并发线程已抢先提交 → 重建上次结果（不写库、不调 applyAnswers）
             return rebuildSubmittedResult(session);
         }
 
@@ -345,10 +403,10 @@ public class PracticeServiceImpl implements PracticeService {
         // ── 10. 路径重算触发（T6）────────────────────────────────────────────
         boolean pathRegenerated = maybeRegeneratePath(session, weakPreqs, after);
 
-        // ── 11. 会话置 status=1，返回结构化结果 ──────────────────────────────
-        session.setStatus(SESSION_SUBMITTED);
-        session.setSubmittedAt(now);
-        practiceSessionMapper.updateById(session);
+        // ── 11. 补写 submittedAt（status=1 已由 CAS 步骤写入）────────────────
+        practiceSessionMapper.update(null, new UpdateWrapper<PracticeSession>()
+                .eq("id", session.getId())
+                .set("submitted_at", now));
 
         PracticeSubmitVO vo = new PracticeSubmitVO();
         vo.setGraded(graded);
@@ -385,6 +443,10 @@ public class PracticeServiceImpl implements PracticeService {
         List<Long> questionIds = new ArrayList<>(records.size());
         List<AnswerGrader.GradeResult> gradeResults = new ArrayList<>(records.size());
 
+        if (records.isEmpty()) {
+            log.warn("rebuildSubmittedResult: session={} 无 answer_record，可能数据不一致（首次提交中断或异常）",
+                    session.getId());
+        }
         Map<Long, Map<String, String>> distractorMap = new HashMap<>();
         if (!records.isEmpty()) {
             questionIds = records.stream()
@@ -603,29 +665,31 @@ public class PracticeServiceImpl implements PracticeService {
         // 条件 (a)：weakPreqs 中有掌握等级 < 2 的节点
         if (!weakPreqs.isEmpty()
                 && anyWeakPreqBelowLevel2(weakPreqs, session.getStudentId(), session.getCourseId())) {
-            doRegenerate(session);
-            return true;
+            return doRegenerate(session);
         }
         // 条件 (b)：练后掌握度 < weakThreshold 且目标节点不在当前路径中
         if (scoreOf(after) < weakThreshold
                 && !nodeInActivePath(session.getStudentId(), session.getCourseId(), session.getNodeId())) {
-            doRegenerate(session);
-            return true;
+            return doRegenerate(session);
         }
         return false;
     }
 
     /**
      * 执行路径重算：构造 PathGenerateRequest（targetNodeId=null，沿用诊断卡点）并调 PathService.generate。
-     * 返回值不使用——PathService.generate 的副作用（旧路径失效、新路径写库）即为目标。
+     *
+     * @return true = 新路径有步骤（重算成功，可告知前端）；
+     *         false = 生成结果为空路径（无诊断结论/目标节点已掌握，不应置 pathRegenerated=true）
      */
-    private void doRegenerate(PracticeSession session) {
+    private boolean doRegenerate(PracticeSession session) {
         PathGenerateRequest req = new PathGenerateRequest();
         req.setStudentId(session.getStudentId());
         req.setCourseId(session.getCourseId());
         req.setTargetNodeId(null); // null = 沿用 DiagnosticResultService 推断的卡点
         req.setUseAi(false);
-        pathService.generate(req);
+        LearningPathVO result = pathService.generate(req);
+        // generate 返回空路径（无诊断结果/前置已全掌握）时不置 pathRegenerated=true（I4 修复）
+        return result != null && result.getSteps() != null && !result.getSteps().isEmpty();
     }
 
     /**

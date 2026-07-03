@@ -21,17 +21,19 @@ public interface PracticeService {
      * <ol>
      *   <li>从 question_node 取该节点关联题（weight=1 优先），过滤已审核（status=1）；</li>
      *   <li>排除该学生 7 天内在任意场景答过的题；</li>
-     *   <li>不足 size 时放宽到 weight=2，再不足就有多少出多少（≥1 开会话，0 题抛异常）；</li>
+     *   <li>不足 size 时放宽到 weight=2；</li>
+     *   <li>recency 排除后可用为 0 时，放宽末档允许重复近期已答题（复练语义）；</li>
      *   <li>轻度难度分层：优先覆盖难度 2–4 各至少一题。</li>
      * </ol>
      *
-     * @param studentId 学生 ID（由 Controller 从 CurrentUser 取，service 不做鉴权）
-     * @param courseId  课程 ID
-     * @param nodeId    练习节点 ID（kg_node.id）
-     * @param size      期望题数，null 时取配置默认值（5），超上限（10）自动夹紧
+     * @param studentId  学生 ID（由 Controller 从 CurrentUser 取，service 不做鉴权）
+     * @param courseId   课程 ID
+     * @param nodeId     练习节点 ID（kg_node.id）
+     * @param pathItemId 来源路径步骤 ID（可空=自由练习；非空时 service 校验归属并写入 session）
+     * @param size       期望题数，null 时取配置默认值（5），超上限（10）自动夹紧
      * @return 会话 + 节点信息 + 脱敏题目列表
      */
-    PracticeStartVO start(Long studentId, Long courseId, Long nodeId, Integer size);
+    PracticeStartVO start(Long studentId, Long courseId, Long nodeId, Long pathItemId, Integer size);
 
     /**
      * 提交练习会话：服务端判分 + answer_record 落库 + 掌握度更新。

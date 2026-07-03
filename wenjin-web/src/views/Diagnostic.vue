@@ -114,7 +114,6 @@ import QuestionAnswerCard from '../components/QuestionAnswerCard.vue'
 
 // ─── 常量 ──────────────────────────────────────────────────────────────────
 const { courseId } = useStudentCourse()
-const letters = ['A', 'B', 'C', 'D']
 
 // 从 localStorage 读取当前登录用户
 function readUser() {
@@ -173,7 +172,6 @@ const progressPct = computed(() => {
 // 响应式排版
 const narrow = computed(() => width.value < 640)
 const mainPad = computed(() => (narrow.value ? '28px 18px 12px' : '48px 24px 16px'))
-const qSize = computed(() => (narrow.value ? '17px' : '20px'))
 const doneTitleSize = computed(() => (narrow.value ? '24px' : '30px'))
 
 // ─── 数据加载 ────────────────────────────────────────────────────────────────
@@ -430,188 +428,6 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-}
-
-/* 题号行 */
-.diag-q-meta {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.diag-q-num {
-  font-family: 'Noto Serif SC', 'Songti SC', serif;
-  font-size: 15px;
-  color: var(--mut);
-}
-
-.diag-q-of {
-  opacity: 0.55;
-}
-
-.diag-chapter-tag {
-  font-size: 12px;
-  color: var(--mut);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 2px 10px;
-}
-
-/* 题内进度条 */
-.diag-inner-progress-track {
-  height: 4px;
-  background: var(--card2);
-  border-radius: 99px;
-  overflow: hidden;
-  margin-bottom: 26px;
-}
-
-.diag-inner-progress-fill {
-  height: 100%;
-  background: var(--acc);
-  border-radius: 99px;
-  transition: width 0.4s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-/* 题干 */
-.diag-stem {
-  font-weight: 500;
-  line-height: 1.65;
-  margin-bottom: 28px;
-}
-
-/* 选项列表 */
-.diag-options {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 32px;
-}
-
-.diag-opt {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-height: 52px;
-  box-sizing: border-box;
-  padding: 13px 16px;
-  background: var(--card);
-  border: 1.5px solid var(--line);
-  border-radius: 11px;
-  cursor: pointer;
-  transition: background-color 0.18s, border-color 0.18s;
-}
-
-.diag-opt:hover {
-  border-color: var(--mut);
-}
-
-.diag-opt.selected {
-  background: var(--accSoft);
-  border-color: var(--acc);
-}
-
-.diag-opt-letter {
-  width: 26px;
-  height: 26px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1.5px solid var(--line);
-  border-radius: 50%;
-  font-size: 12.5px;
-  color: var(--mut);
-  background: transparent;
-  transition: background-color 0.18s, border-color 0.18s, color 0.18s;
-}
-
-.diag-opt-letter.selected {
-  background: var(--acc);
-  border-color: var(--acc);
-  color: #FFFDF8;
-}
-
-.diag-opt-text {
-  font-size: 14.5px;
-  line-height: 1.55;
-  color: var(--ink);
-}
-
-/* 导航按钮行 */
-.diag-nav {
-  margin-top: auto;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding-bottom: 8px;
-}
-
-.diag-btn-ghost {
-  height: 42px;
-  padding: 0 18px;
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  color: var(--mut);
-  font-size: 13px;
-  cursor: pointer;
-  white-space: nowrap;
-  font-family: inherit;
-  transition: border-color 0.15s, color 0.15s;
-}
-.diag-btn-ghost:hover {
-  border-color: var(--mut);
-  color: var(--ink);
-}
-
-.diag-btn-skip {
-  margin-left: auto;
-  height: 42px;
-  padding: 0 16px;
-  background: transparent;
-  border: none;
-  color: var(--mut);
-  font-size: 13px;
-  cursor: pointer;
-  white-space: nowrap;
-  border-radius: 9px;
-  font-family: inherit;
-  transition: color 0.15s;
-}
-.diag-btn-skip:hover {
-  color: var(--ink);
-}
-
-.diag-btn-next {
-  height: 42px;
-  padding: 0 30px;
-  background: var(--card2);
-  border: none;
-  border-radius: 9px;
-  color: var(--mut);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: not-allowed;
-  white-space: nowrap;
-  font-family: inherit;
-  transition: background-color 0.2s, color 0.2s;
-}
-
-.diag-btn-next.active {
-  background: var(--acc);
-  color: #FFFDF8;
-  cursor: pointer;
-}
-
-/* 提示文字 */
-.diag-hint {
-  text-align: center;
-  font-size: 12px;
-  color: var(--mut);
-  opacity: 0.75;
-  padding-bottom: 18px;
 }
 
 /* ── 完成态 ──────────────────────────────────────────────────────── */

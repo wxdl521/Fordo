@@ -2,6 +2,7 @@ package com.wenjin.service;
 
 import com.wenjin.common.BusinessException;
 import com.wenjin.dto.GradedAnswer;
+import com.wenjin.dto.LearningPathVO;
 import com.wenjin.dto.PathGenerateRequest;
 import com.wenjin.dto.PracticeSubmitRequest;
 import com.wenjin.dto.PracticeSubmitVO;
@@ -37,6 +38,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+
+import org.junit.jupiter.api.BeforeEach;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -87,6 +90,16 @@ class PracticeSubmitTest {
     private static final Long NODE_ID     = 10L;
     private static final Long SESSION_ID  = 50L;
     private static final Long PATH_ITEM_ID = 88L;
+
+    // ── 全局默认 stub（I2 CAS：update 默认返回 1 表示正常提交） ─────────────
+    // 测试中需要模拟并发抢占失败时显式 when(...).thenReturn(0) 覆盖此 stub。
+
+    @BeforeEach
+    void stubCasUpdateSuccess() {
+        // 默认 CAS 成功（UPDATE...WHERE status=0 影响1行），使正常提交流程不走重放分支。
+        // 需要测试 CAS 失败的用例在自己的 when 中覆盖为 thenReturn(0)。
+        when(practiceSessionMapper.update(any(), any())).thenReturn(1);
+    }
 
     // ── 构造 impl（注入所有依赖） ────────────────────────────────────────────
 
@@ -488,10 +501,12 @@ class PracticeSubmitTest {
     // ══════════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("提交后：session.status=1、submittedAt 非空，practiceSessionMapper.updateById 被调用")
+    @DisplayName("I2 CAS: 提交后 update(status=0→1) 被调用；submittedAt 末尾写入；updateById 不再被调用")
     void submit_sessionMarkedSubmitted() {
         when(practiceSessionMapper.selectById(SESSION_ID))
                 .thenReturn(session(0, "1"));
+        // CAS update 返回 1（成功），后续 submittedAt 写入 update 也返回 1
+        when(practiceSessionMapper.update(any(), any())).thenReturn(1);
         when(questionMapper.selectList(any()))
                 .thenReturn(List.of(question(1L, QuestionType.SINGLE)));
         when(questionOptionMapper.selectList(any()))
@@ -500,12 +515,14 @@ class PracticeSubmitTest {
                 .thenReturn(mastery(50.0, 1))
                 .thenReturn(mastery(55.0, 1));
 
-        impl().submit(SESSION_ID, req(STUDENT_ID, List.of(item(1L, "A"))));
+        PracticeSubmitVO vo = impl().submit(SESSION_ID, req(STUDENT_ID, List.of(item(1L, "A"))));
 
-        ArgumentCaptor<PracticeSession> captor = ArgumentCaptor.forClass(PracticeSession.class);
-        verify(practiceSessionMapper).updateById(captor.capture());
-        assertThat(captor.getValue().getStatus()).isEqualTo(1);
-        assertThat(captor.getValue().getSubmittedAt()).isNotNull();
+        // I2 CAS：update() 至少被调用两次（第一次=CAS status=0→1，第二次=写 submittedAt）
+        verify(practiceSessionMapper, org.mockito.Mockito.atLeast(2)).update(any(), any());
+        // updateById 不再被调用（旧逻辑已替换）
+        verify(practiceSessionMapper, org.mockito.Mockito.never()).updateById(any(PracticeSession.class));
+        // 正常判分
+        assertThat(vo.getGraded()).hasSize(1);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -677,6 +694,35 @@ class PracticeSubmitTest {
         verify(learningPathItemMapper, never()).updateById(any(LearningPathItem.class));
     }
 
+    // ── T6 / I4 fixture helpers ──────────────────────────────────────────────
+
+    /** 构建含一个步骤的非空 LearningPathVO（供 generate mock 返回，使 pathRegenerated=true）。 */
+    private LearningPathVO nonEmptyPathVO() {
+        LearningPathVO vo = new LearningPathVO();
+        LearningPathVO.StepVO step = new LearningPathVO.StepVO();
+        step.setItemId(300L);
+        step.setNodeId(NODE_ID);
+        step.setName("节点A");
+        step.setRole("root");
+        vo.setSteps(List.of(step));
+        LearningPathVO.Progress pg = new LearningPathVO.Progress();
+        pg.setDone(0);
+        pg.setTotal(1);
+        vo.setProgress(pg);
+        return vo;
+    }
+
+    /** 构建空路径 VO（供 generate mock 返回，使 pathRegenerated=false）。 */
+    private LearningPathVO emptyPathVO() {
+        LearningPathVO vo = new LearningPathVO();
+        vo.setSteps(List.of());
+        LearningPathVO.Progress pg = new LearningPathVO.Progress();
+        pg.setDone(0);
+        pg.setTotal(0);
+        vo.setProgress(pg);
+        return vo;
+    }
+
     // ── T6 fixture helpers ────────────────────────────────────────────────────
 
     /**
@@ -801,6 +847,8 @@ class PracticeSubmitTest {
         // KT99（nodeId=99L）当前掌握度为 0（未学），masteryLevel=0 < 2
         when(studentMasteryMapper.selectList(any()))
                 .thenReturn(List.of(masteryForNode(99L, 0.0, 0)));
+        // I4 修复：generate 返回非空路径 → pathRegenerated=true
+        when(pathService.generate(any())).thenReturn(nonEmptyPathVO());
 
         PracticeSubmitVO vo = impl().submit(SESSION_ID,
                 req(STUDENT_ID, List.of(item(1L, "B"), item(2L, "B"))));
@@ -862,6 +910,8 @@ class PracticeSubmitTest {
                 .thenReturn(mastery(25.0, 0));  // after = 25.0 < 40
         // 无当前有效路径 → nodeInActivePath = false
         when(learningPathMapper.selectList(any())).thenReturn(List.of());
+        // I4 修复：generate 返回非空路径 → pathRegenerated=true
+        when(pathService.generate(any())).thenReturn(nonEmptyPathVO());
 
         PracticeSubmitVO vo = impl().submit(SESSION_ID,
                 req(STUDENT_ID, List.of(item(1L, "A"))));
@@ -968,5 +1018,117 @@ class PracticeSubmitTest {
         // 且不写任何库表
         verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
         verify(masteryService, never()).applyAnswers(any(), any(), any());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // I2：并发重复提交 CAS 抢占（update 返回 0 → 走重放分支）
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("I2 CAS: practiceSessionMapper.update 返回 0（抢占失败）→ 走重放分支，不写库不调 applyAnswers")
+    void submit_casFailed_walksRebuildPath() {
+        // session 读出时 status=0，但 CAS update 返回 0（另一线程已提交）
+        PracticeSession s = session(0, "1");
+        when(practiceSessionMapper.selectById(SESSION_ID)).thenReturn(s);
+        // 覆盖 @BeforeEach 默认 stub：CAS 失败（另一线程已提交）
+        when(practiceSessionMapper.update(any(), any())).thenReturn(0);
+
+        // 重建路径所需：已有 answer_record
+        AnswerRecord ar = new AnswerRecord();
+        ar.setQuestionId(1L);
+        ar.setStudentAnswer("A");
+        ar.setIsCorrect(1);
+        ar.setScene(2);
+        ar.setSessionId(SESSION_ID);
+        when(answerRecordMapper.selectList(any())).thenReturn(List.of(ar));
+        when(questionMapper.selectList(any())).thenReturn(List.of(question(1L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any())).thenReturn(List.of(correctOpt(1L, "A")));
+        when(studentMasteryMapper.selectOne(any())).thenReturn(mastery(60.0, 1));
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID, req(STUDENT_ID, List.of(item(1L, "A"))));
+
+        // 不写 answer_record，不调 applyAnswers（重放分支）
+        verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
+        verify(masteryService, never()).applyAnswers(any(), any(), any());
+        // 返回了重建结果（1 道题）
+        assertThat(vo.getGraded()).hasSize(1);
+        assertThat(vo.getGraded().get(0).getCorrect()).isTrue();
+    }
+
+    @Test
+    @DisplayName("I2 CAS: practiceSessionMapper.update 返回 1（抢占成功）→ 正常判分流程，写库，调 applyAnswers")
+    void submit_casSucceeded_normalSubmitFlow() {
+        when(practiceSessionMapper.selectById(SESSION_ID)).thenReturn(session(0, "1"));
+        // CAS 成功，返回 1
+        when(practiceSessionMapper.update(any(), any())).thenReturn(1);
+
+        when(questionMapper.selectList(any())).thenReturn(List.of(question(1L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any())).thenReturn(List.of(correctOpt(1L, "A")));
+        when(studentMasteryMapper.selectOne(any()))
+                .thenReturn(mastery(50.0, 1))
+                .thenReturn(mastery(55.0, 1));
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID, req(STUDENT_ID, List.of(item(1L, "A"))));
+
+        // 正常流程：写 answer_record，调 applyAnswers
+        verify(answerRecordMapper).insert(any(AnswerRecord.class));
+        verify(masteryService).applyAnswers(any(), any(), any());
+        assertThat(vo.getGraded()).hasSize(1);
+        assertThat(vo.getGraded().get(0).getCorrect()).isTrue();
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // I4：doRegenerate 返回空路径 → pathRegenerated=false
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("I4: condB 触发但 generate 返回空路径 → pathRegenerated=false")
+    void pathRegen_generateReturnsEmptyPath_regeneratedFalse() {
+        // condB：after mastery=25（<40），无有效路径
+        when(practiceSessionMapper.selectById(SESSION_ID)).thenReturn(session(0, "1"));
+        when(practiceSessionMapper.update(any(), any())).thenReturn(1); // CAS 成功
+        when(questionMapper.selectList(any())).thenReturn(List.of(question(1L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any())).thenReturn(List.of(correctOpt(1L, "A")));
+        when(studentMasteryMapper.selectOne(any()))
+                .thenReturn(mastery(20.0, 0))
+                .thenReturn(mastery(25.0, 0)); // < 40 → condB 触发
+        when(learningPathMapper.selectList(any())).thenReturn(List.of()); // 无路径 → condB=true
+
+        // generate 返回空路径（I4：无诊断结果时的正常行为）
+        when(pathService.generate(any())).thenReturn(emptyPathVO());
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID, req(STUDENT_ID, List.of(item(1L, "A"))));
+
+        // 虽然 condB 条件满足，但 generate 返回空 → pathRegenerated=false（I4）
+        assertThat(vo.isPathRegenerated()).isFalse();
+        // generate 仍被调用（condB 触发了 doRegenerate）
+        verify(pathService).generate(any(PathGenerateRequest.class));
+    }
+
+    @Test
+    @DisplayName("I4: condA 触发且 generate 返回非空路径 → pathRegenerated=true")
+    void pathRegen_generateReturnsNonEmptyPath_regeneratedTrue() {
+        when(practiceSessionMapper.selectById(SESSION_ID)).thenReturn(session(0, "1,2"));
+        when(practiceSessionMapper.update(any(), any())).thenReturn(1);
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(question(1L, QuestionType.SINGLE), question(2L, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(
+                        correctOpt(1L, "A"), wrongOpt(1L, "B", "KT99"),
+                        correctOpt(2L, "A"), wrongOpt(2L, "B", "KT99")));
+        when(studentMasteryMapper.selectOne(any()))
+                .thenReturn(mastery(50.0, 1))
+                .thenReturn(mastery(55.0, 1));
+        when(kgNodeMapper.selectList(any()))
+                .thenReturn(List.of(kgNode("KT99", "先修知识99")));
+        when(studentMasteryMapper.selectList(any()))
+                .thenReturn(List.of(masteryForNode(99L, 0.0, 0)));
+        // generate 返回非空路径
+        when(pathService.generate(any())).thenReturn(nonEmptyPathVO());
+
+        PracticeSubmitVO vo = impl().submit(SESSION_ID,
+                req(STUDENT_ID, List.of(item(1L, "B"), item(2L, "B"))));
+
+        assertThat(vo.isPathRegenerated()).isTrue();
     }
 }

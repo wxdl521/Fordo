@@ -67,7 +67,8 @@ public class PracticeController {
         // 3. 课程访问校验（已发布 + 已选课）
         courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
         return Result.ok(practiceService.start(
-                req.getStudentId(), req.getCourseId(), req.getNodeId(), req.getSize()));
+                req.getStudentId(), req.getCourseId(), req.getNodeId(),
+                req.getPathItemId(), req.getSize()));
     }
 
     /**

@@ -111,7 +111,7 @@ class PracticeControllerTest {
     @Test
     @DisplayName("start: 合法 token + 本人 studentId → code=0")
     void start_ownUser_passes() throws Exception {
-        when(practiceService.start(any(), any(), any(), any())).thenReturn(new PracticeStartVO());
+        when(practiceService.start(any(), any(), any(), any(), any())).thenReturn(new PracticeStartVO());
         mvc.perform(post("/api/practice/start")
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -147,7 +147,7 @@ class PracticeControllerTest {
     @Test
     @DisplayName("start: size=1（正整数）→ 允许，不抛 400")
     void start_sizeOne_passes() throws Exception {
-        when(practiceService.start(any(), any(), any(), any())).thenReturn(new PracticeStartVO());
+        when(practiceService.start(any(), any(), any(), any(), any())).thenReturn(new PracticeStartVO());
         mvc.perform(post("/api/practice/start")
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .contentType(MediaType.APPLICATION_JSON)

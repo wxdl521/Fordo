@@ -357,7 +357,8 @@ public class DiagnosticServiceImpl implements DiagnosticService {
             grade.setCorrectKey(firstCorrectKey);
             grades.add(grade);
 
-            // 简答题跳过对错统计和掌握度更新
+            // 简答有意不计入掌握度：AnswerGrader.isGradeable() 对简答返回 false，
+            // 此处是唯一入口，不进 GradedAnswer 即不进 EWMA（T1 裁决，同款逻辑见 PracticeServiceImpl.submit）
             if (gradeResult.isGradeable()) {
                 gradedAnswers.add(new GradedAnswer(questionId, isCorrect));
                 if (isCorrect) {

@@ -341,7 +341,8 @@ async function startSession() {
     const vo = await startPractice({
       studentId: STUDENT_ID,
       courseId: courseId.value,
-      nodeId: nodeId.value
+      nodeId: nodeId.value,
+      pathItemId: pathItemId.value  // C1: 带 pathItemId，后端写入 session 供自动通过判定
     })
     if (!vo || !vo.questions || vo.questions.length === 0) {
       phase.value = 'empty'

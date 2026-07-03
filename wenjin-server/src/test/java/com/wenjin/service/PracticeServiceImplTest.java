@@ -36,6 +36,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import com.wenjin.entity.LearningPath;
+import com.wenjin.entity.LearningPathItem;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -184,7 +187,7 @@ class PracticeServiceImplTest {
         when(questionOptionMapper.selectList(any())).thenReturn(allOpts);
         stubInsertWithId(100L);
 
-        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, 5);
+        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, 5);
 
         // sessionId
         assertThat(vo.getSessionId()).isEqualTo(100L);
@@ -230,7 +233,7 @@ class PracticeServiceImplTest {
         when(questionOptionMapper.selectList(any())).thenReturn(List.of(opt(3L, "A", 1), opt(3L, "B", 0)));
         stubInsertWithId(1L);
 
-        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, 5);
+        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, 5);
 
         // 只有 1 道可用题（status=1）
         assertThat(vo.getQuestions()).hasSize(1);
@@ -264,7 +267,7 @@ class PracticeServiceImplTest {
         when(questionOptionMapper.selectList(any())).thenReturn(opts);
         stubInsertWithId(1L);
 
-        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, 5);
+        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, 5);
 
         // 只剩题 4、5、6（排除了 1、2、3）
         assertThat(vo.getQuestions()).hasSize(3);
@@ -287,7 +290,7 @@ class PracticeServiceImplTest {
         when(questionNodeMapper.selectList(any())).thenReturn(List.of());
         when(questionMapper.selectList(any())).thenReturn(List.of());
 
-        assertThatThrownBy(() -> impl().start(STUDENT_ID, COURSE_ID, NODE_ID, 5))
+        assertThatThrownBy(() -> impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, 5))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("题库不足");
     }
@@ -318,7 +321,7 @@ class PracticeServiceImplTest {
             return 1;
         });
 
-        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, 5);
+        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, 5);
 
         PracticeSession saved = captor.getValue();
         String[] frozenIds = saved.getQuestionIds().split(",");
@@ -355,7 +358,7 @@ class PracticeServiceImplTest {
         when(questionOptionMapper.selectList(any())).thenReturn(List.of());
         stubInsertWithId(1L);
 
-        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, 99);
+        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, 99);
 
         assertThat(vo.getQuestions()).hasSize(10);
     }
@@ -381,7 +384,7 @@ class PracticeServiceImplTest {
         when(questionOptionMapper.selectList(any())).thenReturn(List.of());
         stubInsertWithId(1L);
 
-        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null);
+        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, null);
 
         assertThat(vo.getQuestions()).hasSize(5);
     }
@@ -419,7 +422,7 @@ class PracticeServiceImplTest {
         when(questionOptionMapper.selectList(any())).thenReturn(List.of());
         stubInsertWithId(1L);
 
-        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, 5);
+        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, 5);
 
         assertThat(vo.getQuestions()).hasSize(5);
         // weight=1 题（id 1, 2）一定被包含（先加入 pool）
@@ -454,7 +457,7 @@ class PracticeServiceImplTest {
         when(questionOptionMapper.selectList(any())).thenReturn(List.of());
         stubInsertWithId(1L);
 
-        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, 5);
+        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, 5);
 
         // 只有 3 道可用（< size），但 ≥ 1，应正常开会话
         assertThat(vo.getQuestions()).hasSize(3);
@@ -465,12 +468,12 @@ class PracticeServiceImplTest {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // 用例 10：所有题都被近期答题排除 → 0 题 → BusinessException
+    // 用例 10：所有题都被近期答题排除 → I3(a) 放宽末档允许重复近期题 → 正常开会话
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("weight=1 + weight=2 全被近期答题排除后 0 题可用 → BusinessException")
-    void start_allRecentlyAnswered_throwsBusinessException() {
+    @DisplayName("I3(a): weight=1+2 全被近期排除后，放宽末档允许重复近期题 → 正常开会话")
+    void start_allRecentlyAnswered_fallbackToRecencyAllowed() {
         List<QuestionNode> w1Links = List.of(qnLink(1L, NODE_ID, 1), qnLink(2L, NODE_ID, 1));
         List<Question> w1Approved = List.of(
                 question(1L, QuestionStatus.APPROVED, 3),
@@ -481,14 +484,39 @@ class PracticeServiceImplTest {
 
         when(kgNodeMapper.selectById(NODE_ID)).thenReturn(kgNode(NODE_ID, "KT01", "节点1"));
         when(answerRecordMapper.selectList(any())).thenReturn(recent);
+        // call 1: weight=1（两题都被 recency 过滤）; call 2: weight=2 空; call 3: 放宽 weight=1; call 4: 放宽 weight=2 空
         when(questionNodeMapper.selectList(any()))
-                .thenReturn(w1Links)      // weight=1
-                .thenReturn(List.of());   // weight=2：无
+                .thenReturn(w1Links)      // weight=1（主动过滤 recency，Java层过滤后0题）
+                .thenReturn(List.of())    // weight=2：无
+                .thenReturn(w1Links)      // 放宽末档 weight=1（无 recency 过滤）
+                .thenReturn(List.of());   // 放宽末档 weight=2：无
         when(questionMapper.selectList(any()))
-                .thenReturn(w1Approved)   // weight=1 approved（但都近期答过）
-                .thenReturn(List.of());   // weight=2 approved：无
+                .thenReturn(w1Approved)   // weight=1 approved（Java层按recency过滤→0）
+                .thenReturn(w1Approved);  // 放宽末档 weight=1 approved（无recency过滤→2题）
+        when(questionOptionMapper.selectList(any())).thenReturn(List.of());
+        stubInsertWithId(99L);
 
-        assertThatThrownBy(() -> impl().start(STUDENT_ID, COURSE_ID, NODE_ID, 5))
+        // I3(a)：不应抛异常，应正常开会话
+        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, 5);
+        assertThat(vo.getSessionId()).isEqualTo(99L);
+        // 2 道题（近期答过但被允许重复）
+        assertThat(vo.getQuestions()).hasSize(2);
+        List<Long> ids = vo.getQuestions().stream()
+                .map(PaperQuestionVO::getQuestionId)
+                .collect(Collectors.toList());
+        assertThat(ids).containsExactlyInAnyOrder(1L, 2L);
+    }
+
+    @Test
+    @DisplayName("I3(a): 真的无 APPROVED 题（非近期排除）时仍抛 BusinessException")
+    void start_noApprovedQuestionsAtAll_throwsBusinessException() {
+        when(kgNodeMapper.selectById(NODE_ID)).thenReturn(kgNode(NODE_ID, "KT01", "节点1"));
+        when(answerRecordMapper.selectList(any())).thenReturn(List.of());
+        // 所有调用都返回空（无 question_node 链接）
+        when(questionNodeMapper.selectList(any())).thenReturn(List.of());
+        when(questionMapper.selectList(any())).thenReturn(List.of());
+
+        assertThatThrownBy(() -> impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, 5))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("题库不足");
     }
@@ -498,8 +526,22 @@ class PracticeServiceImplTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("practice_session 落库字段正确：studentId/courseId/nodeId/status=0/createdAt 非空/submittedAt 为 null")
+    @DisplayName("practice_session 落库字段正确：studentId/courseId/nodeId/status=0/createdAt 非空/submittedAt 为 null/pathItemId 写入")
     void start_sessionPersistedWithCorrectFields() {
+        Long PATH_ITEM_ID = 77L;
+        // pathItem 归属校验 mock
+        LearningPathItem item = new LearningPathItem();
+        item.setId(PATH_ITEM_ID);
+        item.setNodeId(NODE_ID);
+        item.setPathId(200L);
+        item.setStatus(0);
+        LearningPath path = new LearningPath();
+        path.setId(200L);
+        path.setStudentId(STUDENT_ID);
+        path.setCourseId(COURSE_ID);
+        when(learningPathItemMapper.selectById(PATH_ITEM_ID)).thenReturn(item);
+        when(learningPathMapper.selectById(200L)).thenReturn(path);
+
         when(kgNodeMapper.selectById(NODE_ID)).thenReturn(kgNode(NODE_ID, "KT01", "节点1"));
         when(answerRecordMapper.selectList(any())).thenReturn(List.of());
         when(questionNodeMapper.selectList(any())).thenReturn(List.of(qnLink(1L, NODE_ID, 1)));
@@ -513,7 +555,7 @@ class PracticeServiceImplTest {
             return 1;
         });
 
-        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, 5);
+        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, PATH_ITEM_ID, 5);
 
         PracticeSession saved = captor.getValue();
         assertThat(saved.getStudentId()).isEqualTo(STUDENT_ID);
@@ -523,6 +565,7 @@ class PracticeServiceImplTest {
         assertThat(saved.getCreatedAt()).isNotNull();
         assertThat(saved.getSubmittedAt()).isNull();
         assertThat(saved.getQuestionIds()).isEqualTo("1"); // 仅 1 道题
+        assertThat(saved.getPathItemId()).isEqualTo(PATH_ITEM_ID); // C1: pathItemId 写入
         assertThat(vo.getSessionId()).isEqualTo(42L);
     }
 
@@ -551,7 +594,7 @@ class PracticeServiceImplTest {
         when(questionOptionMapper.selectList(any())).thenReturn(List.of());
         stubInsertWithId(1L);
 
-        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, 3);
+        PracticeStartVO vo = impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, 3);
 
         assertThat(vo.getQuestions()).hasSize(3);
         // 3 道题的难度应都在 [2,4] 范围内（优先选策略）
@@ -656,5 +699,94 @@ class PracticeServiceImplTest {
         List<PracticeHistoryVO> result = impl().getHistory(STUDENT_ID, COURSE_ID, NODE_ID);
         assertThat(result.get(0).getNodeCode()).isNull();
         assertThat(result.get(0).getNodeName()).isNull();
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // I1：node↔course 一致性校验
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("I1: nodeId 不存在 → BusinessException（NOT_FOUND）")
+    void start_nodeNotFound_throwsNotFound() {
+        when(kgNodeMapper.selectById(NODE_ID)).thenReturn(null);
+
+        assertThatThrownBy(() -> impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, 5))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    @DisplayName("I1: node.courseId 与请求 courseId 不符 → BusinessException（防枚举跨课程 IDOR）")
+    void start_nodeCourseIdMismatch_throwsNotFound() {
+        // 节点属于 courseId=99，请求 courseId=COURSE_ID=1 → 不匹配
+        KgNode wrongCourseNode = kgNode(NODE_ID, "KT01", "节点1");
+        wrongCourseNode.setCourseId(99L);
+        when(kgNodeMapper.selectById(NODE_ID)).thenReturn(wrongCourseNode);
+
+        assertThatThrownBy(() -> impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, 5))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不属于指定课程");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // C1：pathItemId 归属校验
+    // ══════════════════════════════════════════════════════════════════════
+
+    private LearningPathItem pathItem(Long id, Long nodeId, Long pathId) {
+        LearningPathItem item = new LearningPathItem();
+        item.setId(id);
+        item.setNodeId(nodeId);
+        item.setPathId(pathId);
+        item.setStatus(0);
+        item.setStepOrder(1);
+        return item;
+    }
+
+    private LearningPath learningPath(Long id, Long studentId, Long courseId) {
+        LearningPath lp = new LearningPath();
+        lp.setId(id);
+        lp.setStudentId(studentId);
+        lp.setCourseId(courseId);
+        lp.setStatus(1);
+        return lp;
+    }
+
+    @Test
+    @DisplayName("C1: pathItemId 不存在 → BusinessException（NOT_FOUND）")
+    void start_pathItemIdNotFound_throwsNotFound() {
+        when(kgNodeMapper.selectById(NODE_ID)).thenReturn(kgNode(NODE_ID, "KT01", "节点1"));
+        when(learningPathItemMapper.selectById(88L)).thenReturn(null);
+
+        assertThatThrownBy(() -> impl().start(STUDENT_ID, COURSE_ID, NODE_ID, 88L, 5))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    @DisplayName("C1: pathItemId 属于他人学习路径 → BusinessException（code=403 FORBIDDEN）")
+    void start_pathItemIdBelongsToOtherStudent_throwsForbidden() {
+        Long PATH_ID = 200L;
+        Long ITEM_ID = 88L;
+        when(kgNodeMapper.selectById(NODE_ID)).thenReturn(kgNode(NODE_ID, "KT01", "节点1"));
+        when(learningPathItemMapper.selectById(ITEM_ID)).thenReturn(pathItem(ITEM_ID, NODE_ID, PATH_ID));
+        // 路径属于 studentId=999（不是 STUDENT_ID=2）
+        when(learningPathMapper.selectById(PATH_ID)).thenReturn(learningPath(PATH_ID, 999L, COURSE_ID));
+
+        assertThatThrownBy(() -> impl().start(STUDENT_ID, COURSE_ID, NODE_ID, ITEM_ID, 5))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo(403));
+    }
+
+    @Test
+    @DisplayName("C1: pathItemId 对应节点与请求 nodeId 不匹配 → BusinessException（code=400 BAD_REQUEST）")
+    void start_pathItemIdNodeMismatch_throwsBadRequest() {
+        Long PATH_ID = 200L;
+        Long ITEM_ID = 88L;
+        Long OTHER_NODE_ID = 999L; // item 的 nodeId 与请求 nodeId 不同
+        when(kgNodeMapper.selectById(NODE_ID)).thenReturn(kgNode(NODE_ID, "KT01", "节点1"));
+        when(learningPathItemMapper.selectById(ITEM_ID)).thenReturn(pathItem(ITEM_ID, OTHER_NODE_ID, PATH_ID));
+        when(learningPathMapper.selectById(PATH_ID)).thenReturn(learningPath(PATH_ID, STUDENT_ID, COURSE_ID));
+
+        assertThatThrownBy(() -> impl().start(STUDENT_ID, COURSE_ID, NODE_ID, ITEM_ID, 5))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo(400));
     }
 }

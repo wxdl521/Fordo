@@ -21,6 +21,13 @@ public class PracticeStartRequest {
     private Long nodeId;
 
     /**
+     * 来源路径步骤 ID（可空）。
+     * 非 null 时 service 校验归属（item→path→studentId==本人）并将 id 写入 practice_session.path_item_id，
+     * 供提交后自动通过判定使用。null 表示自由练习。
+     */
+    private Long pathItemId;
+
+    /**
      * 期望题数（可选，默认 5，上限 10）。
      * null = 取 wenjin.practice.size 配置默认值；
      * 正整数，超过 wenjin.practice.max-size 时由 service 自动夹紧。
