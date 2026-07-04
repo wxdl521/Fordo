@@ -18,7 +18,6 @@ import com.wenjin.entity.LearningPath;
 import com.wenjin.entity.LearningPathItem;
 import com.wenjin.entity.PracticeSession;
 import com.wenjin.entity.Question;
-import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
 import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.AnswerRecordMapper;
@@ -34,7 +33,7 @@ import com.wenjin.service.MasteryService;
 import com.wenjin.service.PathService;
 import com.wenjin.service.PracticeService;
 import com.wenjin.support.AnswerGrader;
-import com.wenjin.support.QuestionStatus;
+import com.wenjin.support.QuestionPicker;
 import com.wenjin.support.QuestionType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -116,6 +115,9 @@ public class PracticeServiceImpl implements PracticeService {
     private final PathService pathService;
     private final LearningPathMapper learningPathMapper;
 
+    /** 组卷抽取共享组件（M2 T4 抽出；Practice 传恒真谓词，行为与 M1 零变化）。 */
+    private final QuestionPicker questionPicker;
+
     /** 每会话默认题数（配置项 wenjin.practice.size）。 */
     @Value("${wenjin.practice.size:5}")
     private int defaultSize;
@@ -171,6 +173,7 @@ public class PracticeServiceImpl implements PracticeService {
         this.learningPathItemMapper = learningPathItemMapper;
         this.pathService = pathService;
         this.learningPathMapper = learningPathMapper;
+        this.questionPicker = new QuestionPicker(questionNodeMapper, questionMapper);
     }
 
     @Override
@@ -218,44 +221,15 @@ public class PracticeServiceImpl implements PracticeService {
                 .map(AnswerRecord::getQuestionId)
                 .collect(Collectors.toSet());
 
-        // ── 4. 取 weight=1 已审核题池（扣除近期已答） ────────────────────────
-        List<Question> pool = fetchApprovedPool(nodeId, 1, recentQuestionIds);
-        Set<Long> poolIds = pool.stream().map(Question::getId).collect(Collectors.toSet());
-
-        // ── 5. 若 weight=1 不足，放宽到 weight=2 补充 ────────────────────────
-        if (pool.size() < effectiveSize) {
-            List<Question> w2Pool = fetchApprovedPool(nodeId, 2, recentQuestionIds);
-            for (Question q : w2Pool) {
-                if (poolIds.add(q.getId())) { // 去重（题可能同时有 weight=1 和 weight=2 链接）
-                    pool.add(q);
-                }
-            }
-        }
-
-        // ── 5b. 最终放宽档：recency 排除后可用为 0 → 允许重复近期题（I3 修复）──
-        //    复练场景：学生 7 天内把该节点全做了一遍，再来时不应被拦死
-        if (pool.isEmpty()) {
-            List<Question> fullW1 = fetchApprovedPool(nodeId, 1, Set.of());
-            Set<Long> fullIds = fullW1.stream().map(Question::getId).collect(Collectors.toSet());
-            if (fullW1.size() < effectiveSize) {
-                List<Question> fullW2 = fetchApprovedPool(nodeId, 2, Set.of());
-                for (Question q : fullW2) {
-                    if (fullIds.add(q.getId())) {
-                        fullW1.add(q);
-                    }
-                }
-            }
-            pool = fullW1;
-        }
+        // ── 4~7. 组卷抽取（共享组件；Practice 传恒真谓词=不额外过滤，行为与 M1 零变化）
+        //    weight=1 主关联 → weight=2 补充 → recency 排除 → I3a 复练兜底 → 难度轻分层
+        List<Question> selected = questionPicker.pick(nodeId, effectiveSize, recentQuestionIds, q -> true);
 
         // ── 6. 无任何 APPROVED 题 → 抛业务异常 ──────────────────────────────
-        if (pool.isEmpty()) {
+        if (selected.isEmpty()) {
             throw new BusinessException(ResultCode.BAD_REQUEST,
                     "题库不足，该知识点暂无可用题目（已过滤未审核与近期已答）");
         }
-
-        // ── 7. 轻度难度分层取样，最多 effectiveSize 道 ───────────────────────
-        List<Question> selected = stratifyPick(pool, effectiveSize);
 
         // ── 8. 冻结 question_ids，创建 practice_session（status=0） ──────────
         String questionIds = selected.stream()
@@ -851,95 +825,6 @@ public class PracticeServiceImpl implements PracticeService {
             case 1 -> "薄弱";
             default -> "未学";
         };
-    }
-
-    // ── 内部方法 ─────────────────────────────────────────────────────────────
-
-    /**
-     * 查询该节点指定权重下的 APPROVED 题，排除近期已答。
-     *
-     * @param nodeId        知识点 ID
-     * @param weight        权重（1=主, 2=次）
-     * @param recentIds     近期已答题 ID 集合（用于排除）
-     * @return 可用题列表（按 DB 返回顺序，downstream 会重排）
-     */
-    private List<Question> fetchApprovedPool(Long nodeId, int weight, Set<Long> recentIds) {
-        // 查询 question_node 关联
-        List<QuestionNode> links = questionNodeMapper.selectList(
-                new LambdaQueryWrapper<QuestionNode>()
-                        .eq(QuestionNode::getNodeId, nodeId)
-                        .eq(QuestionNode::getWeight, weight));
-        if (links.isEmpty()) {
-            return new ArrayList<>();
-        }
-
-        // 提取 questionId，查 question（DB 过滤 APPROVED）
-        List<Long> questionIds = links.stream()
-                .map(QuestionNode::getQuestionId)
-                .collect(Collectors.toList());
-        List<Question> approved = questionMapper.selectList(
-                new LambdaQueryWrapper<Question>()
-                        .in(Question::getId, questionIds)
-                        .eq(Question::getStatus, QuestionStatus.APPROVED));
-
-        // 排除近期已答
-        return approved.stream()
-                .filter(q -> !recentIds.contains(q.getId()))
-                .collect(Collectors.toCollection(ArrayList::new));
-    }
-
-    /**
-     * 轻度难度分层取样：优先覆盖难度 2–4 各至少一题，随后从剩余题中补足（同样优先 2–4 范围）。
-     *
-     * <p>"允许简化为难度排序取样"：先按"是否在 2–4 范围内"降序，再按难度升序，再按 id 升序排列，
-     * 取前 {@code size} 道；首先尝试从 2、3、4 各取一道种子题以保证覆盖，再填充剩余。</p>
-     *
-     * @param pool 候选题池（保证 ≥ 1 道）
-     * @param size 目标题数（已夹紧）
-     */
-    private List<Question> stratifyPick(List<Question> pool, int size) {
-        if (pool.size() <= size) {
-            return new ArrayList<>(pool);
-        }
-
-        List<Question> selected = new ArrayList<>(size);
-        Set<Long> selectedIds = new HashSet<>();
-
-        // 步骤 A：从难度 2、3、4 各取 id 最小的一道作为种子（保证覆盖 2–4 范围）
-        for (int targetDiff : new int[]{2, 3, 4}) {
-            if (selected.size() >= size) break;
-            pool.stream()
-                    .filter(q -> q.getDifficulty() != null && q.getDifficulty() == targetDiff)
-                    .min(Comparator.comparingLong(Question::getId))
-                    .ifPresent(q -> {
-                        if (selectedIds.add(q.getId())) {
-                            selected.add(q);
-                        }
-                    });
-        }
-
-        // 步骤 B：补充剩余配额，按"2–4 优先，其他次之；同段内难度升序，再 id 升序"
-        if (selected.size() < size) {
-            pool.stream()
-                    .filter(q -> !selectedIds.contains(q.getId()))
-                    .sorted(Comparator
-                            .<Question, Integer>comparing(q -> inPreferredRange(q) ? 0 : 1)
-                            .thenComparingInt(q -> q.getDifficulty() == null ? 999 : q.getDifficulty())
-                            .thenComparingLong(Question::getId))
-                    .forEach(q -> {
-                        if (selected.size() < size) {
-                            selected.add(q);
-                            selectedIds.add(q.getId());
-                        }
-                    });
-        }
-
-        return selected;
-    }
-
-    /** 难度 2–4 为"首选"范围，供排序优先级使用。 */
-    private boolean inPreferredRange(Question q) {
-        return q.getDifficulty() != null && q.getDifficulty() >= 2 && q.getDifficulty() <= 4;
     }
 
     // ── getHistory（T7 新增查询方法）────────────────────────────────────────
