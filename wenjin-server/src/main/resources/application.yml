@@ -53,6 +53,8 @@ wenjin:
       model: ${WENJIN_AI_VISION_MODEL:glm-5v-turbo}
   diagnostic:                                    # 入口诊断组卷（T6）
     paper-size: 25                               # 诊断试卷目标题数（分层抽样上限）
+    adaptive:                                     # 图引导自适应诊断（M2）
+      budget: 15                                 # 题量预算：单次自适应诊断累计探针题数上限，耗尽即终止
   mastery:                                       # 掌握度计算（阶段三 EWMA）
     alpha: 0.3                                   # EWMA 平滑系数基准
     mastered-threshold: 75                       # 掌握度 ≥ 此值判为已掌握
