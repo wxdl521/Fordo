@@ -23,6 +23,7 @@ import com.wenjin.support.AdaptiveDiagState;
 import com.wenjin.support.NodeState;
 import com.wenjin.support.PrereqDirection;
 import com.wenjin.support.QuestionType;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -77,6 +78,16 @@ class AdaptiveDiagnosticServiceTest {
         ReflectionTestUtils.setField(impl, "budget", BUDGET);
         ReflectionTestUtils.setField(impl, "recencyDays", 7);
         return impl;
+    }
+
+    /**
+     * 默认 CAS 写回成功（answer 走 {@code update(session, WHERE status=0 AND state_json=旧)} 影响 1 行），
+     * 使正常作答流程不落"并发抢占失败"分支；需模拟抢占失败的用例显式覆盖为 {@code thenReturn(0)}。
+     * 与 M1 {@code PracticeSubmitTest} 的 CAS 默认 stub 同款。
+     */
+    @BeforeEach
+    void stubCasSuccess() {
+        when(adaptiveDiagSessionMapper.update(any(), any())).thenReturn(1);
     }
 
     // ── fixture ──────────────────────────────────────────────────────────────
@@ -341,7 +352,7 @@ class AdaptiveDiagnosticServiceTest {
 
         // 状态落盘：node2=TESTED_PASS、node1=INFERRED_PASS(祖先)、node3=UNKNOWN、status=1
         ArgumentCaptor<AdaptiveDiagSession> sc = ArgumentCaptor.forClass(AdaptiveDiagSession.class);
-        verify(adaptiveDiagSessionMapper).updateById(sc.capture());
+        verify(adaptiveDiagSessionMapper).update(sc.capture(), any());
         assertThat(sc.getValue().getStatus()).isEqualTo(1);
         AdaptiveDiagState after = parse(sc.getValue());
         assertThat(after.nodeStates().get(2L)).isEqualTo(NodeState.TESTED_PASS);
@@ -379,7 +390,7 @@ class AdaptiveDiagnosticServiceTest {
         AdaptiveDiagnosticVO vo = impl().answer(SESSION_ID, req(STUDENT_ID, a(21L, "A"), a(22L, "B")));
 
         ArgumentCaptor<AdaptiveDiagSession> sc = ArgumentCaptor.forClass(AdaptiveDiagSession.class);
-        verify(adaptiveDiagSessionMapper).updateById(sc.capture());
+        verify(adaptiveDiagSessionMapper).update(sc.capture(), any());
         AdaptiveDiagState after = parse(sc.getValue());
         assertThat(after.nodeStates().get(2L)).isEqualTo(NodeState.TESTED_FAIL);
         assertThat(after.nodeStates().get(3L)).isEqualTo(NodeState.INFERRED_FAIL); // 子孙
@@ -430,11 +441,49 @@ class AdaptiveDiagnosticServiceTest {
         assertThat(vo.getProgress().getBudgetLeft()).isEqualTo(13); // 15 - 2
 
         ArgumentCaptor<AdaptiveDiagSession> sc = ArgumentCaptor.forClass(AdaptiveDiagSession.class);
-        verify(adaptiveDiagSessionMapper).updateById(sc.capture());
+        verify(adaptiveDiagSessionMapper).update(sc.capture(), any());
         AdaptiveDiagState after = parse(sc.getValue());
         assertThat(after.nodeStates().get(10L)).isEqualTo(NodeState.TESTED_PASS);
         assertThat(after.currentProbe().nodeId()).isEqualTo(20L);
         assertThat(after.budgetUsed()).isEqualTo(2);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // answer 用例 3d：并发抢占（CAS 影响 0 行）→ 抛异常传播（回滚由 @Transactional 保证）
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("answer 并发双击：CAS update 影响 0 行 → 抛 BusinessException(400) 传播触发回滚；本调用 applyAnswers 恰一次(非双施)、CAS 恰尝试一次")
+    void answer_concurrentCasLost_throwsForRollback() {
+        // 与 3a 同构：链 1→2→3，探针节点 2 全对；但另一并发在途请求已先行推进 state_json，
+        // 本请求写回 CAS(WHERE status=0 AND state_json=旧) 匹配 0 行 → 抛异常，交由事务回滚本次已写入。
+        String state = stateJson(
+                new java.util.TreeMap<>(Map.of(1L, NodeState.UNKNOWN, 2L, NodeState.UNKNOWN, 3L, NodeState.UNKNOWN)),
+                0,
+                new AdaptiveDiagState.Probe(2L, List.of(21L, 22L)),
+                List.of());
+        when(adaptiveDiagSessionMapper.selectById(SESSION_ID)).thenReturn(session(0, state));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(q(21, QuestionType.SINGLE), q(22, QuestionType.SINGLE)))
+                .thenReturn(List.of(q(21, QuestionType.SINGLE), q(22, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(opt(21, "A", 1), opt(22, "A", 1)));
+        when(questionNodeMapper.selectList(any()))
+                .thenReturn(List.of(link(21, 2, 1), link(22, 2, 1)));
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(node(1), node(2), node(3)));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of(prereq(1, 2), prereq(2, 3)));
+        // 关键：CAS 抢占失败（覆盖 @BeforeEach 默认 thenReturn(1)）——另一线程已推进 state_json
+        when(adaptiveDiagSessionMapper.update(any(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> impl().answer(SESSION_ID, req(STUDENT_ID, a(21L, "A"), a(22L, "A"))))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo(400));
+
+        // 本次调用内 applyAnswers 恰一次（非双施）；异常传播后由 @Transactional 回滚这次写入。
+        // CAS 条件更新确被尝试一次（影响 0 行才抛）——证明写回走的是条件更新而非无条件 updateById。
+        verify(masteryService, org.mockito.Mockito.times(1)).applyAnswers(any(), any(), any());
+        verify(adaptiveDiagSessionMapper, org.mockito.Mockito.times(1)).update(any(), any());
+        verify(adaptiveDiagSessionMapper, never()).updateById(any(AdaptiveDiagSession.class));
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -459,7 +508,7 @@ class AdaptiveDiagnosticServiceTest {
                 .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo(400));
         verify(masteryService, never()).applyAnswers(any(), any(), any());
         verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
-        verify(adaptiveDiagSessionMapper, never()).updateById(any(AdaptiveDiagSession.class));
+        verify(adaptiveDiagSessionMapper, never()).update(any(), any());
     }
 
     @Test
@@ -518,7 +567,7 @@ class AdaptiveDiagnosticServiceTest {
         // 零写入、引擎不动
         verify(masteryService, never()).applyAnswers(any(), any(), any());
         verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
-        verify(adaptiveDiagSessionMapper, never()).updateById(any(AdaptiveDiagSession.class));
+        verify(adaptiveDiagSessionMapper, never()).update(any(), any());
     }
 
     @Test
@@ -539,7 +588,7 @@ class AdaptiveDiagnosticServiceTest {
         assertThat(vo.getSummary().getTested()).isEqualTo(1);
         assertThat(vo.getResultUrl()).contains("courseId=");
         verify(masteryService, never()).applyAnswers(any(), any(), any());
-        verify(adaptiveDiagSessionMapper, never()).updateById(any(AdaptiveDiagSession.class));
+        verify(adaptiveDiagSessionMapper, never()).update(any(), any());
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -572,7 +621,7 @@ class AdaptiveDiagnosticServiceTest {
         assertThat(vo.getProbe()).isNull();
         assertThat(vo.getProgress().getBudgetLeft()).isEqualTo(0); // 夹紧不出现负数（16 用 > 15 预算）
         ArgumentCaptor<AdaptiveDiagSession> sc = ArgumentCaptor.forClass(AdaptiveDiagSession.class);
-        verify(adaptiveDiagSessionMapper).updateById(sc.capture());
+        verify(adaptiveDiagSessionMapper).update(sc.capture(), any());
         assertThat(sc.getValue().getStatus()).isEqualTo(1);
         assertThat(sc.getValue().getFinishedAt()).isNotNull();
     }
@@ -649,7 +698,7 @@ class AdaptiveDiagnosticServiceTest {
 
         assertThat(vo.getProgress().getBudgetLeft()).isEqualTo(14); // 15 - 1
         ArgumentCaptor<AdaptiveDiagSession> sc = ArgumentCaptor.forClass(AdaptiveDiagSession.class);
-        verify(adaptiveDiagSessionMapper).updateById(sc.capture());
+        verify(adaptiveDiagSessionMapper).update(sc.capture(), any());
         AdaptiveDiagState after = parse(sc.getValue());
         assertThat(after.nodeStates().get(2L)).isEqualTo(NodeState.TESTED_PASS);
         assertThat(after.budgetUsed()).isEqualTo(1);
@@ -675,7 +724,7 @@ class AdaptiveDiagnosticServiceTest {
         impl().answer(SESSION_ID, req(STUDENT_ID, a(21L, "B"))); // 错
 
         ArgumentCaptor<AdaptiveDiagSession> sc = ArgumentCaptor.forClass(AdaptiveDiagSession.class);
-        verify(adaptiveDiagSessionMapper).updateById(sc.capture());
+        verify(adaptiveDiagSessionMapper).update(sc.capture(), any());
         AdaptiveDiagState after = parse(sc.getValue());
         assertThat(after.nodeStates().get(2L)).isEqualTo(NodeState.TESTED_FAIL);
         assertThat(after.nodeStates().get(3L)).isEqualTo(NodeState.INFERRED_FAIL);

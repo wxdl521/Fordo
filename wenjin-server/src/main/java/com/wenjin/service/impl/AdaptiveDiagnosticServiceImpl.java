@@ -1,6 +1,7 @@
 package com.wenjin.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.dto.AdaptiveAnswerRequest;
@@ -249,6 +250,10 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
         Long courseId = session.getCourseId();
         List<Long> frozen = probe.questionIds();
 
+        // ── 0. CAS 乐观锁基线：记住进入时读到的 state_json（写回前作 WHERE 条件）──
+        //    正常作答必把 state_json 推进到新值，故它在每次成功作答上必变（见 casUpdateOrThrow）。
+        String casBaselineStateJson = session.getStateJson();
+
         // ── 判分（服务端，复用 AnswerGrader）+ 写 answer_record（scene=1）───────
         Map<Long, Question> qById = loadQuestions(frozen);
         Map<Long, Set<String>> correctKeys = loadCorrectKeys(frozen);
@@ -304,17 +309,54 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
                     new AdaptiveDiagState.Probe(bundle.nodeId(), bundle.questionIds()),
                     newHistory);
             session.setStateJson(newState.toJson());
-            adaptiveDiagSessionMapper.updateById(session);
+            casUpdateOrThrow(session, casBaselineStateJson);
             vo = notDoneResponse(session.getId(), bundle, progressFrom(engine));
         } else {
             AdaptiveDiagnosticVO.SummaryVO summary = finalizeSession(session, engine.summary());
             AdaptiveDiagState newState = new AdaptiveDiagState(
                     engine.statesView(), engine.getBudgetUsed(), null, newHistory);
             session.setStateJson(newState.toJson());
-            adaptiveDiagSessionMapper.updateById(session);
+            casUpdateOrThrow(session, casBaselineStateJson);
             vo = doneResponse(session.getId(), summary, progressFrom(engine), courseId);
         }
         return vo;
+    }
+
+    /**
+     * 并发安全写回（CAS 乐观锁）：以进入 {@code answer} 时读到的 {@code state_json} 为基线做条件更新。
+     *
+     * <pre>UPDATE adaptive_diag_session
+     *   SET status=?, state_json=&lt;新&gt;, finished_at=?  (由 session 非空字段生成)
+     * WHERE id=? AND status=0 AND state_json=&lt;进入时的旧值&gt;</pre>
+     *
+     * <p><b>为何 state_json 足以作 CAS 基线</b>：每次正常作答都会把 state_json 从"进入时的值"
+     * 改写为"含新探针冻结（下一探针题集）/新 probeHistory 追加/新 budgetUsed/传播后新 nodeStates"
+     * 的值——即成功作答与 state_json 变更严格一一对应，故它在每次成功作答上<b>必变</b>
+     * （即便 status 仍为 0 的多轮作答亦然，弥补了 status 单值不足以做 CAS 的缺口）。
+     *
+     * <p><b>并发语义</b>：同一探针"双击"两个在途 answer 同读 status=0 / 同一 state_json，各自判分。
+     * 先提交者把 state_json 推进到新值（affected=1）；后提交者的 WHERE 匹配 0 行（state_json 已非旧值）
+     * → 抛 {@link BusinessException} → 异常传播令 {@code @Transactional} 回滚其已插入的
+     * answer_record 与 applyAnswers 的 EWMA 写入。故 EWMA/记账/answer_record 各恰施加一次。
+     *
+     * <p>字符串列名 UpdateWrapper（非 LambdaUpdateWrapper.set）：对齐 {@code PracticeServiceImpl}，
+     * 纯 Mockito 单测无 MyBatis 元数据缓存亦不报错。SET 子句由 {@code session} 非空字段生成
+     * （id 作 @TableId 不入 SET）。
+     *
+     * @param session            已置好新 status/state_json/finishedAt 的会话（作 SET 来源）
+     * @param baselineStateJson  进入 answer 时读到的旧 state_json（作 WHERE 乐观锁基线）
+     * @throws BusinessException affected=0（并发抢占失败），令事务回滚本次已写入
+     */
+    private void casUpdateOrThrow(AdaptiveDiagSession session, String baselineStateJson) {
+        int affected = adaptiveDiagSessionMapper.update(session,
+                new UpdateWrapper<AdaptiveDiagSession>()
+                        .eq("id", session.getId())
+                        .eq("status", SESSION_IN_PROGRESS)
+                        .eq("state_json", baselineStateJson));
+        if (affected == 0) {
+            throw new BusinessException(ResultCode.BAD_REQUEST,
+                    "并发作答冲突：该探针已被其他请求处理，本次作答未生效（请刷新后重试）");
+        }
     }
 
     /** 幂等重放：按当前会话状态（不动引擎、不写库）重建响应。 */
