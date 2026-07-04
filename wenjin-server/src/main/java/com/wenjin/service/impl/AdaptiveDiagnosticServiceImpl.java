@@ -1,6 +1,7 @@
 package com.wenjin.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
@@ -439,12 +440,22 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
                         .eq("id", session.getId())
                         .eq("status", SESSION_IN_PROGRESS));
         if (affected == 0) {
-            AdaptiveDiagSession current = adaptiveDiagSessionMapper.selectById(sessionId);
+            // 重查必须走当前读（SELECT ... FOR UPDATE，同事务内）——不可"简化"回普通 selectById：
+            // 本方法 @Transactional，入口 selectById 已在 InnoDB 默认 REPEATABLE READ 下建立一致性
+            // 读快照（status=0）。并发赢者提交 status=1/2 后，条件更新 WHERE status=0 走当前读、
+            // 正确匹配 0 行；但普通 selectById 是快照读，该行未被本事务修改 → 仍返回旧快照
+            // status=0，分派逻辑将永远走不到 status=2 幂等分支、错抛 400。锁定读取已提交最新行。
+            AdaptiveDiagSession current = adaptiveDiagSessionMapper.selectOne(
+                    new QueryWrapper<AdaptiveDiagSession>()
+                            .eq("id", sessionId)
+                            .last("FOR UPDATE"));
             int currentStatus = (current == null || current.getStatus() == null)
                     ? SESSION_IN_PROGRESS : current.getStatus();
             if (currentStatus == SESSION_ABANDONED) {
                 return; // 幂等：并发下另一 abandon 请求已先行完成
             }
+            // status=1 → 已完成不可放弃。status=0 理论不可达：条件更新 0 行意味着当时 status≠0，
+            // 且无任何路径把 status 改回 0——若达则为数据异常，防御性同抛 BAD_REQUEST。
             throw new BusinessException(ResultCode.BAD_REQUEST, "已完成的诊断不可放弃");
         }
     }

@@ -1035,41 +1035,43 @@ class AdaptiveDiagnosticServiceTest {
     // ══════════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("T5 清单7a：abandon 条件 update 返回 0 + 重查 status=2 → 幂等成功（并发另一 abandon 赢了）")
+    @DisplayName("T5 清单7a：abandon 条件 update 返回 0 + 锁定读重查 status=2 → 幂等成功（并发另一 abandon 赢了）")
     void t5_abandon_concurrentAbandonWins_idempotent() {
         String state = stateJson(
                 new java.util.TreeMap<>(Map.of(10L, NodeState.UNKNOWN)), 0,
                 new AdaptiveDiagState.Probe(10L, List.of(1L, 2L)),
                 List.of());
-        // 首次 selectById 返回 status=0；条件 update 返回 0（并发 abandon 先一步）；重查返回 status=2
-        when(adaptiveDiagSessionMapper.selectById(SESSION_ID))
-                .thenReturn(session(0, state))
-                .thenReturn(session(2, state));
+        // 入口 selectById 返回 status=0；条件 update 返回 0（并发 abandon 先一步）；
+        // 重查走锁定读 selectOne(FOR UPDATE)——RR 下普通 selectById 会回旧快照，故必须当前读
+        when(adaptiveDiagSessionMapper.selectById(SESSION_ID)).thenReturn(session(0, state));
         when(adaptiveDiagSessionMapper.update(any(), any())).thenReturn(0);
+        when(adaptiveDiagSessionMapper.selectOne(any())).thenReturn(session(2, state));
 
         // 不应抛异常（幂等成功）
         impl().abandon(SESSION_ID, STUDENT_ID);
 
-        verify(adaptiveDiagSessionMapper, times(2)).selectById(SESSION_ID);
+        // 入口快照读恰一次 + 锁定读重查恰一次（不再第二次 selectById——RR 下它会回旧值）
+        verify(adaptiveDiagSessionMapper, times(1)).selectById(SESSION_ID);
+        verify(adaptiveDiagSessionMapper, times(1)).selectOne(any());
         verify(adaptiveDiagSessionMapper, never()).updateById(any(AdaptiveDiagSession.class));
     }
 
     @Test
-    @DisplayName("T5 清单7b：abandon 条件 update 返回 0 + 重查 status=1 → BAD_REQUEST(400)（并发 answer 赢了并完成）")
+    @DisplayName("T5 清单7b：abandon 条件 update 返回 0 + 锁定读重查 status=1 → BAD_REQUEST(400)（并发 answer 赢了并完成）")
     void t5_abandon_concurrentAnswerCompletes_badRequest() {
         String state = stateJson(
                 new java.util.TreeMap<>(Map.of(10L, NodeState.UNKNOWN)), 0,
                 new AdaptiveDiagState.Probe(10L, List.of(1L, 2L)),
                 List.of());
-        when(adaptiveDiagSessionMapper.selectById(SESSION_ID))
-                .thenReturn(session(0, state))
-                .thenReturn(session(1, state)); // 重查结果：已由 answer 完成
+        when(adaptiveDiagSessionMapper.selectById(SESSION_ID)).thenReturn(session(0, state));
         when(adaptiveDiagSessionMapper.update(any(), any())).thenReturn(0);
+        when(adaptiveDiagSessionMapper.selectOne(any())).thenReturn(session(1, state)); // 已由 answer 完成
 
         assertThatThrownBy(() -> impl().abandon(SESSION_ID, STUDENT_ID))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo(400));
-        verify(adaptiveDiagSessionMapper, times(2)).selectById(SESSION_ID);
+        verify(adaptiveDiagSessionMapper, times(1)).selectById(SESSION_ID);
+        verify(adaptiveDiagSessionMapper, times(1)).selectOne(any());
         verify(adaptiveDiagSessionMapper, never()).updateById(any(AdaptiveDiagSession.class));
     }
 }
