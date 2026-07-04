@@ -4,6 +4,7 @@ import Login from '../views/Login.vue'
 // 重页懒加载，移出落地首包
 const ColorMap = () => import('../views/ColorMap.vue')
 const Diagnostic = () => import('../views/Diagnostic.vue')
+const AdaptiveDiagnostic = () => import('../views/AdaptiveDiagnostic.vue')
 const DiagnosticResult = () => import('../views/DiagnosticResult.vue')
 const LearningPath = () => import('../views/LearningPath.vue')
 const Companion = () => import('../views/Companion.vue')
@@ -20,6 +21,7 @@ const routes = [
   { path: '/', name: 'login', component: Login, meta: { title: '登录 / 课程选择' } },
   { path: '/map', name: 'map', component: ColorMap, meta: { title: '染色地图' } },
   { path: '/diagnostic', name: 'diagnostic', component: Diagnostic, meta: { title: '入口诊断' } },
+  { path: '/diagnostic/adaptive', name: 'diagnostic-adaptive', component: AdaptiveDiagnostic, meta: { title: '快速诊断' } },
   { path: '/result', name: 'result', component: DiagnosticResult, meta: { title: '诊断结果' } },
   { path: '/path', name: 'path', component: LearningPath, meta: { title: '学习路径' } },
   { path: '/knowledge', name: 'knowledge', component: KnowledgePoint, meta: { title: '知识点详情' } },

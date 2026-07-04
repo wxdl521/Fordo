@@ -3,6 +3,26 @@
        only inside this component, leaving ColorMap's dark palette untouched. -->
   <div class="wj-diag">
 
+    <!-- 模式选择层：进入诊断先选快速 / 完整；选完整走既有固定卷流程（下方内容一行不动） -->
+    <div v-if="mode === null" class="diag-mode">
+      <div class="diag-mode-inner">
+        <div class="diag-mode-title">选择诊断方式</div>
+        <div class="diag-mode-sub">两种方式都会定位你的知识卡点，快速诊断更省时。</div>
+        <div class="diag-mode-cards">
+          <button class="diag-mode-card" @click="chooseQuick">
+            <span class="diag-mode-card-name">快速诊断（智能，约 10–15 题）</span>
+            <span class="diag-mode-card-desc">问津按你的作答动态选题，沿知识图谱推断掌握分布，更快定位卡点。</span>
+          </button>
+          <button class="diag-mode-card" @click="chooseFull">
+            <span class="diag-mode-card-name">完整诊断（25 题）</span>
+            <span class="diag-mode-card-desc">固定 25 题，逐题覆盖各章节，作答量更大、覆盖更全。</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <template v-else>
+
     <!-- 工具栏 -->
     <div class="diag-topbar">
       <span v-show="width >= 560" class="diag-subtitle">入口诊断</span>
@@ -103,17 +123,31 @@
       </div>
     </div>
 
+    </template>
+
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
 import { fetchPaper, submitPaper } from '../api/diagnostic.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
 import QuestionAnswerCard from '../components/QuestionAnswerCard.vue'
 
 // ─── 常量 ──────────────────────────────────────────────────────────────────
 const { courseId } = useStudentCourse()
+const router = useRouter()
+
+// 模式选择层：null=未选（显示两卡片）/ 'full'=完整卷（走下方既有流程）。
+// 选快速则直接跳转独立视图，不进入下方固定卷逻辑。
+const mode = ref(null)
+function chooseFull() {
+  mode.value = 'full'
+}
+function chooseQuick() {
+  router.push({ path: '/diagnostic/adaptive', query: courseQuery.value })
+}
 
 // 从 localStorage 读取当前登录用户
 function readUser() {
@@ -304,9 +338,11 @@ onMounted(() => {
    */
   if (import.meta.env.DEV) {
     window.__wjDiag = {
+      mode,                              // 模式选择层状态（null/'full'）
       loading, error, idx, total, done, result,
       questions, answers, skipped, submitting, submitError,
       answeredCount, skippedCount, hasSel, last,
+      chooseFull, chooseQuick,           // 选完整卷 / 跳快速诊断
       pick, goNext, goPrev, skip, finish, submitAnswers, restart, load
     }
   }
@@ -329,6 +365,79 @@ onBeforeUnmount(() => {
   flex-direction: column;
   background: var(--bg);
   color: var(--ink);
+}
+
+/* ── 模式选择层 ───────────────────────────────────────────────────── */
+.diag-mode {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+}
+
+.diag-mode-inner {
+  width: 100%;
+  max-width: 680px;
+  text-align: center;
+  animation: wjFadeUp 0.5s ease both;
+}
+
+.diag-mode-title {
+  font-family: 'Noto Serif SC', 'Songti SC', serif;
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 10px;
+}
+
+.diag-mode-sub {
+  font-size: 14px;
+  color: var(--mut);
+  line-height: 1.7;
+  margin-bottom: 32px;
+}
+
+.diag-mode-cards {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.diag-mode-card {
+  flex: 1 1 260px;
+  max-width: 320px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 22px 22px;
+  background: var(--card);
+  border: 1.5px solid var(--line);
+  border-radius: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.18s, transform 0.18s;
+}
+
+.diag-mode-card:hover {
+  border-color: var(--acc);
+  transform: translateY(-2px);
+}
+
+.diag-mode-card-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.diag-mode-card-desc {
+  font-size: 13px;
+  color: var(--mut);
+  line-height: 1.65;
 }
 
 /* ── 顶栏 ─────────────────────────────────────────────────────────── */
