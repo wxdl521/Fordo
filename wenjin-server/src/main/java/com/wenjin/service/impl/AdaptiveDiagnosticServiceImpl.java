@@ -15,6 +15,7 @@ import com.wenjin.entity.KgNode;
 import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
+import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.AdaptiveDiagSessionMapper;
 import com.wenjin.mapper.AnswerRecordMapper;
 import com.wenjin.mapper.KgEdgeMapper;
@@ -22,6 +23,7 @@ import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.AdaptiveDiagnosticService;
 import com.wenjin.service.MasteryService;
 import com.wenjin.support.AdaptiveDiagState;
@@ -36,6 +38,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -93,6 +97,17 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
     /** 每探针题数（简报钉死=2；题库不足 1 题也可，由组卷组件兜底）。 */
     private static final int PROBE_QUESTION_COUNT = 2;
 
+    /**
+     * 推断保守初值：INFERRED_PASS 节点写入 70（低于实测答对冷启动区间上界，留"实测更可信"余量）。
+     * <p>M2 §2.2 裁决，不做 EWMA，直接常量写入，不违反"绝不另写掌握度计算"红线。
+     */
+    private static final int INFERRED_PASS_SCORE = 70;
+
+    /**
+     * 推断保守初值：INFERRED_FAIL 节点写入 35。
+     */
+    private static final int INFERRED_FAIL_SCORE = 35;
+
     private final KgNodeMapper kgNodeMapper;
     private final KgEdgeMapper kgEdgeMapper;
     private final QuestionNodeMapper questionNodeMapper;
@@ -101,6 +116,7 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
     private final AnswerRecordMapper answerRecordMapper;
     private final AdaptiveDiagSessionMapper adaptiveDiagSessionMapper;
     private final MasteryService masteryService;
+    private final StudentMasteryMapper studentMasteryMapper;
 
     /** 组卷抽取共享组件（M1 组卷策略；探针传"仅客观题"谓词）。 */
     private final QuestionPicker questionPicker;
@@ -123,7 +139,8 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
                                          QuestionOptionMapper questionOptionMapper,
                                          AnswerRecordMapper answerRecordMapper,
                                          AdaptiveDiagSessionMapper adaptiveDiagSessionMapper,
-                                         MasteryService masteryService) {
+                                         MasteryService masteryService,
+                                         StudentMasteryMapper studentMasteryMapper) {
         this.kgNodeMapper = kgNodeMapper;
         this.kgEdgeMapper = kgEdgeMapper;
         this.questionNodeMapper = questionNodeMapper;
@@ -132,6 +149,7 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
         this.answerRecordMapper = answerRecordMapper;
         this.adaptiveDiagSessionMapper = adaptiveDiagSessionMapper;
         this.masteryService = masteryService;
+        this.studentMasteryMapper = studentMasteryMapper;
         this.questionPicker = new QuestionPicker(questionNodeMapper, questionMapper);
     }
 
@@ -168,7 +186,7 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
             vo = notDoneResponse(session.getId(), bundle, progressFrom(engine));
         } else {
             // 空图/空题库/无 UNKNOWN → 一开局即终止
-            AdaptiveDiagnosticVO.SummaryVO summary = finalizeSession(session, engine.summary());
+            AdaptiveDiagnosticVO.SummaryVO summary = finalizeSession(session, engine, nodes);
             AdaptiveDiagState state = new AdaptiveDiagState(
                     engine.statesView(), engine.getBudgetUsed(), null, List.of());
             session.setStateJson(state.toJson());
@@ -312,7 +330,7 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
             casUpdateOrThrow(session, casBaselineStateJson);
             vo = notDoneResponse(session.getId(), bundle, progressFrom(engine));
         } else {
-            AdaptiveDiagnosticVO.SummaryVO summary = finalizeSession(session, engine.summary());
+            AdaptiveDiagnosticVO.SummaryVO summary = finalizeSession(session, engine, nodes);
             AdaptiveDiagState newState = new AdaptiveDiagState(
                     engine.statesView(), engine.getBudgetUsed(), null, newHistory);
             session.setStateJson(newState.toJson());
@@ -403,16 +421,32 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
         if (status == SESSION_DONE) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "已完成的诊断不可放弃");
         }
-        // status=0 → 置 2。已实测掌握度天然保留（applyAnswers 已即时落库，无需补偿）。
+        // status=0 → 条件更新置 2（防 lost-update：并发 answer 赢者提交后 abandon 不得回退）。
+        // 已实测掌握度天然保留（applyAnswers 已即时落库，无需补偿）；
+        // 推断落库不触发（计划 §2.4：abandon=status 2+已实测保留，推断初值只在正常终止时写）。
         session.setStatus(SESSION_ABANDONED);
         session.setFinishedAt(LocalDateTime.now());
         // 清空在途探针（T3 契约：放弃后 currentProbe=null），保留已测状态与历史
         if (session.getStateJson() != null) {
-            AdaptiveDiagState state = AdaptiveDiagState.fromJson(session.getStateJson());
+            AdaptiveDiagState prevState = AdaptiveDiagState.fromJson(session.getStateJson());
             session.setStateJson(new AdaptiveDiagState(
-                    state.nodeStates(), state.budgetUsed(), null, state.probeHistory()).toJson());
+                    prevState.nodeStates(), prevState.budgetUsed(), null, prevState.probeHistory()).toJson());
         }
-        adaptiveDiagSessionMapper.updateById(session);
+        // 条件更新：eq id + eq status=0（字符串列名，对齐 answer 路径 casUpdateOrThrow 写法）。
+        // 0 行时重查 status 分派：status=2 → 幂等成功；status=1 → BAD_REQUEST（已完成不可放弃）。
+        int affected = adaptiveDiagSessionMapper.update(session,
+                new UpdateWrapper<AdaptiveDiagSession>()
+                        .eq("id", session.getId())
+                        .eq("status", SESSION_IN_PROGRESS));
+        if (affected == 0) {
+            AdaptiveDiagSession current = adaptiveDiagSessionMapper.selectById(sessionId);
+            int currentStatus = (current == null || current.getStatus() == null)
+                    ? SESSION_IN_PROGRESS : current.getStatus();
+            if (currentStatus == SESSION_ABANDONED) {
+                return; // 幂等：并发下另一 abandon 请求已先行完成
+            }
+            throw new BusinessException(ResultCode.BAD_REQUEST, "已完成的诊断不可放弃");
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -533,20 +567,113 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
     // ══════════════════════════════════════════════════════════════════════════
 
     /**
-     * 终止收尾（T4 最小桩）：置 status=1 + finished_at，返回四类计数 + 空节点明细。
+     * 终止收尾（T5 完整实现）：置 status=1 + finished_at；落库推断保守初值；写快照；汇总节点明细。
      *
-     * <p><b>T5 接手</b>：在此方法内落库推断保守初值（INFERRED_PASS=70 / INFERRED_FAIL=35，
-     * level 走既有 levelOf 映射，仅当无既有 student_mastery 行时写；已有行绝不覆盖）、
-     * 写掌握度快照、汇总节点明细填入 {@link AdaptiveDiagnosticVO.SummaryVO#getNodes()}。
+     * <h3>推断落库（M2 §2.2）</h3>
+     * <ul>
+     *   <li>INFERRED_PASS → score=70，INFERRED_FAIL → score=35（常量写入，非 EWMA，不违反掌握度计算红线）。</li>
+     *   <li>只填空不覆盖：批量 IN 查既有 student_mastery 行（不循环查库），已有行跳过。</li>
+     *   <li>TESTED 节点已由 {@link MasteryService#applyAnswers} 即时落库，UNKNOWN 不落库。</li>
+     *   <li>level 复用 {@link MasteryService#levelOf}（不重写阈值逻辑）。</li>
+     * </ul>
      *
-     * @param session       会话（本方法会置其 status/finishedAt；state_json 由调用方写）
-     * @param engineSummary 引擎汇总计数
+     * <h3>快照</h3>
+     * <p>每个实际插入的推断节点追加一条 mastery_snapshot（复用 {@link MasteryService#appendSnapshot}）。
+     * 已有行跳过 → 快照亦不重复写。全 UNKNOWN / 全 TESTED 时推断落库为空集 → 本方法不写任何快照
+     * （TESTED 节点快照已由 applyAnswers 按答题次序逐题追加，此处不补写，避免重复）。
+     *
+     * <h3>节点明细</h3>
+     * <p>courseNodes 由调用方传入（已在本事务内查过一次，防 N+1），按 nodeId 升序排列。
+     * 包含全部节点（UNKNOWN / TESTED / INFERRED），state 取 {@link NodeState#name()}。
+     *
+     * @param session     会话（本方法置 status=1 / finishedAt；state_json 由调用方序列化写回）
+     * @param engine      已记账传播后的引擎（取 summary + statesView）
+     * @param courseNodes 课程全节点（由 loadCourseNodes 在当前事务查出，传入复用，不再查库）
      */
     private AdaptiveDiagnosticVO.SummaryVO finalizeSession(AdaptiveDiagSession session,
-                                                           AdaptiveEngine.Summary engineSummary) {
+                                                           AdaptiveEngine engine,
+                                                           List<KgNode> courseNodes) {
         session.setStatus(SESSION_DONE);
         session.setFinishedAt(LocalDateTime.now());
-        return summaryOf(engineSummary);
+
+        Long studentId = session.getStudentId();
+        Long courseId = session.getCourseId();
+        Map<Long, NodeState> nodeStates = engine.statesView();
+        AdaptiveEngine.Summary summary = engine.summary();
+
+        // ── 1. 收集推断节点 ID（批量查既有行用）─────────────────────────────
+        List<Long> inferredNodeIds = nodeStates.entrySet().stream()
+                .filter(e -> e.getValue().isInferred())
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
+
+        // ── 2. 一次 IN 查：哪些推断节点已有 student_mastery 行（不覆盖）──────
+        Set<Long> existingNodeIds = new HashSet<>();
+        if (!inferredNodeIds.isEmpty()) {
+            List<StudentMastery> existing = studentMasteryMapper.selectList(
+                    new LambdaQueryWrapper<StudentMastery>()
+                            .eq(StudentMastery::getStudentId, studentId)
+                            .eq(StudentMastery::getCourseId, courseId)
+                            .in(StudentMastery::getNodeId, inferredNodeIds));
+            for (StudentMastery sm : existing) {
+                existingNodeIds.add(sm.getNodeId());
+            }
+        }
+
+        // ── 3. 为无既有行的推断节点写 student_mastery + mastery_snapshot ─────
+        for (Map.Entry<Long, NodeState> entry : nodeStates.entrySet()) {
+            Long nodeId = entry.getKey();
+            NodeState state = entry.getValue();
+            if (!state.isInferred()) {
+                continue; // TESTED 已由 applyAnswers 处理；UNKNOWN 不落库
+            }
+            if (existingNodeIds.contains(nodeId)) {
+                continue; // 已有行，绝不覆盖（比如之前练习已建立掌握度）
+            }
+            int rawScore = (state == NodeState.INFERRED_PASS) ? INFERRED_PASS_SCORE : INFERRED_FAIL_SCORE;
+            int level = masteryService.levelOf(rawScore);
+            BigDecimal score = BigDecimal.valueOf(rawScore).setScale(2, RoundingMode.HALF_UP);
+
+            StudentMastery row = new StudentMastery();
+            row.setStudentId(studentId);
+            row.setCourseId(courseId);
+            row.setNodeId(nodeId);
+            row.setMasteryScore(score);
+            row.setMasteryLevel(level);
+            studentMasteryMapper.insert(row);
+
+            // 快照追加（复用 MasteryService 既有机制，对齐 applyAnswers 快照粒度）
+            masteryService.appendSnapshot(studentId, courseId, nodeId, score, level);
+        }
+
+        // ── 4. 汇总节点明细（全课程节点，含 UNKNOWN / TESTED / INFERRED）──────
+        //    courseNodes 传入复用（本事务已查一次），此处不再查库（防 N+1）。
+        Map<Long, KgNode> nodeById = new HashMap<>();
+        for (KgNode n : courseNodes) {
+            nodeById.put(n.getId(), n);
+        }
+        List<AdaptiveDiagnosticVO.NodeDetailVO> nodeDetails = nodeStates.entrySet().stream()
+                .map(e -> {
+                    KgNode kg = nodeById.get(e.getKey());
+                    AdaptiveDiagnosticVO.NodeDetailVO detail = new AdaptiveDiagnosticVO.NodeDetailVO();
+                    detail.setNodeId(e.getKey());
+                    if (kg != null) {
+                        detail.setNodeCode(kg.getNodeCode());
+                        detail.setName(kg.getName());
+                    }
+                    detail.setState(e.getValue().name());
+                    return detail;
+                })
+                .sorted(Comparator.comparing(AdaptiveDiagnosticVO.NodeDetailVO::getNodeId))
+                .collect(Collectors.toList());
+
+        AdaptiveDiagnosticVO.SummaryVO vo = new AdaptiveDiagnosticVO.SummaryVO();
+        vo.setTested(summary.tested());
+        vo.setInferredPass(summary.inferredPass());
+        vo.setInferredFail(summary.inferredFail());
+        vo.setUnknown(summary.unknown());
+        vo.setNodes(nodeDetails);
+        return vo;
     }
 
     private AdaptiveDiagnosticVO.SummaryVO summaryOf(AdaptiveEngine.Summary s) {
@@ -555,7 +682,7 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
         vo.setInferredPass(s.inferredPass());
         vo.setInferredFail(s.inferredFail());
         vo.setUnknown(s.unknown());
-        vo.setNodes(new ArrayList<>()); // T4 桩：空明细，T5 填充
+        vo.setNodes(new ArrayList<>()); // 幂等重放轻量路径（无需节点明细）
         return vo;
     }
 

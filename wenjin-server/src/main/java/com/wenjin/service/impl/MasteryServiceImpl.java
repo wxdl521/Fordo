@@ -196,8 +196,9 @@ public class MasteryServiceImpl implements MasteryService {
     }
 
     /** 每次更新追加一条快照（只增不改，成长曲线数据来源）。 */
-    private void appendSnapshot(Long studentId, Long courseId, Long nodeId,
-                                BigDecimal score, int level) {
+    @Override
+    public void appendSnapshot(Long studentId, Long courseId, Long nodeId,
+                               BigDecimal score, int level) {
         MasterySnapshot snap = new MasterySnapshot();
         snap.setStudentId(studentId);
         snap.setCourseId(courseId);
@@ -208,7 +209,8 @@ public class MasteryServiceImpl implements MasteryService {
         masterySnapshotMapper.insert(snap);
     }
 
-    private int levelOf(double score) {
+    @Override
+    public int levelOf(double score) {
         if (score >= masteredThreshold) {
             return 2;
         }

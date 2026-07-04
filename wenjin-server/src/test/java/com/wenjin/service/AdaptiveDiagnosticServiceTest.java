@@ -10,6 +10,7 @@ import com.wenjin.entity.KgNode;
 import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
+import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.AdaptiveDiagSessionMapper;
 import com.wenjin.mapper.AnswerRecordMapper;
 import com.wenjin.mapper.KgEdgeMapper;
@@ -17,6 +18,7 @@ import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.entity.AnswerRecord;
 import com.wenjin.service.impl.AdaptiveDiagnosticServiceImpl;
 import com.wenjin.support.AdaptiveDiagState;
@@ -34,6 +36,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -42,7 +45,11 @@ import java.util.stream.Collectors;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -65,6 +72,7 @@ class AdaptiveDiagnosticServiceTest {
     @Mock AnswerRecordMapper answerRecordMapper;
     @Mock AdaptiveDiagSessionMapper adaptiveDiagSessionMapper;
     @Mock MasteryService masteryService;
+    @Mock StudentMasteryMapper studentMasteryMapper;
 
     private static final Long STUDENT_ID = 2L;
     private static final Long COURSE_ID = 1L;
@@ -74,7 +82,8 @@ class AdaptiveDiagnosticServiceTest {
     private AdaptiveDiagnosticServiceImpl impl() {
         AdaptiveDiagnosticServiceImpl impl = new AdaptiveDiagnosticServiceImpl(
                 kgNodeMapper, kgEdgeMapper, questionNodeMapper, questionMapper,
-                questionOptionMapper, answerRecordMapper, adaptiveDiagSessionMapper, masteryService);
+                questionOptionMapper, answerRecordMapper, adaptiveDiagSessionMapper,
+                masteryService, studentMasteryMapper);
         ReflectionTestUtils.setField(impl, "budget", BUDGET);
         ReflectionTestUtils.setField(impl, "recencyDays", 7);
         return impl;
@@ -281,7 +290,11 @@ class AdaptiveDiagnosticServiceTest {
         assertThat(vo.getSummary()).isNotNull();
         assertThat(vo.getSummary().getUnknown()).isEqualTo(2);
         assertThat(vo.getSummary().getTested()).isZero();
-        assertThat(vo.getSummary().getNodes()).isEmpty();
+        // T5：空图（全 UNKNOWN）终止 → nodes 含所有节点（UNKNOWN 态），非空（空图 = 空列表仅指无节点时）
+        assertThat(vo.getSummary().getNodes()).hasSize(2);
+        assertThat(vo.getSummary().getNodes()).allMatch(nd -> "UNKNOWN".equals(nd.getState()));
+        assertThat(vo.getSummary().getNodes().get(0).getNodeId()).isEqualTo(10L);
+        assertThat(vo.getSummary().getNodes().get(1).getNodeId()).isEqualTo(20L);
         assertThat(vo.getResultUrl()).contains("courseId=" + COURSE_ID);
         assertThat(vo.getProgress().getBudgetLeft()).isEqualTo(15);
 
@@ -746,8 +759,10 @@ class AdaptiveDiagnosticServiceTest {
 
         impl().abandon(SESSION_ID, STUDENT_ID);
 
+        // T5 硬项：abandon 改为条件更新（eq id + eq status=0），不再 updateById
         ArgumentCaptor<AdaptiveDiagSession> sc = ArgumentCaptor.forClass(AdaptiveDiagSession.class);
-        verify(adaptiveDiagSessionMapper).updateById(sc.capture());
+        verify(adaptiveDiagSessionMapper).update(sc.capture(), any());
+        verify(adaptiveDiagSessionMapper, never()).updateById(any(AdaptiveDiagSession.class));
         assertThat(sc.getValue().getStatus()).isEqualTo(2);
         assertThat(sc.getValue().getFinishedAt()).isNotNull();
         AdaptiveDiagState after = parse(sc.getValue());
@@ -795,5 +810,266 @@ class AdaptiveDiagnosticServiceTest {
         assertThatThrownBy(() -> impl().abandon(SESSION_ID, STUDENT_ID))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo(404));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // T5 清单 1 / 2 / 3：推断保守初值落库
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /** 复用：链 1→2→3，node2 可实测，触发 finalizeSession 的基础 stub（answer 全对）。 */
+    private void stubPassTermination() {
+        String state = stateJson(
+                new java.util.TreeMap<>(Map.of(1L, NodeState.UNKNOWN, 2L, NodeState.UNKNOWN, 3L, NodeState.UNKNOWN)),
+                0,
+                new AdaptiveDiagState.Probe(2L, List.of(21L, 22L)),
+                List.of());
+        when(adaptiveDiagSessionMapper.selectById(SESSION_ID)).thenReturn(session(0, state));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(q(21, QuestionType.SINGLE), q(22, QuestionType.SINGLE)))
+                .thenReturn(List.of(q(21, QuestionType.SINGLE), q(22, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(opt(21, "A", 1), opt(22, "A", 1)));
+        when(questionNodeMapper.selectList(any()))
+                .thenReturn(List.of(link(21, 2, 1), link(22, 2, 1)));
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(node(1), node(2), node(3)));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of(prereq(1, 2), prereq(2, 3)));
+    }
+
+    /** 复用：链 1→2→3，node2 可实测，触发 finalizeSession 的基础 stub（answer 有错）。 */
+    private void stubFailTermination() {
+        String state = stateJson(
+                new java.util.TreeMap<>(Map.of(1L, NodeState.UNKNOWN, 2L, NodeState.UNKNOWN, 3L, NodeState.UNKNOWN)),
+                0,
+                new AdaptiveDiagState.Probe(2L, List.of(21L, 22L)),
+                List.of());
+        when(adaptiveDiagSessionMapper.selectById(SESSION_ID)).thenReturn(session(0, state));
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(q(21, QuestionType.SINGLE), q(22, QuestionType.SINGLE)))
+                .thenReturn(List.of(q(21, QuestionType.SINGLE), q(22, QuestionType.SINGLE)));
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(opt(21, "A", 1), opt(22, "A", 1)));
+        when(questionNodeMapper.selectList(any()))
+                .thenReturn(List.of(link(21, 2, 1), link(22, 2, 1)));
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(node(1), node(2), node(3)));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of(prereq(1, 2), prereq(2, 3)));
+    }
+
+    @Test
+    @DisplayName("T5 清单1a：INFERRED_PASS 无既有行 → insert score=70 + level=levelOf(70)")
+    void t5_inferredPass_noExistingRow_insertsScore70() {
+        stubPassTermination();
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of());
+        when(masteryService.levelOf(70.0)).thenReturn(1); // 70 >= weakThreshold=40 但 < masteredThreshold=75
+
+        impl().answer(SESSION_ID, req(STUDENT_ID, a(21L, "A"), a(22L, "A")));
+
+        // 仅 node1 是 INFERRED_PASS → 1 次 insert
+        ArgumentCaptor<StudentMastery> cap = ArgumentCaptor.forClass(StudentMastery.class);
+        verify(studentMasteryMapper, times(1)).insert(cap.capture());
+        StudentMastery inserted = cap.getValue();
+        assertThat(inserted.getNodeId()).isEqualTo(1L);
+        assertThat(inserted.getStudentId()).isEqualTo(STUDENT_ID);
+        assertThat(inserted.getCourseId()).isEqualTo(COURSE_ID);
+        assertThat(inserted.getMasteryScore()).isEqualByComparingTo(new BigDecimal("70.00"));
+        assertThat(inserted.getMasteryLevel()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("T5 清单1b：INFERRED_FAIL 无既有行 → insert score=35 + level=levelOf(35)")
+    void t5_inferredFail_noExistingRow_insertsScore35() {
+        stubFailTermination();
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of());
+        when(masteryService.levelOf(35.0)).thenReturn(0); // 35 < weakThreshold=40
+
+        impl().answer(SESSION_ID, req(STUDENT_ID, a(21L, "A"), a(22L, "B"))); // q22 答错
+
+        // 仅 node3 是 INFERRED_FAIL → 1 次 insert
+        ArgumentCaptor<StudentMastery> cap = ArgumentCaptor.forClass(StudentMastery.class);
+        verify(studentMasteryMapper, times(1)).insert(cap.capture());
+        StudentMastery inserted = cap.getValue();
+        assertThat(inserted.getNodeId()).isEqualTo(3L);
+        assertThat(inserted.getMasteryScore()).isEqualByComparingTo(new BigDecimal("35.00"));
+        assertThat(inserted.getMasteryLevel()).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("T5 清单2：已有 student_mastery 行的推断节点 → 零写入（never insert / never updateById）")
+    void t5_inferredPass_existingRow_neverInserted() {
+        stubPassTermination();
+        // node1 已有掌握度行（来自之前练习）
+        StudentMastery existing = new StudentMastery();
+        existing.setId(1L);
+        existing.setStudentId(STUDENT_ID);
+        existing.setCourseId(COURSE_ID);
+        existing.setNodeId(1L);
+        existing.setMasteryScore(new BigDecimal("82.00"));
+        existing.setMasteryLevel(2);
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(existing));
+
+        impl().answer(SESSION_ID, req(STUDENT_ID, a(21L, "A"), a(22L, "A")));
+
+        // 不得 insert（已有行不覆盖）；不得调 appendSnapshot 给 node1
+        verify(studentMasteryMapper, never()).insert(any(StudentMastery.class));
+        verify(masteryService, never()).appendSnapshot(any(), any(), eq(1L), any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("T5 清单3：TESTED 节点与 UNKNOWN 节点不在推断落库范围")
+    void t5_testedAndUnknownNodes_notInserted() {
+        // node2=TESTED_PASS（applyAnswers 已处理）；node3=UNKNOWN；只有 node1=INFERRED_PASS 被写
+        stubPassTermination();
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of());
+        when(masteryService.levelOf(anyDouble())).thenReturn(1);
+
+        impl().answer(SESSION_ID, req(STUDENT_ID, a(21L, "A"), a(22L, "A")));
+
+        // 仅 1 次 insert（node1 INFERRED_PASS），TESTED node2 和 UNKNOWN node3 不被 insert
+        ArgumentCaptor<StudentMastery> cap = ArgumentCaptor.forClass(StudentMastery.class);
+        verify(studentMasteryMapper, times(1)).insert(cap.capture());
+        assertThat(cap.getValue().getNodeId()).isEqualTo(1L);
+        // TESTED 节点不经 studentMasteryMapper.insert（已由 applyAnswers 处理）
+        assertThat(cap.getAllValues().stream().map(StudentMastery::getNodeId))
+                .doesNotContain(2L, 3L);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // T5 清单 4：快照追加
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T5 清单4：推断节点新写入时 appendSnapshot 恰好被调用（内容含 nodeId/score/level）")
+    void t5_inferredNode_appendsSnapshot() {
+        stubPassTermination();
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of());
+        when(masteryService.levelOf(70.0)).thenReturn(1);
+
+        impl().answer(SESSION_ID, req(STUDENT_ID, a(21L, "A"), a(22L, "A")));
+
+        // appendSnapshot 恰 1 次，node1，score=70.00，level=1
+        verify(masteryService, times(1)).appendSnapshot(
+                eq(STUDENT_ID), eq(COURSE_ID), eq(1L),
+                eq(new BigDecimal("70.00")), eq(1));
+    }
+
+    @Test
+    @DisplayName("T5 清单4：已有行的推断节点 → appendSnapshot 不被调用（不重复写快照）")
+    void t5_inferredNode_existingRow_snapshotNotAppended() {
+        stubPassTermination();
+        StudentMastery existing = new StudentMastery();
+        existing.setId(1L);
+        existing.setStudentId(STUDENT_ID);
+        existing.setCourseId(COURSE_ID);
+        existing.setNodeId(1L);
+        existing.setMasteryScore(new BigDecimal("82.00"));
+        existing.setMasteryLevel(2);
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(existing));
+
+        impl().answer(SESSION_ID, req(STUDENT_ID, a(21L, "A"), a(22L, "A")));
+
+        verify(masteryService, never()).appendSnapshot(any(), any(), eq(1L), any(), anyInt());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // T5 清单 5：SummaryVO.nodes
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T5 清单5：SummaryVO.nodes 含全节点、nodeId 升序、nodeCode/name/state 正确、kgNodeMapper 只调一次（防 N+1）")
+    void t5_summaryNodes_allNodesAscending() {
+        // chain 1→2→3；node2 tested pass → node1=INFERRED_PASS, node3=UNKNOWN
+        stubPassTermination();
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of());
+        when(masteryService.levelOf(anyDouble())).thenReturn(1);
+
+        AdaptiveDiagnosticVO vo = impl().answer(SESSION_ID, req(STUDENT_ID, a(21L, "A"), a(22L, "A")));
+
+        List<AdaptiveDiagnosticVO.NodeDetailVO> nodes = vo.getSummary().getNodes();
+        assertThat(nodes).hasSize(3);
+        // nodeId 升序
+        assertThat(nodes.get(0).getNodeId()).isEqualTo(1L);
+        assertThat(nodes.get(1).getNodeId()).isEqualTo(2L);
+        assertThat(nodes.get(2).getNodeId()).isEqualTo(3L);
+        // nodeCode 和 name 来自 fixture（node() 方法）
+        assertThat(nodes.get(0).getNodeCode()).isEqualTo("KT1");
+        assertThat(nodes.get(0).getName()).isEqualTo("节点1");
+        assertThat(nodes.get(1).getNodeCode()).isEqualTo("KT2");
+        assertThat(nodes.get(2).getName()).isEqualTo("节点3");
+        // state 正确
+        assertThat(nodes.get(0).getState()).isEqualTo("INFERRED_PASS");
+        assertThat(nodes.get(1).getState()).isEqualTo("TESTED_PASS");
+        assertThat(nodes.get(2).getState()).isEqualTo("UNKNOWN");
+        // kgNodeMapper.selectList 仅一次（processAnswer 中 loadCourseNodes），finalizeSession 复用传入 nodes，防 N+1
+        verify(kgNodeMapper, times(1)).selectList(any());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // T5 清单 6：start 即终止边界（无推断 no-op，nodes 含全 UNKNOWN 节点）
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T5 清单6：start 即终止（testable 空）→ no-op 不炸、nodes=全 UNKNOWN 节点、studentMasteryMapper 无写入")
+    void t5_startTerminates_noopNodesCorrect() {
+        // 复用 start_terminatesImmediately 场景（questionNodeMapper 返空 → 无 testable）
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(node(10), node(20)));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of());
+        when(questionNodeMapper.selectList(any())).thenReturn(List.of());
+        stubInsertWithId(SESSION_ID);
+
+        AdaptiveDiagnosticVO vo = impl().start(STUDENT_ID, COURSE_ID);
+
+        assertThat(vo.isDone()).isTrue();
+        // 无推断节点 → studentMasteryMapper 无批量查、无 insert、无 appendSnapshot
+        verify(studentMasteryMapper, never()).selectList(any());
+        verify(studentMasteryMapper, never()).insert(any(StudentMastery.class));
+        verify(masteryService, never()).appendSnapshot(any(), any(), any(), any(), anyInt());
+        // nodes 含 2 个 UNKNOWN 节点（全图都是 UNKNOWN）
+        List<AdaptiveDiagnosticVO.NodeDetailVO> nodes = vo.getSummary().getNodes();
+        assertThat(nodes).hasSize(2);
+        assertThat(nodes.get(0).getNodeId()).isEqualTo(10L);
+        assertThat(nodes.get(1).getNodeId()).isEqualTo(20L);
+        assertThat(nodes).allMatch(nd -> "UNKNOWN".equals(nd.getState()));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // T5 清单 7：abandon 条件更新竞态
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("T5 清单7a：abandon 条件 update 返回 0 + 重查 status=2 → 幂等成功（并发另一 abandon 赢了）")
+    void t5_abandon_concurrentAbandonWins_idempotent() {
+        String state = stateJson(
+                new java.util.TreeMap<>(Map.of(10L, NodeState.UNKNOWN)), 0,
+                new AdaptiveDiagState.Probe(10L, List.of(1L, 2L)),
+                List.of());
+        // 首次 selectById 返回 status=0；条件 update 返回 0（并发 abandon 先一步）；重查返回 status=2
+        when(adaptiveDiagSessionMapper.selectById(SESSION_ID))
+                .thenReturn(session(0, state))
+                .thenReturn(session(2, state));
+        when(adaptiveDiagSessionMapper.update(any(), any())).thenReturn(0);
+
+        // 不应抛异常（幂等成功）
+        impl().abandon(SESSION_ID, STUDENT_ID);
+
+        verify(adaptiveDiagSessionMapper, times(2)).selectById(SESSION_ID);
+        verify(adaptiveDiagSessionMapper, never()).updateById(any(AdaptiveDiagSession.class));
+    }
+
+    @Test
+    @DisplayName("T5 清单7b：abandon 条件 update 返回 0 + 重查 status=1 → BAD_REQUEST(400)（并发 answer 赢了并完成）")
+    void t5_abandon_concurrentAnswerCompletes_badRequest() {
+        String state = stateJson(
+                new java.util.TreeMap<>(Map.of(10L, NodeState.UNKNOWN)), 0,
+                new AdaptiveDiagState.Probe(10L, List.of(1L, 2L)),
+                List.of());
+        when(adaptiveDiagSessionMapper.selectById(SESSION_ID))
+                .thenReturn(session(0, state))
+                .thenReturn(session(1, state)); // 重查结果：已由 answer 完成
+        when(adaptiveDiagSessionMapper.update(any(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> impl().abandon(SESSION_ID, STUDENT_ID))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo(400));
+        verify(adaptiveDiagSessionMapper, times(2)).selectById(SESSION_ID);
+        verify(adaptiveDiagSessionMapper, never()).updateById(any(AdaptiveDiagSession.class));
     }
 }
