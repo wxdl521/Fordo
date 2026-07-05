@@ -27,6 +27,7 @@ import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.DiagnosticResultService;
+import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.PathService;
 import com.wenjin.support.QuestionStatus;
 import com.wenjin.support.RelationType;
@@ -34,6 +35,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -74,6 +76,16 @@ public class PathServiceImpl implements PathService {
 
     @Value("${wenjin.mastery.mastered-threshold:75}")
     private double masteredThreshold;
+
+    /** 掌握度衰减总开关；false 时读时有效分≡原始分（与 GraphService 一致） */
+    @Value("${wenjin.mastery.decay.enabled:true}")
+    private boolean decayEnabled;
+
+    @Value("${wenjin.mastery.decay.tau-days:30}")
+    private double decayTauDays;
+
+    @Value("${wenjin.mastery.decay.floor:25}")
+    private double decayFloor;
 
     public PathServiceImpl(StudentMasteryMapper studentMasteryMapper, KgNodeMapper kgNodeMapper,
                            KgEdgeMapper kgEdgeMapper, LearningPathMapper learningPathMapper,
@@ -420,10 +432,30 @@ public class PathServiceImpl implements PathService {
     }
 
     // ── 工具 ───────────────────────────────────────────────
+    /**
+     * 是否视为已掌握（反向 BFS 剪枝用）。启用衰减时用读时 effectiveScore 判定，
+     * 遗忘节点（raw 曾达标但 effective&lt;阈值）不剪枝，可重新进入学习路径。
+     */
     private boolean isMastered(Map<Long, StudentMastery> mById, Long id) {
         StudentMastery m = mById.get(id);
-        return m != null && m.getMasteryScore() != null
-                && m.getMasteryScore().doubleValue() >= masteredThreshold;
+        if (m == null || m.getMasteryScore() == null) {
+            return false;
+        }
+        double raw = m.getMasteryScore().doubleValue();
+        double score = decayEnabled
+                ? MasteryDecayCalculator.effectiveScore(raw, daysSinceEvidence(m.getUpdatedAt()),
+                decayTauDays, decayFloor, m.getMasteryLevel() != null ? m.getMasteryLevel() : 0)
+                : raw;
+        return score >= masteredThreshold;
+    }
+
+    /** 距 updated_at 的天数（小数）；无时间戳时视为 0（不衰减）。 */
+    private double daysSinceEvidence(LocalDateTime updatedAt) {
+        if (updatedAt == null) {
+            return 0.0;
+        }
+        Duration duration = Duration.between(updatedAt, LocalDateTime.now());
+        return duration.toMillis() / (24.0 * 60 * 60 * 1000);
     }
 
     private double scoreOf(Map<Long, StudentMastery> mById, Long id) {

@@ -21,6 +21,7 @@ import com.wenjin.mapper.LearningPathMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.impl.PathServiceImpl;
 import com.wenjin.support.QuestionStatus;
 import org.junit.jupiter.api.AfterEach;
@@ -91,11 +92,21 @@ class PathServiceImplTest {
         return p;
     }
 
+    private static final double TAU_DAYS = 30.0;
+    private static final double DECAY_FLOOR = 25.0;
+
     private PathServiceImpl impl() {
+        return implWithDecay(true);
+    }
+
+    private PathServiceImpl implWithDecay(boolean decayEnabled) {
         PathServiceImpl impl = new PathServiceImpl(studentMasteryMapper, kgNodeMapper, kgEdgeMapper,
                 learningPathMapper, learningPathItemMapper, diagnosticResultService, questionAiClient,
                 questionNodeMapper, questionMapper);
         ReflectionTestUtils.setField(impl, "masteredThreshold", 75.0);
+        ReflectionTestUtils.setField(impl, "decayEnabled", decayEnabled);
+        ReflectionTestUtils.setField(impl, "decayTauDays", TAU_DAYS);
+        ReflectionTestUtils.setField(impl, "decayFloor", DECAY_FLOOR);
         return impl;
     }
 
@@ -112,9 +123,14 @@ class PathServiceImplTest {
     }
 
     private StudentMastery mastery(long nodeId, String score, int level) {
+        return mastery(nodeId, score, level, null);
+    }
+
+    private StudentMastery mastery(long nodeId, String score, int level, LocalDateTime updatedAt) {
         StudentMastery m = new StudentMastery();
         m.setStudentId(S); m.setCourseId(C); m.setNodeId(nodeId);
         m.setMasteryScore(new BigDecimal(score)); m.setMasteryLevel(level);
+        m.setUpdatedAt(updatedAt);
         return m;
     }
 
@@ -399,6 +415,102 @@ class PathServiceImplTest {
         verify(diagnosticResultService, times(1)).getResult(S, C);
         assertThat(vo.getTargetNode().getNodeCode()).isEqualTo("T");
         assertThat(vo.getSteps()).extracting(LearningPathVO.StepVO::getNodeCode).containsExactly("T");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Q  — M3 衰减接入 generate（effectiveScore 过滤已掌握剪枝）
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("Q1 衰减：raw=88 已掌握但 40 天无证据 → effective<75，前置重新入路径")
+    void generate_decayedMasteredPrereqReentersPath() {
+        LocalDateTime stale = LocalDateTime.now().minusDays(40);
+        // X(曾掌握)→A(未学)→T(卡点)
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(
+                node(1, "X", "已掌握前置"), node(2, "A", "甲"), node(3, "T", "卡点")));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of(prereq(1, 2), prereq(2, 3)));
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(
+                mastery(1, "88.00", 2, stale), mastery(3, "30.00", 0)));
+        stubInsertPathId();
+
+        double effective = MasteryDecayCalculator.effectiveScore(88.0, 40.0, TAU_DAYS, DECAY_FLOOR, 2);
+        assertThat(effective).isLessThan(75.0);
+
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setStudentId(S); req.setCourseId(C); req.setTargetNodeId(3L);
+
+        LearningPathVO vo = impl().generate(req);
+
+        assertThat(vo.getSteps()).extracting(LearningPathVO.StepVO::getNodeCode)
+                .containsExactly("X", "A", "T");
+    }
+
+    @Test
+    @DisplayName("Q2 衰减：同节点 updatedAt=now → effective 仍≥75，继续剪枝")
+    void generate_freshEvidenceMasteredPrereqStillPruned() {
+        LocalDateTime fresh = LocalDateTime.now();
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(
+                node(1, "X", "已掌握前置"), node(2, "A", "甲"), node(3, "T", "卡点")));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of(prereq(1, 2), prereq(2, 3)));
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(
+                mastery(1, "88.00", 2, fresh), mastery(3, "30.00", 0)));
+        stubInsertPathId();
+
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setStudentId(S); req.setCourseId(C); req.setTargetNodeId(3L);
+
+        LearningPathVO vo = impl().generate(req);
+
+        assertThat(vo.getSteps()).extracting(LearningPathVO.StepVO::getNodeCode)
+                .containsExactly("A", "T");
+    }
+
+    @Test
+    @DisplayName("Q3 衰减关闭：回拨 updated_at 仍按 raw 剪枝已掌握前置")
+    void generate_decayDisabled_rawMasteredStillPruned() {
+        LocalDateTime stale = LocalDateTime.now().minusDays(40);
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(
+                node(1, "X", "已掌握前置"), node(2, "A", "甲"), node(3, "T", "卡点")));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of(prereq(1, 2), prereq(2, 3)));
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(
+                mastery(1, "88.00", 2, stale), mastery(3, "30.00", 0)));
+        stubInsertPathId();
+
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setStudentId(S); req.setCourseId(C); req.setTargetNodeId(3L);
+
+        LearningPathVO vo = implWithDecay(false).generate(req);
+
+        assertThat(vo.getSteps()).extracting(LearningPathVO.StepVO::getNodeCode)
+                .containsExactly("A", "T");
+    }
+
+    @Test
+    @DisplayName("Q4 衰减+M1：练习刷新证据后 generate 再次剪枝已掌握前置")
+    void generate_afterEvidenceRefresh_masteredPrereqPrunedAgain() {
+        LocalDateTime stale = LocalDateTime.now().minusDays(40);
+        LocalDateTime fresh = LocalDateTime.now();
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(
+                node(1, "X", "已掌握前置"), node(2, "A", "甲"), node(3, "T", "卡点")));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of(prereq(1, 2), prereq(2, 3)));
+        stubInsertPathId();
+
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setStudentId(S); req.setCourseId(C); req.setTargetNodeId(3L);
+
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(
+                mastery(1, "88.00", 2, stale), mastery(3, "30.00", 0)));
+        LearningPathVO staleVo = impl().generate(req);
+        assertThat(staleVo.getSteps()).extracting(LearningPathVO.StepVO::getNodeCode)
+                .contains("X");
+
+        // 模拟 M1 练习提交后 applyAnswers 刷新 updated_at（证据时间归零，有效分恢复）
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(
+                mastery(1, "88.00", 2, fresh), mastery(3, "30.00", 0)));
+        LearningPathVO freshVo = impl().generate(req);
+        assertThat(freshVo.getSteps()).extracting(LearningPathVO.StepVO::getNodeCode)
+                .doesNotContain("X")
+                .containsExactly("A", "T");
     }
 
     // ═══════════════════════════════════════════════════════════════
