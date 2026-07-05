@@ -597,7 +597,7 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
      *
      * <h3>推断落库（M2 §2.2）</h3>
      * <ul>
-     *   <li>INFERRED_PASS → score=70，INFERRED_FAIL → score=35（常量写入，非 EWMA，不违反掌握度计算红线）。</li>
+     *   <li>INFERRED_PASS → score=75，INFERRED_FAIL → score=35（常量写入，非 EWMA，不违反掌握度计算红线）。</li>
      *   <li>只填空不覆盖：批量 IN 查既有 student_mastery 行（不循环查库），已有行跳过。</li>
      *   <li>TESTED 节点已由 {@link MasteryService#applyAnswers} 即时落库，UNKNOWN 不落库。</li>
      *   <li>level 复用 {@link MasteryService#levelOf}（不重写阈值逻辑）。</li>
