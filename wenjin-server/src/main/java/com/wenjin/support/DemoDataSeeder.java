@@ -10,12 +10,14 @@ import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
 import com.wenjin.entity.SysUser;
+import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.AnswerRecordMapper;
 import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.mapper.SysUserMapper;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.DiagnosticService;
@@ -26,6 +28,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -66,8 +69,15 @@ public class DemoDataSeeder implements CommandLineRunner {
     private final QuestionOptionMapper optionMapper;
     private final QuestionNodeMapper questionNodeMapper;
     private final AnswerRecordMapper answerRecordMapper;
+    private final StudentMasteryMapper studentMasteryMapper;
     private final CourseService courseService;
     private final DiagnosticService diagnosticService;
+
+    /** 衰减演示账号：接近掌握，适合展示褪色与复习队列 */
+    static final String DECAY_DEMO_USERNAME = "demo_c";
+
+    /** 幂等判据：已有不少于该数量的「陈旧证据」行则视为画像已播种 */
+    static final int DECAY_PROFILE_MIN_STALE_COUNT = 3;
 
     @Value("${wenjin.demo.course-id:1}")
     private Long courseId;
@@ -79,6 +89,7 @@ public class DemoDataSeeder implements CommandLineRunner {
                           QuestionOptionMapper optionMapper,
                           QuestionNodeMapper questionNodeMapper,
                           AnswerRecordMapper answerRecordMapper,
+                          StudentMasteryMapper studentMasteryMapper,
                           CourseService courseService,
                           DiagnosticService diagnosticService) {
         this.userMapper = userMapper;
@@ -88,12 +99,46 @@ public class DemoDataSeeder implements CommandLineRunner {
         this.optionMapper = optionMapper;
         this.questionNodeMapper = questionNodeMapper;
         this.answerRecordMapper = answerRecordMapper;
+        this.studentMasteryMapper = studentMasteryMapper;
         this.courseService = courseService;
         this.diagnosticService = diagnosticService;
     }
 
     /** 人设标识。 */
     enum Persona { A_WEAK, B_STUCK, C_NEAR }
+
+    /**
+     * 时间分布衰减画像分组：昨天 / 两周前 / 六周前。
+     * 高分 + 不同证据时间 → demo 当场可见褪色节点与非空复习队列。
+     */
+    enum DecayTimeGroup {
+        /** 昨天：仍明亮 */
+        FRESH(1, new BigDecimal("92.0")),
+        /** 两周前：部分衰减 */
+        MID(14, new BigDecimal("88.0")),
+        /** 六周前：跌入复习队列（raw≥75, effective&lt;75） */
+        STALE(42, new BigDecimal("85.0"));
+
+        private final int daysAgo;
+        private final BigDecimal score;
+
+        DecayTimeGroup(int daysAgo, BigDecimal score) {
+            this.daysAgo = daysAgo;
+            this.score = score;
+        }
+
+        int daysAgo() {
+            return daysAgo;
+        }
+
+        BigDecimal score() {
+            return score;
+        }
+
+        LocalDateTime evidenceAt() {
+            return LocalDateTime.now().minusDays(daysAgo);
+        }
+    }
 
     /** 单题元信息（答案 + 干扰项考点 + 主考点 code + 难度），供构造作答模式用。 */
     record QMeta(Long questionId, String correctKey, int difficulty,
@@ -157,8 +202,80 @@ public class DemoDataSeeder implements CommandLineRunner {
         seedStudent("demo_b", "演示学生B·中间卡顿", Persona.B_STUCK, qids, metaById, targetPrereq, hardestQid);
         seedStudent("demo_c", "演示学生C·接近掌握", Persona.C_NEAR, qids, metaById, targetPrereq, hardestQid);
 
+        SysUser decayDemo = userMapper.selectOne(
+                new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, DECAY_DEMO_USERNAME));
+        if (decayDemo != null) {
+            seedDecayTimeProfile(decayDemo.getId());
+        }
+
         log.info("[seed] 演示数据播种完成（课程 {}）。账号 demo_a / demo_b / demo_c，密码 {}。",
                 courseId, DEMO_PASSWORD);
+    }
+
+    /**
+     * 为演示学生造 3 组不同 updated_at 的掌握记录（幂等）。
+     * A 昨天仍亮、B 两周部分褪色、C 六周进入复习队列。
+     */
+    void seedDecayTimeProfile(Long studentId) {
+        if (decayProfileAlreadySeeded(countStaleMasteryRows(studentId))) {
+            log.info("[seed] 学生 {} 时间分布衰减画像已存在，跳过（幂等）。", studentId);
+            return;
+        }
+
+        List<KgNode> nodes = nodeMapper.selectList(
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .orderByAsc(KgNode::getId)
+                        .last("LIMIT 9"));
+        if (nodes.size() < 9) {
+            log.warn("[seed] 课程 {} 节点不足 9 个（{}），跳过衰减时间画像。", courseId, nodes.size());
+            return;
+        }
+
+        applyDecayGroup(studentId, nodes.subList(0, 3), DecayTimeGroup.FRESH);
+        applyDecayGroup(studentId, nodes.subList(3, 6), DecayTimeGroup.MID);
+        applyDecayGroup(studentId, nodes.subList(6, 9), DecayTimeGroup.STALE);
+        log.info("[seed] 学生 {} 时间分布衰减画像已写入（A 昨天 / B 两周 / C 六周）。", studentId);
+    }
+
+    /** 幂等：已有足够「陈旧证据」掌握行则不再改写 updated_at。 */
+    static boolean decayProfileAlreadySeeded(long staleEvidenceCount) {
+        return staleEvidenceCount >= DECAY_PROFILE_MIN_STALE_COUNT;
+    }
+
+    private long countStaleMasteryRows(Long studentId) {
+        return studentMasteryMapper.selectCount(
+                new LambdaQueryWrapper<StudentMastery>()
+                        .eq(StudentMastery::getStudentId, studentId)
+                        .eq(StudentMastery::getCourseId, courseId)
+                        .lt(StudentMastery::getUpdatedAt, LocalDateTime.now().minusDays(20)));
+    }
+
+    private void applyDecayGroup(Long studentId, List<KgNode> nodes, DecayTimeGroup group) {
+        LocalDateTime evidenceAt = group.evidenceAt();
+        BigDecimal score = group.score();
+        for (KgNode node : nodes) {
+            StudentMastery existing = studentMasteryMapper.selectOne(
+                    new LambdaQueryWrapper<StudentMastery>()
+                            .eq(StudentMastery::getStudentId, studentId)
+                            .eq(StudentMastery::getCourseId, courseId)
+                            .eq(StudentMastery::getNodeId, node.getId()));
+            if (existing != null) {
+                existing.setMasteryScore(score);
+                existing.setMasteryLevel(2);
+                existing.setUpdatedAt(evidenceAt);
+                studentMasteryMapper.updateById(existing);
+            } else {
+                StudentMastery row = new StudentMastery();
+                row.setStudentId(studentId);
+                row.setCourseId(courseId);
+                row.setNodeId(node.getId());
+                row.setMasteryScore(score);
+                row.setMasteryLevel(2);
+                row.setUpdatedAt(evidenceAt);
+                studentMasteryMapper.insert(row);
+            }
+        }
     }
 
     /** 创建/复用学生 → 选课 → 两轮真实 submit。已有作答记录则跳过（幂等）。 */

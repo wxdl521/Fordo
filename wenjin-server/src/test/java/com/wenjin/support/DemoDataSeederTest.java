@@ -1,5 +1,7 @@
 package com.wenjin.support;
 
+import com.wenjin.service.MasteryDecayCalculator;
+import com.wenjin.support.DemoDataSeeder.DecayTimeGroup;
 import com.wenjin.support.DemoDataSeeder.Persona;
 import com.wenjin.support.DemoDataSeeder.QMeta;
 import org.junit.jupiter.api.DisplayName;
@@ -19,8 +21,12 @@ class DemoDataSeederTest {
 
     /** 不依赖任何 mapper/service 的纯逻辑测试，构造时全部传 null。 */
     private DemoDataSeeder seeder() {
-        return new DemoDataSeeder(null, null, null, null, null, null, null, null, null);
+        return new DemoDataSeeder(null, null, null, null, null, null, null, null, null, null);
     }
+
+    private static final double TAU_DAYS = 30.0;
+    private static final double DECAY_FLOOR = 25.0;
+    private static final double MASTERED = 75.0;
 
     // 题面：Q1 主点 KT10，干扰 B/C 均指向 KT05；Q2 主点即 KT05；Q3 主点 KT11、最难、无映射
     private static final QMeta Q1 = new QMeta(1L, "A", 2, "KT10",
@@ -75,5 +81,30 @@ class DemoDataSeederTest {
     void aWeakMostlyWrongInRound0() {
         assertThat(seeder().chooseAnswer(Persona.A_WEAK, 0, 0, Q1, "KT05", 3L)).isEqualTo("A"); // index0 对
         assertThat(seeder().chooseAnswer(Persona.A_WEAK, 0, 1, Q2, "KT05", 3L)).isNotEqualTo("A"); // index1 错
+    }
+
+    @Test
+    @DisplayName("衰减画像幂等：陈旧证据行数达阈值则跳过")
+    void decayProfileIdempotentWhenStaleRowsExist() {
+        assertThat(DemoDataSeeder.decayProfileAlreadySeeded(0)).isFalse();
+        assertThat(DemoDataSeeder.decayProfileAlreadySeeded(2)).isFalse();
+        assertThat(DemoDataSeeder.decayProfileAlreadySeeded(3)).isTrue();
+        assertThat(DemoDataSeeder.decayProfileAlreadySeeded(10)).isTrue();
+    }
+
+    @Test
+    @DisplayName("衰减画像三组时间：昨天仍掌握 / 两周部分褪色 / 六周入复习队列")
+    void decayTimeGroupsProduceExpectedEffectiveLevels() {
+        double freshEffective = MasteryDecayCalculator.effectiveScore(
+                DecayTimeGroup.FRESH.score().doubleValue(), 1, TAU_DAYS, DECAY_FLOOR, 2);
+        double midEffective = MasteryDecayCalculator.effectiveScore(
+                DecayTimeGroup.MID.score().doubleValue(), 14, TAU_DAYS, DECAY_FLOOR, 2);
+        double staleEffective = MasteryDecayCalculator.effectiveScore(
+                DecayTimeGroup.STALE.score().doubleValue(), 42, TAU_DAYS, DECAY_FLOOR, 2);
+
+        assertThat(freshEffective).isGreaterThanOrEqualTo(MASTERED);
+        assertThat(midEffective).isLessThan(DecayTimeGroup.MID.score().doubleValue());
+        assertThat(staleEffective).isLessThan(MASTERED);
+        assertThat(DecayTimeGroup.STALE.score().doubleValue()).isGreaterThanOrEqualTo(MASTERED);
     }
 }
