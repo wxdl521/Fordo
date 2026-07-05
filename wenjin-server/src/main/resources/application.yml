@@ -63,6 +63,8 @@ wenjin:
       enabled: true                              # false 时 effective≡raw，一键回退
       tau-days: 30                               # 衰减时间常数 τ（天），约 30 天可衰减部分衰减 63%
       floor: 25                                  # 衰减地板分，学过的高分不会退回完全未学
+  review:                                        # 今日复习队列（M3 T5）
+    daily-size: 5                                # 每日推荐复习节点数上限
   practice:                                      # 节点练习组卷（M1 练习闭环 T3）
     size: 5                                      # 默认每会话题数
     max-size: 10                                 # 每会话最大题数上限（超出自动夹紧）
