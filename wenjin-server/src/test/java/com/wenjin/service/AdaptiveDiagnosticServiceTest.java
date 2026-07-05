@@ -1074,4 +1074,142 @@ class AdaptiveDiagnosticServiceTest {
         verify(adaptiveDiagSessionMapper, times(1)).selectOne(any());
         verify(adaptiveDiagSessionMapper, never()).updateById(any(AdaptiveDiagSession.class));
     }
+    // ══════════════════════════════════════════════════════════════════════════
+    // M2 验收1整改：探针题数按剩余预算截断（budget cap），题量硬顶≤15
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * 验收1 整改 RED→GREEN 测试1：budgetUsed=12，答完 2 题探针后 remaining=1，
+     * 下一探针应仅 1 题（min(2, 15-14)=1）。
+     * <p>证明 buildProbe 走 Math.min(PROBE_QUESTION_COUNT, maxQuestions) 分支。
+     */
+    @Test
+    @DisplayName("budgetCap: 剩余预算=1 时下一探针仅含 1 题（min(2,1)=1）")
+    void budgetCap_remaining1_nextProbeHasOneQuestion() {
+        // 两孤立可实测节点 10、20；budgetUsed=12（等效已用完 6 轮 2 题探针）；
+        // 当前探针在 node10，答完后 budgetUsed=14，remaining=15-14=1 → 下探针 1 题
+        String state = stateJson(
+                new java.util.TreeMap<>(Map.of(10L, NodeState.UNKNOWN, 20L, NodeState.UNKNOWN)),
+                12,
+                new AdaptiveDiagState.Probe(10L, List.of(101L, 102L)),
+                List.of());
+        when(adaptiveDiagSessionMapper.selectById(SESSION_ID)).thenReturn(session(0, state));
+
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(q(101, QuestionType.SINGLE), q(102, QuestionType.SINGLE))) // 判分
+                .thenReturn(List.of(q(101, QuestionType.SINGLE), q(102, QuestionType.SINGLE),
+                        q(201, QuestionType.SINGLE), q(202, QuestionType.SINGLE)))              // testable
+                .thenReturn(List.of(q(201, QuestionType.SINGLE), q(202, QuestionType.SINGLE))); // picker node20
+        when(questionNodeMapper.selectList(any()))
+                .thenReturn(List.of(link(101, 10, 1), link(102, 10, 1),
+                        link(201, 20, 1), link(202, 20, 1))) // testable
+                .thenReturn(List.of(link(201, 20, 1), link(202, 20, 1))); // picker node20 w1
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(opt(101, "A", 1), opt(102, "A", 1)))  // 判分正确键
+                .thenReturn(List.of(opt(201, "A", 1)));                    // sanitize node20(仅 q201)
+        when(answerRecordMapper.selectList(any())).thenReturn(List.of()); // 无近期
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(node(10), node(20)));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of());
+
+        AdaptiveDiagnosticVO vo = impl().answer(SESSION_ID, req(STUDENT_ID, a(101L, "A"), a(102L, "A")));
+
+        // 未终止，下一探针仅 1 题（剩余预算 15-14=1）
+        assertThat(vo.isDone()).isFalse();
+        assertThat(vo.getProbe()).isNotNull();
+        assertThat(vo.getProbe().getNodeId()).isEqualTo(20L);
+        assertThat(vo.getProbe().getQuestions()).hasSize(1);
+        assertThat(vo.getProbe().getQuestions().get(0).getQuestionId()).isEqualTo(201L);
+        assertThat(vo.getProgress().getBudgetLeft()).isEqualTo(1); // 15 - 14 = 1
+
+        // 状态落盘：budgetUsed=14，当前探针 node20 只有 1 题
+        ArgumentCaptor<AdaptiveDiagSession> sc = ArgumentCaptor.forClass(AdaptiveDiagSession.class);
+        verify(adaptiveDiagSessionMapper).update(sc.capture(), any());
+        AdaptiveDiagState after = parse(sc.getValue());
+        assertThat(after.budgetUsed()).isEqualTo(14);
+        assertThat(after.currentProbe().nodeId()).isEqualTo(20L);
+        assertThat(after.currentProbe().questionIds()).containsExactly(201L);
+    }
+
+    /**
+     * 验收1 整改 RED→GREEN 测试2：预算截断后 1 题探针作答，budgetUsed 精确到达 budget=15，
+     * 不超预算（旧行为 budgetUsed=16 > 15）。
+     */
+    @Test
+    @DisplayName("budgetCap: 1 题探针(budgetUsed=14)作答后 budgetUsed=15 精确终止，不超预算")
+    void budgetCap_oneQuestionFinalProbe_budgetUsedEquals15NotExceeds() {
+        // budgetUsed=14（由上一测试的整改状态延续），当前探针仅 1 题（budget-cap 后）；
+        // 作答后 budgetUsed=14+1=15=budget → 引擎 BUDGET_EXHAUSTED → done
+        String state = stateJson(
+                new java.util.TreeMap<>(Map.of(10L, NodeState.TESTED_PASS, 20L, NodeState.UNKNOWN)),
+                14,
+                new AdaptiveDiagState.Probe(20L, List.of(201L)),
+                List.of(new AdaptiveDiagState.ProbeRecord(10L, List.of(101L, 102L), true)));
+        when(adaptiveDiagSessionMapper.selectById(SESSION_ID)).thenReturn(session(0, state));
+
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(q(201, QuestionType.SINGLE)))  // 判分
+                .thenReturn(List.of(q(201, QuestionType.SINGLE))); // testable
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(opt(201, "A", 1)));            // 判分正确键
+        when(questionNodeMapper.selectList(any()))
+                .thenReturn(List.of(link(201, 20, 1)));            // testable
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(node(10), node(20)));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of());
+
+        AdaptiveDiagnosticVO vo = impl().answer(SESSION_ID, req(STUDENT_ID, a(201L, "A")));
+
+        // 终止 done，预算精确满 15（budgetUsed=14+1=15 ≤ budget=15）
+        assertThat(vo.isDone()).isTrue();
+        assertThat(vo.getProbe()).isNull();
+        assertThat(vo.getProgress().getBudgetLeft()).isEqualTo(0); // 15 - 15 = 0
+
+        ArgumentCaptor<AdaptiveDiagSession> sc = ArgumentCaptor.forClass(AdaptiveDiagSession.class);
+        verify(adaptiveDiagSessionMapper).update(sc.capture(), any());
+        assertThat(sc.getValue().getStatus()).isEqualTo(1);
+        // 关键断言：budgetUsed 精确=15，不超 budget（旧行为 budgetUsed=16 时此断言失败）
+        AdaptiveDiagState after = parse(sc.getValue());
+        assertThat(after.budgetUsed()).isEqualTo(15);
+    }
+
+    /**
+     * 验收1 整改 回归测试：剩余预算≥2 时，探针仍正常出 2 题（min(2, remaining≥2)=2，无回归）。
+     * 与现有 answer_notTerminated_returnsNextProbe 互为对称，显式证明正常路径未受影响。
+     */
+    @Test
+    @DisplayName("budgetCap 回归: remaining≥2(budgetUsed=0→记账后2)时下一探针仍出 2 题，无回归")
+    void budgetCap_remainingGe2_nextProbeStillHasTwoQuestions() {
+        // 同 answer_notTerminated_returnsNextProbe 场景：budgetUsed=0，答完 2 题后 remaining=13
+        String state = stateJson(
+                new java.util.TreeMap<>(Map.of(10L, NodeState.UNKNOWN, 20L, NodeState.UNKNOWN)),
+                0,
+                new AdaptiveDiagState.Probe(10L, List.of(101L, 102L)),
+                List.of());
+        when(adaptiveDiagSessionMapper.selectById(SESSION_ID)).thenReturn(session(0, state));
+
+        when(questionMapper.selectList(any()))
+                .thenReturn(List.of(q(101, QuestionType.SINGLE), q(102, QuestionType.SINGLE))) // 判分
+                .thenReturn(List.of(q(101, QuestionType.SINGLE), q(102, QuestionType.SINGLE),
+                        q(201, QuestionType.SINGLE), q(202, QuestionType.SINGLE)))              // testable
+                .thenReturn(List.of(q(201, QuestionType.SINGLE), q(202, QuestionType.SINGLE))); // picker node20
+        when(questionNodeMapper.selectList(any()))
+                .thenReturn(List.of(link(101, 10, 1), link(102, 10, 1),
+                        link(201, 20, 1), link(202, 20, 1))) // testable
+                .thenReturn(List.of(link(201, 20, 1), link(202, 20, 1))); // picker node20 w1
+        when(questionOptionMapper.selectList(any()))
+                .thenReturn(List.of(opt(101, "A", 1), opt(102, "A", 1)))
+                .thenReturn(List.of(opt(201, "A", 1), opt(202, "A", 1)));
+        when(answerRecordMapper.selectList(any())).thenReturn(List.of());
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(node(10), node(20)));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of());
+
+        AdaptiveDiagnosticVO vo = impl().answer(SESSION_ID, req(STUDENT_ID, a(101L, "A"), a(102L, "A")));
+
+        // 剩余预算=13，探针应有 min(2,13)=2 题（无截断）
+        assertThat(vo.isDone()).isFalse();
+        assertThat(vo.getProbe()).isNotNull();
+        assertThat(vo.getProbe().getNodeId()).isEqualTo(20L);
+        assertThat(vo.getProbe().getQuestions()).hasSize(2);  // 关键：仍为 2 题，无回归
+        assertThat(vo.getProgress().getBudgetLeft()).isEqualTo(13); // 15 - 2 = 13
+    }
+
 }

@@ -62,9 +62,10 @@ import java.util.stream.Collectors;
  * 反序列化状态 → 用六参构造器重建 {@link AdaptiveEngine}（恢复状态、不重放传播）→ 处理 →
  * 序列化写回。循环内绝不查库。
  *
- * <h3>探针（每节点 2 题）</h3>
+ * <h3>探针（每节点最多 2 题，剩余预算截断）</h3>
  * <p>复用 {@link QuestionPicker}（M1 组卷策略），只出客观题（简报裁决 2 钉死"简答不作探针"）。
- * 2 题全对=TESTED_PASS，否则 TESTED_FAIL；题库不足 2 题时 1 题也可（1 对=PASS）。
+ * 正常情况每探针 2 题；当剩余预算（{@code budget - budgetUsed}）= 1 时，截断为 1 题，
+ * 保证全局题量严格 ≤ budget（硬顶 15）。1 题探针判分：1 对=PASS，否则 FAIL。
  * 判分复用 {@link AnswerGrader}；实测走既有 {@link MasteryService#applyAnswers}（与固定卷同构）；
  * 作答明细写 {@code answer_record}（scene=1 诊断，session_id 指向本表）。
  *
@@ -96,7 +97,10 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
     private static final int IS_CORRECT = 1;
     private static final int IS_WRONG = 0;
 
-    /** 每探针题数（简报钉死=2；题库不足 1 题也可，由组卷组件兜底）。 */
+    /**
+     * 每探针目标题数（简报钉死=2；组卷层按 {@code min(PROBE_QUESTION_COUNT, budget - budgetUsed)}
+     * 截断，保证剩余预算=1 时只出 1 题；题库不足时由组卷组件兜底（1 题也可）。
+     */
     private static final int PROBE_QUESTION_COUNT = 2;
 
     /**
@@ -178,7 +182,7 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
         Optional<Long> first = engine.selectNextNode();
         AdaptiveDiagnosticVO vo;
         if (first.isPresent()) {
-            ProbeBundle bundle = buildProbe(first.get(), studentId);
+            ProbeBundle bundle = buildProbe(first.get(), studentId, budget - engine.getBudgetUsed());
             AdaptiveDiagState state = new AdaptiveDiagState(
                     engine.statesView(), engine.getBudgetUsed(),
                     new AdaptiveDiagState.Probe(bundle.nodeId(), bundle.questionIds()),
@@ -323,7 +327,7 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
         Optional<Long> next = engine.selectNextNode();
         AdaptiveDiagnosticVO vo;
         if (next.isPresent()) {
-            ProbeBundle bundle = buildProbe(next.get(), studentId);
+            ProbeBundle bundle = buildProbe(next.get(), studentId, budget - engine.getBudgetUsed());
             AdaptiveDiagState newState = new AdaptiveDiagState(
                     engine.statesView(), engine.getBudgetUsed(),
                     new AdaptiveDiagState.Probe(bundle.nodeId(), bundle.questionIds()),
@@ -518,11 +522,20 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
     /**
      * 为引擎选中的节点组探针：近期排除 → 共享组卷（仅客观题）→ 结构性脱敏。
      * nodeId ∈ testable 保证 ≥1 道 APPROVED 客观题，故 pick 必非空。
+     *
+     * @param maxQuestions 本次探针允许的最大题数（调用方传入 budget - engine.getBudgetUsed()，
+     *                     保证剩余预算=1 时只出 1 题）；调用方保证 ≥ 1（否则引擎不应再选节点）。
      */
-    private ProbeBundle buildProbe(Long nodeId, Long studentId) {
+    private ProbeBundle buildProbe(Long nodeId, Long studentId, int maxQuestions) {
+        if (maxQuestions <= 0) {
+            throw new IllegalStateException(
+                    "buildProbe 被以剩余预算≤0 调用，引擎不应再选节点：nodeId=" + nodeId
+                            + " maxQuestions=" + maxQuestions);
+        }
         Set<Long> recent = recentQuestionIds(studentId);
+        int count = Math.min(PROBE_QUESTION_COUNT, maxQuestions);
         List<Question> selected = questionPicker.pick(
-                nodeId, PROBE_QUESTION_COUNT, recent, q -> isObjective(q.getType()));
+                nodeId, count, recent, q -> isObjective(q.getType()));
         if (selected.isEmpty()) {
             // 防御：testable 已保证有题，理论不达；若达则说明可实测集与题库不一致（bug）
             throw new IllegalStateException("可实测节点组探针为空题（testable 与题库不一致）：nodeId=" + nodeId);
