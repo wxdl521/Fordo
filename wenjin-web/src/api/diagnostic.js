@@ -60,3 +60,16 @@ export function answerAdaptive(sessionId, payload) {
 export function abandonAdaptive(sessionId, payload) {
   return http.post(`/diagnostic/adaptive/${sessionId}/abandon`, payload)
 }
+
+/**
+ * 获取最近一次已完成自适应诊断会话的证据（回放归因，T8）。
+ * @param {number} studentId
+ * @param {number} courseId
+ * @returns {Promise<EvidenceVO|null>}
+ *   EvidenceVO: { sessionId, finishedAt, tested, inferredPass, inferredFail, unknown,
+ *     inferredNodes: [{ nodeId, name, state, fromNodeId, fromName, fromPass }] }
+ *   无已完成会话时 data=null（合法业务状态）。
+ */
+export function fetchEvidence(studentId, courseId) {
+  return http.get('/diagnostic/adaptive/evidence', { params: { studentId, courseId } })
+}

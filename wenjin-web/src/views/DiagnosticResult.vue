@@ -45,6 +45,17 @@
         <div v-if="genError" class="rs-err rs-genmsg">生成失败：{{ genError }}</div>
       </section>
 
+      <!-- 快速诊断证据（T8）：仅自适应会话结束后非空，取数失败则静默不渲染 -->
+      <section v-if="evidence" class="rs-card">
+        <div class="rs-label">快速诊断证据</div>
+        <div class="ev-counts">
+          实测 {{ evidence.tested }} 点 / 推断 {{ evidence.inferredPass + evidence.inferredFail }} 点 / 待确认 {{ evidence.unknown }} 点
+        </div>
+        <div v-for="n in evidence.inferredNodes" :key="n.nodeId" class="ev-node">
+          「{{ n.name }}」：由「{{ n.fromName }}」{{ n.fromPass ? '答对' : '答错' }}推断
+        </div>
+      </section>
+
       <div class="rs-grid">
         <!-- 判断依据 -->
         <section class="rs-card">
@@ -85,7 +96,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { fetchResult } from '../api/diagnostic.js'
+import { fetchResult, fetchEvidence } from '../api/diagnostic.js'
 import { generatePath } from '../api/path.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
 
@@ -99,6 +110,7 @@ const currentUser = readUser()
 const DEMO_STUDENT_ID = currentUser?.id || 2
 const router = useRouter()
 const data = ref(null)
+const evidence = ref(null)
 const loading = ref(false)
 const error = ref('')
 const generating = ref(false)
@@ -138,6 +150,8 @@ async function load() {
       return
     }
     data.value = await fetchResult(DEMO_STUDENT_ID, courseId.value)
+    // 证据卡取数失败时静默忽略（不打扰既有结果页渲染），data=null 也静默不渲染
+    evidence.value = await fetchEvidence(DEMO_STUDENT_ID, courseId.value).catch(() => null)
   } catch (e) {
     error.value = e.message || '未知错误'
   } finally {
@@ -241,6 +255,9 @@ onMounted(() => {
 .rs-dist-track { height: 6px; background: var(--card2); border-radius: 99px; overflow: hidden; }
 .rs-dist-fill { height: 100%; border-radius: 99px; }
 .rs-redo { margin-top: 18px; width: 100%; justify-content: center; }
+.ev-counts { font-size: 14px; font-weight: 500; margin-bottom: 14px; }
+.ev-node { font-size: 13.5px; padding: 7px 0; border-bottom: 1px solid var(--line); color: var(--ink); }
+.ev-node:last-child { border-bottom: none; }
 @media (max-width: 760px) {
   .rs-grid { grid-template-columns: 1fr; }
   .rs-h2 { font-size: 23px; }
