@@ -855,11 +855,11 @@ class AdaptiveDiagnosticServiceTest {
     }
 
     @Test
-    @DisplayName("T5 清单1a：INFERRED_PASS 无既有行 → insert score=70 + level=levelOf(70)")
-    void t5_inferredPass_noExistingRow_insertsScore70() {
+    @DisplayName("T5 清单1a：INFERRED_PASS 无既有行 → insert score=75 + level=levelOf(75)（2026-07-05 §2.2 修订）")
+    void t5_inferredPass_noExistingRow_insertsScore75() {
         stubPassTermination();
         when(studentMasteryMapper.selectList(any())).thenReturn(List.of());
-        when(masteryService.levelOf(70.0)).thenReturn(1); // 70 >= weakThreshold=40 但 < masteredThreshold=75
+        when(masteryService.levelOf(75.0)).thenReturn(2); // 75 >= masteredThreshold=75 ⇒ 已掌握（地图涂绿，与 T8「推断通过」一致）
 
         impl().answer(SESSION_ID, req(STUDENT_ID, a(21L, "A"), a(22L, "A")));
 
@@ -870,8 +870,8 @@ class AdaptiveDiagnosticServiceTest {
         assertThat(inserted.getNodeId()).isEqualTo(1L);
         assertThat(inserted.getStudentId()).isEqualTo(STUDENT_ID);
         assertThat(inserted.getCourseId()).isEqualTo(COURSE_ID);
-        assertThat(inserted.getMasteryScore()).isEqualByComparingTo(new BigDecimal("70.00"));
-        assertThat(inserted.getMasteryLevel()).isEqualTo(1);
+        assertThat(inserted.getMasteryScore()).isEqualByComparingTo(new BigDecimal("75.00"));
+        assertThat(inserted.getMasteryLevel()).isEqualTo(2);
     }
 
     @Test
@@ -941,14 +941,14 @@ class AdaptiveDiagnosticServiceTest {
     void t5_inferredNode_appendsSnapshot() {
         stubPassTermination();
         when(studentMasteryMapper.selectList(any())).thenReturn(List.of());
-        when(masteryService.levelOf(70.0)).thenReturn(1);
+        when(masteryService.levelOf(75.0)).thenReturn(2);
 
         impl().answer(SESSION_ID, req(STUDENT_ID, a(21L, "A"), a(22L, "A")));
 
-        // appendSnapshot 恰 1 次，node1，score=70.00，level=1
+        // appendSnapshot 恰 1 次，node1，score=75.00，level=2
         verify(masteryService, times(1)).appendSnapshot(
                 eq(STUDENT_ID), eq(COURSE_ID), eq(1L),
-                eq(new BigDecimal("70.00")), eq(1));
+                eq(new BigDecimal("75.00")), eq(2));
     }
 
     @Test

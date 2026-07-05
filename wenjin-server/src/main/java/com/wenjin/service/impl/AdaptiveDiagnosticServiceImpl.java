@@ -75,7 +75,7 @@ import java.util.stream.Collectors;
  *
  * <h3>与 T5 的接缝</h3>
  * <p>{@link #finalizeSession} 为最小桩：置 status=1 + finished_at、summary 返回四类计数 +
- * 空节点明细。T5 将在同一方法落库推断保守初值（INFERRED_PASS=70/INFERRED_FAIL=35，仅无既有行时）
+ * 空节点明细。T5 将在同一方法落库推断保守初值（INFERRED_PASS=75/INFERRED_FAIL=35，仅无既有行时）
  * + 快照 + 填充节点明细。resultUrl 先固定，T8 增强。
  */
 @Service
@@ -104,10 +104,11 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
     private static final int PROBE_QUESTION_COUNT = 2;
 
     /**
-     * 推断保守初值：INFERRED_PASS 节点写入 70（低于实测答对冷启动区间上界，留"实测更可信"余量）。
+     * 推断保守初值：INFERRED_PASS 节点写入 75（=masteredThreshold，地图涂绿，与 T8 结果页
+     * 「推断通过」语义一致；2026-07-05 用户裁定由 70 修订，原值使推断通过节点落在薄弱色带）。
      * <p>M2 §2.2 裁决，不做 EWMA，直接常量写入，不违反"绝不另写掌握度计算"红线。
      */
-    private static final int INFERRED_PASS_SCORE = 70;
+    private static final int INFERRED_PASS_SCORE = 75;
 
     /**
      * 推断保守初值：INFERRED_FAIL 节点写入 35。
