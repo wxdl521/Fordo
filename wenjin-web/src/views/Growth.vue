@@ -72,14 +72,47 @@
           <!-- 数据点 -->
           <circle v-for="(pt, idx) in curve" :key="idx" :cx="pt.x" :cy="pt.y" :r="idx === curve.length - 1 ? 5 : 3.5" :fill="idx === curve.length - 1 ? 'var(--acc)' : 'var(--ok)'" />
 
+          <!-- 当前有效值标记（读时衰减，与历史曲线末点分离） -->
+          <template v-if="effectiveMarkerPoint">
+            <line
+              :x1="lastPoint.x"
+              :y1="lastPoint.y"
+              :x2="effectiveMarkerPoint.x"
+              :y2="effectiveMarkerPoint.y"
+              stroke="var(--warn)"
+              stroke-width="1.5"
+              stroke-dasharray="4 4"
+              opacity="0.75"
+            />
+            <circle
+              :cx="effectiveMarkerPoint.x"
+              :cy="effectiveMarkerPoint.y"
+              r="5.5"
+              fill="var(--warn)"
+              stroke="var(--card)"
+              stroke-width="1.5"
+            />
+            <text
+              :x="effectiveMarkerPoint.x + 10"
+              :y="effectiveMarkerPoint.y + 4"
+              font-size="12"
+              font-weight="600"
+              fill="var(--warn)"
+            >{{ effectiveMarkerPoint.label }}%</text>
+          </template>
+
           <!-- 最后一个点的标签 -->
-          <text v-if="lastPoint" :x="lastPoint.x - 12" :y="lastPoint.y - 11" text-anchor="end" font-size="13" font-weight="600" fill="var(--acc)">{{ lastPoint.label }}%</text>
+          <text v-if="lastPoint && !effectiveMarkerPoint" :x="lastPoint.x - 12" :y="lastPoint.y - 11" text-anchor="end" font-size="13" font-weight="600" fill="var(--acc)">{{ lastPoint.label }}%</text>
+          <text v-else-if="lastPoint && effectiveMarkerPoint" :x="lastPoint.x - 12" :y="lastPoint.y - 11" text-anchor="end" font-size="12" fill="var(--mut)">{{ lastPoint.label }}%</text>
 
           <!-- X 轴日期标签 -->
           <text v-if="curve.length > 0" :x="curve[0].x" y="242" font-size="11" fill="var(--mut)">{{ fmtDate(data.curve[0].snapshotAt) }}</text>
           <text v-if="curve.length > 1" :x="lastPoint.x" y="242" text-anchor="end" font-size="11" fill="var(--mut)">{{ fmtDate(data.curve[data.curve.length - 1].snapshotAt) }}</text>
         </svg>
-        <div class="gr-curve-note">每完成一次练习、看完一份资源，问津都会重估相关节点的掌握度。</div>
+        <div class="gr-curve-note">
+          每完成一次练习、看完一份资源，问津都会重估相关节点的掌握度。
+          <template v-if="effectiveMarkerPoint">琥珀点表示读时衰减后的当前有效掌握度。</template>
+        </div>
       </div>
 
       <!-- 前后对比 -->
@@ -232,6 +265,27 @@ const lastPoint = computed(() => {
   const pt = curve.value[curve.value.length - 1]
   const mastery = Math.round(parseFloat(data.value.curve[data.value.curve.length - 1].overallMastery || 0))
   return { x: pt.x, y: pt.y, label: mastery }
+})
+
+// 计算属性：曲线终点当前有效值标记
+const effectiveMarkerPoint = computed(() => {
+  const marker = data.value?.effectiveMarker
+  if (!marker || marker.overallEffectiveMastery == null || curve.value.length === 0 || !lastPoint.value) {
+    return null
+  }
+  const rawLast = parseFloat(data.value.curve[data.value.curve.length - 1].overallMastery || 0)
+  const effective = parseFloat(marker.overallEffectiveMastery || 0)
+  if (Math.abs(rawLast - effective) < 0.05) {
+    return null
+  }
+  const yMin = 20
+  const yMax = 220
+  const y = yMax - (yMax - yMin) * (effective / 100)
+  return {
+    x: lastPoint.value.x,
+    y,
+    label: Math.round(effective)
+  }
 })
 
 // 计算属性：baseline 面板

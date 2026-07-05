@@ -26,6 +26,26 @@ public class GrowthVO {
     private Compare compare;
 
     /**
+     * 曲线终点「当前有效值」标记（读时衰减，不参与历史曲线）。
+     * 历史 {@link #curve} 点保持快照原始分；本字段反映当下有效掌握度均值。
+     */
+    private EffectiveMarker effectiveMarker;
+
+    /**
+     * 曲线终点标记：当下有效整体掌握度（与历史曲线点分离展示）。
+     */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class EffectiveMarker {
+        /** 标记时刻（服务端当前时间） */
+        private LocalDateTime asOf;
+
+        /** 已触及节点的有效掌握度均值（保留 1 位小数） */
+        private BigDecimal overallEffectiveMastery;
+    }
+
+    /**
      * 曲线点：某次快照时刻的整体掌握度均值。
      */
     @Data

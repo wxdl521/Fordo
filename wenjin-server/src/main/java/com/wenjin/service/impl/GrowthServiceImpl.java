@@ -3,30 +3,50 @@ package com.wenjin.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.entity.KgNode;
 import com.wenjin.entity.MasterySnapshot;
+import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.MasterySnapshotMapper;
+import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.GrowthService;
+import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.vo.GrowthVO;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
 /**
  * 成长档案服务实现：聚合快照生成成长曲线和前后对比。
+ * <p>
+ * 历史曲线保持快照原始分；曲线终点可附加读时衰减的「当前有效值」标记。
  */
 @Service
 public class GrowthServiceImpl implements GrowthService {
 
     private final MasterySnapshotMapper snapshotMapper;
     private final KgNodeMapper nodeMapper;
+    private final StudentMasteryMapper studentMasteryMapper;
 
-    public GrowthServiceImpl(MasterySnapshotMapper snapshotMapper, KgNodeMapper nodeMapper) {
+    @Value("${wenjin.mastery.decay.enabled:true}")
+    private boolean decayEnabled;
+
+    @Value("${wenjin.mastery.decay.tau-days:30}")
+    private double decayTauDays;
+
+    @Value("${wenjin.mastery.decay.floor:25}")
+    private double decayFloor;
+
+    public GrowthServiceImpl(MasterySnapshotMapper snapshotMapper,
+                             KgNodeMapper nodeMapper,
+                             StudentMasteryMapper studentMasteryMapper) {
         this.snapshotMapper = snapshotMapper;
         this.nodeMapper = nodeMapper;
+        this.studentMasteryMapper = studentMasteryMapper;
     }
 
     @Override
@@ -44,19 +64,22 @@ public class GrowthServiceImpl implements GrowthService {
             return buildEmptyGrowth();
         }
 
-        // 3. 构建成长曲线
+        // 3. 构建成长曲线（历史原始分）
         List<GrowthVO.CurvePoint> curve = buildCurve(snapshots);
 
         // 4. 构建前后对比
         GrowthVO.Compare compare = buildCompare(snapshots);
 
-        // 5. 组装返回
+        // 5. 曲线终点：当前有效值标记（读时衰减，不改历史点）
+        GrowthVO.EffectiveMarker effectiveMarker = buildEffectiveMarker(studentId, courseId);
+
+        // 6. 组装返回
         LocalDateTime startAt = snapshots.get(0).getSnapshotAt();
-        return new GrowthVO(startAt, curve, compare);
+        return new GrowthVO(startAt, curve, compare, effectiveMarker);
     }
 
     /**
-     * 构建成长曲线：每个快照时刻的整体掌握度均值。
+     * 构建成长曲线：每个快照时刻的整体掌握度均值（快照原始分，不衰减）。
      */
     private List<GrowthVO.CurvePoint> buildCurve(List<MasterySnapshot> snapshots) {
         List<GrowthVO.CurvePoint> curve = new ArrayList<>();
@@ -94,6 +117,43 @@ public class GrowthServiceImpl implements GrowthService {
         }
 
         return curve;
+    }
+
+    /**
+     * 构建曲线终点「当前有效值」标记：student_mastery 读时衰减后的整体均值。
+     */
+    private GrowthVO.EffectiveMarker buildEffectiveMarker(Long studentId, Long courseId) {
+        List<StudentMastery> masteries = studentMasteryMapper.selectList(
+            new LambdaQueryWrapper<StudentMastery>()
+                .eq(StudentMastery::getStudentId, studentId)
+                .eq(StudentMastery::getCourseId, courseId)
+        );
+        if (masteries.isEmpty()) {
+            return null;
+        }
+
+        double sumEffective = 0.0;
+        for (StudentMastery sm : masteries) {
+            double raw = sm.getMasteryScore().doubleValue();
+            int dbLevel = sm.getMasteryLevel() != null ? sm.getMasteryLevel() : 0;
+            double days = daysSinceEvidence(sm.getUpdatedAt());
+            double effective = decayEnabled
+                ? MasteryDecayCalculator.effectiveScore(raw, days, decayTauDays, decayFloor, dbLevel)
+                : raw;
+            sumEffective += effective;
+        }
+
+        BigDecimal mean = BigDecimal.valueOf(sumEffective / masteries.size())
+            .setScale(1, RoundingMode.HALF_UP);
+        return new GrowthVO.EffectiveMarker(LocalDateTime.now(), mean);
+    }
+
+    private double daysSinceEvidence(LocalDateTime updatedAt) {
+        if (updatedAt == null) {
+            return 0.0;
+        }
+        Duration duration = Duration.between(updatedAt, LocalDateTime.now());
+        return duration.toMillis() / (24.0 * 60 * 60 * 1000);
     }
 
     /**
@@ -247,6 +307,6 @@ public class GrowthServiceImpl implements GrowthService {
             Collections.emptyList(),
             Collections.emptyList()
         );
-        return new GrowthVO(null, Collections.emptyList(), compare);
+        return new GrowthVO(null, Collections.emptyList(), compare, null);
     }
 }
