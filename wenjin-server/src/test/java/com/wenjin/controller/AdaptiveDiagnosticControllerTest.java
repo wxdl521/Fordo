@@ -9,6 +9,7 @@ import com.wenjin.dto.AdaptiveDiagnosticVO;
 import com.wenjin.dto.AdaptiveDiagnosticVO.ProgressVO;
 import com.wenjin.dto.AdaptiveDiagnosticVO.ProbeVO;
 import com.wenjin.dto.AdaptiveDiagnosticVO.SummaryVO;
+import com.wenjin.dto.EvidenceVO;
 import com.wenjin.dto.PaperQuestionVO;
 import com.wenjin.security.TokenService;
 import com.wenjin.service.AdaptiveDiagnosticService;
@@ -26,6 +27,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,6 +39,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -342,8 +345,8 @@ class AdaptiveDiagnosticControllerTest {
                 .andExpect(jsonPath("$.data.summary.nodes[0].nodeCode").value("KT10"))
                 .andExpect(jsonPath("$.data.summary.nodes[0].name").value("节点10"))
                 .andExpect(jsonPath("$.data.summary.nodes[0].state").value("TESTED_PASS"))
-                // resultUrl 指向结果页
-                .andExpect(jsonPath("$.data.resultUrl").value("/diagnostic/result?courseId=5"));
+                // resultUrl 指向结果页（T8 修正为 /result）
+                .andExpect(jsonPath("$.data.resultUrl").value("/result?courseId=5"));
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -462,6 +465,87 @@ class AdaptiveDiagnosticControllerTest {
         verify(adaptiveDiagnosticService, never()).start(anyLong(), anyLong());
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    // 测试 9：evidence 端点鉴权（T8）
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("evidence: 无 Authorization 头 → 401")
+    void evidence_noToken_returns401() throws Exception {
+        mvc.perform(get("/api/diagnostic/adaptive/evidence")
+                        .param("studentId", "2").param("courseId", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
+    }
+
+    @Test
+    @DisplayName("evidence: 伪造 token → 401")
+    void evidence_forgedToken_returns401() throws Exception {
+        mvc.perform(get("/api/diagnostic/adaptive/evidence")
+                        .header("Authorization", "Bearer forged.token.here")
+                        .param("studentId", "2").param("courseId", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
+    }
+
+    @Test
+    @DisplayName("evidence: token 归属他人（uid=9，studentId=2）→ 403（assertSelf 越权）")
+    void evidence_otherUserToken_returns403() throws Exception {
+        mvc.perform(get("/api/diagnostic/adaptive/evidence")
+                        .header("Authorization", "Bearer " + tokenService.issue(9L, 2))
+                        .param("studentId", "2").param("courseId", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
+    }
+
+    @Test
+    @DisplayName("evidence: assertAccessibleByStudent 抛 FORBIDDEN → 403（课程边界短路）")
+    void evidence_courseNotAccessible_returns403() throws Exception {
+        doThrow(new BusinessException(ResultCode.FORBIDDEN, "课程未发布或未选课"))
+                .when(courseService).assertAccessibleByStudent(eq(2L), eq(5L));
+        mvc.perform(get("/api/diagnostic/adaptive/evidence")
+                        .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
+                        .param("studentId", "2").param("courseId", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
+        verify(adaptiveDiagnosticService, never()).latestEvidence(anyLong(), anyLong());
+    }
+
+    @Test
+    @DisplayName("evidence: 合法请求，service 返回非 null → code=0 + data 形状正确")
+    void evidence_validRequest_returnsEvidence() throws Exception {
+        EvidenceVO ev = buildEvidenceVO();
+        when(adaptiveDiagnosticService.latestEvidence(eq(2L), eq(5L))).thenReturn(ev);
+        mvc.perform(get("/api/diagnostic/adaptive/evidence")
+                        .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
+                        .param("studentId", "2").param("courseId", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.sessionId").value(100))
+                .andExpect(jsonPath("$.data.tested").value(1))
+                .andExpect(jsonPath("$.data.inferredPass").value(1))
+                .andExpect(jsonPath("$.data.inferredFail").value(0))
+                .andExpect(jsonPath("$.data.unknown").value(1))
+                .andExpect(jsonPath("$.data.inferredNodes[0].nodeId").value(10))
+                .andExpect(jsonPath("$.data.inferredNodes[0].name").value("节点A"))
+                .andExpect(jsonPath("$.data.inferredNodes[0].state").value("INFERRED_PASS"))
+                .andExpect(jsonPath("$.data.inferredNodes[0].fromNodeId").value(20))
+                .andExpect(jsonPath("$.data.inferredNodes[0].fromName").value("节点B"))
+                .andExpect(jsonPath("$.data.inferredNodes[0].fromPass").value(true));
+    }
+
+    @Test
+    @DisplayName("evidence: 合法请求，service 返回 null（无已完成会话）→ code=0 + data=null")
+    void evidence_noCompletedSession_returnsNull() throws Exception {
+        when(adaptiveDiagnosticService.latestEvidence(eq(2L), eq(5L))).thenReturn(null);
+        mvc.perform(get("/api/diagnostic/adaptive/evidence")
+                        .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
+                        .param("studentId", "2").param("courseId", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data").isEmpty());
+    }
+
     // ── fixture helpers ──────────────────────────────────────────────────
 
     /** start 响应：首探针 nodeId=10，两题（无 answer/isCorrect/pointNodeCode），budgetLeft=15。 */
@@ -536,7 +620,28 @@ class AdaptiveDiagnosticControllerTest {
         summary.setNodes(List.of(nd));
         vo.setSummary(summary);
 
-        vo.setResultUrl("/diagnostic/result?courseId=5");
+        vo.setResultUrl("/result?courseId=5"); // T8 修正
         return vo;
+    }
+
+    /** evidence 响应：1 实测，1 推断通过，0 推断失败，1 未知；1 条 inferredNodes。 */
+    private EvidenceVO buildEvidenceVO() {
+        EvidenceVO ev = new EvidenceVO();
+        ev.setSessionId(100L);
+        ev.setFinishedAt(LocalDateTime.of(2026, 7, 5, 10, 0, 0));
+        ev.setTested(1);
+        ev.setInferredPass(1);
+        ev.setInferredFail(0);
+        ev.setUnknown(1);
+
+        EvidenceVO.InferredNodeVO n = new EvidenceVO.InferredNodeVO();
+        n.setNodeId(10L);
+        n.setName("节点A");
+        n.setState("INFERRED_PASS");
+        n.setFromNodeId(20L);
+        n.setFromName("节点B");
+        n.setFromPass(true);
+        ev.setInferredNodes(List.of(n));
+        return ev;
     }
 }

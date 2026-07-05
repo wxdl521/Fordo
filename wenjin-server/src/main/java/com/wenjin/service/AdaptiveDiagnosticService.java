@@ -2,6 +2,7 @@ package com.wenjin.service;
 
 import com.wenjin.dto.AdaptiveAnswerRequest;
 import com.wenjin.dto.AdaptiveDiagnosticVO;
+import com.wenjin.dto.EvidenceVO;
 
 /**
  * 图引导自适应诊断服务（M2 图引导自适应诊断 T4）。
@@ -43,4 +44,16 @@ public interface AdaptiveDiagnosticService {
      * @param studentId 学生 ID（反查属主）
      */
     void abandon(Long sessionId, Long studentId);
+
+    /**
+     * 获取最近一次已完成会话的证据（回放归因）。
+     *
+     * <p>归因来源是 state_json 中的 probeHistory 逐步回放（同序回放=同终态），
+     * 绝不从 student_mastery 反推（后续练习会改变掌握度值）。
+     *
+     * @param studentId 学生 ID
+     * @param courseId  课程 ID
+     * @return 证据 VO；无已完成会话时返回 {@code null}（合法业务状态，非 404）
+     */
+    EvidenceVO latestEvidence(Long studentId, Long courseId);
 }

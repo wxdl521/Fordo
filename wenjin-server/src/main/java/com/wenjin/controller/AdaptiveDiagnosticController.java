@@ -4,12 +4,15 @@ import com.wenjin.common.Result;
 import com.wenjin.config.AccessGuard;
 import com.wenjin.dto.AdaptiveAnswerRequest;
 import com.wenjin.dto.AdaptiveDiagnosticVO;
+import com.wenjin.dto.EvidenceVO;
 import com.wenjin.service.AdaptiveDiagnosticService;
 import com.wenjin.service.CourseService;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -79,6 +82,22 @@ public class AdaptiveDiagnosticController {
         // 2. service 内部完成 session 属主反查（T4 实现）
         adaptiveDiagnosticService.abandon(sessionId, req.getStudentId());
         return Result.ok();
+    }
+
+    /**
+     * 获取最近一次已完成会话的证据（回放归因，T8）。
+     * GET /api/diagnostic/adaptive/evidence?studentId=&courseId=
+     *
+     * <p>守卫对齐 start 端点：assertSelf(studentId) → assertAccessibleByStudent → service。
+     * 无已完成会话时 data=null（合法业务状态，非 404）。
+     */
+    @GetMapping("/evidence")
+    public Result<EvidenceVO> evidence(@RequestParam Long studentId, @RequestParam Long courseId) {
+        // 1. 归属校验：studentId 必须等于当前登录用户
+        AccessGuard.assertSelf(studentId);
+        // 2. 课程访问校验（已发布 + 已选课）——对齐 start 端点
+        courseService.assertAccessibleByStudent(studentId, courseId);
+        return Result.ok(adaptiveDiagnosticService.latestEvidence(studentId, courseId));
     }
 
     // ── 轻量请求体 DTO（无现成类时内联，对齐 PracticeStartRequest 风格）──

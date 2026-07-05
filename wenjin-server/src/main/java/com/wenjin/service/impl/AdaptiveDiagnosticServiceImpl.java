@@ -7,6 +7,7 @@ import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.dto.AdaptiveAnswerRequest;
 import com.wenjin.dto.AdaptiveDiagnosticVO;
+import com.wenjin.dto.EvidenceVO;
 import com.wenjin.dto.GradedAnswer;
 import com.wenjin.dto.PaperQuestionVO;
 import com.wenjin.entity.AdaptiveDiagSession;
@@ -725,9 +726,12 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
         return vo;
     }
 
-    /** 结果页地址（T4 固定，T8 增强）。 */
+    /**
+     * 结果页地址（T8 修正）。
+     * 前端真实路由是 /result（router/index.js），而非 /diagnostic/result。
+     */
     private String resultUrl(Long courseId) {
-        return "/diagnostic/result?courseId=" + courseId;
+        return "/result?courseId=" + courseId;
     }
 
     private AdaptiveDiagnosticVO.ProgressVO progressFrom(AdaptiveEngine engine) {
@@ -827,4 +831,121 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
 
     /** 探针组卷产物：被探节点 + 冻结题 id + 脱敏题目 VO。 */
     private record ProbeBundle(Long nodeId, List<Long> questionIds, List<PaperQuestionVO> questionVOs) {}
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // latestEvidence（T8）
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * 获取最近一次已完成会话的证据（回放归因，T8）。
+     *
+     * <h3>归因算法（裁决 3）</h3>
+     * <p>new 一个 fresh {@link AdaptiveEngine}（全节点集为 testable，budget=各步 questionsUsed 之和）；
+     * 按序 {@code recordProbeResult}，逐步比较前后 {@code statesView()} diff；
+     * 对每个节点记录<b>最后一次</b>进入 INFERRED_PASS/INFERRED_FAIL 的成因探针节点。
+     * 回放结束后断言终态 == 存储终态（裁决 4），不一致抛 {@link IllegalStateException}。
+     *
+     * @param studentId 学生 ID
+     * @param courseId  课程 ID
+     * @return 证据 VO；无已完成会话时返回 {@code null}
+     */
+    @Override
+    public EvidenceVO latestEvidence(Long studentId, Long courseId) {
+        // 1. 取最近一次已完成会话（status=1，finished_at 降序、id 降序，平手取 id 大者）
+        AdaptiveDiagSession session = adaptiveDiagSessionMapper.selectOne(
+                new QueryWrapper<AdaptiveDiagSession>()
+                        .eq("student_id", studentId)
+                        .eq("course_id", courseId)
+                        .eq("status", SESSION_DONE)
+                        .orderByDesc("finished_at")
+                        .orderByDesc("id")
+                        .last("LIMIT 1"));
+        if (session == null) {
+            return null;
+        }
+
+        AdaptiveDiagState state = AdaptiveDiagState.fromJson(session.getStateJson());
+        List<AdaptiveDiagState.ProbeRecord> probeHistory = state.probeHistory();
+
+        // 2. 加载课程图（复用既有接缝，循环内不查库）
+        List<KgNode> nodes = loadCourseNodes(courseId);
+        List<KgEdge> prereqEdges = loadPrereqEdges(courseId);
+
+        // testable = 全节点集（回放不需要选点，传全集保证 recordProbeResult 不抛 unknown node）；
+        // budget = probeHistory 各步 questionsUsed 之和（保证回放绝不预算越界）。
+        Set<Long> allNodeIds = nodes.stream().map(KgNode::getId).collect(Collectors.toSet());
+        int replayBudget = probeHistory.stream().mapToInt(r -> r.questionIds().size()).sum();
+
+        // 3. 引擎逐步回放 + 归因记录
+        AdaptiveEngine engine = new AdaptiveEngine(nodes, prereqEdges, allNodeIds, replayBudget);
+
+        // attributionFromNode[nodeId] = 最后一次使该节点进入 INFERRED_* 的探针节点 ID
+        Map<Long, Long> attributionFromNode = new HashMap<>();
+        // attributionFromPass[nodeId] = 该探针是否答对（true=答对/INFERRED_PASS方向）
+        Map<Long, Boolean> attributionFromPass = new HashMap<>();
+
+        for (AdaptiveDiagState.ProbeRecord rec : probeHistory) {
+            Map<Long, NodeState> before = engine.statesView();
+            engine.recordProbeResult(rec.nodeId(), rec.pass(), rec.questionIds().size());
+            Map<Long, NodeState> after = engine.statesView();
+
+            for (Map.Entry<Long, NodeState> entry : after.entrySet()) {
+                Long nodeId = entry.getKey();
+                NodeState afterState = entry.getValue();
+                NodeState beforeState = before.get(nodeId);
+                // 节点刚进入 INFERRED_* 态（从 UNKNOWN 进入；引擎规则保证 TESTED 节点不能变成 INFERRED）
+                if (afterState.isInferred() && (beforeState == null || !beforeState.isInferred())) {
+                    attributionFromNode.put(nodeId, rec.nodeId());
+                    attributionFromPass.put(nodeId, rec.pass());
+                }
+            }
+        }
+
+        // 4. 回放正确性断言（裁决 4）：终态不一致 → 响亮失败，不给错归因
+        Map<Long, NodeState> replayedStates = engine.statesView();
+        Map<Long, NodeState> storedStates = state.nodeStates();
+        if (!replayedStates.equals(storedStates)) {
+            throw new IllegalStateException(
+                    "自适应诊断回放终态与存储终态不一致（图或引擎语义变更）：sessionId=" + session.getId());
+        }
+
+        // 5. 计数（复用 countStates 接缝）
+        AdaptiveEngine.Summary summary = countStates(replayedStates);
+
+        // 6. 节点名查找（从已加载 nodes 就地建 Map，无需再次查库）
+        Map<Long, String> nameById = new HashMap<>();
+        for (KgNode kgNode : nodes) {
+            nameById.put(kgNode.getId(), kgNode.getName());
+        }
+
+        // 7. 构建 inferredNodes（只含 INFERRED_* 节点，按 nodeId 升序）
+        List<EvidenceVO.InferredNodeVO> inferredNodes = replayedStates.entrySet().stream()
+                .filter(e -> e.getValue().isInferred())
+                .sorted(Comparator.comparing(Map.Entry::getKey))
+                .map(e -> {
+                    Long nodeId = e.getKey();
+                    EvidenceVO.InferredNodeVO item = new EvidenceVO.InferredNodeVO();
+                    item.setNodeId(nodeId);
+                    item.setName(nameById.getOrDefault(nodeId, ""));
+                    item.setState(e.getValue().name());
+                    Long fromId = attributionFromNode.get(nodeId);
+                    item.setFromNodeId(fromId);
+                    item.setFromName(fromId != null ? nameById.getOrDefault(fromId, "") : "");
+                    Boolean fromPassVal = attributionFromPass.get(nodeId);
+                    item.setFromPass(Boolean.TRUE.equals(fromPassVal));
+                    return item;
+                })
+                .collect(Collectors.toList());
+
+        // 8. 构建 EvidenceVO
+        EvidenceVO vo = new EvidenceVO();
+        vo.setSessionId(session.getId());
+        vo.setFinishedAt(session.getFinishedAt());
+        vo.setTested(summary.tested());
+        vo.setInferredPass(summary.inferredPass());
+        vo.setInferredFail(summary.inferredFail());
+        vo.setUnknown(summary.unknown());
+        vo.setInferredNodes(inferredNodes);
+        return vo;
+    }
 }
