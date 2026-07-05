@@ -59,6 +59,10 @@ wenjin:
     alpha: 0.3                                   # EWMA 平滑系数基准
     mastered-threshold: 75                       # 掌握度 ≥ 此值判为已掌握
     weak-threshold: 40                           # 掌握度 ≥ 此值判为薄弱，否则未学
+    decay:                                       # 读时遗忘衰减（M3 ColorMap 染色，不写回库）
+      enabled: true                              # false 时 effective≡raw，一键回退
+      tau-days: 30                               # 衰减时间常数 τ（天），约 30 天可衰减部分衰减 63%
+      floor: 25                                  # 衰减地板分，学过的高分不会退回完全未学
   practice:                                      # 节点练习组卷（M1 练习闭环 T3）
     size: 5                                      # 默认每会话题数
     max-size: 10                                 # 每会话最大题数上限（超出自动夹紧）

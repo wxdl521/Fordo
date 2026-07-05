@@ -21,14 +21,18 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -47,7 +51,17 @@ class GraphServiceImplTest {
     @Mock StudentMasteryMapper studentMasteryMapper;
 
     private GraphServiceImpl service() {
-        return new GraphServiceImpl(courseMapper, nodeMapper, edgeMapper, studentMasteryMapper);
+        return serviceWithDecay(true);
+    }
+
+    private GraphServiceImpl serviceWithDecay(boolean decayEnabled) {
+        GraphServiceImpl impl = new GraphServiceImpl(courseMapper, nodeMapper, edgeMapper, studentMasteryMapper);
+        ReflectionTestUtils.setField(impl, "decayEnabled", decayEnabled);
+        ReflectionTestUtils.setField(impl, "decayTauDays", 30.0);
+        ReflectionTestUtils.setField(impl, "decayFloor", 25.0);
+        ReflectionTestUtils.setField(impl, "masteredThreshold", 75.0);
+        ReflectionTestUtils.setField(impl, "weakThreshold", 40.0);
+        return impl;
     }
 
     // ───────── 校验类（校验先于落库，无需 stub mapper） ─────────
@@ -257,6 +271,62 @@ class GraphServiceImplTest {
         assertThat(e.getSource()).isEqualTo("KT01");
         assertThat(e.getTarget()).isEqualTo("KT02");
         assertThat(e.getType()).isEqualTo("前置");
+    }
+
+    @Test
+    @DisplayName("衰减开启：updated_at 回拨 40 天后 effectiveLevel 降级，mastery 染色用有效等级")
+    void getGraphAppliesDecayWhenEvidenceStale() {
+        when(courseMapper.selectById(1L)).thenReturn(course(1L, "C1", "课程一"));
+        KgNode n1 = kgNode(10L, "KT01", "用例", true, 4);
+        when(nodeMapper.selectList(any())).thenReturn(List.of(n1));
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
+
+        StudentMastery sm = new StudentMastery();
+        sm.setNodeId(10L);
+        sm.setMasteryScore(new BigDecimal("88.00"));
+        sm.setMasteryLevel(2);
+        sm.setUpdatedAt(LocalDateTime.now().minusDays(40));
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(sm));
+
+        GraphDataVO vo = service().getGraph(1L, 2L);
+
+        GraphDataVO.NodeVO node = vo.getNodes().get(0);
+        assertThat(node.getRawScore()).isEqualTo(88.0);
+        assertThat(node.getMasteryScore()).isEqualTo(88.0);
+        assertThat(node.getEffectiveScore()).isCloseTo(41.6, within(1.0));
+        assertThat(node.getEffectiveLevel()).isEqualTo(1);
+        assertThat(node.getMastery()).isEqualTo("weak");
+        assertThat(node.getDaysSinceEvidence()).isCloseTo(40.0, within(0.5));
+
+        verify(studentMasteryMapper, never()).updateById(any(StudentMastery.class));
+        verify(studentMasteryMapper, never()).update(any(), any());
+    }
+
+    @Test
+    @DisplayName("衰减关闭时 effective≡raw，mastery 仍按原始分阈值染色")
+    void getGraphDecayDisabled_effectiveEqualsRaw() {
+        when(courseMapper.selectById(1L)).thenReturn(course(1L, "C1", "课程一"));
+        KgNode n1 = kgNode(10L, "KT01", "用例", true, 4);
+        when(nodeMapper.selectList(any())).thenReturn(List.of(n1));
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
+
+        StudentMastery sm = new StudentMastery();
+        sm.setNodeId(10L);
+        sm.setMasteryScore(new BigDecimal("88.00"));
+        sm.setMasteryLevel(2);
+        sm.setUpdatedAt(LocalDateTime.now().minusDays(40));
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(sm));
+
+        GraphDataVO vo = serviceWithDecay(false).getGraph(1L, 2L);
+
+        GraphDataVO.NodeVO node = vo.getNodes().get(0);
+        assertThat(node.getRawScore()).isEqualTo(88.0);
+        assertThat(node.getEffectiveScore()).isEqualTo(88.0);
+        assertThat(node.getEffectiveLevel()).isEqualTo(2);
+        assertThat(node.getMastery()).isEqualTo("mastered");
+
+        verify(studentMasteryMapper, never()).updateById(any(StudentMastery.class));
+        verify(studentMasteryMapper, never()).update(any(), any());
     }
 
     @Test

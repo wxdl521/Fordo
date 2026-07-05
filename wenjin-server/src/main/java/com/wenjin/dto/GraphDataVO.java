@@ -32,10 +32,24 @@ public class GraphDataVO {
         /** 是否重点 */
         private Boolean isKey;
         private String description;
-        /** 掌握度三态：mastered / weak / unlearned；带 studentId 时按真实学情填充，否则统一 unlearned */
+        /**
+         * 染色用掌握度三态：mastered / weak / unlearned。
+         * 有 studentId 时由 {@link #effectiveLevel} 映射；否则统一 unlearned。
+         */
         private String mastery;
-        /** 掌握度分值（0–100，按 studentId 查得；无学生上下文或无掌握行时为 null） */
+        /**
+         * 数据库原始掌握度分值（0–100，向后兼容字段，等同 {@link #rawScore}）。
+         * 无学生上下文或无掌握行时为 null。
+         */
         private Double masteryScore;
+        /** 数据库原始分 {@code student_mastery.mastery_score}；无掌握行时为 null */
+        private Double rawScore;
+        /** 读时衰减后的有效分；衰减关闭时与 rawScore 相同 */
+        private Double effectiveScore;
+        /** 由 effectiveScore 重算的掌握等级：2=已掌握 / 1=薄弱 / 0=未学 */
+        private Integer effectiveLevel;
+        /** 距上次证据（updated_at）的天数，可为小数；无掌握行时为 null */
+        private Double daysSinceEvidence;
     }
 
     /** 边（source/target 用节点业务编码，type 为中文标签） */
