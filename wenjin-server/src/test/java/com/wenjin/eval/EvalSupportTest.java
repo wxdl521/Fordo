@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.offset;
  *
  * <p>覆盖 4 组：① Kahn 分层后半切分（含并列与孤立节点）
  *              ② 着色一致率（含无行=未学、分母=总节点）
- *              ③ 二分类映射与准确率
+ *              ③ 二分类映射与准确率（含对称口径新增）
  *              ④ markdown 渲染 golden 断言
  */
 class EvalSupportTest {
@@ -178,11 +178,11 @@ class EvalSupportTest {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // ③ 二分类映射与准确率
+    // ③ 二分类映射与准确率（含对称口径）
     // ─────────────────────────────────────────────────────────────────────────
 
     @Nested
-    @DisplayName("③ 二分类映射与准确率")
+    @DisplayName("③ 二分类映射与准确率（含对称口径）")
     class BinaryClassifyTests {
 
         @Test
@@ -240,6 +240,36 @@ class EvalSupportTest {
             Map<Long, Boolean> preds = Map.of(); // null (absent) = excluded
             assertThat(EvalSupport.computeAccuracy(preds, weakNodes, allNodes)).isEqualTo(0.0);
         }
+
+        @Test
+        @DisplayName("固定覆盖内：无 mastery 行节点 → 缺席(null) → 排除出分母")
+        void fixedCoveredExcludesNoRowNodes() {
+            // weakNodes = {2, 3}; node3 has no mastery row → absent from map → null → excluded
+            // node1: has row, score≥50 → true(PASS), gt=PASS → correct
+            // node2: has row, score<50 → false(FAIL), gt=FAIL → correct
+            // node3: no row → absent → excluded from denominator
+            Set<Long> weakNodes = Set.of(2L, 3L);
+            Set<Long> allNodes = Set.of(1L, 2L, 3L);
+            Map<Long, Boolean> fixedPredsCovered = Map.of(1L, true, 2L, false);
+            double acc = EvalSupport.computeAccuracy(fixedPredsCovered, weakNodes, allNodes);
+            // correct=2, total=2 → 1.0
+            assertThat(acc).isEqualTo(1.0, offset(1e-9));
+        }
+
+        @Test
+        @DisplayName("自适应全图：UNKNOWN 节点计为 FAIL → 纳入分母")
+        void adaptiveAllImputesUnknownAsFail() {
+            // weakNodes = {3}; node2 was UNKNOWN → imputed as false(FAIL)
+            // node1: true(PASS), gt=PASS → correct
+            // node2: false(FAIL imputed), gt=PASS(not weak) → wrong
+            // node3: false(FAIL), gt=FAIL(weak) → correct
+            Set<Long> weakNodes = Set.of(3L);
+            Set<Long> allNodes = Set.of(1L, 2L, 3L);
+            Map<Long, Boolean> adaptivePredsAll = Map.of(1L, true, 2L, false, 3L, false);
+            double acc = EvalSupport.computeAccuracy(adaptivePredsAll, weakNodes, allNodes);
+            // correct=2, total=3 → 2/3
+            assertThat(acc).isEqualTo(2.0 / 3.0, offset(1e-9));
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -251,36 +281,43 @@ class EvalSupportTest {
     class MarkdownRenderTests {
 
         @Test
-        @DisplayName("renderMarkdownTable：表头 + 数据行格式正确")
+        @DisplayName("renderMarkdownTable：表头四准确率列 + 数据行格式正确；固定卷题数取传入值")
         void golden() {
+            // fixedQuestionCount=23（非 25）验证不再硬编码
             EvalSupport.ProfileResult r = new EvalSupport.ProfileResult(
-                    "全弱", 15, 25, 30, 18, 39, 9,
-                    0.80, 0.90, 0.75, 0.65);
+                    "全弱", 15, 23, 30, 18, 39, 9,
+                    0.80, 0.90, 0.75, 0.68, 0.62, 0.65);
             String table = EvalSupport.renderMarkdownTable(List.of(r));
 
-            // 表头
+            // 表头：新四列
             assertThat(table).contains("| 画像 | 自适应题数 | 固定卷题数");
+            assertThat(table).contains("自适应准确率(覆盖内)");
+            assertThat(table).contains("自适应准确率(全图)");
+            assertThat(table).contains("固定准确率(覆盖内)");
+            assertThat(table).contains("固定准确率(全图)");
             assertThat(table).contains("|------|");
 
             // 数据行：数值正确
             assertThat(table).contains("| 全弱 |");
             assertThat(table).contains("| 15 |");
-            assertThat(table).contains("| 25 |");
+            assertThat(table).contains("| 23 |");   // 传入值，非硬编码 25
             assertThat(table).contains("30/39");
             assertThat(table).contains("18/39");
             assertThat(table).contains("| 9 |");
             assertThat(table).contains("80.0%");
             assertThat(table).contains("90.0%");
-            assertThat(table).contains("75.0%");
-            assertThat(table).contains("65.0%");
+            assertThat(table).contains("75.0%");    // adaptiveAccuracyCovered
+            assertThat(table).contains("68.0%");    // adaptiveAccuracyAll
+            assertThat(table).contains("62.0%");    // fixedAccuracyCovered
+            assertThat(table).contains("65.0%");    // fixedAccuracyAll
         }
 
         @Test
-        @DisplayName("conclusionLine：包含核心数值")
+        @DisplayName("conclusionLine：包含核心数值（四准确率 + 覆盖 + 一致率）")
         void conclusionLineContent() {
             EvalSupport.ProfileResult r = new EvalSupport.ProfileResult(
                     "半弱", 12, 25, 39, 20, 39, 0,
-                    0.85, 0.92, 0.80, 0.72);
+                    0.85, 0.92, 0.80, 0.75, 0.70, 0.72);
             String line = EvalSupport.conclusionLine(r);
 
             assertThat(line).contains("半弱");
@@ -288,18 +325,22 @@ class EvalSupportTest {
             assertThat(line).contains("39/39");
             assertThat(line).contains("UNKNOWN=0");
             assertThat(line).contains("25 题");
-            assertThat(line).contains("85.0%");
+            assertThat(line).contains("85.0%");    // agreementRate
+            assertThat(line).contains("80.0%");    // adaptiveAccuracyCovered
+            assertThat(line).contains("75.0%");    // adaptiveAccuracyAll
+            assertThat(line).contains("70.0%");    // fixedAccuracyCovered
+            assertThat(line).contains("72.0%");    // fixedAccuracyAll
         }
 
         @Test
         @DisplayName("多画像表：行数正确")
         void multipleProfiles() {
             EvalSupport.ProfileResult r1 = new EvalSupport.ProfileResult(
-                    "全弱", 15, 25, 35, 20, 39, 4, 0.82, 0.88, 0.78, 0.70);
+                    "全弱", 15, 25, 35, 20, 39, 4, 0.82, 0.88, 0.78, 0.72, 0.68, 0.70);
             EvalSupport.ProfileResult r2 = new EvalSupport.ProfileResult(
-                    "半弱", 12, 25, 39, 22, 39, 0, 0.87, 0.93, 0.85, 0.76);
+                    "半弱", 12, 25, 39, 22, 39, 0, 0.87, 0.93, 0.85, 0.80, 0.76, 0.76);
             EvalSupport.ProfileResult r3 = new EvalSupport.ProfileResult(
-                    "全强", 8, 25, 38, 24, 39, 1, 0.90, 0.95, 0.88, 0.82);
+                    "全强", 8, 25, 38, 24, 39, 1, 0.90, 0.95, 0.88, 0.85, 0.82, 0.82);
 
             String table = EvalSupport.renderMarkdownTable(List.of(r1, r2, r3));
             String[] lines = table.split("\\R");

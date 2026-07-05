@@ -168,13 +168,16 @@ class AdaptiveVsFixedEvalTest {
                 System.out.printf("  固定卷臂完成，paperSize=%d，cannotConstruct=%d%n",
                         fixedPaperSize, fixedCannotConstruct[0]);
 
-                // 收集指标
+                // 收集指标（fixedPaperSize 传入，不再硬编码 25）
                 EvalSupport.ProfileResult pr = collectMetrics(
                         profile, finalVO, adaptiveId, fixedId,
-                        allNodeIdList, allNodeIdSet, totalNodes, weakNodes);
+                        allNodeIdList, allNodeIdSet, totalNodes, weakNodes, fixedPaperSize);
                 results.add(pr);
-                System.out.printf("  着色一致率=%.1f%%，自适应准确率=%.1f%%，固定准确率=%.1f%%%n%n",
-                        pr.agreementRate() * 100, pr.adaptiveAccuracy() * 100, pr.fixedAccuracy() * 100);
+                System.out.printf(
+                        "  着色一致率=%.1f%%，自适应准确率(覆盖内/全图)=%.1f%%/%.1f%%，固定准确率(覆盖内/全图)=%.1f%%/%.1f%%%n%n",
+                        pr.agreementRate() * 100,
+                        pr.adaptiveAccuracyCovered() * 100, pr.adaptiveAccuracyAll() * 100,
+                        pr.fixedAccuracyCovered() * 100, pr.fixedAccuracyAll() * 100);
             }
 
             // ── 4. 输出 markdown 表与结论行 ────────────────────────────────────
@@ -189,8 +192,10 @@ class AdaptiveVsFixedEvalTest {
                 out.append(EvalSupport.conclusionLine(r)).append("\n\n");
             }
             out.append("---\n");
-            out.append("*注：固定卷二分类阈值=50（65/30 冷启动中点）；");
-            out.append("自适应 UNKNOWN 节点排除于准确率分母。*\n");
+            out.append("*注：固定卷二分类阈值=50（65/30 冷启动中点）。");
+            out.append("覆盖内=排除自适应 UNKNOWN / 固定无 mastery 行节点；");
+            out.append("全图=未覆盖节点计为 FAIL，分母=全部课程节点。");
+            out.append("同口径列方可跨臂比较（覆盖内对覆盖内，全图对全图）。*\n");
 
             System.out.println("═══ 评估结果 ═══");
             System.out.println(out);
@@ -386,7 +391,8 @@ class AdaptiveVsFixedEvalTest {
             List<Long> allNodeIdList,
             Set<Long> allNodeIdSet,
             int totalNodes,
-            Set<Long> weakNodes) {
+            Set<Long> weakNodes,
+            int fixedPaperSize) {
 
         // ── 自适应臂：读最近一次已完成会话的 state_json ──────────────────────
         AdaptiveDiagSession adaptiveSession = adaptiveDiagSessionMapper.selectOne(
@@ -441,29 +447,53 @@ class AdaptiveVsFixedEvalTest {
         double intersectionRate = EvalSupport.computeIntersectionAgreementRate(
                 adaptiveLevels, fixedLevels);
 
-        // ── 二分类准确率 ──────────────────────────────────────────────────────
-        // 自适应：state-based 二分类
-        Map<Long, Boolean> adaptivePreds = new HashMap<>();
+        // ── 二分类准确率（对称四口径）────────────────────────────────────────
+        //
+        // 自适应覆盖内：UNKNOWN → null(缺席) → 排除出分母（方案设计要求，保持不变）
+        Map<Long, Boolean> adaptivePredsCovered = new HashMap<>();
         for (Long nodeId : allNodeIdList) {
-            adaptivePreds.put(nodeId,
+            adaptivePredsCovered.put(nodeId,
                     EvalSupport.binaryClassifyByState(adaptiveNodeStates.get(nodeId)));
         }
-        double adaptiveAccuracy = EvalSupport.computeAccuracy(
-                adaptivePreds, weakNodes, allNodeIdSet);
+        double adaptiveAccuracyCovered = EvalSupport.computeAccuracy(
+                adaptivePredsCovered, weakNodes, allNodeIdSet);
 
-        // 固定卷：score-based 二分类（无行 = 0分 < 50 → FAIL=false）
-        Map<Long, Boolean> fixedPreds = new HashMap<>();
+        // 自适应全图：UNKNOWN → false(FAIL 补全) → 纳入分母，分母=全部节点
+        Map<Long, Boolean> adaptivePredsAll = new HashMap<>();
+        for (Long nodeId : allNodeIdList) {
+            Boolean pred = EvalSupport.binaryClassifyByState(adaptiveNodeStates.get(nodeId));
+            adaptivePredsAll.put(nodeId, pred != null ? pred : Boolean.FALSE);
+        }
+        double adaptiveAccuracyAll = EvalSupport.computeAccuracy(
+                adaptivePredsAll, weakNodes, allNodeIdSet);
+
+        // 固定覆盖内：无 mastery 行节点 → 缺席(null) → 排除出分母（与自适应覆盖内语义对称）
+        Map<Long, Boolean> fixedPredsCovered = new HashMap<>();
+        for (Long nodeId : allNodeIdList) {
+            if (fixedScores.containsKey(nodeId)) {
+                fixedPredsCovered.put(nodeId,
+                        EvalSupport.binaryClassifyByScore(fixedScores.get(nodeId)));
+            }
+            // else: 无 mastery 行 → 缺席 → computeAccuracy 会跳过
+        }
+        double fixedAccuracyCovered = EvalSupport.computeAccuracy(
+                fixedPredsCovered, weakNodes, allNodeIdSet);
+
+        // 固定全图：无 mastery 行 → score=0 < 50 → false(FAIL) → 纳入分母，分母=全部节点
+        Map<Long, Boolean> fixedPredsAll = new HashMap<>();
         for (Long nodeId : allNodeIdList) {
             double score = fixedScores.getOrDefault(nodeId, 0.0);
-            fixedPreds.put(nodeId, EvalSupport.binaryClassifyByScore(score));
+            fixedPredsAll.put(nodeId, EvalSupport.binaryClassifyByScore(score));
         }
-        double fixedAccuracy = EvalSupport.computeAccuracy(
-                fixedPreds, weakNodes, allNodeIdSet);
+        double fixedAccuracyAll = EvalSupport.computeAccuracy(
+                fixedPredsAll, weakNodes, allNodeIdSet);
 
         return new EvalSupport.ProfileResult(
-                profile, budgetUsed, 25 /* fixed 标称 25 题 */,
+                profile, budgetUsed, fixedPaperSize,
                 adaptiveCovered, fixedCovered, totalNodes, unknownCount,
-                agreementRate, intersectionRate, adaptiveAccuracy, fixedAccuracy);
+                agreementRate, intersectionRate,
+                adaptiveAccuracyCovered, adaptiveAccuracyAll,
+                fixedAccuracyCovered, fixedAccuracyAll);
     }
 
     // ─────────────────────────────────────────────────────────────────────────────

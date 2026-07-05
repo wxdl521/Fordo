@@ -217,15 +217,22 @@ public final class EvalSupport {
     /**
      * 渲染 markdown 评估表格（含表头 + 数据行）。
      *
+     * <p>准确率口径说明：
+     * <ul>
+     *   <li>覆盖内 = 排除自适应 UNKNOWN / 固定无 mastery 行节点，分母 = 有效预测节点数</li>
+     *   <li>全图 = 未覆盖节点计为 FAIL 预测，分母 = 全部课程节点数</li>
+     *   <li>同口径列方可跨臂比较（覆盖内对覆盖内，全图对全图）</li>
+     * </ul>
+     *
      * @param results 各画像评估结果（顺序即行顺序）
      * @return 完整 markdown 表格字符串（含末尾换行）
      */
     public static String renderMarkdownTable(List<ProfileResult> results) {
         StringBuilder sb = new StringBuilder();
-        sb.append("| 画像 | 自适应题数 | 固定卷题数 | 自适应覆盖 | 固定覆盖 | UNKNOWN | 着色一致率 | 交集一致率 | 自适应准确率 | 固定准确率 |\n");
-        sb.append("|------|-----------|-----------|-----------|---------|---------|-----------|-----------|------------|----------|\n");
+        sb.append("| 画像 | 自适应题数 | 固定卷题数 | 自适应覆盖 | 固定覆盖 | UNKNOWN | 着色一致率 | 交集一致率 | 自适应准确率(覆盖内) | 自适应准确率(全图) | 固定准确率(覆盖内) | 固定准确率(全图) |\n");
+        sb.append("|------|-----------|-----------|-----------|---------|---------|-----------|-----------|---------------------|------------------|------------------|----------------|\n");
         for (ProfileResult r : results) {
-            sb.append(String.format("| %s | %d | %d | %d/%d | %d/%d | %d | %.1f%% | %.1f%% | %.1f%% | %.1f%% |%n",
+            sb.append(String.format("| %s | %d | %d | %d/%d | %d/%d | %d | %.1f%% | %.1f%% | %.1f%% | %.1f%% | %.1f%% | %.1f%% |%n",
                     r.profile(),
                     r.adaptiveQuestionCount(), r.fixedQuestionCount(),
                     r.adaptiveCovered(), r.totalNodes(),
@@ -233,23 +240,31 @@ public final class EvalSupport {
                     r.unknownCount(),
                     r.agreementRate() * 100,
                     r.intersectionAgreementRate() * 100,
-                    r.adaptiveAccuracy() * 100,
-                    r.fixedAccuracy() * 100));
+                    r.adaptiveAccuracyCovered() * 100,
+                    r.adaptiveAccuracyAll() * 100,
+                    r.fixedAccuracyCovered() * 100,
+                    r.fixedAccuracyAll() * 100));
         }
         return sb.toString();
     }
 
     /**
      * 生成单行结论（每画像一句，可直接贴答辩稿）。
+     *
+     * <p>引用覆盖内准确率并附全图数字，同时注明覆盖情况。
      */
     public static String conclusionLine(ProfileResult r) {
         return String.format(
                 "%s画像：自适应 %d 题完成 %d/%d 节点分类（UNKNOWN=%d），" +
-                "固定卷 %d 题覆盖 %d/%d 节点，着色一致率 %.1f%%。",
+                "覆盖内准确率 %.1f%%（全图 %.1f%%）；" +
+                "固定卷 %d 题覆盖 %d/%d 节点，覆盖内准确率 %.1f%%（全图 %.1f%%）；" +
+                "着色一致率 %.1f%%。",
                 r.profile(),
                 r.adaptiveQuestionCount(),
                 r.adaptiveCovered(), r.totalNodes(), r.unknownCount(),
+                r.adaptiveAccuracyCovered() * 100, r.adaptiveAccuracyAll() * 100,
                 r.fixedQuestionCount(), r.fixedCovered(), r.totalNodes(),
+                r.fixedAccuracyCovered() * 100, r.fixedAccuracyAll() * 100,
                 r.agreementRate() * 100);
     }
 
@@ -260,17 +275,26 @@ public final class EvalSupport {
     /**
      * 单画像评估结果（每画像一行输入 markdown 表）。
      *
+     * <p>准确率分为两口径（四列），以保证答辩素材中跨臂比较的对称性：
+     * <ul>
+     *   <li><b>覆盖内</b>：排除自适应 UNKNOWN / 固定无 mastery 行节点，分母 = 有效预测节点数</li>
+     *   <li><b>全图</b>：未覆盖节点计为 FAIL 预测，分母 = 全部课程节点数</li>
+     * </ul>
+     * 同口径列方可跨臂比较。
+     *
      * @param profile                   画像名（全弱/半弱/全强）
      * @param adaptiveQuestionCount     自适应实际用题数（state_json.budgetUsed）
-     * @param fixedQuestionCount        固定卷下发题数（composePaper 实际返回数）
+     * @param fixedQuestionCount        固定卷实际下发题数（composePaper 返回数，非标称值）
      * @param adaptiveCovered           自适应非 UNKNOWN 节点数
      * @param fixedCovered              固定卷有 student_mastery 行的节点数
      * @param totalNodes                课程总节点数
      * @param unknownCount              自适应 UNKNOWN 节点数（0 题不可实测节点）
      * @param agreementRate             着色一致率（验收3口径）
      * @param intersectionAgreementRate 交集一致率
-     * @param adaptiveAccuracy          自适应 vs ground truth 准确率
-     * @param fixedAccuracy             固定卷 vs ground truth 准确率
+     * @param adaptiveAccuracyCovered   自适应覆盖内准确率（UNKNOWN 排除）
+     * @param adaptiveAccuracyAll       自适应全图准确率（UNKNOWN → FAIL 补全）
+     * @param fixedAccuracyCovered      固定覆盖内准确率（无 mastery 行节点排除）
+     * @param fixedAccuracyAll          固定全图准确率（无 mastery 行节点 → FAIL 补全）
      */
     public record ProfileResult(
             String profile,
@@ -282,7 +306,9 @@ public final class EvalSupport {
             int unknownCount,
             double agreementRate,
             double intersectionAgreementRate,
-            double adaptiveAccuracy,
-            double fixedAccuracy
+            double adaptiveAccuracyCovered,
+            double adaptiveAccuracyAll,
+            double fixedAccuracyCovered,
+            double fixedAccuracyAll
     ) {}
 }
