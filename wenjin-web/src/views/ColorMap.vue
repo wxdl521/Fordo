@@ -22,6 +22,18 @@
         <option v-for="c in CHAPTERS" :key="c" :value="c">{{ c }}</option>
       </select>
 
+      <!-- 今日复习 -->
+      <button
+        v-if="currentUser"
+        @click="toggleReview"
+        class="wj-hover-acc"
+        :style="reviewOpen
+          ? { height: '34px', padding: '0 14px', background: 'var(--accSoft)', border: '1px solid var(--acc)', borderRadius: '8px', color: 'var(--acc)', fontSize: '12.5px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px', fontWeight: 500, whiteSpace: 'nowrap', flex: 'none' }
+          : { height: '34px', padding: '0 14px', background: reviewCount > 0 ? 'var(--accSoft)' : 'transparent', border: reviewCount > 0 ? '1px solid var(--acc)' : '1px solid var(--line)', borderRadius: '8px', color: reviewCount > 0 ? 'var(--acc)' : 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px', whiteSpace: 'nowrap', flex: 'none' }"
+      >
+        <span :style="{ width: '6px', height: '6px', borderRadius: '50%', background: reviewCount > 0 ? 'var(--acc)' : 'var(--mut)', opacity: reviewCount > 0 ? 1 : 0.5 }"></span>{{ width < 900 ? `复习 ${reviewCount}` : `今日复习 ${reviewCount} 项` }}
+      </button>
+
       <!-- 薄弱根因回溯 -->
       <button @click="toggleRoot" class="wj-hover-acc" :style="rootCause
         ? { height: '34px', padding: '0 14px', background: 'var(--accSoft)', border: '1px solid var(--acc)', borderRadius: '8px', color: 'var(--acc)', fontSize: '12.5px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px', fontWeight: 500, whiteSpace: 'nowrap', flex: 'none' }
@@ -29,6 +41,18 @@
         <span :style="{ width: '6px', height: '6px', borderRadius: '50%', background: rootCause ? 'var(--acc)' : 'var(--mut)', opacity: rootCause ? 1 : 0.5 }"></span>{{ width < 1080 ? '回溯' : '薄弱根因回溯' }}
       </button>
     </div>
+
+    <!-- 今日复习面板 -->
+    <ReviewPanel
+      v-if="currentUser && reviewOpen"
+      :items="reviewItems"
+      :total-decaying-count="reviewTotalCount"
+      :course-id="courseId"
+      :loading="reviewLoading"
+      :error="reviewError"
+      @refresh="loadReview"
+      @close="reviewOpen = false"
+    />
 
     <!-- 画布 -->
     <div ref="canvasRef" class="wj-canvas-container" :style="{ flex: 1, position: 'relative', overflow: 'hidden', touchAction: 'none' }">
@@ -207,6 +231,8 @@ import { useViewport } from '../composables/useViewport.js'
 import { useGraphData, resetGraphData } from '../composables/useGraphData.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
 import { computeLayout, shortName, radiusOf } from '../utils/graphLayout.js'
+import { fetchTodayReview } from '../api/review.js'
+import ReviewPanel from '../components/ReviewPanel.vue'
 
 const serif = "'Noto Serif SC', serif"
 const { theme } = useTheme()
@@ -255,6 +281,42 @@ const STATUS_BG = {
 const hoverId = ref(null)
 const selectedId = ref(null)
 const rootCause = ref(false)
+const reviewOpen = ref(false)
+const reviewItems = ref([])
+const reviewTotalCount = ref(0)
+const reviewLoading = ref(false)
+const reviewError = ref('')
+
+const reviewCount = computed(() => {
+  if (reviewTotalCount.value > 0) return reviewTotalCount.value
+  return reviewItems.value.length
+})
+
+async function loadReview() {
+  if (!currentUser.value?.id || !courseId.value) {
+    reviewItems.value = []
+    reviewTotalCount.value = 0
+    return
+  }
+  reviewLoading.value = true
+  reviewError.value = ''
+  try {
+    const vo = await fetchTodayReview(currentUser.value.id, courseId.value)
+    reviewItems.value = vo?.items || []
+    reviewTotalCount.value = vo?.totalDecayingCount ?? reviewItems.value.length
+  } catch (e) {
+    reviewError.value = e.message || '加载复习队列失败'
+    reviewItems.value = []
+    reviewTotalCount.value = 0
+  } finally {
+    reviewLoading.value = false
+  }
+}
+
+function toggleReview() {
+  reviewOpen.value = !reviewOpen.value
+  if (reviewOpen.value && !reviewLoading.value) loadReview()
+}
 const chapterFilter = ref('全部章节')
 const query = ref('')
 const mapIn = ref(false)
@@ -671,9 +733,22 @@ function chainFor(id) {
 const filterOn = computed(() => chapterFilter.value !== '全部章节')
 const chain = computed(() => (!rootCause.value && hoverId.value && layout.value ? chainFor(hoverId.value) : null))
 
+// ── 今日复习：进入页面 / 换课 / 从练习返回时刷新 ──
+watch(courseId, () => {
+  if (currentUser.value) loadReview()
+})
+
+watch(
+  () => route.path,
+  (p) => {
+    if (p === '/map' && currentUser.value) loadReview()
+  }
+)
+
 // ── 布局 ──
 onMounted(() => {
   if (route.query.root === '1') rootCause.value = true
+  if (currentUser.value) loadReview()
   if (data.value) buildLayout()
   watch(data, (d) => { if (d) buildLayout() })
   window.addEventListener('keydown', onKeyDown)
@@ -827,6 +902,11 @@ if (import.meta.env.DEV) {
     currentId,
     rootCause,
     toggleRoot,
+    toggleReview,
+    loadReview,
+    reviewOpen,
+    reviewItems,
+    reviewTotalCount,
     statusOf,
     masteryOf,
     stats,
