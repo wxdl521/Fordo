@@ -91,8 +91,8 @@
           <g v-for="n in nodeList" :key="n.id" :opacity="n.op" :style="{ cursor: draggingNode === n.id ? 'grabbing' : 'pointer', transition: 'opacity 0.25s' }" @mouseenter="hoverId = n.id" @mouseleave="hoverId = null" @click="!wasDragged && (selectedId = n.id)" @pointerdown.stop="onNodePointerDown($event, n.id)">
             <circle :cx="n.x" :cy="n.y" :r="Math.max(n.r * 2, 18)" fill="transparent" />
             <template v-if="n.status !== 'dim'">
-              <circle :cx="n.x" :cy="n.y" :r="n.r * 1.95" :fill="n.c" opacity="0.08" />
-              <circle :cx="n.x" :cy="n.y" :r="n.r * 1.35" :fill="n.c" opacity="0.18" />
+              <circle :cx="n.x" :cy="n.y" :r="n.r * 1.95" :fill="n.c" :opacity="n.glowOuter" />
+              <circle :cx="n.x" :cy="n.y" :r="n.r * 1.35" :fill="n.c" :opacity="n.glowInner" />
             </template>
             <circle v-if="n.rootGlow" :cx="n.x" :cy="n.y" :r="n.r * 2.8" :fill="n.c" opacity="0.1">
               <animate attributeName="opacity" values="0.06;0.18;0.06" dur="2.2s" repeatCount="indefinite" />
@@ -110,6 +110,18 @@
           </g>
         </g>
       </svg>
+
+      <!-- 悬停详情（褪色态双分值） -->
+      <div
+        v-if="hoverTip"
+        :style="{ position: 'absolute', left: hoverTip.left + 'px', top: hoverTip.top + 'px', transform: 'translate(-50%, -100%)', marginTop: '-10px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '10px', padding: '10px 14px', zIndex: 25, pointerEvents: 'none', boxShadow: '0 8px 24px rgba(0,0,0,0.16)', maxWidth: '240px', transition: 'background-color 0.35s, border-color 0.35s' }"
+      >
+        <div :style="{ fontSize: '13px', fontWeight: 500, marginBottom: hoverTip.decaying ? '6px' : 0 }">{{ hoverTip.name }}</div>
+        <template v-if="hoverTip.decaying">
+          <div :style="{ fontSize: '12.5px', color: 'var(--ok)', fontWeight: 500 }">{{ hoverTip.scoreText }}</div>
+          <div :style="{ fontSize: '11.5px', color: 'var(--mut)', marginTop: '4px' }">{{ hoverTip.daysText }}</div>
+        </template>
+      </div>
 
       <!-- 加载态 -->
       <div v-else :style="{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mut)', fontSize: '13px' }">正在绘制知识图谱……</div>
@@ -160,12 +172,13 @@
       <div v-if="!rootCause" :style="{ position: 'absolute', left: '20px', bottom: '20px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '12px', padding: '13px 16px', zIndex: 10, transition: 'background-color 0.35s, border-color 0.35s' }">
         <div :style="{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }">
           <div :style="legendRow"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: 'var(--ok)' }"></span><span>已掌握</span></div>
+          <div :style="legendRow"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: 'var(--ok)', opacity: 0.42 }"></span><span>正在遗忘</span></div>
           <div :style="legendRow"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: 'var(--warn)' }"></span><span>薄弱 · 待修</span></div>
           <div :style="legendRow"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: 'var(--dim)' }"></span><span>未学</span></div>
           <div :style="legendRow"><span :style="{ width: '9px', height: '9px', borderRadius: '3px', border: '1.5px solid var(--acc)', boxSizing: 'border-box' }"></span><span>当前位置 / 根因</span></div>
         </div>
         <div :style="{ height: '1px', background: 'var(--line)', margin: '11px 0 9px' }"></div>
-        <div :style="{ fontSize: '11.5px', color: 'var(--mut)' }">已掌握 {{ stats.ok }} · 薄弱 {{ stats.warn }} · 未学 {{ stats.dim }}</div>
+        <div :style="{ fontSize: '11.5px', color: 'var(--mut)' }">已掌握 {{ stats.ok }}<template v-if="stats.decaying"> · 正在遗忘 {{ stats.decaying }}</template> · 薄弱 {{ stats.warn }} · 未学 {{ stats.dim }}</div>
       </div>
 
       <div v-show="width >= 640 && layout && currentUser" :style="{ position: 'absolute', left: '20px', bottom: '20px', fontSize: '12px', color: 'var(--mut)', opacity: 0.75, zIndex: 10, maxWidth: '420px', lineHeight: 1.6 }">滚轮缩放 · 拖动画布平移 · 右下角缩略图导航</div>
@@ -184,6 +197,7 @@
             <span :style="{ fontSize: '12px', fontWeight: 500, color: selStatusColor, background: selStatusBg, borderRadius: '999px', padding: '4px 11px' }">{{ selStatusLabel }}</span>
             <span :style="{ fontSize: '20px', fontWeight: 600, color: selStatusColor, marginLeft: 'auto' }">{{ selMasteryText }}</span>
           </div>
+          <div v-if="selDecayingDetail" :style="{ fontSize: '12.5px', color: 'var(--mut)', lineHeight: 1.6, marginBottom: '10px' }">{{ selDecayingDetail }}</div>
           <div :style="{ height: '5px', background: 'var(--line)', borderRadius: '99px', overflow: 'hidden', marginBottom: '14px' }">
             <div :style="{ height: '100%', borderRadius: '99px', background: selStatusColor, width: selMasteryPct, transition: 'width 0.4s ease' }"></div>
           </div>
@@ -272,7 +286,8 @@ const PAL = {
   ink: { ok: '#57A87E', warn: '#E0A33E', dim: '#4A4D55', cur: '#D85E45', edge: 'rgba(232,227,216,0.10)', label: '#9A948A', labelHi: '#E8E3D8', star: '#E8E3D8', chap: '#9A948A' },
   paper: { ok: '#3D7A5E', warn: '#C8862A', dim: '#C9C2B4', cur: '#B4422E', edge: 'rgba(42,37,32,0.12)', label: '#6F6759', labelHi: '#2A2520', star: '#6F6759', chap: '#6F6759' }
 }
-const STATUS_LABEL = { ok: '已掌握', warn: '薄弱 · 待修', dim: '未学', cur: '当前位置' }
+const STATUS_LABEL = { ok: '已掌握', warn: '薄弱 · 待修', dim: '未学', cur: '当前位置', decaying: '正在遗忘' }
+const MASTERED_THRESHOLD = 75
 const STATUS_BG = {
   ink: { ok: 'rgba(87,168,126,0.14)', warn: 'rgba(224,163,62,0.14)', dim: 'rgba(74,77,85,0.3)', cur: 'rgba(216,94,69,0.14)' },
   paper: { ok: 'rgba(61,122,94,0.10)', warn: 'rgba(200,134,42,0.12)', dim: 'rgba(201,194,180,0.25)', cur: 'rgba(180,66,46,0.10)' }
@@ -566,6 +581,23 @@ function masteryOf(id) {
   return node ? node.masteryScore : null
 }
 
+/** 曾掌握（raw≥75）但有效分已跌破掌握阈值 —— 褪色态判据 */
+function isDecayingOf(id) {
+  const node = layout.value?.byId[id]
+  if (!node) return false
+  const raw = node.rawScore ?? node.masteryScore
+  const eff = node.effectiveScore
+  if (raw == null || eff == null) return false
+  return raw >= MASTERED_THRESHOLD && eff < MASTERED_THRESHOLD
+}
+
+function fmtDays(d) {
+  if (d == null) return '—'
+  if (d < 1) return '不足 1 天前'
+  if (d < 2) return '约 1 天前'
+  return `约 ${Math.round(d)} 天前`
+}
+
 // ── 当前位置节点（掌握度最低的节点）──
 const currentId = computed(() => {
   if (!data.value || !data.value.nodes.length) return null
@@ -582,9 +614,13 @@ const currentId = computed(() => {
 
 // ── 掌握度统计 ──
 const stats = computed(() => {
-  const s = { ok: 0, warn: 0, dim: 0 }
+  const s = { ok: 0, warn: 0, dim: 0, decaying: 0 }
   if (!data.value) return s
   for (const n of data.value.nodes) {
+    if (isDecayingOf(n.id)) {
+      s.decaying++
+      continue
+    }
     const st = statusOf(n.id)
     if (st === 'ok' || st === 'cur') s.ok++
     else if (st === 'warn') s.warn++
@@ -733,6 +769,28 @@ function chainFor(id) {
 const filterOn = computed(() => chapterFilter.value !== '全部章节')
 const chain = computed(() => (!rootCause.value && hoverId.value && layout.value ? chainFor(hoverId.value) : null))
 
+const hoverTip = computed(() => {
+  if (!hoverId.value || !layout.value || rootCause.value || !canvasRef.value) return null
+  const node = layout.value.byId[hoverId.value]
+  const p = layout.value.pos[hoverId.value]
+  if (!node || !p) return null
+  const decaying = isDecayingOf(hoverId.value)
+  if (!decaying) return null
+  const raw = Math.round(node.rawScore ?? node.masteryScore ?? 0)
+  const eff = node.effectiveScore != null ? Math.round(node.effectiveScore) : null
+  const r = layout.value.radius[hoverId.value] || 8
+  const left = panX.value + p[0] * zoom.value
+  const top = panY.value + (p[1] - r - 18) * zoom.value
+  return {
+    name: shortName(node),
+    decaying: true,
+    scoreText: eff != null ? `${raw} → 当前约 ${eff}` : `${raw}`,
+    daysText: `上次证据 ${fmtDays(node.daysSinceEvidence)}`,
+    left,
+    top
+  }
+})
+
 // ── 今日复习：进入页面 / 换课 / 从练习返回时刷新 ──
 watch(courseId, () => {
   if (currentUser.value) loadReview()
@@ -822,7 +880,10 @@ const nodeList = computed(() => {
   return data.value.nodes.map((n) => {
     const p = L.pos[n.id]
     const s = statusOf(n.id)
-    const c = pal.value[s]
+    const decaying = isDecayingOf(n.id)
+    const c = decaying ? pal.value.ok : pal.value[s]
+    const glowOuter = decaying ? 0.04 : 0.08
+    const glowInner = decaying ? 0.09 : 0.18
     const r = L.radius[n.id]
     const isMain = n.id.indexOf('-') === -1
     const hi = (ch && ch.nodes[n.id]) || (rootCause.value && rootNodeSet.value[n.id]) || selectedId.value === n.id || hoverId.value === n.id
@@ -834,7 +895,8 @@ const nodeList = computed(() => {
     const lp = L.labelPos[n.id] || { x: p[0], y: p[1] + r + 16, a: 'middle' }
     const showLabel = isMain || hi || n.id === currentId.value || (filterOn.value && n.chapter === chapterFilter.value)
     return {
-      id: n.id, x: p[0], y: p[1], r, c, status: s, op, isMain,
+      id: n.id, x: p[0], y: p[1], r, c, status: s, op, isMain, decaying,
+      glowOuter, glowInner,
       isCurrent: n.id === currentId.value,
       rootGlow: rootCause.value && rootNodeSet.value[n.id],
       selRing: selectedId.value === n.id && n.id !== currentId.value,
@@ -863,13 +925,40 @@ function toggleRoot() {
 
 // ── 抽屉 ──
 const sel = computed(() => (selectedId.value && layout.value ? layout.value.byId[selectedId.value] : null))
-const selStatus = computed(() => (sel.value ? statusOf(sel.value.id) : 'dim'))
-const selStatusColor = computed(() => pal.value[selStatus.value])
-const selStatusBg = computed(() => STATUS_BG[theme.value][selStatus.value])
-const selStatusLabel = computed(() => STATUS_LABEL[selStatus.value])
-const selMastery = computed(() => (sel.value ? masteryOf(sel.value.id) : null))
-const selMasteryText = computed(() => (selMastery.value === null ? '未开始' : selMastery.value + '%'))
+const selDecaying = computed(() => (sel.value ? isDecayingOf(sel.value.id) : false))
+const selStatus = computed(() => {
+  if (!sel.value) return 'dim'
+  if (selDecaying.value) return 'decaying'
+  return statusOf(sel.value.id)
+})
+const selStatusColor = computed(() => (selDecaying.value ? pal.value.ok : pal.value[selStatus.value === 'decaying' ? 'ok' : selStatus.value]))
+const selStatusBg = computed(() => {
+  if (selDecaying.value) return STATUS_BG[theme.value].ok
+  const st = selStatus.value === 'decaying' ? 'ok' : selStatus.value
+  return STATUS_BG[theme.value][st]
+})
+const selStatusLabel = computed(() => STATUS_LABEL[selStatus.value] || STATUS_LABEL.dim)
+const selMastery = computed(() => {
+  if (!sel.value) return null
+  if (selDecaying.value && sel.value.effectiveScore != null) return Math.round(sel.value.effectiveScore)
+  return masteryOf(sel.value.id)
+})
+const selMasteryText = computed(() => {
+  if (!sel.value) return '未开始'
+  if (selDecaying.value) {
+    const raw = Math.round(sel.value.rawScore ?? sel.value.masteryScore ?? 0)
+    const eff = sel.value.effectiveScore != null ? Math.round(sel.value.effectiveScore) : '—'
+    return `${raw} → ${eff}`
+  }
+  return selMastery.value === null ? '未开始' : selMastery.value + '%'
+})
 const selMasteryPct = computed(() => (selMastery.value === null ? 0 : selMastery.value) + '%')
+const selDecayingDetail = computed(() => {
+  if (!selDecaying.value || !sel.value) return ''
+  const raw = Math.round(sel.value.rawScore ?? sel.value.masteryScore ?? 0)
+  const eff = sel.value.effectiveScore != null ? Math.round(sel.value.effectiveScore) : '—'
+  return `学过 ${raw} 分，当前约 ${eff} 分，上次证据 ${fmtDays(sel.value.daysSinceEvidence)}`
+})
 const selDiffDots = computed(() => (sel.value ? '●'.repeat(sel.value.difficulty) + '○'.repeat(5 - sel.value.difficulty) : ''))
 const selCta = computed(() => (selStatus.value === 'dim' ? '开始学习' : '开始针对练习'))
 
@@ -909,6 +998,8 @@ if (import.meta.env.DEV) {
     reviewTotalCount,
     statusOf,
     masteryOf,
+    isDecayingOf,
+    hoverTip,
     stats,
     ROOT_NODES
   }

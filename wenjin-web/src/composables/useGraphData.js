@@ -15,7 +15,11 @@ function mapNode(n) {
     bloom: n.bloom || '',   // 后端暂无 bloom 字段，留空占位
     description: n.description || '',
     mastery: n.mastery || 'unlearned',
-    masteryScore: n.masteryScore != null ? Math.round(n.masteryScore) : null
+    masteryScore: n.masteryScore != null ? Math.round(n.masteryScore) : null,
+    rawScore: n.rawScore != null ? Math.round(n.rawScore) : (n.masteryScore != null ? Math.round(n.masteryScore) : null),
+    effectiveScore: n.effectiveScore != null ? Math.round(n.effectiveScore) : null,
+    effectiveLevel: n.effectiveLevel ?? null,
+    daysSinceEvidence: n.daysSinceEvidence ?? null
   }
 }
 
