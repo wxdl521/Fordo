@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.fail;
  *   <li>空图 / 单节点边界；</li>
  *   <li>无可实测节点终止；</li>
  *   <li>gain 手算选点 + 平手裁决链（isKey 优先 / 度数 / nodeId 兜底）；</li>
- *   <li>推断态复测 gain×0.5 + 实测覆盖推断继续传播；</li>
+ *   <li>推断态复测 gain×0.25 + 实测覆盖推断继续传播；</li>
  *   <li>状态恢复重建行为一致；</li>
  *   <li>性质测试（随机 DAG，固定种子）。</li>
  * </ol>
@@ -368,28 +368,32 @@ class AdaptiveEngineTest {
     class GainSelection {
 
         @Test
-        @DisplayName("手算 gain：星形图 1→{2,3,4}，gain(1)=3 最大被选中")
+        @DisplayName("手算 gain（G8）：星形图 1→{2,3,4}，gain(1)=4 最大被选中")
         void starGraph_hubHasMaxGain() {
             AdaptiveEngine engine = engineOf(nodes(1, 2, 3, 4),
                     List.of(prereq(1, 2), prereq(1, 3), prereq(1, 4)), DEFAULT_BUDGET);
 
-            // gain(1)=0祖先+3子孙=3；gain(2/3/4)=1祖先+0子孙=1
+            // gain(1)=0祖先+3子孙+2·min(0,3)+1自身=4；gain(2/3/4)=1+0+0+1=2
             assertThat(engine.selectNextNode()).contains(1L);
         }
 
         @Test
-        @DisplayName("gain 平手 ⇒ 度数大的枢纽胜出：链 1→2→3 选中间节点 2")
+        @DisplayName("gain 平手 ⇒ 度数大的枢纽胜出：双星图中度数 2 的枢纽 1 胜过度数 1 的 4/6")
         void tieBrokenByDegree_hubWins() {
-            AdaptiveEngine engine = chain3();
+            // 1→{2,3} 与 4→5→6，5 不可实测（避免中位 min 加成入围）。
+            // 候选 gain（G8）：1=0+2+0+1=3(度数2)、4=0+2+0+1=3(度数1)、6=2+0+0+1=3(度数1)、
+            // 2/3=1+0+0+1=2；平手 {1,4,6} 均非 key ⇒ 度数大的 1 胜出
+            AdaptiveEngine engine = new AdaptiveEngine(nodes(1, 2, 3, 4, 5, 6),
+                    List.of(prereq(1, 2), prereq(1, 3), prereq(4, 5), prereq(5, 6)),
+                    Set.of(1L, 2L, 3L, 4L, 6L), DEFAULT_BUDGET);
 
-            // gain(1)=2, gain(2)=1+1=2, gain(3)=2；均非 key；度数 1:1, 2:2, 3:1
-            assertThat(engine.selectNextNode()).contains(2L);
+            assertThat(engine.selectNextNode()).contains(1L);
         }
 
         @Test
         @DisplayName("gain 平手 ⇒ is_key=1 优先于度数")
         void tieBrokenByIsKey_beforeDegree() {
-            // 节点1→{2,3}：gain(1)=2、度数2；孤立 key 节点4：gain=0+0+2=2、度数0
+            // 节点1→{2,3}：gain(1)=0+2+0+1=3、度数2；孤立 key 节点4：gain=0+0+0+1+2=3、度数0
             List<KgNode> ns = new ArrayList<>(nodes(1, 2, 3));
             ns.add(node(4, 1));
             AdaptiveEngine engine = new AdaptiveEngine(ns,
@@ -409,25 +413,74 @@ class AdaptiveEngineTest {
         }
     }
 
+    // ── 6b. G8 公式修订（2026-07-05 用户裁定：验收1 整改）────────────────────
+
+    @Nested
+    @DisplayName("清单6b：G8 公式修订（2·min 二分项 / 自身分类价值 / 复测降权 0.25）")
+    class G8FormulaRevision {
+
+        @Test
+        @DisplayName("二分项 2·min(祖先,子孙)：链 1→2→3→4→5 选正中节点 3（而非端侧枢纽）")
+        void bisectionTerm_selectsChainMidpoint() {
+            AdaptiveEngine engine = engineOf(nodes(1, 2, 3, 4, 5),
+                    List.of(prereq(1, 2), prereq(2, 3), prereq(3, 4), prereq(4, 5)),
+                    DEFAULT_BUDGET);
+
+            // gain(3)=2+2+2·min(2,2)+1自身=9；gain(2)=1+3+2·1+1=7；gain(1)=0+4+0+1=5
+            assertThat(engine.selectNextNode()).contains(3L);
+        }
+
+        @Test
+        @DisplayName("自身分类价值：末个 UNKNOWN 孤立节点胜过 key 节点的零信息复测（P2 病理回归）")
+        void lastUnknown_beatsZeroInfoKeyRetest() {
+            // 图：1→2（2 是 key），3 孤立。probe(1, FAIL) ⇒ 2=INFERRED_FAIL，仅剩 3 UNKNOWN
+            List<KgNode> ns = new ArrayList<>(nodes(1, 3));
+            ns.add(node(2, 1));
+            AdaptiveEngine engine = new AdaptiveEngine(ns, List.of(prereq(1, 2)),
+                    Set.of(1L, 2L, 3L), DEFAULT_BUDGET);
+            engine.recordProbeResult(1, false, 2);
+            assertThat(engine.stateOf(2)).isEqualTo(NodeState.INFERRED_FAIL);
+
+            // gain(3)=0+0+0+1自身=1 > gain(2)=(0+0+0+2key)×0.25=0.5 ⇒ 选 3 而非烧复测
+            assertThat(engine.selectNextNode()).contains(3L);
+        }
+
+        @Test
+        @DisplayName("复测降权 0.25：原始 gain 8 的推断节点（旧×0.5=4 会胜）输给 gain 3 的 UNKNOWN 节点")
+        void retestWeight_quarterNotHalf() {
+            // 图：1→{2..9}（8 个 UNKNOWN 子孙），10→{11,12}；恢复态 1=INFERRED_PASS
+            List<KgNode> ns = nodes(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
+            List<KgEdge> es = List.of(prereq(1, 2), prereq(1, 3), prereq(1, 4), prereq(1, 5),
+                    prereq(1, 6), prereq(1, 7), prereq(1, 8), prereq(1, 9),
+                    prereq(10, 11), prereq(10, 12));
+            AdaptiveEngine engine = new AdaptiveEngine(ns, es, idsOf(ns), DEFAULT_BUDGET,
+                    Map.of(1L, NodeState.INFERRED_PASS), 0);
+
+            // gain(1)=8×0.25=2（推断态无自身项）；gain(10)=0+2+0+1=3 ⇒ 选 10
+            // 若降权仍为 0.5：gain(1)=4 > 3 会选 1
+            assertThat(engine.selectNextNode()).contains(10L);
+        }
+    }
+
     // ── 7. 推断态复测 ──────────────────────────────────────────────────────
 
     @Nested
-    @DisplayName("清单7：推断态复测（gain×0.5 与实测覆盖后继续传播）")
+    @DisplayName("清单7：推断态复测（gain×0.25 与实测覆盖后继续传播）")
     class InferredRetest {
 
         @Test
-        @DisplayName("INFERRED 候选 gain×0.5：原始 gain 4 的推断节点输给 gain 3 的 UNKNOWN 节点")
+        @DisplayName("INFERRED 候选降权：推断节点输给 UNKNOWN 节点，复测不优先")
         void inferredCandidate_gainHalved() {
             // 图：1→{2,3,4,5}（4 个 UNKNOWN 子孙），6→{7,8,9}（3 个 UNKNOWN 子孙）
             List<KgNode> ns = nodes(1, 2, 3, 4, 5, 6, 7, 8, 9);
             List<KgEdge> es = List.of(prereq(1, 2), prereq(1, 3), prereq(1, 4), prereq(1, 5),
                     prereq(6, 7), prereq(6, 8), prereq(6, 9));
 
-            // 无推断态时：gain(1)=4 > gain(6)=3 ⇒ 选 1
+            // 无推断态时（G8）：gain(1)=0+4+0+1=5 > gain(6)=0+3+0+1=4 ⇒ 选 1
             AdaptiveEngine fresh = engineOf(ns, es, DEFAULT_BUDGET);
             assertThat(fresh.selectNextNode()).contains(1L);
 
-            // 1 为 INFERRED_PASS 时：gain(1)=4×0.5=2 < gain(6)=3 ⇒ 选 6
+            // 1 为 INFERRED_PASS 时：gain(1)=4×0.25=1（无自身项）< gain(6)=4 ⇒ 选 6
             AdaptiveEngine restored = new AdaptiveEngine(ns, es, idsOf(ns), DEFAULT_BUDGET,
                     Map.of(1L, NodeState.INFERRED_PASS), 0);
             assertThat(restored.selectNextNode()).contains(6L);

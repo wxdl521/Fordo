@@ -29,10 +29,18 @@ import java.util.TreeMap;
  *   <li>对已推断节点复测：先置 TESTED_*，再照常向对应方向传播（仍遵守上述规则）。</li>
  * </ul>
  *
- * <h2>选题策略（贪心信息最大化）</h2>
- * <pre>gain(n) = |UNKNOWN 祖先(n)| + |UNKNOWN 子孙(n)| + isKey(n)·2</pre>
- * 候选集 = (UNKNOWN ∪ INFERRED_*) ∩ 可实测集；INFERRED_* 候选 gain×0.5 后参与比较。
+ * <h2>选题策略（贪心信息最大化，G8 公式：2026-07-05 用户裁定修订 §2.1）</h2>
+ * <pre>gain(n) = |UNKNOWN 祖先(n)| + |UNKNOWN 子孙(n)| + 2·min(两者) + 自身UNKNOWN·1 + isKey(n)·2</pre>
+ * 候选集 = (UNKNOWN ∪ INFERRED_*) ∩ 可实测集；INFERRED_* 候选 gain×0.25 后参与比较。
  * 平手裁决链（完全确定性）：is_key=1 优先 → (入度+出度) 大者优先 → nodeId 小者优先。
+ *
+ * <p>G8 三成分的机理（模拟消融证明缺一不可，见 progress-m2.md 整改批②-公式变体模拟）：
+ * <ul>
+ *   <li><b>2·min(祖先,子孙)</b>：DAG 上的二分搜索压力——奖励"无论 PASS/FAIL 都能大量
+ *       分类"的中位节点，治愈章节汇点祖先锥虚高导致的探针浪费（P1 病理）；</li>
+ *   <li><b>自身 UNKNOWN +1</b>：探测自身即分类自身——末个孤立 UNKNOWN 节点 gain 不再为 0（P2 病理）；</li>
+ *   <li><b>复测降权 0.25</b>：保证仅剩的 UNKNOWN 节点稳定胜过 key 推断节点的零信息复测。</li>
+ * </ul>
  *
  * <h2>终止条件（按 a→b→c 顺序判定，先到先停）</h2>
  * <ol>
@@ -73,8 +81,8 @@ public final class AdaptiveEngine {
     /** 汇总计数（tested = TESTED_PASS + TESTED_FAIL）。 */
     public record Summary(int tested, int inferredPass, int inferredFail, int unknown) { }
 
-    /** 推断态候选复测的降权系数（裁决 2）。 */
-    private static final double INFERRED_RETEST_WEIGHT = 0.5;
+    /** 推断态候选复测的降权系数（裁决 2，2026-07-05 G8 修订 0.5→0.25）。 */
+    private static final double INFERRED_RETEST_WEIGHT = 0.25;
 
     /** is_key=1 节点的 gain 加成（计划公式 isKey·2）。 */
     private static final int KEY_NODE_GAIN_BONUS = 2;
@@ -271,10 +279,15 @@ public final class AdaptiveEngine {
         return Optional.ofNullable(bestId);
     }
 
-    /** gain(n) = |UNKNOWN 祖先| + |UNKNOWN 子孙| + isKey·2（未降权的原始值）。 */
+    /** gain(n) = |UNKNOWN 祖先| + |UNKNOWN 子孙| + 2·min(两者) + 自身UNKNOWN·1 + isKey·2（未降权的原始值，G8）。 */
     private double rawGain(long nodeId) {
-        int gain = countUnknownReachable(nodeId, prereqsOf)
-                + countUnknownReachable(nodeId, dependentsOf);
+        int unknownAncestors = countUnknownReachable(nodeId, prereqsOf);
+        int unknownDescendants = countUnknownReachable(nodeId, dependentsOf);
+        int gain = unknownAncestors + unknownDescendants
+                + 2 * Math.min(unknownAncestors, unknownDescendants);
+        if (states.get(nodeId) == NodeState.UNKNOWN) {
+            gain += 1;
+        }
         if (keyNodeIds.contains(nodeId)) {
             gain += KEY_NODE_GAIN_BONUS;
         }
