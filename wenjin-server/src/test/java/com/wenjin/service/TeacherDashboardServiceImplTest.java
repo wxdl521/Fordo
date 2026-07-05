@@ -10,12 +10,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -26,9 +31,27 @@ class TeacherDashboardServiceImplTest {
     @Mock KgNodeMapper nodeMapper;
     @InjectMocks TeacherDashboardServiceImpl service;
 
+    private static final double TAU_DAYS = 30.0;
+    private static final double DECAY_FLOOR = 25.0;
+
+    @BeforeEach
+    void setDecayConfig() {
+        ReflectionTestUtils.setField(service, "decayEnabled", true);
+        ReflectionTestUtils.setField(service, "decayTauDays", TAU_DAYS);
+        ReflectionTestUtils.setField(service, "decayFloor", DECAY_FLOOR);
+        ReflectionTestUtils.setField(service, "masteredThreshold", 75.0);
+        ReflectionTestUtils.setField(service, "weakThreshold", 40.0);
+    }
+
     private StudentMastery sm(long stu, long node, String score, int lvl) {
+        return sm(stu, node, score, lvl, LocalDateTime.now());
+    }
+
+    private StudentMastery sm(long stu, long node, String score, int lvl, LocalDateTime updatedAt) {
         StudentMastery m = new StudentMastery(); m.setStudentId(stu); m.setCourseId(1L);
-        m.setNodeId(node); m.setMasteryScore(new BigDecimal(score)); m.setMasteryLevel(lvl); return m;
+        m.setNodeId(node); m.setMasteryScore(new BigDecimal(score)); m.setMasteryLevel(lvl);
+        m.setUpdatedAt(updatedAt);
+        return m;
     }
     private KgNode kn(long id, String code, String name, String chap) {
         KgNode n = new KgNode(); n.setId(id); n.setCourseId(1L); n.setNodeCode(code); n.setName(name); n.setChapter(chap); return n;
@@ -71,5 +94,34 @@ class TeacherDashboardServiceImplTest {
         assertThat(vo.getSummary().getTotalStudents()).isEqualTo(0);
         assertThat(vo.getNodes().get(0).getRate()).isNull();
         assertThat(vo.getWeakRanking()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("衰减开启：raw 已掌握但证据陈旧 → 聚合按 effectiveLevel 计为薄弱，双均分手算一致")
+    void aggregatesWithDecayHandCalculated() {
+        LocalDateTime stale = LocalDateTime.now().minusDays(40);
+        double effectiveStale = MasteryDecayCalculator.effectiveScore(88.0, 40.0, TAU_DAYS, DECAY_FLOOR, 2);
+        int staleLevel = MasteryDecayCalculator.effectiveLevel(effectiveStale, 75.0, 40.0);
+
+        when(masteryMapper.selectList(any())).thenReturn(Arrays.asList(
+            sm(11, 100, "88", 2, stale),
+            sm(12, 100, "88", 2, LocalDateTime.now())
+        ));
+        when(nodeMapper.selectList(any())).thenReturn(Arrays.asList(
+            kn(100, "KT01", "软工概述", "概述")
+        ));
+
+        DashboardVO vo = service.dashboard(1L);
+        DashboardVO.NodeStat kt01 = vo.getNodes().stream()
+                .filter(n -> n.getNodeCode().equals("KT01")).findFirst().orElseThrow();
+
+        assertThat(staleLevel).isEqualTo(1);
+        assertThat(kt01.getMastered()).isEqualTo(1);
+        assertThat(kt01.getWeak()).isEqualTo(1);
+        assertThat(kt01.getRate()).isCloseTo(0.5, within(0.001));
+        assertThat(kt01.getAvgRawScore()).isEqualTo(88.0);
+        double expectedAvgEffective = (effectiveStale + 88.0) / 2.0;
+        assertThat(kt01.getAvgEffectiveScore()).isCloseTo(expectedAvgEffective, within(0.1));
+        assertThat(kt01.getAvgScore()).isEqualTo(kt01.getAvgRawScore());
     }
 }

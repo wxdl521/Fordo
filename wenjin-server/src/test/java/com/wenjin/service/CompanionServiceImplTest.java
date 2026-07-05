@@ -23,6 +23,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -69,10 +71,19 @@ class CompanionServiceImplTest {
     @InjectMocks
     private CompanionServiceImpl service;
 
+    private static final double TAU_DAYS = 30.0;
+    private static final double DECAY_FLOOR = 25.0;
+
     private CompanionChatRequest req;
 
     @BeforeEach
     void setUp() {
+        ReflectionTestUtils.setField(service, "decayEnabled", true);
+        ReflectionTestUtils.setField(service, "decayTauDays", TAU_DAYS);
+        ReflectionTestUtils.setField(service, "decayFloor", DECAY_FLOOR);
+        ReflectionTestUtils.setField(service, "masteredThreshold", 75.0);
+        ReflectionTestUtils.setField(service, "weakThreshold", 40.0);
+
         req = new CompanionChatRequest();
         req.setStudentId(1L);
         req.setCourseId(10L);
@@ -397,5 +408,59 @@ class CompanionServiceImplTest {
         );
         assertThat(promptBlank).contains("《课程》");
         assertThat(promptBlank).doesNotContain("软件工程");
+    }
+
+    /**
+     * 测试 9：raw 已掌握但证据陈旧衰减后，弱项 prompt 应包含该节点（effectiveLevel&lt;2）。
+     */
+    @Test
+    void streamReplyIncludesDecayedFormerlyMasteredWeakPoint() {
+        Long conversationId = 400L;
+
+        CompanionConversation conv = new CompanionConversation();
+        conv.setId(400L);
+        conv.setStudentId(1L);
+        conv.setCourseId(10L);
+        when(conversationMapper.selectById(400L)).thenReturn(conv);
+
+        CompanionMessage historyMsg = new CompanionMessage();
+        historyMsg.setRole(1);
+        historyMsg.setContent("我忘了软件测试怎么办？");
+        when(messageMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(historyMsg));
+
+        KgNode whitelistNode = new KgNode();
+        whitelistNode.setName("软件测试");
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(whitelistNode));
+
+        StudentMastery decayed = new StudentMastery();
+        decayed.setNodeId(12L);
+        decayed.setMasteryScore(new BigDecimal("88.0"));
+        decayed.setMasteryLevel(2);
+        decayed.setUpdatedAt(LocalDateTime.now().minusDays(40));
+        when(masteryMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(decayed));
+
+        KgNode weakNode = new KgNode();
+        weakNode.setId(12L);
+        weakNode.setName("软件测试");
+        when(nodeMapper.selectBatchIds(Arrays.asList(12L))).thenReturn(Arrays.asList(weakNode));
+
+        when(pathService.getCurrent(1L, 10L)).thenThrow(new RuntimeException("no path"));
+        when(diagnosticResultService.getResult(1L, 10L)).thenThrow(new RuntimeException("no diag"));
+        when(courseMapper.selectById(10L)).thenReturn(null);
+
+        doAnswer(inv -> null).when(aiClient).stream(any(), any(), any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, token -> {});
+
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).stream(promptCaptor.capture(), any(), any(), any());
+        String prompt = promptCaptor.getValue();
+
+        assertThat(prompt).contains("## 学生薄弱点");
+        assertThat(prompt).contains("软件测试");
+        double expectedEffective = MasteryDecayCalculator.effectiveScore(88.0, 40.0, TAU_DAYS, DECAY_FLOOR, 2);
+        assertThat(prompt).contains("掌握度 " + Math.round(expectedEffective));
+        assertThat(MasteryDecayCalculator.effectiveLevel(expectedEffective, 75.0, 40.0)).isEqualTo(1);
     }
 }
