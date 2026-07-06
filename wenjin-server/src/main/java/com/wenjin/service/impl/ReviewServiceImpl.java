@@ -20,8 +20,6 @@ import com.wenjin.support.RelationType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -45,20 +43,7 @@ public class ReviewServiceImpl implements ReviewService {
     private final QuestionNodeMapper questionNodeMapper;
     private final QuestionMapper questionMapper;
 
-    @Value("${wenjin.mastery.mastered-threshold:75}")
-    private double masteredThreshold;
-
-    @Value("${wenjin.mastery.weak-threshold:40}")
-    private double weakThreshold;
-
-    @Value("${wenjin.mastery.decay.enabled:true}")
-    private boolean decayEnabled;
-
-    @Value("${wenjin.mastery.decay.tau-days:30}")
-    private double decayTauDays;
-
-    @Value("${wenjin.mastery.decay.floor:25}")
-    private double decayFloor;
+    private final MasteryDecayCalculator decayCalculator;
 
     @Value("${wenjin.review.daily-size:5}")
     private int dailySize;
@@ -67,12 +52,14 @@ public class ReviewServiceImpl implements ReviewService {
                              KgNodeMapper kgNodeMapper,
                              KgEdgeMapper kgEdgeMapper,
                              QuestionNodeMapper questionNodeMapper,
-                             QuestionMapper questionMapper) {
+                             QuestionMapper questionMapper,
+                             MasteryDecayCalculator decayCalculator) {
         this.studentMasteryMapper = studentMasteryMapper;
         this.kgNodeMapper = kgNodeMapper;
         this.kgEdgeMapper = kgEdgeMapper;
         this.questionNodeMapper = questionNodeMapper;
         this.questionMapper = questionMapper;
+        this.decayCalculator = decayCalculator;
     }
 
     @Override
@@ -106,20 +93,17 @@ public class ReviewServiceImpl implements ReviewService {
             }
 
             double raw = m.getMasteryScore().doubleValue();
-            if (raw < masteredThreshold) {
+            if (raw < decayCalculator.getMasteredThreshold()) {
                 continue;
             }
 
-            double days = daysSinceEvidence(m.getUpdatedAt());
-            int level = m.getMasteryLevel() != null ? m.getMasteryLevel() : 0;
-            double effective = decayEnabled
-                    ? MasteryDecayCalculator.effectiveScore(raw, days, decayTauDays, decayFloor, level)
-                    : raw;
-            if (effective >= masteredThreshold) {
+            double effective = decayCalculator.effectiveScoreOf(m);
+            if (effective >= decayCalculator.getMasteredThreshold()) {
                 continue;
             }
 
-            int effLevel = MasteryDecayCalculator.effectiveLevel(effective, masteredThreshold, weakThreshold);
+            double days = decayCalculator.daysSinceEvidence(m.getUpdatedAt()); // for VO field
+            int effLevel = decayCalculator.effectiveLevelOf(effective);
             double gap = raw - effective;
             boolean isKey = node.getIsKey() != null && node.getIsKey() == 1;
             int out = outDegree.getOrDefault(node.getId(), 0);
@@ -164,14 +148,6 @@ public class ReviewServiceImpl implements ReviewService {
             out.merge(e.getFromNodeId(), 1, Integer::sum);
         }
         return out;
-    }
-
-    private double daysSinceEvidence(LocalDateTime updatedAt) {
-        if (updatedAt == null) {
-            return 0.0;
-        }
-        Duration duration = Duration.between(updatedAt, LocalDateTime.now());
-        return duration.toMillis() / (24.0 * 60 * 60 * 1000);
     }
 
     /**

@@ -99,15 +99,21 @@ class PathServiceImplTest {
         return implWithDecay(true);
     }
 
+    /** 小工厂：构建真实 MasteryDecayCalculator 并注入服务，避免在每个用例重复 setField。 */
+    private MasteryDecayCalculator calculator(boolean enabled) {
+        MasteryDecayCalculator calc = new MasteryDecayCalculator();
+        ReflectionTestUtils.setField(calc, "enabled", enabled);
+        ReflectionTestUtils.setField(calc, "tauDays", TAU_DAYS);
+        ReflectionTestUtils.setField(calc, "floor", DECAY_FLOOR);
+        ReflectionTestUtils.setField(calc, "masteredThreshold", 75.0);
+        ReflectionTestUtils.setField(calc, "weakThreshold", 40.0);
+        return calc;
+    }
+
     private PathServiceImpl implWithDecay(boolean decayEnabled) {
-        PathServiceImpl impl = new PathServiceImpl(studentMasteryMapper, kgNodeMapper, kgEdgeMapper,
+        return new PathServiceImpl(studentMasteryMapper, kgNodeMapper, kgEdgeMapper,
                 learningPathMapper, learningPathItemMapper, diagnosticResultService, questionAiClient,
-                questionNodeMapper, questionMapper);
-        ReflectionTestUtils.setField(impl, "masteredThreshold", 75.0);
-        ReflectionTestUtils.setField(impl, "decayEnabled", decayEnabled);
-        ReflectionTestUtils.setField(impl, "decayTauDays", TAU_DAYS);
-        ReflectionTestUtils.setField(impl, "decayFloor", DECAY_FLOOR);
-        return impl;
+                questionNodeMapper, questionMapper, calculator(decayEnabled));
     }
 
     private KgNode node(long id, String code, String name) {

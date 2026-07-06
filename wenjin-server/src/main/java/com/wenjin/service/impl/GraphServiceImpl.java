@@ -27,8 +27,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
-import java.time.Duration;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -59,28 +57,16 @@ public class GraphServiceImpl implements GraphService {
     @Value("${wenjin.demo.teacher-id:1}")
     private Long demoTeacherId;
 
-    /** 掌握度衰减总开关；false 时读时有效分≡原始分（一键回退） */
-    @Value("${wenjin.mastery.decay.enabled:true}")
-    private boolean decayEnabled;
-
-    @Value("${wenjin.mastery.decay.tau-days:30}")
-    private double decayTauDays;
-
-    @Value("${wenjin.mastery.decay.floor:25}")
-    private double decayFloor;
-
-    @Value("${wenjin.mastery.mastered-threshold:75}")
-    private double masteredThreshold;
-
-    @Value("${wenjin.mastery.weak-threshold:40}")
-    private double weakThreshold;
+    private final MasteryDecayCalculator decayCalculator;
 
     public GraphServiceImpl(CourseMapper courseMapper, KgNodeMapper nodeMapper,
-                            KgEdgeMapper edgeMapper, StudentMasteryMapper studentMasteryMapper) {
+                            KgEdgeMapper edgeMapper, StudentMasteryMapper studentMasteryMapper,
+                            MasteryDecayCalculator decayCalculator) {
         this.courseMapper = courseMapper;
         this.nodeMapper = nodeMapper;
         this.edgeMapper = edgeMapper;
         this.studentMasteryMapper = studentMasteryMapper;
+        this.decayCalculator = decayCalculator;
     }
 
     // ───────────────────────────── 导入 ─────────────────────────────
@@ -373,16 +359,13 @@ public class GraphServiceImpl implements GraphService {
 
     /**
      * 读时填充掌握度双轨字段：raw 来自库，effective 由衰减模型计算（不写回 student_mastery）。
+     * daysSinceEvidence 用计算器实例方法算一次，复用变量同时填 VO 字段。
      */
     private void applyMasteryWithDecay(GraphDataVO.NodeVO nv, StudentMastery sm) {
         double raw = sm.getMasteryScore().doubleValue();
-        int dbLevel = sm.getMasteryLevel() != null ? sm.getMasteryLevel() : 0;
-        double days = daysSinceEvidence(sm.getUpdatedAt());
-
-        double effective = decayEnabled
-                ? MasteryDecayCalculator.effectiveScore(raw, days, decayTauDays, decayFloor, dbLevel)
-                : raw;
-        int effectiveLevel = MasteryDecayCalculator.effectiveLevel(effective, masteredThreshold, weakThreshold);
+        double days = decayCalculator.daysSinceEvidence(sm.getUpdatedAt()); // compute once, reused for VO field
+        double effective = decayCalculator.effectiveScoreOf(sm);
+        int effectiveLevel = decayCalculator.effectiveLevelOf(effective);
 
         nv.setRawScore(raw);
         nv.setMasteryScore(raw);
@@ -390,15 +373,6 @@ public class GraphServiceImpl implements GraphService {
         nv.setEffectiveLevel(effectiveLevel);
         nv.setDaysSinceEvidence(days);
         nv.setMastery(levelToMastery(effectiveLevel));
-    }
-
-    /** 距 updated_at 的天数（小数）；无时间戳时视为 0（不衰减）。 */
-    private double daysSinceEvidence(LocalDateTime updatedAt) {
-        if (updatedAt == null) {
-            return 0.0;
-        }
-        Duration duration = Duration.between(updatedAt, LocalDateTime.now());
-        return duration.toMillis() / (24.0 * 60 * 60 * 1000);
     }
 
     /** 掌握等级 TINYINT → 前端三态串：2=已掌握 / 1=薄弱 / 0 及空值或未知=未学。 */

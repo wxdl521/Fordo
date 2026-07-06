@@ -1,9 +1,14 @@
 package com.wenjin.service;
 
+import com.wenjin.entity.StudentMastery;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
@@ -121,5 +126,82 @@ class MasteryDecayCalculatorTest {
         double fourArg = MasteryDecayCalculator.effectiveScore(80.0, 15.0, TAU_DAYS, FLOOR);
         double fiveArg = MasteryDecayCalculator.effectiveScore(80.0, 15.0, TAU_DAYS, FLOOR, 2);
         assertThat(fiveArg).isEqualTo(fourArg);
+    }
+
+    // ─────────────────── 实例方法测试 ───────────────────
+
+    /** 小工厂：构建配置好的 MasteryDecayCalculator 实例。 */
+    private MasteryDecayCalculator calculator(boolean enabled) {
+        MasteryDecayCalculator calc = new MasteryDecayCalculator();
+        ReflectionTestUtils.setField(calc, "enabled", enabled);
+        ReflectionTestUtils.setField(calc, "tauDays", TAU_DAYS);
+        ReflectionTestUtils.setField(calc, "floor", FLOOR);
+        ReflectionTestUtils.setField(calc, "masteredThreshold", MASTERED);
+        ReflectionTestUtils.setField(calc, "weakThreshold", WEAK);
+        return calc;
+    }
+
+    private StudentMastery mastery(double score, int level, LocalDateTime updatedAt) {
+        StudentMastery m = new StudentMastery();
+        m.setMasteryScore(new BigDecimal(String.valueOf(score)));
+        m.setMasteryLevel(level);
+        m.setUpdatedAt(updatedAt);
+        return m;
+    }
+
+    @Test
+    @DisplayName("实例：保险丝关闭（enabled=false）→ effectiveScoreOf 直接返回 raw")
+    void instance_fuseOff_returnsRaw() {
+        MasteryDecayCalculator calc = calculator(false);
+        StudentMastery m = mastery(88.0, 2, LocalDateTime.now().minusDays(40));
+        // 即便有 40 天的衰减证据，关闭开关后 effective≡raw
+        assertThat(calc.effectiveScoreOf(m)).isEqualTo(88.0);
+    }
+
+    @Test
+    @DisplayName("实例：updatedAt=null → daysSinceEvidence=0 → 不衰减，effective=raw")
+    void instance_updatedAtNull_daysZero_noDecay() {
+        MasteryDecayCalculator calc = calculator(true);
+        assertThat(calc.daysSinceEvidence(null)).isEqualTo(0.0);
+        StudentMastery m = mastery(88.0, 2, null);
+        assertThat(calc.effectiveScoreOf(m)).isEqualTo(88.0);
+    }
+
+    @Test
+    @DisplayName("实例：mastery_level=0（未学）→ effectiveScoreOf 不衰减，返回 raw")
+    void instance_levelZero_noDecay() {
+        MasteryDecayCalculator calc = calculator(true);
+        StudentMastery m = mastery(65.0, 0, LocalDateTime.now().minusDays(60));
+        // level=0 豁免衰减，即使有陈旧证据
+        assertThat(calc.effectiveScoreOf(m)).isEqualTo(65.0);
+    }
+
+    @Test
+    @DisplayName("实例：effectiveLevelOf 阈值边界 — =75→2，=40→1，<40→0")
+    void instance_effectiveLevelOf_boundaries() {
+        MasteryDecayCalculator calc = calculator(true);
+        assertThat(calc.effectiveLevelOf(75.0)).isEqualTo(2);   // 恰好等于已掌握阈值
+        assertThat(calc.effectiveLevelOf(76.0)).isEqualTo(2);
+        assertThat(calc.effectiveLevelOf(74.9)).isEqualTo(1);
+        assertThat(calc.effectiveLevelOf(40.0)).isEqualTo(1);   // 恰好等于薄弱阈值
+        assertThat(calc.effectiveLevelOf(39.9)).isEqualTo(0);
+        assertThat(calc.effectiveLevelOf(0.0)).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("实例：getMasteredThreshold 返回配置值 75")
+    void instance_getMasteredThreshold() {
+        MasteryDecayCalculator calc = calculator(true);
+        assertThat(calc.getMasteredThreshold()).isEqualTo(MASTERED);
+    }
+
+    @Test
+    @DisplayName("实例：保险丝开启时 effectiveScoreOf 与手算静态方法一致")
+    void instance_fuseOn_matchesStaticMethod() {
+        MasteryDecayCalculator calc = calculator(true);
+        LocalDateTime stale = LocalDateTime.now().minusDays(40);
+        StudentMastery m = mastery(88.0, 2, stale);
+        double expected = MasteryDecayCalculator.effectiveScore(88.0, 40.0, TAU_DAYS, FLOOR, 2);
+        assertThat(calc.effectiveScoreOf(m)).isCloseTo(expected, within(0.5));
     }
 }

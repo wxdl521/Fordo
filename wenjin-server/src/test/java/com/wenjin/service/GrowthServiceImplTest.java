@@ -10,9 +10,9 @@ import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.impl.GrowthServiceImpl;
 import com.wenjin.vo.GrowthVO;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -42,16 +42,26 @@ class GrowthServiceImplTest {
     @Mock
     private StudentMasteryMapper studentMasteryMapper;
 
-    @InjectMocks
     private GrowthServiceImpl service;
 
     private static final double TAU_DAYS = 30.0;
     private static final double DECAY_FLOOR = 25.0;
 
-    private void enableDecay() {
-        ReflectionTestUtils.setField(service, "decayEnabled", true);
-        ReflectionTestUtils.setField(service, "decayTauDays", TAU_DAYS);
-        ReflectionTestUtils.setField(service, "decayFloor", DECAY_FLOOR);
+    /** 小工厂：构建真实 MasteryDecayCalculator 并注入服务，避免在每个用例重复 setField。 */
+    private MasteryDecayCalculator calculator(boolean enabled) {
+        MasteryDecayCalculator calc = new MasteryDecayCalculator();
+        ReflectionTestUtils.setField(calc, "enabled", enabled);
+        ReflectionTestUtils.setField(calc, "tauDays", TAU_DAYS);
+        ReflectionTestUtils.setField(calc, "floor", DECAY_FLOOR);
+        ReflectionTestUtils.setField(calc, "masteredThreshold", 75.0);
+        ReflectionTestUtils.setField(calc, "weakThreshold", 40.0);
+        return calc;
+    }
+
+    @BeforeEach
+    void setUp() {
+        // 默认启用衰减；测试中可通过重建 service 覆盖
+        service = new GrowthServiceImpl(snapshotMapper, nodeMapper, studentMasteryMapper, calculator(true));
     }
 
     /**
@@ -215,7 +225,7 @@ class GrowthServiceImplTest {
     void curveRawUnchanged_effectiveMarkerReflectsDecay() {
         Long studentId = 4L;
         Long courseId = 40L;
-        enableDecay();
+        // service 在 setUp() 中已以 enabled=true 初始化，此处无需额外配置
 
         LocalDateTime t1 = LocalDateTime.of(2024, 1, 1, 10, 0);
         LocalDateTime t2 = LocalDateTime.of(2024, 1, 5, 10, 0);
@@ -276,8 +286,9 @@ class GrowthServiceImplTest {
 
     /**
      * 测试 5：effectiveMarker 跳过 masteryScore 为 null 的行。
-     * 验证：3 行中 1 行 masteryScore=null，其余 2 行有分值、updatedAt=now（不衰减）
-     * → 不抛 NPE，effectiveMarker.overallEffectiveMastery 等于这 2 行的均值。
+     * 验证：3 行中 1 行 masteryScore=null，其余 2 行有分值、updatedAt=now（days≈0 → effective≈raw）
+     * → 不抛 NPE，effectiveMarker.overallEffectiveMastery 等于这 2 行 raw 分的均值。
+     * enabled=true 显式设置：衰减开启，但因 days≈0，effective≈raw，结果与关闭时一致。
      */
     @Test
     void effectiveMarker_skipNullMasteryScore() {
@@ -343,7 +354,8 @@ class GrowthServiceImplTest {
 
     /**
      * 测试 6：全部行 masteryScore 为 null 时 effectiveMarker 为 null。
-     * 验证：2 行全部 masteryScore=null → getEffectiveMarker() 返回 null（不能除以 0）。
+     * 验证：2 行全部 masteryScore=null → counted==0 → getEffectiveMarker() 返回 null（不能除以 0）。
+     * enabled=true 显式设置：衰减逻辑不影响结果（null 行被跳过，不进入衰减计算）。
      */
     @Test
     void effectiveMarker_allNullMasteryScore() {

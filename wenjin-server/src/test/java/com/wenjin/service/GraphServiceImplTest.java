@@ -14,6 +14,7 @@ import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.impl.GraphServiceImpl;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -54,14 +55,19 @@ class GraphServiceImplTest {
         return serviceWithDecay(true);
     }
 
+    /** 小工厂：构建真实 MasteryDecayCalculator 并注入服务，避免在每个用例重复 setField。 */
+    private MasteryDecayCalculator calculator(boolean enabled) {
+        MasteryDecayCalculator calc = new MasteryDecayCalculator();
+        ReflectionTestUtils.setField(calc, "enabled", enabled);
+        ReflectionTestUtils.setField(calc, "tauDays", 30.0);
+        ReflectionTestUtils.setField(calc, "floor", 25.0);
+        ReflectionTestUtils.setField(calc, "masteredThreshold", 75.0);
+        ReflectionTestUtils.setField(calc, "weakThreshold", 40.0);
+        return calc;
+    }
+
     private GraphServiceImpl serviceWithDecay(boolean decayEnabled) {
-        GraphServiceImpl impl = new GraphServiceImpl(courseMapper, nodeMapper, edgeMapper, studentMasteryMapper);
-        ReflectionTestUtils.setField(impl, "decayEnabled", decayEnabled);
-        ReflectionTestUtils.setField(impl, "decayTauDays", 30.0);
-        ReflectionTestUtils.setField(impl, "decayFloor", 25.0);
-        ReflectionTestUtils.setField(impl, "masteredThreshold", 75.0);
-        ReflectionTestUtils.setField(impl, "weakThreshold", 40.0);
-        return impl;
+        return new GraphServiceImpl(courseMapper, nodeMapper, edgeMapper, studentMasteryMapper, calculator(decayEnabled));
     }
 
     // ───────── 校验类（校验先于落库，无需 stub mapper） ─────────

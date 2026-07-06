@@ -16,11 +16,11 @@ import com.wenjin.mapper.CompanionMessageMapper;
 import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.service.MasteryDecayCalculator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -68,7 +68,6 @@ class CompanionServiceImplTest {
     @Mock
     private CompanionAiClient aiClient;
 
-    @InjectMocks
     private CompanionServiceImpl service;
 
     private static final double TAU_DAYS = 30.0;
@@ -76,13 +75,21 @@ class CompanionServiceImplTest {
 
     private CompanionChatRequest req;
 
+    /** 小工厂：构建真实 MasteryDecayCalculator 并设置字段，避免在每个用例重复 setField。 */
+    private MasteryDecayCalculator makeCalculator(boolean enabled) {
+        MasteryDecayCalculator calc = new MasteryDecayCalculator();
+        ReflectionTestUtils.setField(calc, "enabled", enabled);
+        ReflectionTestUtils.setField(calc, "tauDays", TAU_DAYS);
+        ReflectionTestUtils.setField(calc, "floor", DECAY_FLOOR);
+        ReflectionTestUtils.setField(calc, "masteredThreshold", 75.0);
+        ReflectionTestUtils.setField(calc, "weakThreshold", 40.0);
+        return calc;
+    }
+
     @BeforeEach
     void setUp() {
-        ReflectionTestUtils.setField(service, "decayEnabled", true);
-        ReflectionTestUtils.setField(service, "decayTauDays", TAU_DAYS);
-        ReflectionTestUtils.setField(service, "decayFloor", DECAY_FLOOR);
-        ReflectionTestUtils.setField(service, "masteredThreshold", 75.0);
-        ReflectionTestUtils.setField(service, "weakThreshold", 40.0);
+        service = new CompanionServiceImpl(conversationMapper, messageMapper, nodeMapper, masteryMapper,
+                courseMapper, pathService, diagnosticResultService, aiClient, makeCalculator(true));
 
         req = new CompanionChatRequest();
         req.setStudentId(1L);

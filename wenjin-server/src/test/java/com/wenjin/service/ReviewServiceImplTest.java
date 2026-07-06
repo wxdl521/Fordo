@@ -11,6 +11,7 @@ import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.impl.ReviewServiceImpl;
 import com.wenjin.support.QuestionStatus;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,15 +64,21 @@ class ReviewServiceImplTest {
         return implWithDecay(true, DAILY_SIZE);
     }
 
+    /** 小工厂：构建真实 MasteryDecayCalculator 并注入服务，避免在每个用例重复 setField。 */
+    private MasteryDecayCalculator calculator(boolean enabled) {
+        MasteryDecayCalculator calc = new MasteryDecayCalculator();
+        ReflectionTestUtils.setField(calc, "enabled", enabled);
+        ReflectionTestUtils.setField(calc, "tauDays", TAU_DAYS);
+        ReflectionTestUtils.setField(calc, "floor", DECAY_FLOOR);
+        ReflectionTestUtils.setField(calc, "masteredThreshold", MASTERED);
+        ReflectionTestUtils.setField(calc, "weakThreshold", WEAK);
+        return calc;
+    }
+
     private ReviewServiceImpl implWithDecay(boolean decayEnabled, int dailySize) {
         ReviewServiceImpl impl = new ReviewServiceImpl(
                 studentMasteryMapper, kgNodeMapper, kgEdgeMapper,
-                questionNodeMapper, questionMapper);
-        ReflectionTestUtils.setField(impl, "masteredThreshold", MASTERED);
-        ReflectionTestUtils.setField(impl, "weakThreshold", WEAK);
-        ReflectionTestUtils.setField(impl, "decayEnabled", decayEnabled);
-        ReflectionTestUtils.setField(impl, "decayTauDays", TAU_DAYS);
-        ReflectionTestUtils.setField(impl, "decayFloor", DECAY_FLOOR);
+                questionNodeMapper, questionMapper, calculator(decayEnabled));
         ReflectionTestUtils.setField(impl, "dailySize", dailySize);
         return impl;
     }

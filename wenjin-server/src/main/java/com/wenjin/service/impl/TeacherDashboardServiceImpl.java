@@ -8,13 +8,10 @@ import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.TeacherDashboardService;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.Duration;
-import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -30,26 +27,13 @@ public class TeacherDashboardServiceImpl implements TeacherDashboardService {
 
     private final StudentMasteryMapper masteryMapper;
     private final KgNodeMapper nodeMapper;
+    private final MasteryDecayCalculator decayCalculator;
 
-    /** 掌握度衰减总开关；false 时读时有效分≡原始分（一键回退） */
-    @Value("${wenjin.mastery.decay.enabled:true}")
-    private boolean decayEnabled;
-
-    @Value("${wenjin.mastery.decay.tau-days:30}")
-    private double decayTauDays;
-
-    @Value("${wenjin.mastery.decay.floor:25}")
-    private double decayFloor;
-
-    @Value("${wenjin.mastery.mastered-threshold:75}")
-    private double masteredThreshold;
-
-    @Value("${wenjin.mastery.weak-threshold:40}")
-    private double weakThreshold;
-
-    public TeacherDashboardServiceImpl(StudentMasteryMapper masteryMapper, KgNodeMapper nodeMapper) {
+    public TeacherDashboardServiceImpl(StudentMasteryMapper masteryMapper, KgNodeMapper nodeMapper,
+                                       MasteryDecayCalculator decayCalculator) {
         this.masteryMapper = masteryMapper;
         this.nodeMapper = nodeMapper;
+        this.decayCalculator = decayCalculator;
     }
 
     @Override
@@ -83,8 +67,8 @@ public class TeacherDashboardServiceImpl implements TeacherDashboardService {
                 }
                 scored++;
                 double raw = m.getMasteryScore().doubleValue();
-                double effective = effectiveScoreOf(m);
-                int level = MasteryDecayCalculator.effectiveLevel(effective, masteredThreshold, weakThreshold);
+                double effective = decayCalculator.effectiveScoreOf(m);
+                int level = decayCalculator.effectiveLevelOf(effective);
                 if (level == 2) {
                     mastered++;
                 } else if (level == 1) {
@@ -141,22 +125,4 @@ public class TeacherDashboardServiceImpl implements TeacherDashboardService {
         return vo;
     }
 
-    private double effectiveScoreOf(StudentMastery m) {
-        double raw = m.getMasteryScore().doubleValue();
-        if (!decayEnabled) {
-            return raw;
-        }
-        int dbLevel = m.getMasteryLevel() != null ? m.getMasteryLevel() : 0;
-        return MasteryDecayCalculator.effectiveScore(raw, daysSinceEvidence(m.getUpdatedAt()),
-                decayTauDays, decayFloor, dbLevel);
-    }
-
-    /** 距 updated_at 的天数（小数）；无时间戳时视为 0（不衰减）。 */
-    private double daysSinceEvidence(LocalDateTime updatedAt) {
-        if (updatedAt == null) {
-            return 0.0;
-        }
-        Duration duration = Duration.between(updatedAt, LocalDateTime.now());
-        return duration.toMillis() / (24.0 * 60 * 60 * 1000);
-    }
 }

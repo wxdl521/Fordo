@@ -5,10 +5,10 @@ import com.wenjin.entity.KgNode;
 import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.impl.TeacherDashboardServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -29,18 +29,26 @@ class TeacherDashboardServiceImplTest {
 
     @Mock StudentMasteryMapper masteryMapper;
     @Mock KgNodeMapper nodeMapper;
-    @InjectMocks TeacherDashboardServiceImpl service;
+
+    private TeacherDashboardServiceImpl service;
 
     private static final double TAU_DAYS = 30.0;
     private static final double DECAY_FLOOR = 25.0;
 
+    /** 小工厂：构建真实 MasteryDecayCalculator 并注入服务，避免在每个用例重复 setField。 */
+    private MasteryDecayCalculator calculator(boolean enabled) {
+        MasteryDecayCalculator calc = new MasteryDecayCalculator();
+        ReflectionTestUtils.setField(calc, "enabled", enabled);
+        ReflectionTestUtils.setField(calc, "tauDays", TAU_DAYS);
+        ReflectionTestUtils.setField(calc, "floor", DECAY_FLOOR);
+        ReflectionTestUtils.setField(calc, "masteredThreshold", 75.0);
+        ReflectionTestUtils.setField(calc, "weakThreshold", 40.0);
+        return calc;
+    }
+
     @BeforeEach
     void setDecayConfig() {
-        ReflectionTestUtils.setField(service, "decayEnabled", true);
-        ReflectionTestUtils.setField(service, "decayTauDays", TAU_DAYS);
-        ReflectionTestUtils.setField(service, "decayFloor", DECAY_FLOOR);
-        ReflectionTestUtils.setField(service, "masteredThreshold", 75.0);
-        ReflectionTestUtils.setField(service, "weakThreshold", 40.0);
+        service = new TeacherDashboardServiceImpl(masteryMapper, nodeMapper, calculator(true));
     }
 
     private StudentMastery sm(long stu, long node, String score, int lvl) {

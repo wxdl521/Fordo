@@ -10,12 +10,10 @@ import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.GrowthService;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.vo.GrowthVO;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -31,22 +29,16 @@ public class GrowthServiceImpl implements GrowthService {
     private final MasterySnapshotMapper snapshotMapper;
     private final KgNodeMapper nodeMapper;
     private final StudentMasteryMapper studentMasteryMapper;
-
-    @Value("${wenjin.mastery.decay.enabled:true}")
-    private boolean decayEnabled;
-
-    @Value("${wenjin.mastery.decay.tau-days:30}")
-    private double decayTauDays;
-
-    @Value("${wenjin.mastery.decay.floor:25}")
-    private double decayFloor;
+    private final MasteryDecayCalculator decayCalculator;
 
     public GrowthServiceImpl(MasterySnapshotMapper snapshotMapper,
                              KgNodeMapper nodeMapper,
-                             StudentMasteryMapper studentMasteryMapper) {
+                             StudentMasteryMapper studentMasteryMapper,
+                             MasteryDecayCalculator decayCalculator) {
         this.snapshotMapper = snapshotMapper;
         this.nodeMapper = nodeMapper;
         this.studentMasteryMapper = studentMasteryMapper;
+        this.decayCalculator = decayCalculator;
     }
 
     @Override
@@ -138,13 +130,7 @@ public class GrowthServiceImpl implements GrowthService {
             if (sm.getMasteryScore() == null) {
                 continue;
             }
-            double raw = sm.getMasteryScore().doubleValue();
-            int dbLevel = sm.getMasteryLevel() != null ? sm.getMasteryLevel() : 0;
-            double days = daysSinceEvidence(sm.getUpdatedAt());
-            double effective = decayEnabled
-                ? MasteryDecayCalculator.effectiveScore(raw, days, decayTauDays, decayFloor, dbLevel)
-                : raw;
-            sumEffective += effective;
+            sumEffective += decayCalculator.effectiveScoreOf(sm);
             counted++;
         }
         if (counted == 0) {
@@ -154,14 +140,6 @@ public class GrowthServiceImpl implements GrowthService {
         BigDecimal mean = BigDecimal.valueOf(sumEffective / counted)
             .setScale(1, RoundingMode.HALF_UP);
         return new GrowthVO.EffectiveMarker(LocalDateTime.now(), mean);
-    }
-
-    private double daysSinceEvidence(LocalDateTime updatedAt) {
-        if (updatedAt == null) {
-            return 0.0;
-        }
-        Duration duration = Duration.between(updatedAt, LocalDateTime.now());
-        return duration.toMillis() / (24.0 * 60 * 60 * 1000);
     }
 
     /**
