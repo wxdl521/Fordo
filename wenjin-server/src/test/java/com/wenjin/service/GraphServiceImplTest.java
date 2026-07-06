@@ -461,6 +461,83 @@ class GraphServiceImplTest {
         return e;
     }
 
+    // ─────────── decaying 字段四场景（Task 3 TDD）───────────
+
+    @Test
+    @DisplayName("decaying: 回拨 40 天高分行 → decaying == true")
+    void decaying_staleHighScore_isTrue() {
+        when(courseMapper.selectById(1L)).thenReturn(course(1L, "C1", "课程一"));
+        KgNode n1 = kgNode(10L, "KT01", "用例", true, 4);
+        when(nodeMapper.selectList(any())).thenReturn(List.of(n1));
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
+
+        StudentMastery sm = new StudentMastery();
+        sm.setNodeId(10L);
+        sm.setMasteryScore(new BigDecimal("88.00"));
+        sm.setMasteryLevel(2);
+        sm.setUpdatedAt(LocalDateTime.now().minusDays(40));
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(sm));
+
+        GraphDataVO vo = service().getGraph(1L, 2L);
+
+        assertThat(vo.getNodes().get(0).getDecaying()).isTrue();
+    }
+
+    @Test
+    @DisplayName("decaying: 新鲜高分行（updatedAt=now）→ decaying == false")
+    void decaying_freshHighScore_isFalse() {
+        when(courseMapper.selectById(1L)).thenReturn(course(1L, "C1", "课程一"));
+        KgNode n1 = kgNode(10L, "KT01", "用例", true, 4);
+        when(nodeMapper.selectList(any())).thenReturn(List.of(n1));
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
+
+        StudentMastery sm = new StudentMastery();
+        sm.setNodeId(10L);
+        sm.setMasteryScore(new BigDecimal("88.00"));
+        sm.setMasteryLevel(2);
+        sm.setUpdatedAt(LocalDateTime.now());
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(sm));
+
+        GraphDataVO vo = service().getGraph(1L, 2L);
+
+        assertThat(vo.getNodes().get(0).getDecaying()).isFalse();
+    }
+
+    @Test
+    @DisplayName("decaying: fuse off（enabled=false）→ decaying == false")
+    void decaying_fuseOff_isFalse() {
+        when(courseMapper.selectById(1L)).thenReturn(course(1L, "C1", "课程一"));
+        KgNode n1 = kgNode(10L, "KT01", "用例", true, 4);
+        when(nodeMapper.selectList(any())).thenReturn(List.of(n1));
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
+
+        StudentMastery sm = new StudentMastery();
+        sm.setNodeId(10L);
+        sm.setMasteryScore(new BigDecimal("88.00"));
+        sm.setMasteryLevel(2);
+        sm.setUpdatedAt(LocalDateTime.now().minusDays(40));
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(sm));
+
+        GraphDataVO vo = serviceWithDecay(false).getGraph(1L, 2L);
+
+        assertThat(vo.getNodes().get(0).getDecaying()).isFalse();
+    }
+
+    @Test
+    @DisplayName("decaying: 无掌握行的节点 → decaying == null")
+    void decaying_noMasteryRow_isNull() {
+        when(courseMapper.selectById(1L)).thenReturn(course(1L, "C1", "课程一"));
+        KgNode n1 = kgNode(10L, "KT01", "用例", true, 4);
+        when(nodeMapper.selectList(any())).thenReturn(List.of(n1));
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
+
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of());
+
+        GraphDataVO vo = service().getGraph(1L, 2L);
+
+        assertThat(vo.getNodes().get(0).getDecaying()).isNull();
+    }
+
     @Test
     @DisplayName("getGraph 过滤待复核边（学生侧不可见）")
     void getGraphExcludesPendingEdges() {

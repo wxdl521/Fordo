@@ -115,6 +115,25 @@ public class MasteryDecayCalculator {
     }
 
     /**
+     * 读时有效分（重载，接受调用方已算好的 {@code days}，跳过内部 {@code LocalDateTime.now()} 重算）。
+     * <p>
+     * 语义与 {@link #effectiveScoreOf(StudentMastery)} 完全相同：
+     * {@code enabled=false} 仍先返回 raw；{@code mastery_level} 为 null 时视为 0（不衰减）。
+     * 供调用方已持有 {@code days} 变量（如 Graph/Review）时使用，避免两次 {@code LocalDateTime.now()} 偏差。
+     *
+     * @param m    掌握行（前置条件：{@code m.getMasteryScore() != null}）
+     * @param days 距上次证据的天数（由调用方提前用 {@link #daysSinceEvidence} 算好）
+     */
+    public double effectiveScoreOf(StudentMastery m, double days) {
+        double raw = m.getMasteryScore().doubleValue();
+        if (!enabled) {
+            return raw;
+        }
+        int level = m.getMasteryLevel() != null ? m.getMasteryLevel() : 0;
+        return effectiveScore(raw, days, tauDays, floor, level);
+    }
+
+    /**
      * 由有效分重算掌握等级，委托静态 {@link #effectiveLevel(double, double, double)}，
      * 阈值取实例配置的 {@code masteredThreshold} / {@code weakThreshold}。
      *

@@ -97,12 +97,11 @@ public class ReviewServiceImpl implements ReviewService {
                 continue;
             }
 
-            double effective = decayCalculator.effectiveScoreOf(m);
+            double days = decayCalculator.daysSinceEvidence(m.getUpdatedAt()); // compute once, passed to overload
+            double effective = decayCalculator.effectiveScoreOf(m, days);
             if (effective >= decayCalculator.getMasteredThreshold()) {
                 continue;
             }
-
-            double days = decayCalculator.daysSinceEvidence(m.getUpdatedAt()); // for VO field
             int effLevel = decayCalculator.effectiveLevelOf(effective);
             double gap = raw - effective;
             boolean isKey = node.getIsKey() != null && node.getIsKey() == 1;

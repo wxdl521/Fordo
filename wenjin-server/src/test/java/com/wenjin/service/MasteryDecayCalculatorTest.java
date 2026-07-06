@@ -204,4 +204,25 @@ class MasteryDecayCalculatorTest {
         double expected = MasteryDecayCalculator.effectiveScore(88.0, 40.0, TAU_DAYS, FLOOR, 2);
         assertThat(calc.effectiveScoreOf(m)).isCloseTo(expected, within(0.5));
     }
+
+    // ─────────────────── 带 days 重载（T2-m1）───────────────────
+
+    @Test
+    @DisplayName("重载 effectiveScoreOf(m, days)：保险丝开启时与单参版在同 days 下结果一致")
+    void overload_fuseOn_sameResultAsSingleArg() {
+        MasteryDecayCalculator calc = calculator(true);
+        // 固定 days=40 传入重载，使两次调用的 days 完全相同，避免时间偏差
+        StudentMastery m = mastery(88.0, 2, LocalDateTime.now().minusDays(40));
+        double singleArg = calc.effectiveScoreOf(m);
+        double withDays = calc.effectiveScoreOf(m, 40.0);
+        assertThat(withDays).isCloseTo(singleArg, within(0.5));
+    }
+
+    @Test
+    @DisplayName("重载 effectiveScoreOf(m, days)：保险丝关闭时返回 raw（忽略 days 参数）")
+    void overload_fuseOff_returnsRaw() {
+        MasteryDecayCalculator calc = calculator(false);
+        StudentMastery m = mastery(88.0, 2, LocalDateTime.now().minusDays(40));
+        assertThat(calc.effectiveScoreOf(m, 40.0)).isEqualTo(88.0);
+    }
 }

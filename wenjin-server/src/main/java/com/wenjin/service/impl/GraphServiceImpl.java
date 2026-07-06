@@ -359,13 +359,14 @@ public class GraphServiceImpl implements GraphService {
 
     /**
      * 读时填充掌握度双轨字段：raw 来自库，effective 由衰减模型计算（不写回 student_mastery）。
-     * daysSinceEvidence 用计算器实例方法算一次，复用变量同时填 VO 字段。
+     * daysSinceEvidence 用计算器实例方法算一次，传入 effectiveScoreOf 重载避免内部重算偏差，同时填 VO 字段。
      */
     private void applyMasteryWithDecay(GraphDataVO.NodeVO nv, StudentMastery sm) {
         double raw = sm.getMasteryScore().doubleValue();
-        double days = decayCalculator.daysSinceEvidence(sm.getUpdatedAt()); // compute once, reused for VO field
-        double effective = decayCalculator.effectiveScoreOf(sm);
+        double days = decayCalculator.daysSinceEvidence(sm.getUpdatedAt()); // compute once, passed to overload
+        double effective = decayCalculator.effectiveScoreOf(sm, days);
         int effectiveLevel = decayCalculator.effectiveLevelOf(effective);
+        double threshold = decayCalculator.getMasteredThreshold();
 
         nv.setRawScore(raw);
         nv.setMasteryScore(raw);
@@ -373,6 +374,7 @@ public class GraphServiceImpl implements GraphService {
         nv.setEffectiveLevel(effectiveLevel);
         nv.setDaysSinceEvidence(days);
         nv.setMastery(levelToMastery(effectiveLevel));
+        nv.setDecaying(raw >= threshold && effective < threshold);
     }
 
     /** 掌握等级 TINYINT → 前端三态串：2=已掌握 / 1=薄弱 / 0 及空值或未知=未学。 */

@@ -50,6 +50,11 @@ public class GraphDataVO {
         private Integer effectiveLevel;
         /** 距上次证据（updated_at）的天数，可为小数；无掌握行时为 null */
         private Double daysSinceEvidence;
+        /**
+         * 褪色态：曾掌握（raw ≥ mastered 阈值）但有效分已跌破阈值；无学生上下文或无掌握行时为 null。
+         * fuse off（wenjin.mastery.decay.enabled=false）时恒为 false（effective≡raw，不可能跌破）。
+         */
+        private Boolean decaying;
     }
 
     /** 边（source/target 用节点业务编码，type 为中文标签） */
