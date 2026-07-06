@@ -287,7 +287,6 @@ const PAL = {
   paper: { ok: '#3D7A5E', warn: '#C8862A', dim: '#C9C2B4', cur: '#B4422E', edge: 'rgba(42,37,32,0.12)', label: '#6F6759', labelHi: '#2A2520', star: '#6F6759', chap: '#6F6759' }
 }
 const STATUS_LABEL = { ok: '已掌握', warn: '薄弱 · 待修', dim: '未学', cur: '当前位置', decaying: '正在遗忘' }
-const MASTERED_THRESHOLD = 75
 const STATUS_BG = {
   ink: { ok: 'rgba(87,168,126,0.14)', warn: 'rgba(224,163,62,0.14)', dim: 'rgba(74,77,85,0.3)', cur: 'rgba(216,94,69,0.14)' },
   paper: { ok: 'rgba(61,122,94,0.10)', warn: 'rgba(200,134,42,0.12)', dim: 'rgba(201,194,180,0.25)', cur: 'rgba(180,66,46,0.10)' }
@@ -581,14 +580,9 @@ function masteryOf(id) {
   return node ? node.masteryScore : null
 }
 
-/** 曾掌握（raw≥75）但有效分已跌破掌握阈值 —— 褪色态判据 */
+/** 曾掌握（raw≥75）但有效分已跌破掌握阈值 —— 褪色态判据（由后端 decaying 字段驱动） */
 function isDecayingOf(id) {
-  const node = layout.value?.byId[id]
-  if (!node) return false
-  const raw = node.rawScore ?? node.masteryScore
-  const eff = node.effectiveScore
-  if (raw == null || eff == null) return false
-  return raw >= MASTERED_THRESHOLD && eff < MASTERED_THRESHOLD
+  return layout.value?.byId[id]?.decaying === true
 }
 
 function fmtDays(d) {
@@ -791,17 +785,10 @@ const hoverTip = computed(() => {
   }
 })
 
-// ── 今日复习：进入页面 / 换课 / 从练习返回时刷新 ──
+// ── 今日复习：进入页面 / 换课时刷新 ──
 watch(courseId, () => {
   if (currentUser.value) loadReview()
 })
-
-watch(
-  () => route.path,
-  (p) => {
-    if (p === '/map' && currentUser.value) loadReview()
-  }
-)
 
 // ── 布局 ──
 onMounted(() => {

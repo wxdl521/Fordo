@@ -111,7 +111,7 @@
         </svg>
         <div class="gr-curve-note">
           每完成一次练习、看完一份资源，问津都会重估相关节点的掌握度。
-          <template v-if="effectiveMarkerPoint">琥珀点表示读时衰减后的当前有效掌握度。</template>
+          <template v-if="effectiveMarkerPoint">琥珀点表示当前的整体有效掌握度（含读时衰减，按当前全部已学节点计算）。</template>
         </div>
       </div>
 

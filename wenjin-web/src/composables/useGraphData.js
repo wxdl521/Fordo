@@ -19,7 +19,8 @@ function mapNode(n) {
     rawScore: n.rawScore != null ? Math.round(n.rawScore) : (n.masteryScore != null ? Math.round(n.masteryScore) : null),
     effectiveScore: n.effectiveScore != null ? Math.round(n.effectiveScore) : null,
     effectiveLevel: n.effectiveLevel ?? null,
-    daysSinceEvidence: n.daysSinceEvidence ?? null
+    daysSinceEvidence: n.daysSinceEvidence ?? null,
+    decaying: n.decaying === true
   }
 }
 
