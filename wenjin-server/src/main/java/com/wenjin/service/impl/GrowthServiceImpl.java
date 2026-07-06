@@ -133,7 +133,11 @@ public class GrowthServiceImpl implements GrowthService {
         }
 
         double sumEffective = 0.0;
+        int counted = 0;
         for (StudentMastery sm : masteries) {
+            if (sm.getMasteryScore() == null) {
+                continue;
+            }
             double raw = sm.getMasteryScore().doubleValue();
             int dbLevel = sm.getMasteryLevel() != null ? sm.getMasteryLevel() : 0;
             double days = daysSinceEvidence(sm.getUpdatedAt());
@@ -141,9 +145,13 @@ public class GrowthServiceImpl implements GrowthService {
                 ? MasteryDecayCalculator.effectiveScore(raw, days, decayTauDays, decayFloor, dbLevel)
                 : raw;
             sumEffective += effective;
+            counted++;
+        }
+        if (counted == 0) {
+            return null;
         }
 
-        BigDecimal mean = BigDecimal.valueOf(sumEffective / masteries.size())
+        BigDecimal mean = BigDecimal.valueOf(sumEffective / counted)
             .setScale(1, RoundingMode.HALF_UP);
         return new GrowthVO.EffectiveMarker(LocalDateTime.now(), mean);
     }

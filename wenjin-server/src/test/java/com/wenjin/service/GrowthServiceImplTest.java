@@ -273,4 +273,127 @@ class GrowthServiceImplTest {
             .compareTo(new BigDecimal("88.0")) < 0);
         assertNotNull(result.getEffectiveMarker().getAsOf());
     }
+
+    /**
+     * 测试 5：effectiveMarker 跳过 masteryScore 为 null 的行。
+     * 验证：3 行中 1 行 masteryScore=null，其余 2 行有分值、updatedAt=now（不衰减）
+     * → 不抛 NPE，effectiveMarker.overallEffectiveMastery 等于这 2 行的均值。
+     */
+    @Test
+    void effectiveMarker_skipNullMasteryScore() {
+        Long studentId = 5L;
+        Long courseId = 50L;
+
+        // 至少需要 1 快照，避免提前走 empty 分支
+        LocalDateTime tSnapshot = LocalDateTime.of(2024, 1, 1, 10, 0);
+        MasterySnapshot snap = new MasterySnapshot();
+        snap.setStudentId(studentId);
+        snap.setCourseId(courseId);
+        snap.setNodeId(500L);
+        snap.setMasteryScore(new BigDecimal("70.0"));
+        snap.setMasteryLevel(2);
+        snap.setSnapshotAt(tSnapshot);
+        when(snapshotMapper.selectList(any(LambdaQueryWrapper.class)))
+            .thenReturn(Collections.singletonList(snap));
+
+        KgNode node = new KgNode();
+        node.setId(500L);
+        node.setNodeCode("KT50");
+        node.setName("节点 A");
+        node.setChapter("第四章");
+        when(nodeMapper.selectBatchIds(Arrays.asList(500L))).thenReturn(Arrays.asList(node));
+
+        // 3 个 StudentMastery，其中 1 个 masteryScore=null
+        LocalDateTime now = LocalDateTime.now();
+        StudentMastery sm1 = new StudentMastery();
+        sm1.setStudentId(studentId);
+        sm1.setCourseId(courseId);
+        sm1.setNodeId(501L);
+        sm1.setMasteryScore(new BigDecimal("60.0"));
+        sm1.setMasteryLevel(2);
+        sm1.setUpdatedAt(now);
+
+        StudentMastery sm2 = new StudentMastery();
+        sm2.setStudentId(studentId);
+        sm2.setCourseId(courseId);
+        sm2.setNodeId(502L);
+        sm2.setMasteryScore(null);  // 这一行会被跳过
+        sm2.setMasteryLevel(1);
+        sm2.setUpdatedAt(now);
+
+        StudentMastery sm3 = new StudentMastery();
+        sm3.setStudentId(studentId);
+        sm3.setCourseId(courseId);
+        sm3.setNodeId(503L);
+        sm3.setMasteryScore(new BigDecimal("80.0"));
+        sm3.setMasteryLevel(2);
+        sm3.setUpdatedAt(now);
+
+        when(studentMasteryMapper.selectList(any(LambdaQueryWrapper.class)))
+            .thenReturn(Arrays.asList(sm1, sm2, sm3));
+
+        // 调用 getGrowth，应不抛 NPE
+        GrowthVO result = service.getGrowth(studentId, courseId);
+
+        // 验证 effectiveMarker 存在且等于 2 行的均值：(60 + 80) / 2 = 70
+        assertNotNull(result.getEffectiveMarker());
+        BigDecimal expected = new BigDecimal("70.0");
+        assertEquals(0, result.getEffectiveMarker().getOverallEffectiveMastery().compareTo(expected));
+    }
+
+    /**
+     * 测试 6：全部行 masteryScore 为 null 时 effectiveMarker 为 null。
+     * 验证：2 行全部 masteryScore=null → getEffectiveMarker() 返回 null（不能除以 0）。
+     */
+    @Test
+    void effectiveMarker_allNullMasteryScore() {
+        Long studentId = 6L;
+        Long courseId = 60L;
+
+        // 至少需要 1 快照
+        LocalDateTime tSnapshot = LocalDateTime.of(2024, 1, 1, 10, 0);
+        MasterySnapshot snap = new MasterySnapshot();
+        snap.setStudentId(studentId);
+        snap.setCourseId(courseId);
+        snap.setNodeId(600L);
+        snap.setMasteryScore(new BigDecimal("50.0"));
+        snap.setMasteryLevel(1);
+        snap.setSnapshotAt(tSnapshot);
+        when(snapshotMapper.selectList(any(LambdaQueryWrapper.class)))
+            .thenReturn(Collections.singletonList(snap));
+
+        KgNode node = new KgNode();
+        node.setId(600L);
+        node.setNodeCode("KT60");
+        node.setName("节点 B");
+        node.setChapter("第五章");
+        when(nodeMapper.selectBatchIds(Arrays.asList(600L))).thenReturn(Arrays.asList(node));
+
+        // 2 个 StudentMastery，全部 masteryScore=null
+        LocalDateTime now = LocalDateTime.now();
+        StudentMastery sm1 = new StudentMastery();
+        sm1.setStudentId(studentId);
+        sm1.setCourseId(courseId);
+        sm1.setNodeId(601L);
+        sm1.setMasteryScore(null);
+        sm1.setMasteryLevel(0);
+        sm1.setUpdatedAt(now);
+
+        StudentMastery sm2 = new StudentMastery();
+        sm2.setStudentId(studentId);
+        sm2.setCourseId(courseId);
+        sm2.setNodeId(602L);
+        sm2.setMasteryScore(null);
+        sm2.setMasteryLevel(0);
+        sm2.setUpdatedAt(now);
+
+        when(studentMasteryMapper.selectList(any(LambdaQueryWrapper.class)))
+            .thenReturn(Arrays.asList(sm1, sm2));
+
+        // 调用 getGrowth
+        GrowthVO result = service.getGrowth(studentId, courseId);
+
+        // 验证 effectiveMarker 为 null（不能除以 0）
+        assertNull(result.getEffectiveMarker());
+    }
 }
