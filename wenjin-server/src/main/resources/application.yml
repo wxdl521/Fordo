@@ -51,6 +51,13 @@ wenjin:
       base-url: ${WENJIN_AI_VISION_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
       api-key: ${WENJIN_AI_VISION_API_KEY:}
       model: ${WENJIN_AI_VISION_MODEL:glm-5v-turbo}
+  companion:
+    tools:
+      enabled: true
+      max-rounds: 2
+      max-tool-calls: 3
+      timeout-ms: 5000
+      max-result-chars: 2000
   diagnostic:                                    # 入口诊断组卷（T6）
     paper-size: 25                               # 诊断试卷目标题数（分层抽样上限）
     adaptive:                                     # 图引导自适应诊断（M2）
