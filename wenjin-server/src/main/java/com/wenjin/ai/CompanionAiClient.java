@@ -1,6 +1,7 @@
 package com.wenjin.ai;
 
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 /**
@@ -12,6 +13,14 @@ public interface CompanionAiClient {
     /** 一条对话消息。role 取 "user" / "assistant"。 */
     record ChatMsg(String role, String content) {}
 
+    record ToolCall(String id, String name, String argumentsJson) {}
+
+    sealed interface TurnOutcome permits FinalText, ToolCalls {}
+
+    record FinalText(String text) implements TurnOutcome {}
+
+    record ToolCalls(List<ToolCall> calls) implements TurnOutcome {}
+
     /**
      * 以系统提示 + 历史 + 当前用户消息发起流式补全，逐 token 回调 onToken。
      * 禁用/缺 key/网络异常抛 BusinessException(AI_ERROR)。
@@ -22,4 +31,8 @@ public interface CompanionAiClient {
      * @param onToken      每个增量 token 的回调
      */
     void stream(String systemPrompt, List<ChatMsg> history, String userMessage, Consumer<String> onToken);
+
+    TurnOutcome completeWithTools(List<Map<String, Object>> messages, List<Map<String, Object>> toolSchemas);
+
+    void streamMessages(List<Map<String, Object>> messages, Consumer<String> onToken);
 }
