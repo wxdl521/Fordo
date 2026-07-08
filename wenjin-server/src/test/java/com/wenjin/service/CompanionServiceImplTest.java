@@ -404,6 +404,39 @@ class CompanionServiceImplTest {
     }
 
     @Test
+    void streamReplyWithPracticeCardResultEmitsToolResultBeforePracticeCard() {
+        Long conversationId = 311L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("start practice")));
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "start_practice",
+                "start practice",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        PracticeStartVO card = practiceCard(901L, 12L, "KT12", "Quadratic Functions", "What shape is the graph?");
+        when(aiClient.completeWithTools(any(), any())).thenReturn(
+                new CompanionAiClient.ToolCalls(List.of(
+                        new CompanionAiClient.ToolCall("call-1", "start_practice", "{\"nodeCode\":\"KT12\"}"))),
+                new CompanionAiClient.FinalText("practice is ready"));
+        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+                new ToolExecutionResult(
+                        "call-1",
+                        "start_practice",
+                        true,
+                        "{\"sessionId\":901,\"questionCount\":1}",
+                        card));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(conversationId, sink);
+
+        assertThat(sink.events).containsSubsequence(
+                "tool_start|start_practice|start practice",
+                "tool_result|start_practice|true",
+                "practice_card|901",
+                "token|practice is ready");
+    }
+
+    @Test
     void streamReplyWithToolsExecutesToolCallsThenStreamsFinalReply() {
         Long conversationId = 301L;
         stubConversationAndPrompt(conversationId, List.of(
@@ -790,25 +823,30 @@ class CompanionServiceImplTest {
         private final List<String> toolStarts = new ArrayList<>();
         private final List<String> toolResults = new ArrayList<>();
         private final List<PracticeStartVO> practiceCards = new ArrayList<>();
+        private final List<String> events = new ArrayList<>();
 
         @Override
         public void token(String token) {
             tokens.add(token);
+            events.add("token|" + token);
         }
 
         @Override
         public void toolStart(String name, String label) {
             toolStarts.add(name + "|" + label);
+            events.add("tool_start|" + name + "|" + label);
         }
 
         @Override
         public void toolResult(String name, boolean ok) {
             toolResults.add(name + "|" + ok);
+            events.add("tool_result|" + name + "|" + ok);
         }
 
         @Override
         public void practiceCard(PracticeStartVO card) {
             practiceCards.add(card);
+            events.add("practice_card|" + (card == null ? "null" : card.getSessionId()));
         }
     }
 }
