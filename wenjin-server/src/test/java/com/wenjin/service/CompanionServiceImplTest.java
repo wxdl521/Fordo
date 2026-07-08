@@ -2,21 +2,23 @@ package com.wenjin.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.ai.CompanionAiClient;
+import com.wenjin.config.CompanionToolProperties;
 import com.wenjin.dto.CompanionChatRequest;
-import com.wenjin.dto.CompanionConversationVO;
-import com.wenjin.dto.CompanionMessageVO;
 import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.LearningPathVO;
 import com.wenjin.entity.CompanionConversation;
 import com.wenjin.entity.CompanionMessage;
 import com.wenjin.entity.KgNode;
-import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.CompanionConversationMapper;
 import com.wenjin.mapper.CompanionMessageMapper;
 import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
-import com.wenjin.service.MasteryDecayCalculator;
+import com.wenjin.service.companion.CompanionTool;
+import com.wenjin.service.companion.ToolContext;
+import com.wenjin.service.companion.ToolExecutionResult;
+import com.wenjin.service.companion.ToolExecutionState;
+import com.wenjin.service.companion.ToolGovernor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,22 +27,25 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.within;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
-/**
- * CompanionServiceImpl 测试（TDD 4 例）。
- */
 @ExtendWith(MockitoExtension.class)
 class CompanionServiceImplTest {
 
@@ -68,128 +73,268 @@ class CompanionServiceImplTest {
     @Mock
     private CompanionAiClient aiClient;
 
+    @Mock
+    private ToolGovernor toolGovernor;
+
     private CompanionServiceImpl service;
-
-    private static final double TAU_DAYS = 30.0;
-    private static final double DECAY_FLOOR = 25.0;
-
     private CompanionChatRequest req;
-
-    /** 小工厂：构建真实 MasteryDecayCalculator 并设置字段，避免在每个用例重复 setField。 */
-    private MasteryDecayCalculator makeCalculator(boolean enabled) {
-        MasteryDecayCalculator calc = new MasteryDecayCalculator();
-        ReflectionTestUtils.setField(calc, "enabled", enabled);
-        ReflectionTestUtils.setField(calc, "tauDays", TAU_DAYS);
-        ReflectionTestUtils.setField(calc, "floor", DECAY_FLOOR);
-        ReflectionTestUtils.setField(calc, "masteredThreshold", 75.0);
-        ReflectionTestUtils.setField(calc, "weakThreshold", 40.0);
-        return calc;
-    }
 
     @BeforeEach
     void setUp() {
-        service = new CompanionServiceImpl(conversationMapper, messageMapper, nodeMapper, masteryMapper,
-                courseMapper, pathService, diagnosticResultService, aiClient, makeCalculator(true));
+        service = new CompanionServiceImpl(
+                conversationMapper,
+                messageMapper,
+                nodeMapper,
+                masteryMapper,
+                courseMapper,
+                pathService,
+                diagnosticResultService,
+                aiClient,
+                makeCalculator());
 
         req = new CompanionChatRequest();
         req.setStudentId(1L);
         req.setCourseId(10L);
         req.setMessage("什么是二次函数？");
+
+        configureTools(false, 2, 3, List.of());
     }
 
-    /**
-     * 测试 1：首次对话时创建新会话并保存用户消息。
-     */
     @Test
     void startTurnCreatesConversation() {
-        req.setConversationId(null);  // 首次对话
+        req.setConversationId(null);
         req.setNodeCode("KT12");
 
-        // Mock：节点查询
         KgNode node = new KgNode();
         node.setNodeCode("KT12");
         node.setName("二次函数基础");
         when(nodeMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(node);
 
-        // Mock：会话插入
-        doAnswer(inv -> {
-            CompanionConversation conv = inv.getArgument(0);
-            conv.setId(100L);  // 模拟数据库生成的 ID
+        doAnswer(invocation -> {
+            CompanionConversation conversation = invocation.getArgument(0);
+            conversation.setId(100L);
             return 1;
         }).when(conversationMapper).insert(any(CompanionConversation.class));
-
-        // Mock：消息插入
         when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
 
-        Long convId = service.startTurn(req);
+        Long conversationId = service.startTurn(req);
 
-        assertEquals(100L, convId);
+        assertEquals(100L, conversationId);
 
-        // 验证会话创建
-        ArgumentCaptor<CompanionConversation> convCaptor = ArgumentCaptor.forClass(CompanionConversation.class);
-        verify(conversationMapper).insert(convCaptor.capture());
-        CompanionConversation savedConv = convCaptor.getValue();
-        assertEquals(1L, savedConv.getStudentId());
-        assertEquals(10L, savedConv.getCourseId());
-        assertEquals("KT12", savedConv.getNodeCode());
-        assertTrue(savedConv.getTitle().contains("二次函数基础"));
-        assertTrue(savedConv.getTitle().contains("什么是二次函数"));
+        ArgumentCaptor<CompanionConversation> conversationCaptor = ArgumentCaptor.forClass(CompanionConversation.class);
+        verify(conversationMapper).insert(conversationCaptor.capture());
+        CompanionConversation savedConversation = conversationCaptor.getValue();
+        assertEquals(1L, savedConversation.getStudentId());
+        assertEquals(10L, savedConversation.getCourseId());
+        assertEquals("KT12", savedConversation.getNodeCode());
+        assertThat(savedConversation.getTitle()).contains("二次函数基础");
+        assertThat(savedConversation.getTitle()).contains("什么是二次函数");
 
-        // 验证用户消息保存
-        ArgumentCaptor<CompanionMessage> msgCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
-        verify(messageMapper).insert(msgCaptor.capture());
-        CompanionMessage savedMsg = msgCaptor.getValue();
-        assertEquals(100L, savedMsg.getConversationId());
-        assertEquals(1, savedMsg.getRole());  // user
-        assertEquals("什么是二次函数？", savedMsg.getContent());
+        ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
+        verify(messageMapper).insert(messageCaptor.capture());
+        CompanionMessage savedMessage = messageCaptor.getValue();
+        assertEquals(100L, savedMessage.getConversationId());
+        assertEquals(1, savedMessage.getRole());
+        assertEquals("什么是二次函数？", savedMessage.getContent());
     }
 
-    /**
-     * 测试 2：后续对话时复用会话，仅保存用户消息。
-     */
     @Test
     void startTurnReusesConversation() {
-        req.setConversationId(200L);  // 复用会话
+        req.setConversationId(200L);
 
-        // Mock：会话存在
-        CompanionConversation existingConv = new CompanionConversation();
-        existingConv.setId(200L);
-        existingConv.setStudentId(1L);
-        existingConv.setCourseId(10L);
-        when(conversationMapper.selectById(200L)).thenReturn(existingConv);
-
-        // Mock：消息插入
+        CompanionConversation existingConversation = new CompanionConversation();
+        existingConversation.setId(200L);
+        existingConversation.setStudentId(1L);
+        existingConversation.setCourseId(10L);
+        when(conversationMapper.selectById(200L)).thenReturn(existingConversation);
         when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
-
-        // Mock：会话更新
         when(conversationMapper.updateById(any(CompanionConversation.class))).thenReturn(1);
 
-        Long convId = service.startTurn(req);
+        Long conversationId = service.startTurn(req);
 
-        assertEquals(200L, convId);
-
-        // 验证不再创建新会话
+        assertEquals(200L, conversationId);
         verify(conversationMapper, never()).insert(any(CompanionConversation.class));
-
-        // 验证更新会话的 updatedAt
         verify(conversationMapper).updateById(any(CompanionConversation.class));
 
-        // 验证用户消息保存
-        ArgumentCaptor<CompanionMessage> msgCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
-        verify(messageMapper).insert(msgCaptor.capture());
-        CompanionMessage savedMsg = msgCaptor.getValue();
-        assertEquals(200L, savedMsg.getConversationId());
-        assertEquals(1, savedMsg.getRole());  // user
+        ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
+        verify(messageMapper).insert(messageCaptor.capture());
+        CompanionMessage savedMessage = messageCaptor.getValue();
+        assertEquals(200L, savedMessage.getConversationId());
+        assertEquals(1, savedMessage.getRole());
     }
 
-    /**
-     * 测试 3：buildSystemPrompt 方法正确构建系统提示（静态方法，无 mock）。
-     */
     @Test
-    void buildPromptIncludesWhitelistWeakPathAndFocus() {
-        List<String> whitelist = Arrays.asList("二次函数基础", "一元二次方程", "函数图像");
-        List<String> weakPoints = Arrays.asList("函数图像（掌握度 45）", "配方法（掌握度 38）");
+    void streamReplyWhenToolsDisabledUsesLegacyStreamAndPersistsReply() {
+        Long conversationId = 300L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("什么是二次函数？")));
+        configureTools(false, 2, 3, List.of());
 
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            onToken.accept("二次");
+            onToken.accept("函数");
+            return null;
+        }).when(aiClient).stream(any(), any(), any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        StringBuilder streamed = new StringBuilder();
+        service.streamReply(conversationId, streamed::append);
+
+        assertEquals("二次函数", streamed.toString());
+        verify(aiClient).stream(any(), any(), any(), any());
+        verify(aiClient, never()).completeWithTools(any(), any());
+        verify(aiClient, never()).streamMessages(any(), any());
+
+        ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
+        verify(messageMapper, times(1)).insert(messageCaptor.capture());
+        CompanionMessage savedMessage = messageCaptor.getValue();
+        assertEquals(ROLE_AI, savedMessage.getRole());
+        assertEquals("二次函数", savedMessage.getContent());
+    }
+
+    @Test
+    void streamReplyWithToolsExecutesToolCallsThenStreamsFinalReply() {
+        Long conversationId = 301L;
+        stubConversationAndPrompt(conversationId, List.of(
+                userMessage("上次的问题"),
+                aiMessage("上次的回答"),
+                userMessage("我现在该补什么？")));
+
+        CompanionTool tool = fakeTool(
+                "query_mastery",
+                "查询掌握度",
+                Map.of("type", "object", "properties", Map.of()));
+        configureTools(true, 2, 3, List.of(tool));
+
+        when(aiClient.completeWithTools(any(), any())).thenReturn(
+                new CompanionAiClient.ToolCalls(List.of(
+                        new CompanionAiClient.ToolCall("call-1", "query_mastery", "{\"nodeCode\":\"KT12\"}"))),
+                new CompanionAiClient.FinalText(""));
+        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+                new ToolExecutionResult("call-1", "query_mastery", true, "{\"nodeCode\":\"KT12\",\"effectiveScore\":42}"));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(1);
+            onToken.accept("先补");
+            onToken.accept("二次函数基础");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(conversationId, sink);
+
+        assertEquals(List.of("先补", "二次函数基础"), sink.tokens);
+        assertEquals(List.of("query_mastery|查询掌握度"), sink.toolStarts);
+        assertEquals(List.of("query_mastery|true"), sink.toolResults);
+
+        ArgumentCaptor<List<Map<String, Object>>> schemaCaptor = ArgumentCaptor.forClass(List.class);
+        verify(aiClient, times(2)).completeWithTools(any(), schemaCaptor.capture());
+        assertThat(schemaCaptor.getAllValues().get(0)).hasSize(1);
+        assertThat(schemaCaptor.getAllValues().get(0).get(0))
+                .containsEntry("type", "function");
+
+        ArgumentCaptor<ToolContext> ctxCaptor = ArgumentCaptor.forClass(ToolContext.class);
+        ArgumentCaptor<CompanionAiClient.ToolCall> callCaptor = ArgumentCaptor.forClass(CompanionAiClient.ToolCall.class);
+        verify(toolGovernor).execute(ctxCaptor.capture(), callCaptor.capture(), any(ToolExecutionState.class));
+        assertEquals(1L, ctxCaptor.getValue().studentId());
+        assertEquals(10L, ctxCaptor.getValue().courseId());
+        assertEquals("query_mastery", callCaptor.getValue().name());
+
+        ArgumentCaptor<List<Map<String, Object>>> streamMessagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(aiClient).streamMessages(streamMessagesCaptor.capture(), any());
+        List<Map<String, Object>> messages = streamMessagesCaptor.getValue();
+        assertThat(messages).hasSize(6);
+        assertThat(messages.get(0)).containsEntry("role", "system");
+        assertThat(messages.get(1)).containsEntry("role", "user").containsEntry("content", "上次的问题");
+        assertThat(messages.get(2)).containsEntry("role", "assistant").containsEntry("content", "上次的回答");
+        assertThat(messages.get(3)).containsEntry("role", "user").containsEntry("content", "我现在该补什么？");
+        assertThat(messages.get(4)).containsEntry("role", "assistant");
+        assertThat(messages.get(4)).containsKey("tool_calls");
+        assertThat(messages.get(5)).containsEntry("role", "tool");
+        assertThat(messages.get(5)).containsEntry("tool_call_id", "call-1");
+        assertThat(messages.get(5)).containsEntry("content", "{\"nodeCode\":\"KT12\",\"effectiveScore\":42}");
+
+        ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
+        verify(messageMapper, times(1)).insert(messageCaptor.capture());
+        assertEquals("先补二次函数基础", messageCaptor.getValue().getContent());
+    }
+
+    @Test
+    void streamReplyWhenMaxRoundsExhaustedStillStreamsFinalReply() {
+        Long conversationId = 302L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("继续")));
+
+        configureTools(true, 1, 3, List.of(fakeTool(
+                "query_mastery",
+                "查询掌握度",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        when(aiClient.completeWithTools(any(), any())).thenReturn(
+                new CompanionAiClient.ToolCalls(List.of(
+                        new CompanionAiClient.ToolCall("call-1", "query_mastery", "{}"))));
+        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+                new ToolExecutionResult("call-1", "query_mastery", true, "{\"items\":[]}"));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(1);
+            onToken.accept("继续回答");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, token -> { });
+
+        verify(aiClient, times(1)).completeWithTools(any(), any());
+        ArgumentCaptor<List<Map<String, Object>>> streamMessagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(aiClient).streamMessages(streamMessagesCaptor.capture(), any());
+        List<Map<String, Object>> messages = streamMessagesCaptor.getValue();
+        assertThat(messages).hasSize(4);
+        assertThat(messages.get(2)).containsEntry("role", "assistant");
+        assertThat(messages.get(3)).containsEntry("role", "tool").containsEntry("content", "{\"items\":[]}");
+    }
+
+    @Test
+    void streamReplyWhenToolFailsAppendsToolErrorAndStillStreamsFinalReply() {
+        Long conversationId = 303L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("给我建议")));
+
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "query_mastery",
+                "查询掌握度",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        when(aiClient.completeWithTools(any(), any())).thenReturn(
+                new CompanionAiClient.ToolCalls(List.of(
+                        new CompanionAiClient.ToolCall("call-err", "query_mastery", "{}"))),
+                new CompanionAiClient.FinalText(""));
+        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+                new ToolExecutionResult("call-err", "query_mastery", false,
+                        "{\"error\":\"tool_error\",\"message\":\"boom\"}"));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(1);
+            onToken.accept("先从概念开始");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(conversationId, sink);
+
+        assertEquals(List.of("query_mastery|false"), sink.toolResults);
+        ArgumentCaptor<List<Map<String, Object>>> streamMessagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(aiClient).streamMessages(streamMessagesCaptor.capture(), any());
+        List<Map<String, Object>> messages = streamMessagesCaptor.getValue();
+        assertThat(messages.get(messages.size() - 1))
+                .containsEntry("role", "tool")
+                .containsEntry("tool_call_id", "call-err")
+                .containsEntry("content", "{\"error\":\"tool_error\",\"message\":\"boom\"}");
+
+        ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
+        verify(messageMapper).insert(messageCaptor.capture());
+        assertEquals("先从概念开始", messageCaptor.getValue().getContent());
+    }
+
+    @Test
+    void buildPromptOmitsWeakPointSectionAndAddsToolGuidance() {
         LearningPathVO.NodeRef targetNode = new LearningPathVO.NodeRef();
         targetNode.setNodeCode("KT20");
         targetNode.setName("一元二次方程");
@@ -199,275 +344,216 @@ class CompanionServiceImplTest {
         currentStep.setName("二次函数基础");
 
         String prompt = CompanionServiceImpl.buildSystemPrompt(
-            null, whitelist, weakPoints, targetNode, currentStep, "KT12", "二次函数基础", null
-        );
+                "数据结构",
+                Arrays.asList("链表", "二叉树"),
+                Arrays.asList("函数图像（掌握度 45）", "配方法（掌握度 38）"),
+                targetNode,
+                currentStep,
+                "KT12",
+                "二次函数基础",
+                null);
 
-        // 验证包含白名单
-        assertTrue(prompt.contains("二次函数基础"));
-        assertTrue(prompt.contains("一元二次方程"));
-        assertTrue(prompt.contains("函数图像"));
-
-        // 验证包含薄弱点
-        assertTrue(prompt.contains("函数图像（掌握度 45）"));
-        assertTrue(prompt.contains("配方法（掌握度 38）"));
-
-        // 验证包含路径信息
-        assertTrue(prompt.contains("一元二次方程"));  // 目标节点
-        assertTrue(prompt.contains("二次函数基础"));  // 当前步骤
-
-        // 验证包含焦点节点
-        assertTrue(prompt.contains("KT12"));
-        assertTrue(prompt.contains("二次函数基础"));
+        assertFalse(prompt.contains("## 学生薄弱点"));
+        assertFalse(prompt.contains("函数图像（掌握度 45）"));
+        assertThat(prompt).contains("## 工具使用");
+        assertThat(prompt).contains("掌握度");
+        assertThat(prompt).contains("节点详情");
+        assertThat(prompt).contains("练习");
+        assertThat(prompt).contains("禁止编造掌握度");
+        assertThat(prompt).contains("当前学习路径");
+        assertThat(prompt).contains("当前焦点节点");
     }
 
-    /**
-     * 测试 4：streamReply 调用 AI 客户端并累积回复后落库。
-     */
-    @Test
-    void streamReplyAccumulatesAndPersists() {
-        Long conversationId = 300L;
-
-        // Mock：会话查询
-        CompanionConversation conv = new CompanionConversation();
-        conv.setId(300L);
-        conv.setStudentId(1L);
-        conv.setCourseId(10L);
-        conv.setNodeCode("KT12");
-        when(conversationMapper.selectById(300L)).thenReturn(conv);
-
-        // Mock：历史消息查询
-        CompanionMessage historyMsg = new CompanionMessage();
-        historyMsg.setRole(1);  // user
-        historyMsg.setContent("什么是二次函数？");
-        when(messageMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(historyMsg));
-
-        // Mock：节点白名单查询（课程下所有节点）
-        KgNode node1 = new KgNode();
-        node1.setName("二次函数基础");
-        KgNode node2 = new KgNode();
-        node2.setName("一元二次方程");
-        when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(node1, node2));
-
-        // Mock：薄弱点查询
-        StudentMastery mastery1 = new StudentMastery();
-        mastery1.setNodeId(12L);
-        mastery1.setMasteryScore(new BigDecimal("45.0"));
-        StudentMastery mastery2 = new StudentMastery();
-        mastery2.setNodeId(15L);
-        mastery2.setMasteryScore(new BigDecimal("38.0"));
-        when(masteryMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(mastery1, mastery2));
-
-        // Mock：节点名查询（薄弱点批量查询）
-        KgNode weakNode1 = new KgNode();
-        weakNode1.setId(12L);
-        weakNode1.setName("函数图像");
-        KgNode weakNode2 = new KgNode();
-        weakNode2.setId(15L);
-        weakNode2.setName("配方法");
-        when(nodeMapper.selectBatchIds(Arrays.asList(12L, 15L))).thenReturn(Arrays.asList(weakNode1, weakNode2));
-
-        // Mock：学习路径查询
-        LearningPathVO pathVO = new LearningPathVO();
-        LearningPathVO.NodeRef targetNode = new LearningPathVO.NodeRef();
-        targetNode.setNodeCode("KT20");
-        targetNode.setName("一元二次方程");
-        pathVO.setTargetNode(targetNode);
-        LearningPathVO.StepVO step = new LearningPathVO.StepVO();
-        step.setNodeCode("KT12");
-        step.setName("二次函数基础");
-        pathVO.setSteps(Arrays.asList(step));
-        when(pathService.getCurrent(1L, 10L)).thenReturn(pathVO);
-
-        // Mock：焦点节点查询
-        KgNode focusNode = new KgNode();
-        focusNode.setName("二次函数基础");
-        when(nodeMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(focusNode);
-
-        // Mock：AI 客户端流式回调
-        doAnswer(inv -> {
-            Consumer<String> onToken = inv.getArgument(3);
-            onToken.accept("二次");
-            onToken.accept("函数");
-            onToken.accept("是");
-            onToken.accept("一种");
-            onToken.accept("重要");
-            onToken.accept("的");
-            onToken.accept("数学");
-            onToken.accept("模型");
-            return null;
-        }).when(aiClient).stream(any(), any(), any(), any());
-
-        // Mock：AI 消息插入
-        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
-
-        // 执行流式回复
-        StringBuilder accumulated = new StringBuilder();
-        service.streamReply(conversationId, token -> accumulated.append(token));
-
-        // 验证累积内容
-        assertEquals("二次函数是一种重要的数学模型", accumulated.toString());
-
-        // 验证 AI 客户端被调用
-        verify(aiClient).stream(any(), any(), any(), any());
-
-        // 验证 AI 回复落库
-        ArgumentCaptor<CompanionMessage> msgCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
-        verify(messageMapper, times(1)).insert(msgCaptor.capture());
-        CompanionMessage savedMsg = msgCaptor.getValue();
-        assertEquals(300L, savedMsg.getConversationId());
-        assertEquals(2, savedMsg.getRole());  // ai
-        assertEquals("二次函数是一种重要的数学模型", savedMsg.getContent());
-    }
-
-    /**
-     * 测试 5：存在非自身根因时，prompt 注入"诊断根因"段（根因名 + 前置 + 卡点名 + 掌握度）。
-     */
     @Test
     void buildPromptInjectsDiagnosticRootCause() {
-        DiagnosticResultVO diag = new DiagnosticResultVO();
-        diag.setHasWeakness(true);
+        DiagnosticResultVO diagnostic = new DiagnosticResultVO();
+        diagnostic.setHasWeakness(true);
 
-        DiagnosticResultVO.NodeRef stuck = new DiagnosticResultVO.NodeRef();
-        stuck.setName("软件测试");
-        diag.setStuckNode(stuck);
+        DiagnosticResultVO.NodeRef stuckNode = new DiagnosticResultVO.NodeRef();
+        stuckNode.setName("软件测试");
+        diagnostic.setStuckNode(stuckNode);
 
-        DiagnosticResultVO.RootCause rc = new DiagnosticResultVO.RootCause();
-        rc.setName("需求分析");
-        rc.setMasteryScore(42.0);
-        rc.setSelf(false);
-        diag.setRootCause(rc);
+        DiagnosticResultVO.RootCause rootCause = new DiagnosticResultVO.RootCause();
+        rootCause.setName("需求分析");
+        rootCause.setMasteryScore(42.0);
+        rootCause.setSelf(false);
+        diagnostic.setRootCause(rootCause);
 
-        DiagnosticResultVO.ChainNode c1 = new DiagnosticResultVO.ChainNode();
-        c1.setName("需求分析");
-        DiagnosticResultVO.ChainNode c2 = new DiagnosticResultVO.ChainNode();
-        c2.setName("软件测试");
-        diag.setChain(Arrays.asList(c1, c2));
+        DiagnosticResultVO.ChainNode chain1 = new DiagnosticResultVO.ChainNode();
+        chain1.setName("需求分析");
+        DiagnosticResultVO.ChainNode chain2 = new DiagnosticResultVO.ChainNode();
+        chain2.setName("软件测试");
+        diagnostic.setChain(List.of(chain1, chain2));
 
         String prompt = CompanionServiceImpl.buildSystemPrompt(
-            null, Arrays.asList("需求分析", "软件测试"), Arrays.asList(),
-            null, null, null, null, diag);
+                null,
+                List.of("需求分析", "软件测试"),
+                List.of(),
+                null,
+                null,
+                null,
+                null,
+                diagnostic);
 
-        assertTrue(prompt.contains("## 诊断根因"));  // 段标题（区别于对话规则里的"诊断根因"关键词）
-        assertTrue(prompt.contains("需求分析"));   // 根因名
-        assertTrue(prompt.contains("前置"));        // 因果结构关键词
-        assertTrue(prompt.contains("软件测试"));     // 卡点名
-        assertTrue(prompt.contains("42"));          // 根因掌握度
+        assertTrue(prompt.contains("## 诊断根因"));
+        assertTrue(prompt.contains("需求分析"));
+        assertTrue(prompt.contains("前置"));
+        assertTrue(prompt.contains("软件测试"));
+        assertTrue(prompt.contains("42"));
     }
 
-    /**
-     * 测试 6：根因即卡点自身（self）或无诊断时，不注入"诊断根因"段。
-     */
-    @Test
-    void buildPromptSkipsRootCauseWhenSelfOrAbsent() {
-        DiagnosticResultVO diag = new DiagnosticResultVO();
-        diag.setHasWeakness(true);
-        DiagnosticResultVO.NodeRef stuck = new DiagnosticResultVO.NodeRef();
-        stuck.setName("软件测试");
-        diag.setStuckNode(stuck);
-        DiagnosticResultVO.RootCause rc = new DiagnosticResultVO.RootCause();
-        rc.setName("软件测试");
-        rc.setSelf(true);
-        diag.setRootCause(rc);
-
-        String selfPrompt = CompanionServiceImpl.buildSystemPrompt(
-            null, Arrays.asList("软件测试"), Arrays.asList(), null, null, null, null, diag);
-        assertFalse(selfPrompt.contains("## 诊断根因"));  // 段标题不出现（规则里的关键词不算）
-
-        String nullPrompt = CompanionServiceImpl.buildSystemPrompt(
-            null, Arrays.asList("软件测试"), Arrays.asList(), null, null, null, null, null);
-        assertFalse(nullPrompt.contains("## 诊断根因"));
-    }
-
-    /**
-     * 测试 7：buildSystemPrompt 传入具名课程名时，prompt 首句及对话规则均含该名称。
-     */
-    @Test
-    void buildPromptUsesProvidedCourseName() {
-        String prompt = CompanionServiceImpl.buildSystemPrompt(
-            "数据结构",
-            Arrays.asList("链表", "二叉树"),
-            Arrays.asList(),
-            null, null, null, null, null
-        );
-
-        assertThat(prompt).contains("《数据结构》");
-    }
-
-    /**
-     * 测试 8：buildSystemPrompt 传 null 或空白课程名时，prompt 回退为「课程」且不含「软件工程」。
-     */
     @Test
     void buildPromptFallsBackToCourseWhenNameNullOrBlank() {
         String promptNull = CompanionServiceImpl.buildSystemPrompt(
-            null,
-            Arrays.asList("链表"),
-            Arrays.asList(),
-            null, null, null, null, null
-        );
+                null,
+                List.of("链表"),
+                List.of(),
+                null,
+                null,
+                null,
+                null,
+                null);
         assertThat(promptNull).contains("《课程》");
         assertThat(promptNull).doesNotContain("软件工程");
 
         String promptBlank = CompanionServiceImpl.buildSystemPrompt(
-            "",
-            Arrays.asList("链表"),
-            Arrays.asList(),
-            null, null, null, null, null
-        );
+                "",
+                List.of("链表"),
+                List.of(),
+                null,
+                null,
+                null,
+                null,
+                null);
         assertThat(promptBlank).contains("《课程》");
         assertThat(promptBlank).doesNotContain("软件工程");
     }
 
-    /**
-     * 测试 9：raw 已掌握但证据陈旧衰减后，弱项 prompt 应包含该节点（effectiveLevel&lt;2）。
-     */
-    @Test
-    void streamReplyIncludesDecayedFormerlyMasteredWeakPoint() {
-        Long conversationId = 400L;
+    private MasteryDecayCalculator makeCalculator() {
+        MasteryDecayCalculator calculator = new MasteryDecayCalculator();
+        ReflectionTestUtils.setField(calculator, "enabled", true);
+        ReflectionTestUtils.setField(calculator, "tauDays", 30.0);
+        ReflectionTestUtils.setField(calculator, "floor", 25.0);
+        ReflectionTestUtils.setField(calculator, "masteredThreshold", 75.0);
+        ReflectionTestUtils.setField(calculator, "weakThreshold", 40.0);
+        return calculator;
+    }
 
-        CompanionConversation conv = new CompanionConversation();
-        conv.setId(400L);
-        conv.setStudentId(1L);
-        conv.setCourseId(10L);
-        when(conversationMapper.selectById(400L)).thenReturn(conv);
+    private void configureTools(boolean enabled, int maxRounds, int maxToolCalls, List<CompanionTool> tools) {
+        CompanionToolProperties properties = new CompanionToolProperties();
+        properties.setEnabled(enabled);
+        properties.setMaxRounds(maxRounds);
+        properties.setMaxToolCalls(maxToolCalls);
+        ReflectionTestUtils.setField(service, "toolProperties", properties);
+        ReflectionTestUtils.setField(service, "companionTools", tools);
+        ReflectionTestUtils.setField(service, "toolGovernor", toolGovernor);
+    }
 
-        CompanionMessage historyMsg = new CompanionMessage();
-        historyMsg.setRole(1);
-        historyMsg.setContent("我忘了软件测试怎么办？");
-        when(messageMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(historyMsg));
+    private void stubConversationAndPrompt(Long conversationId, List<CompanionMessage> history) {
+        CompanionConversation conversation = new CompanionConversation();
+        conversation.setId(conversationId);
+        conversation.setStudentId(1L);
+        conversation.setCourseId(10L);
+        conversation.setNodeCode("KT12");
+        when(conversationMapper.selectById(conversationId)).thenReturn(conversation);
+        when(messageMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(history);
 
         KgNode whitelistNode = new KgNode();
-        whitelistNode.setName("软件测试");
-        when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(whitelistNode));
-
-        StudentMastery decayed = new StudentMastery();
-        decayed.setNodeId(12L);
-        decayed.setMasteryScore(new BigDecimal("88.0"));
-        decayed.setMasteryLevel(2);
-        decayed.setUpdatedAt(LocalDateTime.now().minusDays(40));
-        when(masteryMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(decayed));
-
-        KgNode weakNode = new KgNode();
-        weakNode.setId(12L);
-        weakNode.setName("软件测试");
-        when(nodeMapper.selectBatchIds(Arrays.asList(12L))).thenReturn(Arrays.asList(weakNode));
-
-        when(pathService.getCurrent(1L, 10L)).thenThrow(new RuntimeException("no path"));
-        when(diagnosticResultService.getResult(1L, 10L)).thenThrow(new RuntimeException("no diag"));
+        whitelistNode.setId(12L);
+        whitelistNode.setNodeCode("KT12");
+        whitelistNode.setName("二次函数基础");
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(whitelistNode));
+        when(pathService.getCurrent(1L, 10L)).thenReturn(path());
+        when(diagnosticResultService.getResult(1L, 10L)).thenReturn(null);
         when(courseMapper.selectById(10L)).thenReturn(null);
 
-        doAnswer(inv -> null).when(aiClient).stream(any(), any(), any(), any());
-        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+        KgNode focusNode = new KgNode();
+        focusNode.setId(12L);
+        focusNode.setNodeCode("KT12");
+        focusNode.setName("二次函数基础");
+        when(nodeMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(focusNode);
+    }
 
-        service.streamReply(conversationId, token -> {});
+    private LearningPathVO path() {
+        LearningPathVO path = new LearningPathVO();
+        LearningPathVO.NodeRef targetNode = new LearningPathVO.NodeRef();
+        targetNode.setNodeCode("KT20");
+        targetNode.setName("一元二次方程");
+        path.setTargetNode(targetNode);
 
-        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
-        verify(aiClient).stream(promptCaptor.capture(), any(), any(), any());
-        String prompt = promptCaptor.getValue();
+        LearningPathVO.StepVO currentStep = new LearningPathVO.StepVO();
+        currentStep.setNodeCode("KT12");
+        currentStep.setName("二次函数基础");
+        currentStep.setStatus(0);
+        path.setSteps(List.of(currentStep));
+        return path;
+    }
 
-        assertThat(prompt).contains("## 学生薄弱点");
-        assertThat(prompt).contains("软件测试");
-        double expectedEffective = MasteryDecayCalculator.effectiveScore(88.0, 40.0, TAU_DAYS, DECAY_FLOOR, 2);
-        assertThat(prompt).contains("掌握度 " + Math.round(expectedEffective));
-        assertThat(MasteryDecayCalculator.effectiveLevel(expectedEffective, 75.0, 40.0)).isEqualTo(1);
+    private CompanionMessage userMessage(String content) {
+        CompanionMessage message = new CompanionMessage();
+        message.setRole(ROLE_USER);
+        message.setContent(content);
+        message.setCreatedAt(LocalDateTime.now());
+        return message;
+    }
+
+    private CompanionMessage aiMessage(String content) {
+        CompanionMessage message = new CompanionMessage();
+        message.setRole(ROLE_AI);
+        message.setContent(content);
+        message.setCreatedAt(LocalDateTime.now());
+        return message;
+    }
+
+    private CompanionTool fakeTool(String name, String description, Map<String, Object> parameters) {
+        Map<String, Object> function = new LinkedHashMap<>();
+        function.put("name", name);
+        function.put("description", description);
+        function.put("parameters", parameters);
+
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "function");
+        schema.put("function", function);
+
+        return new CompanionTool() {
+            @Override
+            public String name() {
+                return name;
+            }
+
+            @Override
+            public Map<String, Object> schema() {
+                return schema;
+            }
+
+            @Override
+            public String execute(ToolContext ctx, com.fasterxml.jackson.databind.JsonNode args) {
+                throw new UnsupportedOperationException("not used in this test");
+            }
+        };
+    }
+
+    private static final int ROLE_USER = 1;
+    private static final int ROLE_AI = 2;
+
+    private static final class RecordingSink extends CompanionService.CompanionStreamSink {
+        private final List<String> tokens = new ArrayList<>();
+        private final List<String> toolStarts = new ArrayList<>();
+        private final List<String> toolResults = new ArrayList<>();
+
+        @Override
+        public void token(String token) {
+            tokens.add(token);
+        }
+
+        @Override
+        public void toolStart(String name, String label) {
+            toolStarts.add(name + "|" + label);
+        }
+
+        @Override
+        public void toolResult(String name, boolean ok) {
+            toolResults.add(name + "|" + ok);
+        }
     }
 }

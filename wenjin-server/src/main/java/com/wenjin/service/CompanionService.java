@@ -3,6 +3,7 @@ package com.wenjin.service;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
+import com.wenjin.dto.PracticeStartVO;
 
 import java.util.List;
 import java.util.function.Consumer;
@@ -11,6 +12,20 @@ import java.util.function.Consumer;
  * AI 学习伴侣服务（PRD 9.2）：流式对话 + 会话持久化 + 画像系统提示。
  */
 public interface CompanionService {
+
+    abstract class CompanionStreamSink {
+
+        public abstract void token(String token);
+
+        public void toolStart(String name, String label) {
+        }
+
+        public void toolResult(String name, boolean ok) {
+        }
+
+        public void practiceCard(PracticeStartVO card) {
+        }
+    }
 
     /**
      * 开始一轮对话：创建/复用会话，保存用户消息，返回会话 ID。
@@ -27,6 +42,8 @@ public interface CompanionService {
      * @param onToken        每个增量 token 的回调
      */
     void streamReply(Long conversationId, Consumer<String> onToken);
+
+    void streamReply(Long conversationId, CompanionStreamSink sink);
 
     /**
      * 查询学生的所有会话（按更新时间倒序）。
