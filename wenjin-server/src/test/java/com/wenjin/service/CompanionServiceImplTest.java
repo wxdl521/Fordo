@@ -9,6 +9,7 @@ import com.wenjin.dto.LearningPathVO;
 import com.wenjin.entity.CompanionConversation;
 import com.wenjin.entity.CompanionMessage;
 import com.wenjin.entity.KgNode;
+import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.CompanionConversationMapper;
 import com.wenjin.mapper.CompanionMessageMapper;
 import com.wenjin.mapper.CourseMapper;
@@ -190,6 +191,117 @@ class CompanionServiceImplTest {
         CompanionMessage savedMessage = messageCaptor.getValue();
         assertEquals(ROLE_AI, savedMessage.getRole());
         assertEquals("二次函数", savedMessage.getContent());
+    }
+
+    @Test
+    void streamReplyWhenToolsDisabledUsesLegacyPromptGrounding() {
+        Long conversationId = 304L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("review first")));
+        stubWeakPoint();
+        configureTools(false, 2, 3, List.of(fakeTool(
+                "query_mastery",
+                "query mastery",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            onToken.accept("review graph");
+            return null;
+        }).when(aiClient).stream(any(), any(), any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, token -> { });
+
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).stream(promptCaptor.capture(), any(), any(), any());
+        String prompt = promptCaptor.getValue();
+        assertThat(prompt).contains("\u0023\u0023 \u5b66\u751f\u8584\u5f31\u70b9");
+        assertThat(prompt).contains("\u638c\u63e1\u5ea6 45");
+        assertThat(prompt).doesNotContain("\u0023\u0023 \u5de5\u5177\u4f7f\u7528");
+        assertThat(prompt).doesNotContain("\u7981\u6b62\u7f16\u9020\u638c\u63e1\u5ea6");
+    }
+
+    @Test
+    void streamReplyWhenToolsEnabledButNoSchemasFallsBackWithoutToolOrchestration() {
+        Long conversationId = 305L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("what next")));
+        stubWeakPoint();
+        configureTools(true, 2, 3, List.of());
+
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            onToken.accept("鍏堣ˉ鍑芥暟鍥惧儚");
+            return null;
+        }).when(aiClient).stream(any(), any(), any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, token -> { });
+
+        verify(aiClient).stream(any(), any(), any(), any());
+        verify(aiClient, never()).completeWithTools(any(), any());
+        verify(aiClient, never()).streamMessages(any(), any());
+
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).stream(promptCaptor.capture(), any(), any(), any());
+        String prompt = promptCaptor.getValue();
+        assertThat(prompt).contains("\u0023\u0023 \u5b66\u751f\u8584\u5f31\u70b9");
+        assertThat(prompt).doesNotContain("\u0023\u0023 \u5de5\u5177\u4f7f\u7528");
+    }
+
+    @Test
+    void streamReplyWhenMaxRoundsZeroFallsBackWithoutToolPrompt() {
+        Long conversationId = 306L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("what next")));
+        stubWeakPoint();
+        configureTools(true, 0, 3, List.of(fakeTool(
+                "query_mastery",
+                "query mastery",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            onToken.accept("鍏堣ˉ鍑芥暟鍥惧儚");
+            return null;
+        }).when(aiClient).stream(any(), any(), any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, token -> { });
+
+        verify(aiClient).stream(any(), any(), any(), any());
+        verify(aiClient, never()).completeWithTools(any(), any());
+        verify(aiClient, never()).streamMessages(any(), any());
+
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).stream(promptCaptor.capture(), any(), any(), any());
+        assertThat(promptCaptor.getValue()).doesNotContain("\u0023\u0023 \u5de5\u5177\u4f7f\u7528");
+    }
+
+    @Test
+    void streamReplyWhenMaxToolCallsZeroFallsBackWithoutToolPrompt() {
+        Long conversationId = 307L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("what next")));
+        stubWeakPoint();
+        configureTools(true, 2, 0, List.of(fakeTool(
+                "query_mastery",
+                "query mastery",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            onToken.accept("鍏堣ˉ鍑芥暟鍥惧儚");
+            return null;
+        }).when(aiClient).stream(any(), any(), any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, token -> { });
+
+        verify(aiClient).stream(any(), any(), any(), any());
+        verify(aiClient, never()).completeWithTools(any(), any());
+        verify(aiClient, never()).streamMessages(any(), any());
+
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).stream(promptCaptor.capture(), any(), any(), any());
+        assertThat(promptCaptor.getValue()).doesNotContain("\u0023\u0023 \u5de5\u5177\u4f7f\u7528");
     }
 
     @Test
@@ -472,6 +584,20 @@ class CompanionServiceImplTest {
         focusNode.setNodeCode("KT12");
         focusNode.setName("二次函数基础");
         when(nodeMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(focusNode);
+    }
+
+    private void stubWeakPoint() {
+        StudentMastery mastery = new StudentMastery();
+        mastery.setNodeId(99L);
+        mastery.setMasteryScore(new java.math.BigDecimal("45.0"));
+        mastery.setMasteryLevel(1);
+        mastery.setUpdatedAt(LocalDateTime.now());
+        when(masteryMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(mastery));
+
+        KgNode weakNode = new KgNode();
+        weakNode.setId(99L);
+        weakNode.setName("鍑芥暟鍥惧儚");
+        when(nodeMapper.selectBatchIds(List.of(99L))).thenReturn(List.of(weakNode));
     }
 
     private LearningPathVO path() {

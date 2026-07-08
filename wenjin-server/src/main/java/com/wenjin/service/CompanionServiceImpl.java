@@ -15,6 +15,7 @@ import com.wenjin.entity.CompanionConversation;
 import com.wenjin.entity.CompanionMessage;
 import com.wenjin.entity.Course;
 import com.wenjin.entity.KgNode;
+import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.CompanionConversationMapper;
 import com.wenjin.mapper.CompanionMessageMapper;
 import com.wenjin.mapper.CourseMapper;
@@ -104,7 +105,6 @@ public class CompanionServiceImpl implements CompanionService {
         userMessage.setContent(req.getMessage());
         userMessage.setCreatedAt(LocalDateTime.now());
         messageMapper.insert(userMessage);
-
         return conversationId;
     }
 
@@ -133,17 +133,20 @@ public class CompanionServiceImpl implements CompanionService {
             throw new BusinessException(ResultCode.BAD_REQUEST, "会话无历史消息");
         }
 
+        List<CompanionTool> usableTools = usableTools();
+        boolean toolOrchestrationAvailable = toolOrchestrationAvailable(usableTools);
         String systemPrompt = buildSystemPromptForStudent(
                 conversation.getStudentId(),
                 conversation.getCourseId(),
-                conversation.getNodeCode());
+                conversation.getNodeCode(),
+                toolOrchestrationAvailable);
 
-        if (!toolsEnabled()) {
+        if (!toolOrchestrationAvailable) {
             streamWithLegacyPath(conversationId, systemPrompt, history, sink);
             return;
         }
 
-        streamWithTools(conversationId, conversation, systemPrompt, history, sink);
+        streamWithTools(conversationId, conversation, systemPrompt, history, usableTools, sink);
     }
 
     @Override
@@ -213,12 +216,11 @@ public class CompanionServiceImpl implements CompanionService {
                                  CompanionConversation conversation,
                                  String systemPrompt,
                                  List<CompanionMessage> history,
+                                 List<CompanionTool> tools,
                                  CompanionStreamSink sink) {
         List<Map<String, Object>> messages = buildMessages(systemPrompt, history);
-        List<Map<String, Object>> toolSchemas = companionTools == null
-                ? List.of()
-                : companionTools.stream().map(CompanionTool::schema).filter(Objects::nonNull).toList();
-        Map<String, String> toolLabels = buildToolLabels(companionTools);
+        List<Map<String, Object>> toolSchemas = tools.stream().map(CompanionTool::schema).toList();
+        Map<String, String> toolLabels = buildToolLabels(tools);
         ToolExecutionState state = new ToolExecutionState(maxToolCalls());
         ToolContext context = new ToolContext(conversation.getStudentId(), conversation.getCourseId());
 
@@ -315,8 +317,24 @@ public class CompanionServiceImpl implements CompanionService {
         return tool.name();
     }
 
-    private boolean toolsEnabled() {
-        return toolGovernor != null && toolProperties != null && toolProperties.isEnabled();
+    private boolean toolOrchestrationAvailable(List<CompanionTool> tools) {
+        return toolGovernor != null
+                && toolProperties != null
+                && toolProperties.isEnabled()
+                && maxRounds() > 0
+                && maxToolCalls() > 0
+                && tools != null
+                && !tools.isEmpty();
+    }
+
+    private List<CompanionTool> usableTools() {
+        if (companionTools == null || companionTools.isEmpty()) {
+            return List.of();
+        }
+        return companionTools.stream()
+                .filter(Objects::nonNull)
+                .filter(tool -> tool.schema() != null)
+                .toList();
     }
 
     private int maxRounds() {
@@ -363,7 +381,37 @@ public class CompanionServiceImpl implements CompanionService {
         return truncated;
     }
 
-    private String buildSystemPromptForStudent(Long studentId, Long courseId, String nodeCode) {
+    private String buildSystemPromptForStudent(Long studentId,
+                                               Long courseId,
+                                               String nodeCode,
+                                               boolean useToolPrompt) {
+        PromptContext context = buildPromptContext(studentId, courseId, nodeCode, !useToolPrompt);
+        if (useToolPrompt) {
+            return buildSystemPrompt(
+                    context.courseName(),
+                    context.whitelist(),
+                    List.of(),
+                    context.targetNode(),
+                    context.currentStep(),
+                    context.focusNodeCode(),
+                    context.focusNodeName(),
+                    context.diagnostic());
+        }
+        return buildLegacySystemPrompt(
+                context.courseName(),
+                context.whitelist(),
+                context.weakPoints(),
+                context.targetNode(),
+                context.currentStep(),
+                context.focusNodeCode(),
+                context.focusNodeName(),
+                context.diagnostic());
+    }
+
+    private PromptContext buildPromptContext(Long studentId,
+                                             Long courseId,
+                                             String nodeCode,
+                                             boolean includeWeakPoints) {
         List<KgNode> allNodes = nodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>()
                         .eq(KgNode::getCourseId, courseId));
@@ -407,15 +455,41 @@ public class CompanionServiceImpl implements CompanionService {
                 ? course.getName()
                 : null;
 
-        return buildSystemPrompt(
-                courseName,
-                whitelist,
-                List.of(),
-                targetNode,
-                currentStep,
-                focusNodeCode,
-                focusNodeName,
-                diagnostic);
+        List<String> weakPoints = includeWeakPoints ? loadWeakPoints(studentId, courseId) : List.of();
+        return new PromptContext(courseName, whitelist, weakPoints, targetNode, currentStep, focusNodeCode, focusNodeName, diagnostic);
+    }
+
+    private List<String> loadWeakPoints(Long studentId, Long courseId) {
+        List<StudentMastery> masteries = masteryMapper.selectList(
+                new LambdaQueryWrapper<StudentMastery>()
+                        .eq(StudentMastery::getStudentId, studentId)
+                        .eq(StudentMastery::getCourseId, courseId));
+
+        List<StudentMastery> weakMasteries = masteries.stream()
+                .filter(mastery -> mastery.getMasteryScore() != null)
+                .filter(mastery -> decayCalculator.effectiveLevelOf(decayCalculator.effectiveScoreOf(mastery)) < 2)
+                .toList();
+
+        if (weakMasteries.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> nodeIds = weakMasteries.stream().map(StudentMastery::getNodeId).toList();
+        Map<Long, KgNode> nodeMap = nodeMapper.selectBatchIds(nodeIds).stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.toMap(KgNode::getId, node -> node, (left, right) -> left));
+
+        return weakMasteries.stream()
+                .map(mastery -> {
+                    KgNode node = nodeMap.get(mastery.getNodeId());
+                    if (node == null) {
+                        return null;
+                    }
+                    double effective = decayCalculator.effectiveScoreOf(mastery);
+                    return node.getName() + "（掌握度 " + Math.round(effective) + "）";
+                })
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     public static String buildSystemPrompt(String courseName,
@@ -472,6 +546,61 @@ public class CompanionServiceImpl implements CompanionService {
         return sb.toString();
     }
 
+    private static String buildLegacySystemPrompt(String courseName,
+                                                  List<String> whitelist,
+                                                  List<String> weakPoints,
+                                                  LearningPathVO.NodeRef targetNode,
+                                                  LearningPathVO.StepVO currentStep,
+                                                  String focusNodeCode,
+                                                  String focusNodeName,
+                                                  DiagnosticResultVO diagnostic) {
+        String cn = (courseName == null || courseName.isBlank()) ? "课程" : courseName;
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("你是「问津」的 AI 学习伴侣，专注于帮助学生理解和掌握《").append(cn).append("》课程的知识点。\n\n");
+
+        appendRootCauseSection(sb, diagnostic);
+
+        sb.append("## 课程知识点范围\n");
+        if (whitelist != null) {
+            for (String nodeName : whitelist) {
+                sb.append("- ").append(nodeName).append("\n");
+            }
+        }
+        sb.append("\n");
+
+        if (weakPoints != null && !weakPoints.isEmpty()) {
+            sb.append("## 学生薄弱点\n");
+            for (String weakPoint : weakPoints) {
+                sb.append("- ").append(weakPoint).append("\n");
+            }
+            sb.append("\n");
+        }
+
+        if (targetNode != null) {
+            sb.append("## 当前学习路径\n");
+            sb.append("目标节点：").append(targetNode.getName()).append("（").append(targetNode.getNodeCode()).append("）\n");
+            if (currentStep != null) {
+                sb.append("当前步骤：").append(currentStep.getName()).append("（").append(currentStep.getNodeCode()).append("）\n");
+            }
+            sb.append("\n");
+        }
+
+        if (focusNodeCode != null && focusNodeName != null) {
+            sb.append("## 当前焦点节点\n");
+            sb.append("学生正在学习：").append(focusNodeName).append("（").append(focusNodeCode).append("）\n\n");
+        }
+
+        sb.append("## 对话规则\n");
+        sb.append("- 只回答《").append(cn).append("》课程范围内的问题；超出范围时礼貌地把话题引导回当前焦点节点或学习路径目标。\n");
+        sb.append("- 采用启发式教学：不要一次性给出完整答案。先一句话点出关键，再反问一个小问题确认理解；学生卡住时再分步提示，逐步逼近答案。\n");
+        sb.append("- 关注优先级：诊断根因 > 学生薄弱点 > 当前学习路径。\n");
+        sb.append("- 回答控制在 3–5 句、口语化，适合聊天气泡；多用具体例子，少长篇理论。\n");
+        sb.append("- 不要编造学生未学内容的掌握情况，只依据上文提供的诊断/掌握度信息。\n");
+
+        return sb.toString();
+    }
+
     private static void appendRootCauseSection(StringBuilder sb, DiagnosticResultVO diagnostic) {
         if (diagnostic == null || !diagnostic.isHasWeakness()) {
             return;
@@ -513,5 +642,15 @@ public class CompanionServiceImpl implements CompanionService {
         CompanionToolProperties properties = new CompanionToolProperties();
         properties.setEnabled(false);
         return properties;
+    }
+
+    private record PromptContext(String courseName,
+                                 List<String> whitelist,
+                                 List<String> weakPoints,
+                                 LearningPathVO.NodeRef targetNode,
+                                 LearningPathVO.StepVO currentStep,
+                                 String focusNodeCode,
+                                 String focusNodeName,
+                                 DiagnosticResultVO diagnostic) {
     }
 }
