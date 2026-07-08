@@ -75,7 +75,7 @@ export function dispatchChatStreamEvent(eventType, payload, callbacks = {}) {
 
 /**
  * 流式对话接口（SSE）
- * @param {{ studentId: number, courseId: number, conversationId?: number, contextNodeCode?: string, message: string }} payload
+ * @param {{ studentId: number, courseId: number, conversationId?: number, nodeCode?: string, message: string }} payload
  * @param {{
  *   onMeta?: (event: any) => void,
  *   onToken?: (token: string) => void,

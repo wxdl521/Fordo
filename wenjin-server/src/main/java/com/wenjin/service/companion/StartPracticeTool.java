@@ -38,6 +38,11 @@ public class StartPracticeTool implements CompanionTool {
     }
 
     @Override
+    public String label() {
+        return "正在生成节点练习…";
+    }
+
+    @Override
     public Map<String, Object> schema() {
         Map<String, Object> parameters = new LinkedHashMap<>();
         parameters.put("type", "object");

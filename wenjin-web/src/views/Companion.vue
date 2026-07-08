@@ -169,7 +169,7 @@
       <div v-if="ctxNodeCode" class="cp-context-chip">
         <span class="cp-chip-label">上下文</span>
         <span class="cp-chip-code">{{ ctxNodeCode }}</span>
-        <button class="cp-chip-close" title="清除上下文" @click="ctxNodeCode = null">×</button>
+        <button class="cp-chip-close" title="清除上下文" @click="clearContextNodeCode">×</button>
       </div>
 
       <div class="cp-input-area">
@@ -199,10 +199,12 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import QuestionAnswerCard from '../components/QuestionAnswerCard.vue'
 import { listConversations, fetchConversation, deleteConversation, chatStream } from '../api/companion.js'
 import { submitPractice } from '../api/practice.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
+import { buildCompanionChatPayload, readCompanionNodeCode } from '../utils/companionContext.js'
 import {
   applyToolResult,
   buildPracticeAnswerList,
@@ -214,6 +216,8 @@ import {
   restoreTypedMessagesFromSnapshot
 } from '../utils/companionMessages.js'
 
+const route = useRoute()
+const router = useRouter()
 const { courseId } = useStudentCourse()
 
 function readUser() {
@@ -546,7 +550,12 @@ function newChat() {
   conversationId.value = null
   msgs.value = []
   input.value = ''
-  ctxNodeCode.value = null
+}
+
+function clearContextNodeCode() {
+  const query = { ...route.query }
+  delete query.nodeCode
+  router.replace({ query })
 }
 
 async function handleDelete(id) {
@@ -587,14 +596,13 @@ async function sendText() {
   await nextTick()
   scrollToEnd()
 
-  const payload = {
+  const payload = buildCompanionChatPayload({
     studentId: STUDENT_ID,
     courseId: courseId.value,
+    conversationId: conversationId.value,
+    nodeCode: ctxNodeCode.value,
     message: text
-  }
-
-  if (conversationId.value) payload.conversationId = conversationId.value
-  if (ctxNodeCode.value) payload.contextNodeCode = ctxNodeCode.value
+  })
 
   try {
     await chatStream(payload, {
@@ -670,6 +678,10 @@ function formatTime(value) {
 
 watch(courseId, (value) => {
   if (value) loadConversations()
+}, { immediate: true })
+
+watch(() => route.query.nodeCode, (value) => {
+  ctxNodeCode.value = readCompanionNodeCode(value)
 }, { immediate: true })
 
 watch(msgs, () => {

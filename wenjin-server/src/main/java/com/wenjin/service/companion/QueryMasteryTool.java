@@ -51,6 +51,11 @@ public class QueryMasteryTool implements CompanionTool {
     }
 
     @Override
+    public String label() {
+        return "正在查询你的掌握情况…";
+    }
+
+    @Override
     public Map<String, Object> schema() {
         Map<String, Object> parameters = new LinkedHashMap<>();
         parameters.put("type", "object");

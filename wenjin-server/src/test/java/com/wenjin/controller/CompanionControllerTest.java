@@ -72,7 +72,7 @@ class CompanionControllerTest {
         when(companionService.startTurn(any(CompanionChatRequest.class))).thenReturn(321L);
         doAnswer(invocation -> {
             CompanionService.CompanionStreamSink sink = invocation.getArgument(1);
-            sink.toolStart("query_mastery", "Query Mastery");
+            sink.toolStart("query_mastery", "正在查询你的掌握情况…");
             sink.toolResult("query_mastery", true);
             sink.practiceCard(card);
             sink.token("hello");
@@ -108,7 +108,7 @@ class CompanionControllerTest {
         assertThat(eventIndex(stream, "token")).isLessThan(eventIndex(stream, "done"));
         assertThat(stream).contains("\"conversationId\":321");
         assertThat(stream).contains("\"name\":\"query_mastery\"");
-        assertThat(stream).contains("\"label\":\"Query Mastery\"");
+        assertThat(stream).contains("\"label\":\"正在查询你的掌握情况…\"");
         assertThat(stream).contains("\"ok\":true");
         assertThat(stream).contains("\"sessionId\":901");
         assertThat(stream).contains("\"nodeId\":12");

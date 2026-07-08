@@ -15,6 +15,21 @@ public interface CompanionTool {
 
     Map<String, Object> schema();
 
+    default String label() {
+        Map<String, Object> toolSchema = schema();
+        if (toolSchema == null) {
+            return name();
+        }
+        Object function = toolSchema.get("function");
+        if (function instanceof Map<?, ?> functionMap) {
+            Object description = functionMap.get("description");
+            if (description instanceof String text && !text.isBlank()) {
+                return text;
+            }
+        }
+        return name();
+    }
+
     String execute(ToolContext ctx, JsonNode args) throws ToolException;
 
     default ToolExecutionResult executeForGovernor(String toolCallId,

@@ -27,6 +27,8 @@ import com.wenjin.service.companion.ToolExecutionResult;
 import com.wenjin.service.companion.ToolExecutionState;
 import com.wenjin.service.companion.ToolGovernor;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +46,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class CompanionServiceImpl implements CompanionService {
 
+    private static final Logger log = LoggerFactory.getLogger(CompanionServiceImpl.class);
     private static final int ROLE_USER = 1;
     private static final int ROLE_AI = 2;
 
@@ -94,6 +97,10 @@ public class CompanionServiceImpl implements CompanionService {
             CompanionConversation conversation = conversationMapper.selectById(conversationId);
             if (conversation == null) {
                 throw new BusinessException(ResultCode.NOT_FOUND, "会话不存在: " + conversationId);
+            }
+            if (!Objects.equals(conversation.getStudentId(), req.getStudentId())
+                    || !Objects.equals(conversation.getCourseId(), req.getCourseId())) {
+                throw new BusinessException(ResultCode.FORBIDDEN, "鏃犳潈璁块棶璇ヤ細璇?");
             }
             conversation.setUpdatedAt(LocalDateTime.now());
             conversationMapper.updateById(conversation);
@@ -223,14 +230,18 @@ public class CompanionServiceImpl implements CompanionService {
         Map<String, String> toolLabels = buildToolLabels(tools);
         ToolExecutionState state = new ToolExecutionState(maxToolCalls());
         ToolContext context = new ToolContext(conversation.getStudentId(), conversation.getCourseId());
-        String directFinalText = null;
 
         for (int round = 0; round < maxRounds(); round++) {
-            CompanionAiClient.TurnOutcome outcome = aiClient.completeWithTools(messages, toolSchemas);
-            if (outcome instanceof CompanionAiClient.FinalText finalText
-                    && finalText.text() != null
-                    && !finalText.text().isBlank()) {
-                directFinalText = finalText.text();
+            CompanionAiClient.TurnOutcome outcome;
+            try {
+                outcome = aiClient.completeWithTools(messages, toolSchemas);
+            } catch (Exception ex) {
+                log.warn("Companion tool resolution failed for conversationId={}, falling back to legacy stream",
+                        conversationId, ex);
+                streamWithLegacyPath(conversationId, systemPrompt, history, sink);
+                return;
+            }
+            if (outcome instanceof CompanionAiClient.FinalText) {
                 break;
             }
             if (!(outcome instanceof CompanionAiClient.ToolCalls toolCalls) || toolCalls.calls().isEmpty()) {
@@ -248,12 +259,6 @@ public class CompanionServiceImpl implements CompanionService {
                     sink.practiceCard(result.practiceCard());
                 }
             }
-        }
-
-        if (directFinalText != null) {
-            sink.token(directFinalText);
-            saveAiMessage(conversationId, directFinalText);
-            return;
         }
 
         StringBuilder fullReply = new StringBuilder();
@@ -313,24 +318,9 @@ public class CompanionServiceImpl implements CompanionService {
             if (tool == null || tool.name() == null || tool.name().isBlank()) {
                 continue;
             }
-            labels.put(tool.name(), extractToolLabel(tool));
+            labels.put(tool.name(), tool.label());
         }
         return labels;
-    }
-
-    private String extractToolLabel(CompanionTool tool) {
-        Map<String, Object> schema = tool.schema();
-        if (schema == null) {
-            return tool.name();
-        }
-        Object function = schema.get("function");
-        if (function instanceof Map<?, ?> functionMap) {
-            Object description = functionMap.get("description");
-            if (description instanceof String text && !text.isBlank()) {
-                return text;
-            }
-        }
-        return tool.name();
     }
 
     private boolean toolOrchestrationAvailable(List<CompanionTool> tools) {

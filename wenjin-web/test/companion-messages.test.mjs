@@ -9,6 +9,10 @@ import {
   normalizeConversationMessage,
   restoreTypedMessagesFromSnapshot
 } from '../src/utils/companionMessages.js'
+import {
+  buildCompanionChatPayload,
+  readCompanionNodeCode
+} from '../src/utils/companionContext.js'
 
 test('applyToolResult completes the earliest pending matching tool first', () => {
   const messages = [
@@ -26,6 +30,46 @@ test('applyToolResult completes the earliest pending matching tool first', () =>
 
 test('createToolMessage uses the Chinese tool fallback label', () => {
   assert.equal(createToolMessage({}).label, '工具')
+})
+
+test('readCompanionNodeCode normalizes route query values', () => {
+  assert.equal(readCompanionNodeCode('KT12'), 'KT12')
+  assert.equal(readCompanionNodeCode(['KT12', 'KT99']), 'KT12')
+  assert.equal(readCompanionNodeCode('   '), null)
+  assert.equal(readCompanionNodeCode(undefined), null)
+})
+
+test('buildCompanionChatPayload sends nodeCode instead of contextNodeCode', () => {
+  assert.deepEqual(
+    buildCompanionChatPayload({
+      studentId: 2,
+      courseId: 5,
+      conversationId: 99,
+      nodeCode: 'KT12',
+      message: 'help me practice'
+    }),
+    {
+      studentId: 2,
+      courseId: 5,
+      conversationId: 99,
+      nodeCode: 'KT12',
+      message: 'help me practice'
+    }
+  )
+
+  assert.deepEqual(
+    buildCompanionChatPayload({
+      studentId: 2,
+      courseId: 5,
+      nodeCode: null,
+      message: 'help me practice'
+    }),
+    {
+      studentId: 2,
+      courseId: 5,
+      message: 'help me practice'
+    }
+  )
 })
 
 test('buildPracticeAnswerList stays compatible with NodePractice answer semantics', () => {

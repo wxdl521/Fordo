@@ -47,6 +47,11 @@ public class GetNodeDetailTool implements CompanionTool {
     }
 
     @Override
+    public String label() {
+        return "正在读取知识点详情…";
+    }
+
+    @Override
     public Map<String, Object> schema() {
         Map<String, Object> parameters = new LinkedHashMap<>();
         parameters.put("type", "object");

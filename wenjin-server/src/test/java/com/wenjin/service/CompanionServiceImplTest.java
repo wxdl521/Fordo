@@ -39,6 +39,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -164,6 +165,40 @@ class CompanionServiceImplTest {
         CompanionMessage savedMessage = messageCaptor.getValue();
         assertEquals(200L, savedMessage.getConversationId());
         assertEquals(1, savedMessage.getRole());
+    }
+
+    @Test
+    void startTurnRejectsForeignConversationId() {
+        req.setConversationId(201L);
+
+        CompanionConversation existingConversation = new CompanionConversation();
+        existingConversation.setId(201L);
+        existingConversation.setStudentId(2L);
+        existingConversation.setCourseId(10L);
+        when(conversationMapper.selectById(201L)).thenReturn(existingConversation);
+
+        assertThatThrownBy(() -> service.startTurn(req))
+                .isInstanceOf(com.wenjin.common.BusinessException.class);
+
+        verify(conversationMapper, never()).updateById(any(CompanionConversation.class));
+        verify(messageMapper, never()).insert(any(CompanionMessage.class));
+    }
+
+    @Test
+    void startTurnRejectsConversationIdFromAnotherCourse() {
+        req.setConversationId(202L);
+
+        CompanionConversation existingConversation = new CompanionConversation();
+        existingConversation.setId(202L);
+        existingConversation.setStudentId(1L);
+        existingConversation.setCourseId(11L);
+        when(conversationMapper.selectById(202L)).thenReturn(existingConversation);
+
+        assertThatThrownBy(() -> service.startTurn(req))
+                .isInstanceOf(com.wenjin.common.BusinessException.class);
+
+        verify(conversationMapper, never()).updateById(any(CompanionConversation.class));
+        verify(messageMapper, never()).insert(any(CompanionMessage.class));
     }
 
     @Test
@@ -307,40 +342,52 @@ class CompanionServiceImplTest {
     }
 
     @Test
-    void streamReplyWithToolsUsesMeaningfulFinalTextWithoutStreamingSecondCall() {
+    void streamReplyWithToolsTreatsMeaningfulFinalTextAsStopSignalAndStreamsFinalReply() {
         Long conversationId = 308L;
         stubConversationAndPrompt(conversationId, List.of(userMessage("need advice")));
         configureTools(true, 2, 3, List.of(fakeTool(
                 "query_mastery",
-                "query mastery",
+                "正在查询你的掌握情况…",
                 Map.of("type", "object", "properties", Map.of()))));
 
         when(aiClient.completeWithTools(any(), any()))
                 .thenReturn(new CompanionAiClient.FinalText("direct final answer"));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(1);
+            onToken.accept("streamed final answer");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
         when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
 
         RecordingSink sink = new RecordingSink();
         service.streamReply(conversationId, sink);
 
-        assertEquals(List.of("direct final answer"), sink.tokens);
+        assertEquals(List.of("streamed final answer"), sink.tokens);
         assertThat(sink.toolStarts).isEmpty();
         assertThat(sink.toolResults).isEmpty();
         verify(aiClient, times(1)).completeWithTools(any(), any());
-        verify(aiClient, never()).streamMessages(any(), any());
+        verify(aiClient).streamMessages(any(), any());
         verify(toolGovernor, never()).execute(any(), any(), any());
+
+        ArgumentCaptor<List<Map<String, Object>>> streamMessagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(aiClient).streamMessages(streamMessagesCaptor.capture(), any());
+        assertThat(streamMessagesCaptor.getValue()).hasSize(2);
+        assertThat(streamMessagesCaptor.getValue().get(1))
+                .containsEntry("role", "user")
+                .containsEntry("content", "need advice");
 
         ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
         verify(messageMapper).insert(messageCaptor.capture());
-        assertEquals("direct final answer", messageCaptor.getValue().getContent());
+        assertEquals("streamed final answer", messageCaptor.getValue().getContent());
     }
 
     @Test
-    void streamReplyWithToolsUsesMeaningfulFinalTextAfterToolRound() {
+    void streamReplyWithToolsTreatsMeaningfulFinalTextAfterToolRoundAsStopSignalAndStreamsFinalReply() {
         Long conversationId = 309L;
         stubConversationAndPrompt(conversationId, List.of(userMessage("need advice")));
         configureTools(true, 2, 3, List.of(fakeTool(
                 "query_mastery",
-                "query mastery",
+                "正在查询你的掌握情况…",
                 Map.of("type", "object", "properties", Map.of()))));
 
         when(aiClient.completeWithTools(any(), any())).thenReturn(
@@ -349,20 +396,25 @@ class CompanionServiceImplTest {
                 new CompanionAiClient.FinalText("answer after tool"));
         when(toolGovernor.execute(any(), any(), any())).thenReturn(
                 new ToolExecutionResult("call-1", "query_mastery", true, "{\"items\":[]}"));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(1);
+            onToken.accept("streamed after tool");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
         when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
 
         RecordingSink sink = new RecordingSink();
         service.streamReply(conversationId, sink);
 
-        assertEquals(List.of("answer after tool"), sink.tokens);
-        assertEquals(List.of("query_mastery|query mastery"), sink.toolStarts);
+        assertEquals(List.of("streamed after tool"), sink.tokens);
+        assertEquals(List.of("query_mastery|正在查询你的掌握情况…"), sink.toolStarts);
         assertEquals(List.of("query_mastery|true"), sink.toolResults);
         verify(aiClient, times(2)).completeWithTools(any(), any());
-        verify(aiClient, never()).streamMessages(any(), any());
+        verify(aiClient).streamMessages(any(), any());
 
         ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
         verify(messageMapper).insert(messageCaptor.capture());
-        assertEquals("answer after tool", messageCaptor.getValue().getContent());
+        assertEquals("streamed after tool", messageCaptor.getValue().getContent());
     }
 
     @Test
@@ -371,7 +423,7 @@ class CompanionServiceImplTest {
         stubConversationAndPrompt(conversationId, List.of(userMessage("start practice")));
         configureTools(true, 2, 3, List.of(fakeTool(
                 "start_practice",
-                "start practice",
+                "正在生成节点练习…",
                 Map.of("type", "object", "properties", Map.of()))));
 
         PracticeStartVO card = practiceCard(901L, 12L, "KT12", "Quadratic Functions", "What shape is the graph?");
@@ -386,6 +438,11 @@ class CompanionServiceImplTest {
                         true,
                         "{\"sessionId\":901,\"questionCount\":1}",
                         card));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(1);
+            onToken.accept("practice is ready");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
         when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
 
         RecordingSink sink = new RecordingSink();
@@ -409,7 +466,7 @@ class CompanionServiceImplTest {
         stubConversationAndPrompt(conversationId, List.of(userMessage("start practice")));
         configureTools(true, 2, 3, List.of(fakeTool(
                 "start_practice",
-                "start practice",
+                "正在生成节点练习…",
                 Map.of("type", "object", "properties", Map.of()))));
 
         PracticeStartVO card = practiceCard(901L, 12L, "KT12", "Quadratic Functions", "What shape is the graph?");
@@ -424,13 +481,18 @@ class CompanionServiceImplTest {
                         true,
                         "{\"sessionId\":901,\"questionCount\":1}",
                         card));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(1);
+            onToken.accept("practice is ready");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
         when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
 
         RecordingSink sink = new RecordingSink();
         service.streamReply(conversationId, sink);
 
         assertThat(sink.events).containsSubsequence(
-                "tool_start|start_practice|start practice",
+                "tool_start|start_practice|正在生成节点练习…",
                 "tool_result|start_practice|true",
                 "practice_card|901",
                 "token|practice is ready");
@@ -575,6 +637,39 @@ class CompanionServiceImplTest {
         ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
         verify(messageMapper).insert(messageCaptor.capture());
         assertEquals("先从概念开始", messageCaptor.getValue().getContent());
+    }
+
+    @Test
+    void streamReplyWhenFirstToolResolutionFailsFallsBackToLegacyStreamAndPersistsReply() {
+        Long conversationId = 312L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("need fallback")));
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "query_mastery",
+                "query mastery",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        when(aiClient.completeWithTools(any(), any())).thenThrow(new IllegalStateException("stage one boom"));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            onToken.accept("legacy fallback reply");
+            return null;
+        }).when(aiClient).stream(any(), any(), any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(conversationId, sink);
+
+        assertEquals(List.of("legacy fallback reply"), sink.tokens);
+        assertThat(sink.toolStarts).isEmpty();
+        assertThat(sink.toolResults).isEmpty();
+        verify(aiClient).completeWithTools(any(), any());
+        verify(aiClient).stream(any(), any(), any(), any());
+        verify(aiClient, never()).streamMessages(any(), any());
+        verify(toolGovernor, never()).execute(any(), any(), any());
+
+        ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
+        verify(messageMapper).insert(messageCaptor.capture());
+        assertEquals("legacy fallback reply", messageCaptor.getValue().getContent());
     }
 
     @Test
