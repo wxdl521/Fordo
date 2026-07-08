@@ -9,6 +9,7 @@ import com.wenjin.entity.KgNode;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.support.PrereqDirection;
+import com.wenjin.support.ReviewMarker;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -79,7 +80,8 @@ public class GetNodeDetailTool implements CompanionTool {
         Set<Long> dependentIds = new LinkedHashSet<>();
         for (KgEdge edge : edges) {
             if (!Objects.equals(edge.getCourseId(), ctx.courseId())
-                    || !Objects.equals(edge.getRelationType(), PrereqDirection.RELATION_TYPE_PREREQUISITE)) {
+                    || !Objects.equals(edge.getRelationType(), PrereqDirection.RELATION_TYPE_PREREQUISITE)
+                    || ReviewMarker.isPending(edge.getRelationNote())) {
                 continue;
             }
             if (Objects.equals(PrereqDirection.dependentNodeId(edge), focus.getId())) {

@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
@@ -142,6 +143,28 @@ class QueryMasteryToolTest {
         assertThat(json.path("effectiveLevel").asInt()).isEqualTo(1);
         assertThat(json.path("daysSinceEvidence").asDouble()).isEqualTo(40.0);
         assertThat(json.path("lastEvidenceAt").asText()).isEqualTo("2026-05-28T09:30:00");
+    }
+
+    @Test
+    void specificNodeWithoutMasteryRowReturnsZeroDefaults() throws Exception {
+        KgNode kt01 = node(101L, 10L, "KT01", "Loops");
+
+        when(nodeMapper.selectOne(any())).thenReturn(kt01);
+        when(masteryMapper.selectOne(any())).thenReturn(null);
+
+        JsonNode json = objectMapper.readTree(tool.execute(
+                new ToolContext(1L, 10L),
+                objectMapper.createObjectNode().put("nodeCode", "KT01")));
+
+        assertThat(json.path("nodeCode").asText()).isEqualTo("KT01");
+        assertThat(json.path("name").asText()).isEqualTo("Loops");
+        assertThat(json.path("rawScore").asDouble()).isZero();
+        assertThat(json.path("rawLevel").asInt()).isZero();
+        assertThat(json.path("effectiveScore").asDouble()).isZero();
+        assertThat(json.path("effectiveLevel").asInt()).isZero();
+        assertThat(json.path("daysSinceEvidence").isNull()).isTrue();
+        assertThat(json.path("lastEvidenceAt").isNull()).isTrue();
+        verifyNoInteractions(decayCalculator);
     }
 
     private KgNode node(Long id, Long courseId, String nodeCode, String name) {

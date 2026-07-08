@@ -3,6 +3,9 @@ package com.wenjin.service.companion;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import com.wenjin.ai.CompanionAiClient;
 import com.wenjin.config.CompanionToolProperties;
 import org.slf4j.Logger;
@@ -98,7 +101,7 @@ public class ToolGovernor {
         Future<String> future = executor.submit(() -> tool.execute(ctx, args));
         try {
             String content = future.get(timeoutMs(), TimeUnit.MILLISECONDS);
-            return new ToolExecutionResult(call.id(), call.name(), true, truncate(content));
+            return new ToolExecutionResult(call.id(), call.name(), true, truncateSuccessfulContent(content));
         } catch (TimeoutException e) {
             future.cancel(true);
             return failed(call.id(), call.name(), "tool_timeout", "Tool timed out");
@@ -134,14 +137,138 @@ public class ToolGovernor {
         }
     }
 
-    private String truncate(String content) {
+    private String truncateSuccessfulContent(String content) {
         String safe = content == null ? "" : content;
         int max = properties == null ? 2000 : properties.getMaxResultChars();
         max = Math.max(0, max);
         if (safe.length() <= max) {
             return safe;
         }
-        return safe.substring(0, max);
+        return truncateJsonContent(safe, max);
+    }
+
+    private String truncateJsonContent(String content, int max) {
+        JsonNode parsed;
+        try {
+            parsed = objectMapper.readTree(content);
+        } catch (JsonProcessingException e) {
+            return fitFallbackContent(max);
+        }
+
+        JsonNode truncated = addTruncatedFlag(parsed.deepCopy());
+        while (serialize(truncated).length() > max) {
+            if (trimLastArrayElement(truncated)) {
+                continue;
+            }
+            if (trimLongestStringValue(truncated, serialize(truncated).length() - max)) {
+                continue;
+            }
+            return fitFallbackContent(max);
+        }
+        return serialize(truncated);
+    }
+
+    private JsonNode addTruncatedFlag(JsonNode node) {
+        if (node instanceof ObjectNode objectNode) {
+            objectNode.put("truncated", true);
+            return objectNode;
+        }
+        ObjectNode wrapper = objectMapper.createObjectNode();
+        wrapper.put("truncated", true);
+        wrapper.set("result", node);
+        return wrapper;
+    }
+
+    private boolean trimLastArrayElement(JsonNode node) {
+        if (node instanceof ArrayNode arrayNode) {
+            if (!arrayNode.isEmpty()) {
+                arrayNode.remove(arrayNode.size() - 1);
+                return true;
+            }
+            return false;
+        }
+        if (node instanceof ObjectNode objectNode) {
+            for (JsonNode child : objectNode) {
+                if (trimLastArrayElement(child)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        for (JsonNode child : node) {
+            if (trimLastArrayElement(child)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean trimLongestStringValue(JsonNode node, int overflow) {
+        TrimCandidate candidate = findLongestString(node);
+        if (candidate == null) {
+            return false;
+        }
+        int delta = Math.max(1, overflow);
+        int newLength = Math.max(0, candidate.value().length() - delta);
+        candidate.replaceWith(candidate.value().substring(0, newLength));
+        return true;
+    }
+
+    private TrimCandidate findLongestString(JsonNode node) {
+        TrimCandidate best = null;
+        if (node instanceof ObjectNode objectNode) {
+            var fields = objectNode.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> entry = fields.next();
+                JsonNode child = entry.getValue();
+                if (child.isTextual()) {
+                    TrimCandidate candidate = TrimCandidate.forField(objectNode, entry.getKey(), child.asText());
+                    if (best == null || candidate.value().length() > best.value().length()) {
+                        best = candidate;
+                    }
+                    continue;
+                }
+                TrimCandidate nested = findLongestString(child);
+                if (nested != null && (best == null || nested.value().length() > best.value().length())) {
+                    best = nested;
+                }
+            }
+            return best;
+        }
+        if (node instanceof ArrayNode arrayNode) {
+            for (int i = 0; i < arrayNode.size(); i++) {
+                JsonNode child = arrayNode.get(i);
+                if (child.isTextual()) {
+                    TrimCandidate candidate = TrimCandidate.forIndex(arrayNode, i, child.asText());
+                    if (best == null || candidate.value().length() > best.value().length()) {
+                        best = candidate;
+                    }
+                    continue;
+                }
+                TrimCandidate nested = findLongestString(child);
+                if (nested != null && (best == null || nested.value().length() > best.value().length())) {
+                    best = nested;
+                }
+            }
+        }
+        return best;
+    }
+
+    private String fitFallbackContent(int max) {
+        for (String candidate : List.of("{\"truncated\":true}", "{}", "\"\"", "0")) {
+            if (candidate.length() <= max) {
+                return candidate;
+            }
+        }
+        return "0";
+    }
+
+    private String serialize(JsonNode node) {
+        try {
+            return objectMapper.writeValueAsString(node);
+        } catch (JsonProcessingException e) {
+            return "{\"truncated\":true}";
+        }
     }
 
     private void audit(ToolContext ctx,
@@ -171,5 +298,33 @@ public class ToolGovernor {
             return normalized;
         }
         return normalized.substring(0, maxLength);
+    }
+
+    private sealed interface TrimCandidate permits FieldTrimCandidate, IndexTrimCandidate {
+        String value();
+
+        void replaceWith(String value);
+
+        static TrimCandidate forField(ObjectNode parent, String fieldName, String value) {
+            return new FieldTrimCandidate(parent, fieldName, value);
+        }
+
+        static TrimCandidate forIndex(ArrayNode parent, int index, String value) {
+            return new IndexTrimCandidate(parent, index, value);
+        }
+    }
+
+    private record FieldTrimCandidate(ObjectNode parent, String fieldName, String value) implements TrimCandidate {
+        @Override
+        public void replaceWith(String value) {
+            parent.put(fieldName, value);
+        }
+    }
+
+    private record IndexTrimCandidate(ArrayNode parent, int index, String value) implements TrimCandidate {
+        @Override
+        public void replaceWith(String value) {
+            parent.set(index, TextNode.valueOf(value));
+        }
     }
 }

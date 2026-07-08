@@ -112,20 +112,31 @@ class ToolGovernorTest {
     }
 
     @Test
-    void longSuccessfulResultIsTruncated() {
+    void longSuccessfulJsonResultRemainsValidJsonAndFitsLimit() throws Exception {
         ToolGovernor governor = new ToolGovernor(
-                List.of(new FakeTool("echo", new AtomicInteger(), "abcdefghijklmnopqrstuvwxyz")),
+                List.of(new FakeTool("echo", new AtomicInteger(),
+                        "{\"items\":["
+                                + "{\"nodeCode\":\"KT01\",\"name\":\"Loops\"},"
+                                + "{\"nodeCode\":\"KT02\",\"name\":\"Arrays\"},"
+                                + "{\"nodeCode\":\"KT03\",\"name\":\"Recursion\"}"
+                                + "]}")),
                 objectMapper,
-                properties(5_000, 12));
+                properties(5_000, 90));
 
         ToolExecutionResult result = governor.execute(
                 new ToolContext(1L, 10L),
                 new CompanionAiClient.ToolCall("call_1", "echo", "{}"),
                 new ToolExecutionState(3));
 
+        JsonNode json = objectMapper.readTree(result.content());
+
         assertThat(result.ok()).isTrue();
-        assertThat(result.content()).isEqualTo("abcdefghijkl");
-        assertThat(result.content()).hasSize(12);
+        assertThat(result.content()).hasSizeLessThanOrEqualTo(90);
+        assertThat(json.path("truncated").asBoolean()).isTrue();
+        assertThat(json.path("items").isArray()).isTrue();
+        assertThat(json.path("items")).isNotEmpty();
+        assertThat(json.path("items")).hasSizeLessThan(3);
+        assertThat(json.at("/items/0/nodeCode").asText()).isEqualTo("KT01");
     }
 
     @Test

@@ -7,6 +7,7 @@ import com.wenjin.entity.KgNode;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.support.PrereqDirection;
+import com.wenjin.support.ReviewMarker;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -124,6 +125,35 @@ class GetNodeDetailToolTest {
         when(nodeMapper.selectOne(any())).thenReturn(focus);
         when(edgeMapper.selectList(any())).thenReturn(List.of(goodIn, goodOut, wrongType, wrongCourse));
         when(nodeMapper.selectBatchIds(any())).thenReturn(List.of(prereq, dependent));
+
+        JsonNode json = objectMapper.readTree(tool.execute(
+                new ToolContext(1L, 10L),
+                objectMapper.createObjectNode().put("nodeCode", "KT02")));
+
+        assertThat(json.path("prerequisites")).hasSize(1);
+        assertThat(json.at("/prerequisites/0/nodeCode").asText()).isEqualTo("KT01");
+        assertThat(json.path("dependents")).hasSize(1);
+        assertThat(json.at("/dependents/0/nodeCode").asText()).isEqualTo("KT03");
+    }
+
+    @Test
+    void pendingPrerequisiteEdgesAreExcludedFromPrerequisitesAndDependents() throws Exception {
+        KgNode focus = node(200L, 10L, "KT02", "Dynamic Programming");
+        KgNode visiblePrereq = node(110L, 10L, "KT01", "Recursion");
+        KgNode pendingPrereq = node(111L, 10L, "KT00", "Induction");
+        KgNode visibleDependent = node(210L, 10L, "KT03", "State Compression");
+        KgNode pendingDependent = node(211L, 10L, "KT04", "Digit DP");
+
+        KgEdge visibleIn = edge(10L, 10L, visiblePrereq.getId(), focus.getId(), PrereqDirection.RELATION_TYPE_PREREQUISITE);
+        KgEdge pendingIn = edge(11L, 10L, pendingPrereq.getId(), focus.getId(), PrereqDirection.RELATION_TYPE_PREREQUISITE);
+        pendingIn.setRelationNote(ReviewMarker.PREFIX + "teacher review");
+        KgEdge visibleOut = edge(12L, 10L, focus.getId(), visibleDependent.getId(), PrereqDirection.RELATION_TYPE_PREREQUISITE);
+        KgEdge pendingOut = edge(13L, 10L, focus.getId(), pendingDependent.getId(), PrereqDirection.RELATION_TYPE_PREREQUISITE);
+        pendingOut.setRelationNote(ReviewMarker.PREFIX + "teacher review");
+
+        when(nodeMapper.selectOne(any())).thenReturn(focus);
+        when(edgeMapper.selectList(any())).thenReturn(List.of(visibleIn, pendingIn, visibleOut, pendingOut));
+        when(nodeMapper.selectBatchIds(any())).thenReturn(List.of(visiblePrereq, pendingPrereq, visibleDependent, pendingDependent));
 
         JsonNode json = objectMapper.readTree(tool.execute(
                 new ToolContext(1L, 10L),
