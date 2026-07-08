@@ -178,7 +178,8 @@ class CompanionServiceImplTest {
         when(conversationMapper.selectById(201L)).thenReturn(existingConversation);
 
         assertThatThrownBy(() -> service.startTurn(req))
-                .isInstanceOf(com.wenjin.common.BusinessException.class);
+                .isInstanceOf(com.wenjin.common.BusinessException.class)
+                .hasMessageContaining("无权访问该会话");
 
         verify(conversationMapper, never()).updateById(any(CompanionConversation.class));
         verify(messageMapper, never()).insert(any(CompanionMessage.class));
@@ -195,7 +196,8 @@ class CompanionServiceImplTest {
         when(conversationMapper.selectById(202L)).thenReturn(existingConversation);
 
         assertThatThrownBy(() -> service.startTurn(req))
-                .isInstanceOf(com.wenjin.common.BusinessException.class);
+                .isInstanceOf(com.wenjin.common.BusinessException.class)
+                .hasMessageContaining("无权访问该会话");
 
         verify(conversationMapper, never()).updateById(any(CompanionConversation.class));
         verify(messageMapper, never()).insert(any(CompanionMessage.class));

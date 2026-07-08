@@ -100,7 +100,7 @@ public class CompanionServiceImpl implements CompanionService {
             }
             if (!Objects.equals(conversation.getStudentId(), req.getStudentId())
                     || !Objects.equals(conversation.getCourseId(), req.getCourseId())) {
-                throw new BusinessException(ResultCode.FORBIDDEN, "鏃犳潈璁块棶璇ヤ細璇?");
+                throw new BusinessException(ResultCode.FORBIDDEN, "无权访问该会话");
             }
             conversation.setUpdatedAt(LocalDateTime.now());
             conversationMapper.updateById(conversation);
