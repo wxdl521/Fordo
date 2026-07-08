@@ -121,6 +121,15 @@ class QueryMasteryToolTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void schemaDisallowsUnknownArguments() {
+        var function = (java.util.Map<String, Object>) tool.schema().get("function");
+        var parameters = (java.util.Map<String, Object>) function.get("parameters");
+
+        assertThat(parameters).containsEntry("additionalProperties", false);
+    }
+
+    @Test
     void specificNodeReturnsDetailJson() throws Exception {
         KgNode kt01 = node(101L, 10L, "KT01", "Loops");
         StudentMastery mastery = mastery(1L, 10L, 101L, 88.0, 2, LocalDateTime.of(2026, 5, 28, 9, 30));

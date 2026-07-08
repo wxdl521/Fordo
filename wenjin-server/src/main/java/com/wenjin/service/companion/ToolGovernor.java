@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -81,6 +82,12 @@ public class ToolGovernor {
             audit(ctx, toolName, argsJson, started, result);
             return result;
         }
+        String validationError = validateArguments(tool, args);
+        if (validationError != null) {
+            result = failed(toolCallId, toolName, "invalid_arguments", validationError);
+            audit(ctx, toolName, argsJson, started, result);
+            return result;
+        }
 
         if (state == null || !state.tryConsume()) {
             result = failed(toolCallId, toolName, "tool_budget_exceeded", "Tool call budget exceeded");
@@ -91,6 +98,77 @@ public class ToolGovernor {
         result = executeWithTimeout(ctx, call, tool, args);
         audit(ctx, toolName, argsJson, started, result);
         return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private String validateArguments(CompanionTool tool, JsonNode args) {
+        if (!args.isObject()) {
+            return "Tool arguments must be a JSON object";
+        }
+        Map<String, Object> toolSchema = tool.schema();
+        Object function = toolSchema == null ? null : toolSchema.get("function");
+        if (!(function instanceof Map<?, ?> functionMap)) {
+            return null;
+        }
+        Object parameters = functionMap.get("parameters");
+        if (!(parameters instanceof Map<?, ?> parameterMap)) {
+            return null;
+        }
+        Object properties = parameterMap.get("properties");
+        Map<String, Object> propertyMap = properties instanceof Map<?, ?> map
+                ? (Map<String, Object>) map
+                : Map.of();
+        Set<String> allowed = propertyMap.keySet();
+
+        var fieldNames = args.fieldNames();
+        while (fieldNames.hasNext()) {
+            String fieldName = fieldNames.next();
+            if (!allowed.contains(fieldName)) {
+                return "Unknown tool argument: " + fieldName;
+            }
+        }
+
+        Object required = parameterMap.get("required");
+        if (required instanceof List<?> requiredFields) {
+            for (Object field : requiredFields) {
+                if (field instanceof String fieldName
+                        && (!args.has(fieldName) || args.get(fieldName).isNull())) {
+                    return "Missing required tool argument: " + fieldName;
+                }
+            }
+        }
+
+        for (Map.Entry<String, Object> entry : propertyMap.entrySet()) {
+            JsonNode value = args.get(entry.getKey());
+            if (value == null || value.isNull()) {
+                continue;
+            }
+            String error = validateArgumentType(entry.getKey(), value, entry.getValue());
+            if (error != null) {
+                return error;
+            }
+        }
+        return null;
+    }
+
+    private String validateArgumentType(String fieldName, JsonNode value, Object propertySchema) {
+        if (!(propertySchema instanceof Map<?, ?> schema)) {
+            return null;
+        }
+        Object type = schema.get("type");
+        if (!(type instanceof String expectedType)) {
+            return null;
+        }
+        boolean valid = switch (expectedType) {
+            case "string" -> value.isTextual();
+            case "integer" -> value.isIntegralNumber() && value.canConvertToInt();
+            case "number" -> value.isNumber();
+            case "boolean" -> value.isBoolean();
+            case "object" -> value.isObject();
+            case "array" -> value.isArray();
+            default -> true;
+        };
+        return valid ? null : "Tool argument has invalid type: " + fieldName;
     }
 
     private ToolExecutionResult executeWithTimeout(ToolContext ctx,

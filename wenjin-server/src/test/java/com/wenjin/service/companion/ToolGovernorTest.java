@@ -91,6 +91,68 @@ class ToolGovernorTest {
     }
 
     @Test
+    void nonObjectArgumentsReturnErrorAndDoNotExecuteTool() throws Exception {
+        AtomicInteger executions = new AtomicInteger();
+        ToolGovernor governor = new ToolGovernor(
+                List.of(new StrictTool("start_practice", executions, "{\"ok\":true}")),
+                objectMapper,
+                properties(5_000, 2_000));
+        ToolExecutionState state = new ToolExecutionState(3);
+
+        ToolExecutionResult result = governor.execute(
+                new ToolContext(1L, 10L),
+                new CompanionAiClient.ToolCall("call_1", "start_practice", "[]"),
+                state);
+
+        assertThat(result.ok()).isFalse();
+        assertThat(errorCode(result)).isEqualTo("invalid_arguments");
+        assertThat(executions).hasValue(0);
+        assertThat(state.used()).isZero();
+    }
+
+    @Test
+    void unknownArgumentsReturnErrorAndDoNotExecuteTool() throws Exception {
+        AtomicInteger executions = new AtomicInteger();
+        ToolGovernor governor = new ToolGovernor(
+                List.of(new StrictTool("start_practice", executions, "{\"ok\":true}")),
+                objectMapper,
+                properties(5_000, 2_000));
+        ToolExecutionState state = new ToolExecutionState(3);
+
+        ToolExecutionResult result = governor.execute(
+                new ToolContext(1L, 10L),
+                new CompanionAiClient.ToolCall("call_1", "start_practice",
+                        "{\"nodeCode\":\"KT12\",\"extra\":true}"),
+                state);
+
+        assertThat(result.ok()).isFalse();
+        assertThat(errorCode(result)).isEqualTo("invalid_arguments");
+        assertThat(executions).hasValue(0);
+        assertThat(state.used()).isZero();
+    }
+
+    @Test
+    void argumentTypeMismatchReturnsErrorAndDoesNotExecuteTool() throws Exception {
+        AtomicInteger executions = new AtomicInteger();
+        ToolGovernor governor = new ToolGovernor(
+                List.of(new StrictTool("start_practice", executions, "{\"ok\":true}")),
+                objectMapper,
+                properties(5_000, 2_000));
+        ToolExecutionState state = new ToolExecutionState(3);
+
+        ToolExecutionResult result = governor.execute(
+                new ToolContext(1L, 10L),
+                new CompanionAiClient.ToolCall("call_1", "start_practice",
+                        "{\"nodeCode\":\"KT12\",\"size\":\"abc\"}"),
+                state);
+
+        assertThat(result.ok()).isFalse();
+        assertThat(errorCode(result)).isEqualTo("invalid_arguments");
+        assertThat(executions).hasValue(0);
+        assertThat(state.used()).isZero();
+    }
+
+    @Test
     void toolCallBudgetBlocksFourthCall() throws Exception {
         AtomicInteger executions = new AtomicInteger();
         ToolGovernor governor = new ToolGovernor(
@@ -233,6 +295,28 @@ class ToolGovernorTest {
         @Override
         public Map<String, Object> schema() {
             return Map.of("type", "function", "function", Map.of("name", name));
+        }
+
+        @Override
+        public String execute(ToolContext ctx, JsonNode args) {
+            executions.incrementAndGet();
+            return response;
+        }
+    }
+
+    private record StrictTool(String name, AtomicInteger executions, String response) implements CompanionTool {
+        @Override
+        public Map<String, Object> schema() {
+            return Map.of(
+                    "type", "function",
+                    "function", Map.of(
+                            "name", name,
+                            "parameters", Map.of(
+                                    "type", "object",
+                                    "properties", Map.of(
+                                            "nodeCode", Map.of("type", "string"),
+                                            "size", Map.of("type", "integer")),
+                                    "required", List.of("nodeCode"))));
         }
 
         @Override

@@ -60,6 +60,7 @@ public class GetNodeDetailTool implements CompanionTool {
                         "type", "string",
                         "description", "Knowledge node code within the current course")));
         parameters.put("required", List.of("nodeCode"));
+        parameters.put("additionalProperties", false);
 
         Map<String, Object> function = new LinkedHashMap<>();
         function.put("name", name());

@@ -145,11 +145,13 @@ class CompanionServiceImplTest {
     @Test
     void startTurnReusesConversation() {
         req.setConversationId(200L);
+        req.setNodeCode("KT99");
 
         CompanionConversation existingConversation = new CompanionConversation();
         existingConversation.setId(200L);
         existingConversation.setStudentId(1L);
         existingConversation.setCourseId(10L);
+        existingConversation.setNodeCode("KT12");
         when(conversationMapper.selectById(200L)).thenReturn(existingConversation);
         when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
         when(conversationMapper.updateById(any(CompanionConversation.class))).thenReturn(1);
@@ -158,13 +160,37 @@ class CompanionServiceImplTest {
 
         assertEquals(200L, conversationId);
         verify(conversationMapper, never()).insert(any(CompanionConversation.class));
-        verify(conversationMapper).updateById(any(CompanionConversation.class));
+        ArgumentCaptor<CompanionConversation> conversationCaptor = ArgumentCaptor.forClass(CompanionConversation.class);
+        verify(conversationMapper).updateById(conversationCaptor.capture());
+        assertEquals("KT99", conversationCaptor.getValue().getNodeCode());
 
         ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
         verify(messageMapper).insert(messageCaptor.capture());
         CompanionMessage savedMessage = messageCaptor.getValue();
         assertEquals(200L, savedMessage.getConversationId());
         assertEquals(1, savedMessage.getRole());
+    }
+
+    @Test
+    void startTurnReusesConversationKeepsExistingNodeCodeWhenRequestOmitsIt() {
+        req.setConversationId(203L);
+        req.setNodeCode(null);
+
+        CompanionConversation existingConversation = new CompanionConversation();
+        existingConversation.setId(203L);
+        existingConversation.setStudentId(1L);
+        existingConversation.setCourseId(10L);
+        existingConversation.setNodeCode("KT12");
+        when(conversationMapper.selectById(203L)).thenReturn(existingConversation);
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+        when(conversationMapper.updateById(any(CompanionConversation.class))).thenReturn(1);
+
+        Long conversationId = service.startTurn(req);
+
+        assertEquals(203L, conversationId);
+        ArgumentCaptor<CompanionConversation> conversationCaptor = ArgumentCaptor.forClass(CompanionConversation.class);
+        verify(conversationMapper).updateById(conversationCaptor.capture());
+        assertEquals("KT12", conversationCaptor.getValue().getNodeCode());
     }
 
     @Test
@@ -645,6 +671,7 @@ class CompanionServiceImplTest {
     void streamReplyWhenFirstToolResolutionFailsFallsBackToLegacyStreamAndPersistsReply() {
         Long conversationId = 312L;
         stubConversationAndPrompt(conversationId, List.of(userMessage("need fallback")));
+        stubWeakPoint();
         configureTools(true, 2, 3, List.of(fakeTool(
                 "query_mastery",
                 "query mastery",
@@ -665,7 +692,10 @@ class CompanionServiceImplTest {
         assertThat(sink.toolStarts).isEmpty();
         assertThat(sink.toolResults).isEmpty();
         verify(aiClient).completeWithTools(any(), any());
-        verify(aiClient).stream(any(), any(), any(), any());
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).stream(promptCaptor.capture(), any(), any(), any());
+        assertThat(promptCaptor.getValue()).doesNotContain("## 工具使用");
+        assertThat(promptCaptor.getValue()).contains("## 学生薄弱点");
         verify(aiClient, never()).streamMessages(any(), any());
         verify(toolGovernor, never()).execute(any(), any(), any());
 

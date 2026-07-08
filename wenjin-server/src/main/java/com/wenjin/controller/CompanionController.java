@@ -8,6 +8,7 @@ import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
 import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.service.CompanionService;
+import com.wenjin.service.CourseService;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,11 +39,13 @@ public class CompanionController {
     private static final Logger log = LoggerFactory.getLogger(CompanionController.class);
 
     private final CompanionService companionService;
+    private final CourseService courseService;
     // 虚拟线程：每次 SSE 请求独立一个虚拟线程，避免 newCachedThreadPool 在高并发下无界扩张平台线程
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
-    public CompanionController(CompanionService companionService) {
+    public CompanionController(CompanionService companionService, CourseService courseService) {
         this.companionService = companionService;
+        this.courseService = courseService;
     }
 
     @PreDestroy
@@ -70,6 +73,7 @@ public class CompanionController {
     public SseEmitter chat(@RequestBody CompanionChatRequest req) {
         // 必须在请求线程（此处）校验——CurrentUser 是 ThreadLocal，进入 executor 后不可见
         AccessGuard.assertSelf(req.getStudentId());
+        courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
         SseEmitter emitter = new SseEmitter(180_000L); // 3 minutes timeout
 
         // 在请求线程取出身份，透传给虚拟线程（ThreadLocal 不跨线程）
@@ -144,6 +148,7 @@ public class CompanionController {
             @RequestParam("studentId") Long studentId,
             @RequestParam("courseId") Long courseId) {
         AccessGuard.assertSelf(studentId);
+        courseService.assertAccessibleByStudent(studentId, courseId);
         return Result.ok(companionService.listConversations(studentId, courseId));
     }
 

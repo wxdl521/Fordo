@@ -9,6 +9,7 @@ import com.wenjin.dto.PaperQuestionVO;
 import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.security.TokenService;
 import com.wenjin.service.CompanionService;
+import com.wenjin.service.CourseService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -48,12 +49,15 @@ class CompanionControllerTest {
     @Mock
     private CompanionService companionService;
 
+    @Mock
+    private CourseService courseService;
+
     private final TokenService tokenService = new TokenService("test-secret", 3600);
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
-        CompanionController controller = new CompanionController(companionService);
+        CompanionController controller = new CompanionController(companionService, courseService);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .addInterceptors(new AuthContextInterceptor(tokenService))
                 .setControllerAdvice(new GlobalExceptionHandler())
@@ -126,6 +130,7 @@ class CompanionControllerTest {
         assertThat(requestCaptor.getValue().getConversationId()).isEqualTo(99L);
         assertThat(requestCaptor.getValue().getNodeCode()).isEqualTo("KT12");
         assertThat(requestCaptor.getValue().getMessage()).isEqualTo("help me practice");
+        verify(courseService).assertAccessibleByStudent(2L, 5L);
         verify(companionService).streamReply(eq(321L), any(CompanionService.CompanionStreamSink.class));
     }
 
@@ -146,6 +151,31 @@ class CompanionControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
 
+        verify(companionService, never()).startTurn(any());
+        verify(companionService, never()).streamReply(any(), any(CompanionService.CompanionStreamSink.class));
+    }
+
+    @Test
+    @DisplayName("chat: inaccessible course returns 403 before async work and does not start turn")
+    void chat_inaccessibleCourse_returns403WithoutStartingTurn() throws Exception {
+        org.mockito.Mockito.doThrow(new com.wenjin.common.BusinessException(ResultCode.FORBIDDEN, "course denied"))
+                .when(courseService).assertAccessibleByStudent(2L, 5L);
+
+        mvc.perform(post("/api/companion/chat")
+                        .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "studentId": 2,
+                                  "courseId": 5,
+                                  "message": "help me practice"
+                                }
+                                """))
+                .andExpect(request().asyncNotStarted())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
+
+        verify(courseService).assertAccessibleByStudent(2L, 5L);
         verify(companionService, never()).startTurn(any());
         verify(companionService, never()).streamReply(any(), any(CompanionService.CompanionStreamSink.class));
     }
@@ -198,6 +228,23 @@ class CompanionControllerTest {
         assertThat(stream).contains("event:error");
         assertThat(stream).contains("\"message\":\"boom\"");
         assertThat(stream).doesNotContain("event:done");
+    }
+
+    @Test
+    @DisplayName("conversations: inaccessible course returns 403 and does not list conversations")
+    void listConversations_inaccessibleCourse_returns403WithoutListing() throws Exception {
+        org.mockito.Mockito.doThrow(new com.wenjin.common.BusinessException(ResultCode.FORBIDDEN, "course denied"))
+                .when(courseService).assertAccessibleByStudent(2L, 5L);
+
+        mvc.perform(MockMvcRequestBuilders.get("/api/companion/conversations")
+                        .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
+                        .param("studentId", "2")
+                        .param("courseId", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
+
+        verify(courseService).assertAccessibleByStudent(2L, 5L);
+        verify(companionService, never()).listConversations(anyLong(), anyLong());
     }
 
     private static int eventIndex(String stream, String eventName) {

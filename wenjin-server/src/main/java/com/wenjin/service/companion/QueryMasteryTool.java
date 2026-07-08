@@ -63,6 +63,7 @@ public class QueryMasteryTool implements CompanionTool {
                 "nodeCode", Map.of(
                         "type", "string",
                         "description", "Optional knowledge node code within the current course")));
+        parameters.put("additionalProperties", false);
 
         Map<String, Object> function = new LinkedHashMap<>();
         function.put("name", name());

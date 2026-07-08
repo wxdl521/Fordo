@@ -54,6 +54,7 @@ public class StartPracticeTool implements CompanionTool {
                         "type", "integer",
                         "description", "Practice question count hint. Defaults to 2 and is clamped to 1-3.")));
         parameters.put("required", List.of("nodeCode"));
+        parameters.put("additionalProperties", false);
 
         Map<String, Object> function = new LinkedHashMap<>();
         function.put("name", name());

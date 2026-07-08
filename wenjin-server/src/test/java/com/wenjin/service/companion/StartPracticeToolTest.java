@@ -81,6 +81,15 @@ class StartPracticeToolTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void schemaDisallowsUnknownArguments() {
+        var function = (java.util.Map<String, Object>) tool.schema().get("function");
+        var parameters = (java.util.Map<String, Object>) function.get("parameters");
+
+        assertThat(parameters).containsEntry("additionalProperties", false);
+    }
+
+    @Test
     void sizeDefaultsToTwo() throws Exception {
         KgNode node = node(55L, 10L, "KT12", "Quadratic Functions");
         PracticeStartVO card = practiceCard(node, 901L, question("Q1", "A"), question("Q2", "B"));

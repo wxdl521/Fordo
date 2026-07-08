@@ -50,6 +50,15 @@ class GetNodeDetailToolTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void schemaDisallowsUnknownArguments() {
+        var function = (java.util.Map<String, Object>) tool.schema().get("function");
+        var parameters = (java.util.Map<String, Object>) function.get("parameters");
+
+        assertThat(parameters).containsEntry("additionalProperties", false);
+    }
+
+    @Test
     void validNodeReturnsNodeFieldsAndPrerequisites() throws Exception {
         KgNode focus = node(200L, 10L, "KT02", "Dynamic Programming");
         focus.setChapter("Chapter 3");

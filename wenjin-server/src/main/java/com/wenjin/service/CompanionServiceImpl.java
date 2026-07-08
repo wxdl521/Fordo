@@ -102,6 +102,9 @@ public class CompanionServiceImpl implements CompanionService {
                     || !Objects.equals(conversation.getCourseId(), req.getCourseId())) {
                 throw new BusinessException(ResultCode.FORBIDDEN, "无权访问该会话");
             }
+            if (req.getNodeCode() != null && !req.getNodeCode().isBlank()) {
+                conversation.setNodeCode(req.getNodeCode());
+            }
             conversation.setUpdatedAt(LocalDateTime.now());
             conversationMapper.updateById(conversation);
         }
@@ -238,7 +241,12 @@ public class CompanionServiceImpl implements CompanionService {
             } catch (Exception ex) {
                 log.warn("Companion tool resolution failed for conversationId={}, falling back to legacy stream",
                         conversationId, ex);
-                streamWithLegacyPath(conversationId, systemPrompt, history, sink);
+                String fallbackPrompt = buildSystemPromptForStudent(
+                        conversation.getStudentId(),
+                        conversation.getCourseId(),
+                        conversation.getNodeCode(),
+                        false);
+                streamWithLegacyPath(conversationId, fallbackPrompt, history, sink);
                 return;
             }
             if (outcome instanceof CompanionAiClient.FinalText) {
