@@ -203,6 +203,16 @@ import QuestionAnswerCard from '../components/QuestionAnswerCard.vue'
 import { listConversations, fetchConversation, deleteConversation, chatStream } from '../api/companion.js'
 import { submitPractice } from '../api/practice.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
+import {
+  applyToolResult,
+  buildPracticeAnswerList,
+  conversationSnapshotKey,
+  createPracticeMessage,
+  createToolMessage,
+  createTypedMessagesSnapshot,
+  normalizeConversationMessage,
+  restoreTypedMessagesFromSnapshot
+} from '../utils/companionMessages.js'
 
 const { courseId } = useStudentCourse()
 
@@ -248,55 +258,6 @@ function roleLabel(role) {
 
 function isPlainMessage(message) {
   return message.role === 'user' || message.role === 'assistant'
-}
-
-function normalizeConversationMessage(message) {
-  const role = message?.role === 'ai' ? 'assistant' : message?.role
-  if (role === 'user' || role === 'assistant') {
-    return { role, content: message?.content || '' }
-  }
-  return { role: 'assistant', content: message?.content || '' }
-}
-
-function normalizePracticeCard(card) {
-  return {
-    sessionId: card?.sessionId,
-    node: card?.node || null,
-    questions: (card?.questions || []).map((question) => ({
-      questionId: question.questionId,
-      c: question.chapter,
-      q: question.stem,
-      o: (question.options || []).map((option) => option.text),
-      optionKeys: (question.options || []).map((option) => option.key),
-      type: question.type || 1
-    }))
-  }
-}
-
-function createPracticeMessage(card) {
-  return {
-    role: 'practice',
-    card: normalizePracticeCard(card),
-    phase: 'answering',
-    currentIndex: 0,
-    answers: {
-      single: {},
-      multi: {},
-      text: {}
-    },
-    skippedSet: {},
-    submitResult: null,
-    submitError: ''
-  }
-}
-
-function createToolMessage(event, ok = null) {
-  return {
-    role: 'tool',
-    name: event?.name || 'tool',
-    label: event?.label || event?.name || '工具',
-    ok
-  }
 }
 
 function toolStateClass(message) {
@@ -366,6 +327,39 @@ function practiceLastLabel(message) {
 
 function lockPractice(message) {
   return message.phase === 'submitting' || message.phase === 'result'
+}
+
+function currentSnapshotKey(targetConversationId = conversationId.value) {
+  if (!courseId.value || !targetConversationId) return null
+  return conversationSnapshotKey(STUDENT_ID, courseId.value, targetConversationId)
+}
+
+function readConversationSnapshot(targetConversationId) {
+  const key = currentSnapshotKey(targetConversationId)
+  if (!key) return null
+
+  try {
+    return JSON.parse(localStorage.getItem(key) || 'null')
+  } catch {
+    return null
+  }
+}
+
+function clearConversationSnapshot(targetConversationId = conversationId.value) {
+  const key = currentSnapshotKey(targetConversationId)
+  if (!key) return
+  localStorage.removeItem(key)
+}
+
+function persistTypedSnapshot() {
+  const key = currentSnapshotKey()
+  if (!key) return
+
+  try {
+    localStorage.setItem(key, JSON.stringify(createTypedMessagesSnapshot(msgs.value)))
+  } catch (error) {
+    console.warn('Failed to persist companion snapshot:', error)
+  }
 }
 
 function clearPracticeError(message) {
@@ -442,42 +436,8 @@ function onPracticeNext(message) {
   }
 }
 
-function buildPracticeAnswers(message) {
-  const list = []
-
-  ;(message.card?.questions || []).forEach((question, questionIndex) => {
-    let studentAnswer = null
-
-    if (question.type === 2) {
-      const selected = [...(message.answers.multi[questionIndex] || [])].sort((a, b) => a - b)
-      if (selected.length) {
-        studentAnswer = selected
-          .map((selectedIndex) => question.optionKeys?.[selectedIndex])
-          .filter((value) => value !== undefined)
-          .join(',')
-      }
-    } else if (question.type === 4) {
-      studentAnswer = message.answers.text[questionIndex] !== undefined ? message.answers.text[questionIndex] : ''
-    } else {
-      const optionIndex = message.answers.single[questionIndex]
-      if (typeof optionIndex === 'number' && question.optionKeys?.[optionIndex] !== undefined) {
-        studentAnswer = question.optionKeys[optionIndex]
-      }
-    }
-
-    if (studentAnswer !== null) {
-      list.push({
-        questionId: question.questionId,
-        studentAnswer
-      })
-    }
-  })
-
-  return list
-}
-
 async function submitPracticeMessage(message) {
-  const answers = buildPracticeAnswers(message)
+  const answers = buildPracticeAnswerList(message)
   if (!answers.length) {
     message.submitError = '请至少回答一道题后再提交。'
     message.phase = 'submitError'
@@ -564,8 +524,16 @@ async function openConversation(id) {
   conversationId.value = id
   try {
     const conversation = await fetchConversation(id)
-    const messages = Array.isArray(conversation) ? conversation : (conversation?.messages || [])
-    msgs.value = messages.map(normalizeConversationMessage)
+    const serverMessages = (Array.isArray(conversation) ? conversation : (conversation?.messages || []))
+      .map(normalizeConversationMessage)
+    const snapshot = readConversationSnapshot(id)
+    const restored = restoreTypedMessagesFromSnapshot(serverMessages, snapshot)
+
+    msgs.value = restored.messages
+    if (!restored.usedSnapshot && snapshot) {
+      clearConversationSnapshot(id)
+    }
+
     await nextTick()
     scrollToEnd()
   } catch (error) {
@@ -584,6 +552,7 @@ function newChat() {
 async function handleDelete(id) {
   try {
     await deleteConversation(id)
+    clearConversationSnapshot(id)
     if (conversationId.value === id) {
       conversationId.value = null
       msgs.value = []
@@ -592,16 +561,6 @@ async function handleDelete(id) {
   } catch (error) {
     console.error('删除会话失败:', error)
   }
-}
-
-function findPendingToolMessage(name) {
-  for (let i = msgs.value.length - 1; i >= 0; i--) {
-    const message = msgs.value[i]
-    if (message.role === 'tool' && message.name === name && message.ok == null) {
-      return message
-    }
-  }
-  return null
 }
 
 function appendToAssistant(content) {
@@ -642,6 +601,7 @@ async function sendText() {
       onMeta: async (meta) => {
         if (meta?.conversationId && !conversationId.value) {
           conversationId.value = meta.conversationId
+          persistTypedSnapshot()
           await loadConversations()
         }
       },
@@ -650,12 +610,7 @@ async function sendText() {
         scrollToEnd()
       },
       onToolResult: (event) => {
-        const existing = findPendingToolMessage(event?.name)
-        if (existing) {
-          existing.ok = !!event?.ok
-        } else {
-          msgs.value.push(createToolMessage(event, !!event?.ok))
-        }
+        msgs.value = applyToolResult(msgs.value, event)
         scrollToEnd()
       },
       onPracticeCard: (event) => {
@@ -717,6 +672,10 @@ watch(courseId, (value) => {
   if (value) loadConversations()
 }, { immediate: true })
 
+watch(msgs, () => {
+  persistTypedSnapshot()
+}, { deep: true })
+
 onMounted(() => {
   if (import.meta.env.DEV) {
     window.__wjCompanion = {
@@ -731,7 +690,9 @@ onMounted(() => {
       openConversation,
       newChat,
       sendText,
-      submitPracticeMessage
+      submitPracticeMessage,
+      persistTypedSnapshot,
+      clearConversationSnapshot
     }
   }
 })
