@@ -40,13 +40,13 @@ class GetNodeDetailToolTest {
     void missingOrBlankNodeCodeThrowsToolException() {
         assertThatThrownBy(() -> tool.execute(new ToolContext(1L, 10L), objectMapper.createObjectNode()))
                 .isInstanceOf(ToolException.class)
-                .hasMessageContaining("nodeCode is required");
+                .hasMessageContaining("nodeCode or nodeName is required");
 
         assertThatThrownBy(() -> tool.execute(
                 new ToolContext(1L, 10L),
                 objectMapper.createObjectNode().put("nodeCode", "   ")))
                 .isInstanceOf(ToolException.class)
-                .hasMessageContaining("nodeCode is required");
+                .hasMessageContaining("nodeCode or nodeName is required");
     }
 
     @Test
@@ -56,6 +56,7 @@ class GetNodeDetailToolTest {
         var parameters = (java.util.Map<String, Object>) function.get("parameters");
 
         assertThat(parameters).containsEntry("additionalProperties", false);
+        assertThat(parameters).containsKey("anyOf");
     }
 
     @Test
@@ -93,6 +94,34 @@ class GetNodeDetailToolTest {
         assertThat(json.path("prerequisites")).hasSize(2);
         assertThat(json.at("/prerequisites/0/nodeCode").asText()).isEqualTo("KT00");
         assertThat(json.at("/prerequisites/1/nodeCode").asText()).isEqualTo("KT01");
+    }
+
+    @Test
+    void validUniqueNodeNameResolvesNodeDeterministically() throws Exception {
+        KgNode focus = node(200L, 10L, "KT02", "Dynamic Programming");
+
+        when(nodeMapper.selectList(any())).thenReturn(List.of(focus));
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
+
+        JsonNode json = objectMapper.readTree(tool.execute(
+                new ToolContext(1L, 10L),
+                objectMapper.createObjectNode().put("nodeName", "Dynamic Programming")));
+
+        assertThat(json.path("nodeCode").asText()).isEqualTo("KT02");
+        assertThat(json.path("name").asText()).isEqualTo("Dynamic Programming");
+    }
+
+    @Test
+    void ambiguousNodeNameThrowsToolException() {
+        when(nodeMapper.selectList(any())).thenReturn(List.of(
+                node(200L, 10L, "KT02", "Dynamic Programming"),
+                node(201L, 10L, "KT20", "Dynamic Programming")));
+
+        assertThatThrownBy(() -> tool.execute(
+                new ToolContext(1L, 10L),
+                objectMapper.createObjectNode().put("nodeName", "Dynamic Programming")))
+                .isInstanceOf(ToolException.class)
+                .hasMessageContaining("ambiguous");
     }
 
     @Test

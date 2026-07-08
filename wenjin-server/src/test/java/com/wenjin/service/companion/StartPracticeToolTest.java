@@ -63,10 +63,44 @@ class StartPracticeToolTest {
     }
 
     @Test
+    void resolvesUniqueNodeNameWithinCourseAndStartsPractice() throws Exception {
+        KgNode node = node(55L, 10L, "KT12", "Quadratic Functions");
+        PracticeStartVO card = practiceCard(node, 901L, question("Q1", "A"), question("Q2", "B"));
+
+        when(nodeMapper.selectList(any())).thenReturn(List.of(node));
+        when(practiceService.start(1L, 10L, 55L, null, 2)).thenReturn(card);
+
+        ToolExecutionResult result = tool.executeForGovernor(
+                "call-1",
+                new ToolContext(1L, 10L),
+                objectMapper.readTree("{\"nodeName\":\"Quadratic Functions\"}"));
+
+        JsonNode json = objectMapper.readTree(result.content());
+        assertThat(json.path("sessionId").asLong()).isEqualTo(901L);
+        assertThat(result.practiceCard()).isSameAs(card);
+        verify(practiceService).start(1L, 10L, 55L, null, 2);
+    }
+
+    @Test
+    void ambiguousNodeNameDoesNotStartPractice() {
+        when(nodeMapper.selectList(any())).thenReturn(List.of(
+                node(55L, 10L, "KT12", "Quadratic Functions"),
+                node(56L, 10L, "KT99", "Quadratic Functions")));
+
+        assertThatThrownBy(() -> tool.execute(
+                new ToolContext(1L, 10L),
+                objectMapper.createObjectNode().put("nodeName", "Quadratic Functions")))
+                .isInstanceOf(ToolException.class)
+                .hasMessageContaining("ambiguous");
+
+        verifyNoInteractions(practiceService);
+    }
+
+    @Test
     void missingOrUnknownNodeThrowsToolException() {
         assertThatThrownBy(() -> tool.execute(new ToolContext(1L, 10L), objectMapper.createObjectNode()))
                 .isInstanceOf(ToolException.class)
-                .hasMessageContaining("nodeCode is required");
+                .hasMessageContaining("nodeCode or nodeName is required");
 
         when(nodeMapper.selectOne(any())).thenReturn(null);
 
@@ -87,6 +121,7 @@ class StartPracticeToolTest {
         var parameters = (java.util.Map<String, Object>) function.get("parameters");
 
         assertThat(parameters).containsEntry("additionalProperties", false);
+        assertThat(parameters).containsKey("anyOf");
     }
 
     @Test

@@ -442,7 +442,7 @@ class CompanionServiceImplTest {
         verify(aiClient).completeWithTools(messagesCaptor.capture(), any());
         String systemPrompt = (String) messagesCaptor.getValue().get(0).get("content");
         assertThat(systemPrompt).contains("- 数组（nodeCode: KT99）");
-        assertThat(systemPrompt).contains("用户只说节点名称时，先从课程知识点范围匹配名称，再使用对应 nodeCode 调用工具");
+        assertThat(systemPrompt).contains("能确定 nodeCode 就用 nodeCode，否则传精确 nodeName 让服务端解析");
     }
 
     @Test

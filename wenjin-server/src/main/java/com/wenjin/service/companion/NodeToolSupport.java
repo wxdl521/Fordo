@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -30,6 +31,26 @@ public class NodeToolSupport {
             throw new ToolException("nodeCode not found in course: " + nodeCode.trim());
         }
         return node;
+    }
+
+    public KgNode requireNode(Long courseId, String nodeCode, String nodeName) throws ToolException {
+        if (StringUtils.hasText(nodeCode)) {
+            return requireNode(courseId, nodeCode);
+        }
+        if (!StringUtils.hasText(nodeName)) {
+            throw new ToolException("nodeCode or nodeName is required");
+        }
+        String normalizedName = nodeName.trim();
+        List<KgNode> matches = nodeMapper.selectList(new LambdaQueryWrapper<KgNode>()
+                .eq(KgNode::getCourseId, courseId)
+                .eq(KgNode::getName, normalizedName));
+        if (matches == null || matches.isEmpty()) {
+            throw new ToolException("nodeName not found in course: " + normalizedName);
+        }
+        if (matches.size() > 1) {
+            throw new ToolException("ambiguous nodeName in course: " + normalizedName);
+        }
+        return matches.get(0);
     }
 
     public Map<String, Object> nodeRef(KgNode node) {

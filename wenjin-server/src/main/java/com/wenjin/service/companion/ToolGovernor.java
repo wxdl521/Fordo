@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -137,6 +138,10 @@ public class ToolGovernor {
                 }
             }
         }
+        String anyOfError = validateAnyOfRequired(parameterMap, args);
+        if (anyOfError != null) {
+            return anyOfError;
+        }
 
         for (Map.Entry<String, Object> entry : propertyMap.entrySet()) {
             JsonNode value = args.get(entry.getKey());
@@ -149,6 +154,46 @@ public class ToolGovernor {
             }
         }
         return null;
+    }
+
+    private String validateAnyOfRequired(Map<?, ?> parameterMap, JsonNode args) {
+        Object anyOf = parameterMap.get("anyOf");
+        if (!(anyOf instanceof List<?> candidates) || candidates.isEmpty()) {
+            return null;
+        }
+        Set<String> alternatives = new LinkedHashSet<>();
+        boolean hasRequiredCandidate = false;
+        for (Object candidate : candidates) {
+            if (!(candidate instanceof Map<?, ?> candidateMap)) {
+                continue;
+            }
+            Object required = candidateMap.get("required");
+            if (!(required instanceof List<?> requiredFields)) {
+                continue;
+            }
+            boolean hasStringField = false;
+            boolean allPresent = true;
+            for (Object field : requiredFields) {
+                if (field instanceof String fieldName) {
+                    alternatives.add(fieldName);
+                    hasStringField = true;
+                    if (!args.has(fieldName) || args.get(fieldName).isNull()) {
+                        allPresent = false;
+                    }
+                }
+            }
+            if (!hasStringField) {
+                continue;
+            }
+            hasRequiredCandidate = true;
+            if (allPresent) {
+                return null;
+            }
+        }
+        if (!hasRequiredCandidate) {
+            return null;
+        }
+        return "Missing required tool argument: one of " + String.join(",", alternatives);
     }
 
     private String validateArgumentType(String fieldName, JsonNode value, Object propertySchema) {

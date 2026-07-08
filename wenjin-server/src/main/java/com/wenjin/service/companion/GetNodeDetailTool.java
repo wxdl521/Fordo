@@ -58,8 +58,13 @@ public class GetNodeDetailTool implements CompanionTool {
         parameters.put("properties", Map.of(
                 "nodeCode", Map.of(
                         "type", "string",
-                        "description", "Knowledge node code within the current course")));
-        parameters.put("required", List.of("nodeCode"));
+                        "description", "Knowledge node code within the current course"),
+                "nodeName", Map.of(
+                        "type", "string",
+                        "description", "Exact knowledge node name within the current course when nodeCode is unknown")));
+        parameters.put("anyOf", List.of(
+                Map.of("required", List.of("nodeCode")),
+                Map.of("required", List.of("nodeName"))));
         parameters.put("additionalProperties", false);
 
         Map<String, Object> function = new LinkedHashMap<>();
@@ -76,7 +81,8 @@ public class GetNodeDetailTool implements CompanionTool {
     @Override
     public String execute(ToolContext ctx, JsonNode args) throws ToolException {
         String nodeCode = args == null ? null : args.path("nodeCode").asText(null);
-        KgNode focus = nodeToolSupport.requireNode(ctx.courseId(), nodeCode);
+        String nodeName = args == null ? null : args.path("nodeName").asText(null);
+        KgNode focus = nodeToolSupport.requireNode(ctx.courseId(), nodeCode, nodeName);
 
         List<KgEdge> edges = edgeMapper.selectList(new LambdaQueryWrapper<KgEdge>()
                 .eq(KgEdge::getCourseId, ctx.courseId())

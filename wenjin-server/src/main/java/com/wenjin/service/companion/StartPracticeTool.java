@@ -50,10 +50,15 @@ public class StartPracticeTool implements CompanionTool {
                 "nodeCode", Map.of(
                         "type", "string",
                         "description", "Knowledge node code within the current course"),
+                "nodeName", Map.of(
+                        "type", "string",
+                        "description", "Exact knowledge node name within the current course when nodeCode is unknown"),
                 "size", Map.of(
                         "type", "integer",
                         "description", "Practice question count hint. Defaults to 2 and is clamped to 1-3.")));
-        parameters.put("required", List.of("nodeCode"));
+        parameters.put("anyOf", List.of(
+                Map.of("required", List.of("nodeCode")),
+                Map.of("required", List.of("nodeName"))));
         parameters.put("additionalProperties", false);
 
         Map<String, Object> function = new LinkedHashMap<>();
@@ -80,7 +85,8 @@ public class StartPracticeTool implements CompanionTool {
 
     private StartPracticeOutcome startPractice(ToolContext ctx, JsonNode args) throws ToolException {
         String nodeCode = args == null ? null : args.path("nodeCode").asText(null);
-        KgNode node = nodeToolSupport.requireNode(ctx.courseId(), nodeCode);
+        String nodeName = args == null ? null : args.path("nodeName").asText(null);
+        KgNode node = nodeToolSupport.requireNode(ctx.courseId(), nodeCode, nodeName);
         int size = resolveSize(args);
 
         PracticeStartVO card = practiceService.start(

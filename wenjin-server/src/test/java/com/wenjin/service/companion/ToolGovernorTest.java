@@ -153,6 +153,47 @@ class ToolGovernorTest {
     }
 
     @Test
+    void nodeNameArgumentIsAcceptedByStrictSchema() throws Exception {
+        AtomicInteger executions = new AtomicInteger();
+        ToolGovernor governor = new ToolGovernor(
+                List.of(new StrictTool("start_practice", executions, "{\"ok\":true}")),
+                objectMapper,
+                properties(5_000, 2_000));
+        ToolExecutionState state = new ToolExecutionState(3);
+
+        ToolExecutionResult result = governor.execute(
+                new ToolContext(1L, 10L),
+                new CompanionAiClient.ToolCall("call_1", "start_practice",
+                        "{\"nodeName\":\"Quadratic Functions\",\"size\":2}"),
+                state);
+
+        assertThat(result.ok()).isTrue();
+        assertThat(executions).hasValue(1);
+        assertThat(state.used()).isEqualTo(1);
+    }
+
+    @Test
+    void missingNodeIdentifierReturnsErrorAndDoesNotExecuteTool() throws Exception {
+        AtomicInteger executions = new AtomicInteger();
+        ToolGovernor governor = new ToolGovernor(
+                List.of(new StrictTool("start_practice", executions, "{\"ok\":true}")),
+                objectMapper,
+                properties(5_000, 2_000));
+        ToolExecutionState state = new ToolExecutionState(3);
+
+        ToolExecutionResult result = governor.execute(
+                new ToolContext(1L, 10L),
+                new CompanionAiClient.ToolCall("call_1", "start_practice", "{\"size\":2}"),
+                state);
+
+        assertThat(result.ok()).isFalse();
+        assertThat(errorCode(result)).isEqualTo("invalid_arguments");
+        assertThat(errorMessage(result)).isEqualTo("Missing required tool argument: one of nodeCode,nodeName");
+        assertThat(executions).hasValue(0);
+        assertThat(state.used()).isZero();
+    }
+
+    @Test
     void toolCallBudgetBlocksFourthCall() throws Exception {
         AtomicInteger executions = new AtomicInteger();
         ToolGovernor governor = new ToolGovernor(
@@ -291,6 +332,10 @@ class ToolGovernorTest {
         return objectMapper.readTree(result.content()).path("error").asText();
     }
 
+    private String errorMessage(ToolExecutionResult result) throws Exception {
+        return objectMapper.readTree(result.content()).path("message").asText();
+    }
+
     private record FakeTool(String name, AtomicInteger executions, String response) implements CompanionTool {
         @Override
         public Map<String, Object> schema() {
@@ -315,8 +360,11 @@ class ToolGovernorTest {
                                     "type", "object",
                                     "properties", Map.of(
                                             "nodeCode", Map.of("type", "string"),
+                                            "nodeName", Map.of("type", "string"),
                                             "size", Map.of("type", "integer")),
-                                    "required", List.of("nodeCode"))));
+                                    "anyOf", List.of(
+                                            Map.of("required", List.of("nodeCode")),
+                                            Map.of("required", List.of("nodeName"))))));
         }
 
         @Override

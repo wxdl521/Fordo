@@ -62,7 +62,10 @@ public class QueryMasteryTool implements CompanionTool {
         parameters.put("properties", Map.of(
                 "nodeCode", Map.of(
                         "type", "string",
-                        "description", "Optional knowledge node code within the current course")));
+                        "description", "Optional knowledge node code within the current course"),
+                "nodeName", Map.of(
+                        "type", "string",
+                        "description", "Optional exact knowledge node name within the current course when nodeCode is unknown")));
         parameters.put("additionalProperties", false);
 
         Map<String, Object> function = new LinkedHashMap<>();
@@ -79,8 +82,9 @@ public class QueryMasteryTool implements CompanionTool {
     @Override
     public String execute(ToolContext ctx, JsonNode args) throws ToolException {
         String nodeCode = args == null ? null : args.path("nodeCode").asText(null);
-        Map<String, Object> body = StringUtils.hasText(nodeCode)
-                ? buildDetail(ctx, nodeCode)
+        String nodeName = args == null ? null : args.path("nodeName").asText(null);
+        Map<String, Object> body = StringUtils.hasText(nodeCode) || StringUtils.hasText(nodeName)
+                ? buildDetail(ctx, nodeCode, nodeName)
                 : buildOverview(ctx);
         return toJson(body);
     }
@@ -114,8 +118,8 @@ public class QueryMasteryTool implements CompanionTool {
         return body;
     }
 
-    private Map<String, Object> buildDetail(ToolContext ctx, String nodeCode) throws ToolException {
-        KgNode node = nodeToolSupport.requireNode(ctx.courseId(), nodeCode);
+    private Map<String, Object> buildDetail(ToolContext ctx, String nodeCode, String nodeName) throws ToolException {
+        KgNode node = nodeToolSupport.requireNode(ctx.courseId(), nodeCode, nodeName);
         StudentMastery mastery = masteryMapper.selectOne(new LambdaQueryWrapper<StudentMastery>()
                 .eq(StudentMastery::getStudentId, ctx.studentId())
                 .eq(StudentMastery::getCourseId, ctx.courseId())

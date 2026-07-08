@@ -563,7 +563,7 @@ public class CompanionServiceImpl implements CompanionService {
         sb.append("- 涉及掌握度、薄弱点、证据时间时，先通过工具查询，再回答。\n");
         sb.append("- 涉及节点详情、前置关系、后继关系时，先通过工具获取节点详情，再组织解释。\n");
         sb.append("- 需要发起练习、推荐练习或确认练习入口时，先通过工具获取练习信息。\n");
-        sb.append("- 用户只说节点名称时，先从课程知识点范围匹配名称，再使用对应 nodeCode 调用工具。\n");
+        sb.append("- 用户只说节点名称时，先从课程知识点范围匹配名称；能确定 nodeCode 就用 nodeCode，否则传精确 nodeName 让服务端解析。\n");
         sb.append("- 禁止编造掌握度；没有工具证据时，要明确说明暂未查询到。\n\n");
 
         sb.append("## 对话规则\n");

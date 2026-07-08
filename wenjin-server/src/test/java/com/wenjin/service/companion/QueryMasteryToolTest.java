@@ -155,6 +155,34 @@ class QueryMasteryToolTest {
     }
 
     @Test
+    void specificNodeNameReturnsDetailJson() throws Exception {
+        KgNode kt01 = node(101L, 10L, "KT01", "Loops");
+
+        when(nodeMapper.selectList(any())).thenReturn(List.of(kt01));
+        when(masteryMapper.selectOne(any())).thenReturn(null);
+
+        JsonNode json = objectMapper.readTree(tool.execute(
+                new ToolContext(1L, 10L),
+                objectMapper.createObjectNode().put("nodeName", "Loops")));
+
+        assertThat(json.path("nodeCode").asText()).isEqualTo("KT01");
+        assertThat(json.path("name").asText()).isEqualTo("Loops");
+    }
+
+    @Test
+    void ambiguousNodeNameThrowsToolException() {
+        when(nodeMapper.selectList(any())).thenReturn(List.of(
+                node(101L, 10L, "KT01", "Loops"),
+                node(102L, 10L, "KT02", "Loops")));
+
+        assertThatThrownBy(() -> tool.execute(
+                new ToolContext(1L, 10L),
+                objectMapper.createObjectNode().put("nodeName", "Loops")))
+                .isInstanceOf(ToolException.class)
+                .hasMessageContaining("ambiguous");
+    }
+
+    @Test
     void specificNodeWithoutMasteryRowReturnsZeroDefaults() throws Exception {
         KgNode kt01 = node(101L, 10L, "KT01", "Loops");
 
