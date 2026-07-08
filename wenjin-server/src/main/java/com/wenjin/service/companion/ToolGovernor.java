@@ -205,7 +205,7 @@ public class ToolGovernor {
 
     private boolean trimLongestStringValue(JsonNode node, int overflow) {
         TrimCandidate candidate = findLongestString(node);
-        if (candidate == null) {
+        if (candidate == null || candidate.value().isEmpty()) {
             return false;
         }
         int delta = Math.max(1, overflow);
@@ -255,12 +255,12 @@ public class ToolGovernor {
     }
 
     private String fitFallbackContent(int max) {
-        for (String candidate : List.of("{\"truncated\":true}", "{}", "\"\"", "0")) {
+        for (String candidate : List.of("{\"truncated\":true}", "{}", "\"\"", "0", "")) {
             if (candidate.length() <= max) {
                 return candidate;
             }
         }
-        return "0";
+        return "";
     }
 
     private String serialize(JsonNode node) {

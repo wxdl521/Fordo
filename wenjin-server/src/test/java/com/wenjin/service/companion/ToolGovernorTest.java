@@ -6,11 +6,13 @@ import com.wenjin.ai.CompanionAiClient;
 import com.wenjin.config.CompanionToolProperties;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ToolGovernorTest {
@@ -137,6 +139,42 @@ class ToolGovernorTest {
         assertThat(json.path("items")).isNotEmpty();
         assertThat(json.path("items")).hasSizeLessThan(3);
         assertThat(json.at("/items/0/nodeCode").asText()).isEqualTo("KT01");
+    }
+
+    @Test
+    void tinySuccessfulObjectLimitReturnsPromptlyInsteadOfLoopingForever() {
+        ToolGovernor governor = new ToolGovernor(
+                List.of(new FakeTool("echo", new AtomicInteger(), "{\"nodeCode\":\"A\",\"name\":\"B\"}")),
+                objectMapper,
+                properties(5_000, 1));
+
+        ToolExecutionResult result = assertTimeoutPreemptively(
+                Duration.ofMillis(500),
+                () -> governor.execute(
+                        new ToolContext(1L, 10L),
+                        new CompanionAiClient.ToolCall("call_1", "echo", "{}"),
+                        new ToolExecutionState(3)));
+
+        assertThat(result.ok()).isTrue();
+        assertThat(result.content()).hasSizeLessThanOrEqualTo(1);
+    }
+
+    @Test
+    void zeroMaxResultCharsFallsBackToEmptyStringWithinLimit() {
+        ToolGovernor governor = new ToolGovernor(
+                List.of(new FakeTool("echo", new AtomicInteger(), "{\"nodeCode\":\"A\",\"name\":\"B\"}")),
+                objectMapper,
+                properties(5_000, 0));
+
+        ToolExecutionResult result = assertTimeoutPreemptively(
+                Duration.ofMillis(500),
+                () -> governor.execute(
+                        new ToolContext(1L, 10L),
+                        new CompanionAiClient.ToolCall("call_1", "echo", "{}"),
+                        new ToolExecutionState(3)));
+
+        assertThat(result.ok()).isTrue();
+        assertThat(result.content()).isEmpty();
     }
 
     @Test
