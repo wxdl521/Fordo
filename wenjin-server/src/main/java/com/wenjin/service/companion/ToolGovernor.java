@@ -98,10 +98,25 @@ public class ToolGovernor {
                                                    CompanionTool tool,
                                                    JsonNode args) {
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-        Future<String> future = executor.submit(() -> tool.execute(ctx, args));
+        Future<ToolExecutionResult> future = executor.submit(() -> tool.executeForGovernor(call.id(), ctx, args));
         try {
-            String content = future.get(timeoutMs(), TimeUnit.MILLISECONDS);
-            return new ToolExecutionResult(call.id(), call.name(), true, truncateSuccessfulContent(content));
+            ToolExecutionResult result = future.get(timeoutMs(), TimeUnit.MILLISECONDS);
+            if (result == null) {
+                return failed(call.id(), call.name(), "tool_error", "Tool execution failed");
+            }
+            if (!result.ok()) {
+                return new ToolExecutionResult(
+                        result.toolCallId(),
+                        result.toolName(),
+                        false,
+                        result.content());
+            }
+            return new ToolExecutionResult(
+                    result.toolCallId(),
+                    result.toolName(),
+                    true,
+                    truncateSuccessfulContent(result.content()),
+                    result.practiceCard());
         } catch (TimeoutException e) {
             future.cancel(true);
             return failed(call.id(), call.name(), "tool_timeout", "Tool timed out");

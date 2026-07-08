@@ -6,6 +6,8 @@ import com.wenjin.config.CompanionToolProperties;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.LearningPathVO;
+import com.wenjin.dto.PaperQuestionVO;
+import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.entity.CompanionConversation;
 import com.wenjin.entity.CompanionMessage;
 import com.wenjin.entity.KgNode;
@@ -364,6 +366,44 @@ class CompanionServiceImplTest {
     }
 
     @Test
+    void streamReplyWithPracticeCardResultEmitsCardToSinkAndKeepsToolMessageMinimal() {
+        Long conversationId = 310L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("start practice")));
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "start_practice",
+                "start practice",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        PracticeStartVO card = practiceCard(901L, 12L, "KT12", "Quadratic Functions", "What shape is the graph?");
+        when(aiClient.completeWithTools(any(), any())).thenReturn(
+                new CompanionAiClient.ToolCalls(List.of(
+                        new CompanionAiClient.ToolCall("call-1", "start_practice", "{\"nodeCode\":\"KT12\"}"))),
+                new CompanionAiClient.FinalText("practice is ready"));
+        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+                new ToolExecutionResult(
+                        "call-1",
+                        "start_practice",
+                        true,
+                        "{\"sessionId\":901,\"questionCount\":1}",
+                        card));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(conversationId, sink);
+
+        assertEquals(List.of("practice is ready"), sink.tokens);
+        assertThat(sink.practiceCards).containsExactly(card);
+
+        ArgumentCaptor<List<Map<String, Object>>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(aiClient, times(2)).completeWithTools(messagesCaptor.capture(), any());
+        List<Map<String, Object>> secondRoundMessages = messagesCaptor.getAllValues().get(1);
+        assertThat(secondRoundMessages.get(secondRoundMessages.size() - 1))
+                .containsEntry("role", "tool")
+                .containsEntry("tool_call_id", "call-1")
+                .containsEntry("content", "{\"sessionId\":901,\"questionCount\":1}");
+    }
+
+    @Test
     void streamReplyWithToolsExecutesToolCallsThenStreamsFinalReply() {
         Long conversationId = 301L;
         stubConversationAndPrompt(conversationId, List.of(
@@ -718,6 +758,30 @@ class CompanionServiceImplTest {
         };
     }
 
+    private PracticeStartVO practiceCard(Long sessionId,
+                                         Long nodeId,
+                                         String nodeCode,
+                                         String nodeName,
+                                         String stem) {
+        PracticeStartVO card = new PracticeStartVO();
+        card.setSessionId(sessionId);
+        PracticeStartVO.NodeRef nodeRef = new PracticeStartVO.NodeRef();
+        nodeRef.setNodeId(nodeId);
+        nodeRef.setNodeCode(nodeCode);
+        nodeRef.setName(nodeName);
+        card.setNode(nodeRef);
+
+        PaperQuestionVO question = new PaperQuestionVO();
+        question.setQuestionId(700L);
+        question.setStem(stem);
+        PaperQuestionVO.OptionVO option = new PaperQuestionVO.OptionVO();
+        option.setKey("A");
+        option.setText("Parabola");
+        question.setOptions(List.of(option));
+        card.setQuestions(List.of(question));
+        return card;
+    }
+
     private static final int ROLE_USER = 1;
     private static final int ROLE_AI = 2;
 
@@ -725,6 +789,7 @@ class CompanionServiceImplTest {
         private final List<String> tokens = new ArrayList<>();
         private final List<String> toolStarts = new ArrayList<>();
         private final List<String> toolResults = new ArrayList<>();
+        private final List<PracticeStartVO> practiceCards = new ArrayList<>();
 
         @Override
         public void token(String token) {
@@ -739,6 +804,11 @@ class CompanionServiceImplTest {
         @Override
         public void toolResult(String name, boolean ok) {
             toolResults.add(name + "|" + ok);
+        }
+
+        @Override
+        public void practiceCard(PracticeStartVO card) {
+            practiceCards.add(card);
         }
     }
 }

@@ -243,6 +243,9 @@ public class CompanionServiceImpl implements CompanionService {
                 sink.toolStart(toolName, toolLabels.getOrDefault(toolName, toolName));
                 ToolExecutionResult result = toolGovernor.execute(context, call, state);
                 messages.add(toolMessage(result));
+                if (result.practiceCard() != null) {
+                    sink.practiceCard(result.practiceCard());
+                }
                 sink.toolResult(toolName, result.ok());
             }
         }

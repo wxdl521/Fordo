@@ -2,6 +2,7 @@ package com.wenjin.service.companion;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.ai.CompanionAiClient;
 import com.wenjin.config.CompanionToolProperties;
 import org.junit.jupiter.api.Test;
@@ -196,6 +197,24 @@ class ToolGovernorTest {
         assertThat(elapsedMs).isLessThan(800);
     }
 
+    @Test
+    void executePreservesPracticeCardSideChannelFromToolOutput() {
+        PracticeStartVO card = new PracticeStartVO();
+        card.setSessionId(901L);
+        ToolGovernor governor = new ToolGovernor(
+                List.of(new PracticeCardTool("start_practice", card)),
+                objectMapper,
+                properties(5_000, 2_000));
+
+        ToolExecutionResult result = governor.execute(
+                new ToolContext(1L, 10L),
+                new CompanionAiClient.ToolCall("call_1", "start_practice", "{}"),
+                new ToolExecutionState(3));
+
+        assertThat(result.ok()).isTrue();
+        assertThat(result.practiceCard()).isSameAs(card);
+    }
+
     private CompanionToolProperties properties(long timeoutMs, int maxResultChars) {
         CompanionToolProperties properties = new CompanionToolProperties();
         properties.setEnabled(true);
@@ -220,6 +239,23 @@ class ToolGovernorTest {
         public String execute(ToolContext ctx, JsonNode args) {
             executions.incrementAndGet();
             return response;
+        }
+    }
+
+    private record PracticeCardTool(String name, PracticeStartVO card) implements CompanionTool {
+        @Override
+        public Map<String, Object> schema() {
+            return Map.of("type", "function", "function", Map.of("name", name));
+        }
+
+        @Override
+        public String execute(ToolContext ctx, JsonNode args) {
+            return "{\"sessionId\":901,\"questionCount\":1}";
+        }
+
+        @Override
+        public ToolExecutionResult executeForGovernor(String toolCallId, ToolContext ctx, JsonNode args) {
+            return new ToolExecutionResult(toolCallId, name, true, execute(ctx, args), card);
         }
     }
 

@@ -16,4 +16,10 @@ public interface CompanionTool {
     Map<String, Object> schema();
 
     String execute(ToolContext ctx, JsonNode args) throws ToolException;
+
+    default ToolExecutionResult executeForGovernor(String toolCallId,
+                                                   ToolContext ctx,
+                                                   JsonNode args) throws ToolException {
+        return new ToolExecutionResult(toolCallId, name(), true, execute(ctx, args));
+    }
 }
