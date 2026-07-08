@@ -6,6 +6,7 @@ import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
+import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.service.CompanionService;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -87,14 +88,25 @@ public class CompanionController {
                         .data(Map.of("conversationId", conversationId)));
 
                 // 3. 流式生成回复，逐 token 发送
-                companionService.streamReply(conversationId, token -> {
-                    try {
-                        emitter.send(SseEmitter.event()
-                                .name("token")
-                                .data(Map.of("t", token)));
-                    } catch (Exception e) {
-                        log.error("Failed to send token via SSE", e);
-                        throw new RuntimeException("Failed to send token", e);
+                companionService.streamReply(conversationId, new CompanionService.CompanionStreamSink() {
+                    @Override
+                    public void token(String token) {
+                        sendEvent(emitter, "token", Map.of("t", token), "token");
+                    }
+
+                    @Override
+                    public void toolStart(String name, String label) {
+                        sendEvent(emitter, "tool_start", Map.of("name", name, "label", label), "tool_start");
+                    }
+
+                    @Override
+                    public void toolResult(String name, boolean ok) {
+                        sendEvent(emitter, "tool_result", Map.of("name", name, "ok", ok), "tool_result");
+                    }
+
+                    @Override
+                    public void practiceCard(PracticeStartVO card) {
+                        sendEvent(emitter, "practice_card", card, "practice_card");
                     }
                 });
 
@@ -152,5 +164,16 @@ public class CompanionController {
     public Result<Void> deleteConversation(@PathVariable("id") Long id) {
         companionService.deleteConversation(id);
         return Result.ok(null);
+    }
+
+    private void sendEvent(SseEmitter emitter, String eventName, Object data, String logLabel) {
+        try {
+            emitter.send(SseEmitter.event()
+                    .name(eventName)
+                    .data(data));
+        } catch (Exception e) {
+            log.error("Failed to send {} via SSE", logLabel, e);
+            throw new RuntimeException("Failed to send " + logLabel, e);
+        }
     }
 }
