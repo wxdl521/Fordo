@@ -223,9 +223,16 @@ public class CompanionServiceImpl implements CompanionService {
         Map<String, String> toolLabels = buildToolLabels(tools);
         ToolExecutionState state = new ToolExecutionState(maxToolCalls());
         ToolContext context = new ToolContext(conversation.getStudentId(), conversation.getCourseId());
+        String directFinalText = null;
 
         for (int round = 0; round < maxRounds(); round++) {
             CompanionAiClient.TurnOutcome outcome = aiClient.completeWithTools(messages, toolSchemas);
+            if (outcome instanceof CompanionAiClient.FinalText finalText
+                    && finalText.text() != null
+                    && !finalText.text().isBlank()) {
+                directFinalText = finalText.text();
+                break;
+            }
             if (!(outcome instanceof CompanionAiClient.ToolCalls toolCalls) || toolCalls.calls().isEmpty()) {
                 break;
             }
@@ -238,6 +245,12 @@ public class CompanionServiceImpl implements CompanionService {
                 messages.add(toolMessage(result));
                 sink.toolResult(toolName, result.ok());
             }
+        }
+
+        if (directFinalText != null) {
+            sink.token(directFinalText);
+            saveAiMessage(conversationId, directFinalText);
+            return;
         }
 
         StringBuilder fullReply = new StringBuilder();

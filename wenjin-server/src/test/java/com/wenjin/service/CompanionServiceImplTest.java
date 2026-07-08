@@ -305,6 +305,65 @@ class CompanionServiceImplTest {
     }
 
     @Test
+    void streamReplyWithToolsUsesMeaningfulFinalTextWithoutStreamingSecondCall() {
+        Long conversationId = 308L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("need advice")));
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "query_mastery",
+                "query mastery",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        when(aiClient.completeWithTools(any(), any()))
+                .thenReturn(new CompanionAiClient.FinalText("direct final answer"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(conversationId, sink);
+
+        assertEquals(List.of("direct final answer"), sink.tokens);
+        assertThat(sink.toolStarts).isEmpty();
+        assertThat(sink.toolResults).isEmpty();
+        verify(aiClient, times(1)).completeWithTools(any(), any());
+        verify(aiClient, never()).streamMessages(any(), any());
+        verify(toolGovernor, never()).execute(any(), any(), any());
+
+        ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
+        verify(messageMapper).insert(messageCaptor.capture());
+        assertEquals("direct final answer", messageCaptor.getValue().getContent());
+    }
+
+    @Test
+    void streamReplyWithToolsUsesMeaningfulFinalTextAfterToolRound() {
+        Long conversationId = 309L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("need advice")));
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "query_mastery",
+                "query mastery",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        when(aiClient.completeWithTools(any(), any())).thenReturn(
+                new CompanionAiClient.ToolCalls(List.of(
+                        new CompanionAiClient.ToolCall("call-1", "query_mastery", "{}"))),
+                new CompanionAiClient.FinalText("answer after tool"));
+        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+                new ToolExecutionResult("call-1", "query_mastery", true, "{\"items\":[]}"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(conversationId, sink);
+
+        assertEquals(List.of("answer after tool"), sink.tokens);
+        assertEquals(List.of("query_mastery|query mastery"), sink.toolStarts);
+        assertEquals(List.of("query_mastery|true"), sink.toolResults);
+        verify(aiClient, times(2)).completeWithTools(any(), any());
+        verify(aiClient, never()).streamMessages(any(), any());
+
+        ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
+        verify(messageMapper).insert(messageCaptor.capture());
+        assertEquals("answer after tool", messageCaptor.getValue().getContent());
+    }
+
+    @Test
     void streamReplyWithToolsExecutesToolCallsThenStreamsFinalReply() {
         Long conversationId = 301L;
         stubConversationAndPrompt(conversationId, List.of(
