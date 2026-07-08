@@ -59,6 +59,7 @@ public class CompanionServiceImpl implements CompanionService {
     private final DiagnosticResultService diagnosticResultService;
     private final CompanionAiClient aiClient;
     private final MasteryDecayCalculator decayCalculator;
+    private final CourseService courseService;
 
     @Autowired(required = false)
     private ToolGovernor toolGovernor;
@@ -377,6 +378,7 @@ public class CompanionServiceImpl implements CompanionService {
         if (conversation == null || !currentUserId.equals(conversation.getStudentId())) {
             throw new BusinessException(ResultCode.FORBIDDEN, "无权访问他人会话");
         }
+        courseService.assertAccessibleByStudent(currentUserId, conversation.getCourseId());
     }
 
     private String buildTitle(CompanionChatRequest req) {
@@ -429,7 +431,7 @@ public class CompanionServiceImpl implements CompanionService {
         List<KgNode> allNodes = nodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>()
                         .eq(KgNode::getCourseId, courseId));
-        List<String> whitelist = allNodes.stream().map(KgNode::getName).collect(Collectors.toList());
+        List<String> whitelist = allNodes.stream().map(CompanionServiceImpl::nodePromptLabel).collect(Collectors.toList());
 
         LearningPathVO path = null;
         try {
@@ -506,6 +508,18 @@ public class CompanionServiceImpl implements CompanionService {
                 .toList();
     }
 
+    private static String nodePromptLabel(KgNode node) {
+        if (node == null) {
+            return "";
+        }
+        String name = node.getName() == null ? "" : node.getName();
+        String nodeCode = node.getNodeCode();
+        if (nodeCode == null || nodeCode.isBlank()) {
+            return name;
+        }
+        return name + "（nodeCode: " + nodeCode + "）";
+    }
+
     public static String buildSystemPrompt(String courseName,
                                            List<String> whitelist,
                                            List<String> weakPoints,
@@ -549,6 +563,7 @@ public class CompanionServiceImpl implements CompanionService {
         sb.append("- 涉及掌握度、薄弱点、证据时间时，先通过工具查询，再回答。\n");
         sb.append("- 涉及节点详情、前置关系、后继关系时，先通过工具获取节点详情，再组织解释。\n");
         sb.append("- 需要发起练习、推荐练习或确认练习入口时，先通过工具获取练习信息。\n");
+        sb.append("- 用户只说节点名称时，先从课程知识点范围匹配名称，再使用对应 nodeCode 调用工具。\n");
         sb.append("- 禁止编造掌握度；没有工具证据时，要明确说明暂未查询到。\n\n");
 
         sb.append("## 对话规则\n");

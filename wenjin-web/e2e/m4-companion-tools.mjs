@@ -222,7 +222,7 @@ try {
   check('弱点提问触发工具胶囊', !!weakTool?.messages?.some((message) => message.role === 'tool'))
   await waitCompanion('弱点回答结束', (state) => !state.typing, 180, 500)
 
-  await sendCompanionText(`请调用练习工具，给我出两道关于节点 ${target.nodeCode}（${target.name}）的题。`)
+  await sendCompanionText(`请调用练习工具，给我出两道关于“${target.name}”的题。`)
   const practiceState = await waitCompanion(
     '练习提问后出现 practice_card',
     (state) => state.messages.some((message) => message.role === 'practice' && message.card?.sessionId),

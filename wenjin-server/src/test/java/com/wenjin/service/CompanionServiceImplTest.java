@@ -80,6 +80,9 @@ class CompanionServiceImplTest {
     @Mock
     private ToolGovernor toolGovernor;
 
+    @Mock
+    private CourseService courseService;
+
     private CompanionServiceImpl service;
     private CompanionChatRequest req;
 
@@ -94,7 +97,8 @@ class CompanionServiceImplTest {
                 pathService,
                 diagnosticResultService,
                 aiClient,
-                makeCalculator());
+                makeCalculator(),
+                courseService);
 
         req = new CompanionChatRequest();
         req.setStudentId(1L);
@@ -407,6 +411,38 @@ class CompanionServiceImplTest {
         ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
         verify(messageMapper).insert(messageCaptor.capture());
         assertEquals("streamed final answer", messageCaptor.getValue().getContent());
+    }
+
+    @Test
+    void streamReplyWithToolsIncludesNodeCodeLookupInSystemPrompt() {
+        Long conversationId = 318L;
+        KgNode focusNode = new KgNode();
+        focusNode.setId(12L);
+        focusNode.setNodeCode("KT12");
+        focusNode.setName("二次函数基础");
+        KgNode namedNode = new KgNode();
+        namedNode.setId(99L);
+        namedNode.setNodeCode("KT99");
+        namedNode.setName("数组");
+        stubConversationAndPrompt(conversationId, List.of(userMessage("给我出两道数组的题")),
+                List.of(focusNode, namedNode), focusNode);
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "start_practice",
+                "正在生成节点练习…",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        when(aiClient.completeWithTools(any(), any()))
+                .thenReturn(new CompanionAiClient.FinalText(""));
+        doAnswer(invocation -> null).when(aiClient).streamMessages(any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, token -> { });
+
+        ArgumentCaptor<List<Map<String, Object>>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(aiClient).completeWithTools(messagesCaptor.capture(), any());
+        String systemPrompt = (String) messagesCaptor.getValue().get(0).get("content");
+        assertThat(systemPrompt).contains("- 数组（nodeCode: KT99）");
+        assertThat(systemPrompt).contains("用户只说节点名称时，先从课程知识点范围匹配名称，再使用对应 nodeCode 调用工具");
     }
 
     @Test
@@ -821,6 +857,17 @@ class CompanionServiceImplTest {
     }
 
     private void stubConversationAndPrompt(Long conversationId, List<CompanionMessage> history) {
+        KgNode whitelistNode = new KgNode();
+        whitelistNode.setId(12L);
+        whitelistNode.setNodeCode("KT12");
+        whitelistNode.setName("二次函数基础");
+        stubConversationAndPrompt(conversationId, history, List.of(whitelistNode), whitelistNode);
+    }
+
+    private void stubConversationAndPrompt(Long conversationId,
+                                           List<CompanionMessage> history,
+                                           List<KgNode> whitelistNodes,
+                                           KgNode focusNode) {
         CompanionConversation conversation = new CompanionConversation();
         conversation.setId(conversationId);
         conversation.setStudentId(1L);
@@ -828,20 +875,10 @@ class CompanionServiceImplTest {
         conversation.setNodeCode("KT12");
         when(conversationMapper.selectById(conversationId)).thenReturn(conversation);
         when(messageMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(history);
-
-        KgNode whitelistNode = new KgNode();
-        whitelistNode.setId(12L);
-        whitelistNode.setNodeCode("KT12");
-        whitelistNode.setName("二次函数基础");
-        when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(whitelistNode));
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(whitelistNodes);
         when(pathService.getCurrent(1L, 10L)).thenReturn(path());
         when(diagnosticResultService.getResult(1L, 10L)).thenReturn(null);
         when(courseMapper.selectById(10L)).thenReturn(null);
-
-        KgNode focusNode = new KgNode();
-        focusNode.setId(12L);
-        focusNode.setNodeCode("KT12");
-        focusNode.setName("二次函数基础");
         when(nodeMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(focusNode);
     }
 

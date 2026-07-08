@@ -36,6 +36,9 @@ class CompanionOwnershipTest {
     @Mock
     private CompanionMessageMapper messageMapper;
 
+    @Mock
+    private CourseService courseService;
+
     @AfterEach
     void clearCurrentUser() {
         CurrentUser.clear();
@@ -47,13 +50,14 @@ class CompanionOwnershipTest {
         // 其余依赖不涉及：传 null 不会被触达（decayCalculator 亦不会被触达，传 null）
         return new CompanionServiceImpl(
                 conversationMapper, messageMapper,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, courseService);
     }
 
     private CompanionConversation conv(long convId, long ownerStudentId) {
         CompanionConversation c = new CompanionConversation();
         c.setId(convId);
         c.setStudentId(ownerStudentId);
+        c.setCourseId(10L);
         return c;
     }
 
@@ -77,6 +81,20 @@ class CompanionOwnershipTest {
         when(messageMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(List.of());
 
         assertThatCode(() -> service().getMessages(99L)).doesNotThrowAnyException();
+        org.mockito.Mockito.verify(courseService).assertAccessibleByStudent(2L, 10L);
+    }
+
+    @Test
+    void getMessages_ownerInInaccessibleCourse_throwsForbidden() {
+        CurrentUser.set(2L);
+        when(conversationMapper.selectById(99L)).thenReturn(conv(99L, 2L));
+        org.mockito.Mockito.doThrow(new BusinessException(ResultCode.FORBIDDEN, "未选该课程"))
+                .when(courseService).assertAccessibleByStudent(2L, 10L);
+
+        assertThatThrownBy(() -> service().getMessages(99L))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.FORBIDDEN.getCode()));
     }
 
     @Test
@@ -120,5 +138,19 @@ class CompanionOwnershipTest {
         when(conversationMapper.deleteById(99L)).thenReturn(1);
 
         assertThatCode(() -> service().deleteConversation(99L)).doesNotThrowAnyException();
+        org.mockito.Mockito.verify(courseService).assertAccessibleByStudent(2L, 10L);
+    }
+
+    @Test
+    void deleteConversation_ownerInInaccessibleCourse_throwsForbidden() {
+        CurrentUser.set(2L);
+        when(conversationMapper.selectById(99L)).thenReturn(conv(99L, 2L));
+        org.mockito.Mockito.doThrow(new BusinessException(ResultCode.FORBIDDEN, "未选该课程"))
+                .when(courseService).assertAccessibleByStudent(2L, 10L);
+
+        assertThatThrownBy(() -> service().deleteConversation(99L))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.FORBIDDEN.getCode()));
     }
 }
