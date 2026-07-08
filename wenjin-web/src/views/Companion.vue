@@ -1,15 +1,15 @@
 <template>
   <div class="wj-companion">
-    <!-- 侧栏：会话列表 -->
     <aside class="cp-sidebar">
       <div class="cp-sidebar-head">
         <h3 class="cp-sidebar-title">学习伴侣</h3>
-        <button class="cp-btn-new" @click="newChat" title="新对话">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <button class="cp-btn-new" title="新对话" @click="newChat">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
           </svg>
         </button>
       </div>
+
       <div class="cp-conversations">
         <div
           v-for="conv in conversations"
@@ -20,40 +20,145 @@
         >
           <div class="cp-conv-title">{{ conv.title || '新对话' }}</div>
           <div class="cp-conv-meta">{{ formatTime(conv.createdAt) }}</div>
-          <button class="cp-conv-del" @click.stop="handleDelete(conv.id)" title="删除对话">×</button>
+          <button class="cp-conv-del" title="删除对话" @click.stop="handleDelete(conv.id)">×</button>
         </div>
+
         <div v-if="!conversations.length" class="cp-conv-empty">暂无对话</div>
       </div>
     </aside>
 
-    <!-- 主区域：消息列表 + 输入框 -->
     <main class="cp-main">
-      <!-- 空状态 / 消息列表 -->
       <div v-if="!msgs.length" class="cp-empty">
         <h2 class="cp-empty-title">你好，我是你的学习伴侣</h2>
-        <p class="cp-empty-sub">我可以帮你解答知识点问题、分析学习进度、制定学习计划。</p>
+        <p class="cp-empty-sub">可以随时问我知识点、学习进度，或者直接在这里完成节点练习。</p>
         <div class="cp-starters">
           <button
-            v-for="s in starters"
-            :key="s"
+            v-for="starter in starters"
+            :key="starter"
             class="cp-starter"
-            @click="input = s; sendText()"
+            @click="sendStarter(starter)"
           >
-            {{ s }}
+            {{ starter }}
           </button>
         </div>
       </div>
 
-      <div v-else class="cp-messages" ref="scrollEl">
+      <div v-else ref="scrollEl" class="cp-messages">
         <div
-          v-for="(msg, i) in msgs"
-          :key="i"
+          v-for="(msg, index) in msgs"
+          :key="index"
           class="cp-msg"
-          :class="{ user: msg.role === 'user', ai: msg.role === 'assistant' }"
+          :class="`is-${msg.role}`"
         >
-          <div class="cp-msg-role">{{ msg.role === 'user' ? '你' : 'AI' }}</div>
-          <div class="cp-msg-body">{{ msg.content }}</div>
+          <div class="cp-msg-role">{{ roleLabel(msg.role) }}</div>
+
+          <div class="cp-msg-main">
+            <div v-if="isPlainMessage(msg)" class="cp-msg-body">
+              {{ msg.content }}
+            </div>
+
+            <div v-else-if="msg.role === 'tool'" class="cp-tool-capsule" :class="toolStateClass(msg)">
+              <span class="cp-tool-dot"></span>
+              <span class="cp-tool-label">{{ msg.label || msg.name }}</span>
+              <span class="cp-tool-state">{{ toolStateText(msg) }}</span>
+            </div>
+
+            <div v-else-if="msg.role === 'practice'" class="cp-practice">
+              <div class="cp-practice-head">
+                <div class="cp-practice-title">{{ practiceTitle(msg) }}</div>
+                <div class="cp-practice-meta">{{ practiceMeta(msg) }}</div>
+              </div>
+
+              <div v-if="practiceCurrentQuestion(msg) && msg.phase !== 'result'" class="cp-practice-body">
+                <QuestionAnswerCard
+                  :question="practiceCurrentQuestion(msg)"
+                  :index="msg.currentIndex + 1"
+                  :total="practiceQuestionCount(msg)"
+                  :selected="practiceSelected(msg)"
+                  :selected-set="practiceSelectedSet(msg)"
+                  :text-value="practiceTextValue(msg)"
+                  :is-last="practiceIsLast(msg)"
+                  :last-label="practiceLastLabel(msg)"
+                  :has-selection="practiceHasSelection(msg)"
+                  :show-hint="false"
+                  @pick="onPracticePick(msg, $event)"
+                  @text-input="onPracticeTextInput(msg, $event)"
+                  @prev="onPracticePrev(msg)"
+                  @next="onPracticeNext(msg)"
+                  @skip="onPracticeSkip(msg)"
+                />
+
+                <div v-if="msg.phase === 'submitting'" class="cp-practice-note">
+                  正在提交本次作答…
+                </div>
+                <div v-else-if="msg.submitError" class="cp-practice-note is-error">
+                  {{ msg.submitError }}
+                </div>
+              </div>
+
+              <div v-else-if="msg.phase !== 'result'" class="cp-practice-empty">
+                暂无可作答题目
+              </div>
+
+              <div v-if="msg.phase === 'result' && msg.submitResult" class="cp-practice-result">
+                <div class="cp-practice-summary">
+                  <div class="cp-practice-summary-main">
+                    <span class="cp-summary-label">掌握度</span>
+                    <strong class="cp-summary-value">
+                      {{ formatPct(msg.submitResult.masteryBefore) }}
+                      <span class="cp-summary-arrow">→</span>
+                      {{ formatPct(msg.submitResult.masteryAfter) }}
+                    </strong>
+                    <span
+                      v-if="practiceMasteryDelta(msg) !== null"
+                      class="cp-summary-delta"
+                      :class="deltaClass(practiceMasteryDelta(msg))"
+                    >
+                      {{ formatDelta(practiceMasteryDelta(msg)) }}
+                    </span>
+                  </div>
+                  <div v-if="msg.submitResult.masteryLevel" class="cp-summary-badge">
+                    {{ msg.submitResult.masteryLevel }}
+                  </div>
+                </div>
+
+                <div class="cp-practice-lines">
+                  <div class="cp-practice-line">{{ practiceStatusSummary(msg) }}</div>
+                  <div
+                    v-if="msg.submitResult.weakPrerequisites && msg.submitResult.weakPrerequisites.length"
+                    class="cp-practice-line"
+                  >
+                    薄弱前置：{{ practiceWeakSummary(msg.submitResult.weakPrerequisites) }}
+                  </div>
+                </div>
+
+                <div
+                  v-if="msg.submitResult.graded && msg.submitResult.graded.length"
+                  class="cp-grades"
+                >
+                  <div
+                    v-for="(grade, gradeIndex) in msg.submitResult.graded"
+                    :key="`${grade.questionId || gradeIndex}`"
+                    class="cp-grade-item"
+                    :class="grade.correct === true ? 'is-correct' : grade.correct === false ? 'is-wrong' : 'is-neutral'"
+                  >
+                    <div class="cp-grade-head">
+                      <span class="cp-grade-title">{{ practiceGradeTitle(msg, grade, gradeIndex) }}</span>
+                      <span class="cp-grade-state">{{ practiceGradeState(grade) }}</span>
+                    </div>
+                    <div v-if="grade.correctAnswer && grade.correct !== true" class="cp-grade-extra">
+                      正确答案：{{ grade.correctAnswer }}
+                    </div>
+                    <div v-if="grade.analysis && grade.correct !== true" class="cp-grade-extra">
+                      {{ grade.analysis }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
+
         <div v-if="typing" class="cp-typing">
           <span class="cp-typing-dot"></span>
           <span class="cp-typing-dot"></span>
@@ -61,14 +166,12 @@
         </div>
       </div>
 
-      <!-- 上下文 chip -->
       <div v-if="ctxNodeCode" class="cp-context-chip">
-        <span class="cp-chip-label">上下文：</span>
+        <span class="cp-chip-label">上下文</span>
         <span class="cp-chip-code">{{ ctxNodeCode }}</span>
-        <button class="cp-chip-close" @click="ctxNodeCode = null" title="清除上下文">×</button>
+        <button class="cp-chip-close" title="清除上下文" @click="ctxNodeCode = null">×</button>
       </div>
 
-      <!-- 输入区 -->
       <div class="cp-input-area">
         <textarea
           v-model="input"
@@ -77,13 +180,15 @@
           rows="1"
           @keydown="onKey"
         ></textarea>
-        <button
-          class="cp-btn-send"
-          :disabled="!hasText || typing"
-          @click="sendText"
-        >
-          <svg v-if="!typing" width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <path d="M16 2L8 10M16 2l-6 14-2-6-6-2 14-6z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <button class="cp-btn-send" :disabled="!hasText || typing" @click="sendText">
+          <svg v-if="!typing" width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+            <path
+              d="M16 2L8 10M16 2l-6 14-2-6-6-2 14-6z"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
           </svg>
           <span v-else class="cp-sending">…</span>
         </button>
@@ -93,22 +198,24 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import QuestionAnswerCard from '../components/QuestionAnswerCard.vue'
 import { listConversations, fetchConversation, deleteConversation, chatStream } from '../api/companion.js'
+import { submitPractice } from '../api/practice.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
 
 const { courseId } = useStudentCourse()
 
-// 从 localStorage 读取当前登录用户
 function readUser() {
-  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
+  try {
+    return JSON.parse(localStorage.getItem('wj_user'))
+  } catch {
+    return null
+  }
 }
-const currentUser = readUser()
-const DEMO_STUDENT_ID = currentUser?.id || 2
-const router = useRouter()
 
-// 状态
+const STUDENT_ID = readUser()?.id || 2
+
 const msgs = ref([])
 const input = ref('')
 const typing = ref(false)
@@ -117,49 +224,356 @@ const conversations = ref([])
 const ctxNodeCode = ref(null)
 const scrollEl = ref(null)
 
-// 启动器示例
 const starters = computed(() => [
-  '我在「数组」上卡住了，怎么办？',
-  '我的学习进度如何？',
-  '帮我制定下一步的学习计划'
+  '我在“数组”这里卡住了，应该先补哪一部分？',
+  '帮我看看这门课最近的学习节奏是否合理。',
+  '给我一组适合现在状态的节点练习。'
 ])
 
 const hasText = computed(() => input.value.trim().length > 0)
 
-// 找到最后一条 AI 消息的索引，用于流式追加
-const lastAiIdx = computed(() => {
+const lastAssistantIdx = computed(() => {
   for (let i = msgs.value.length - 1; i >= 0; i--) {
     if (msgs.value[i].role === 'assistant') return i
   }
   return -1
 })
 
-// 加载会话列表
-async function loadConversations() {
-  try {
-    if (!courseId.value) return
-    const data = await listConversations(DEMO_STUDENT_ID, courseId.value)
-    conversations.value = data || []
-  } catch (e) {
-    console.error('Failed to load conversations:', e)
+function roleLabel(role) {
+  if (role === 'user') return '你'
+  if (role === 'assistant') return 'AI'
+  if (role === 'tool') return '工具'
+  return '练习'
+}
+
+function isPlainMessage(message) {
+  return message.role === 'user' || message.role === 'assistant'
+}
+
+function normalizeConversationMessage(message) {
+  const role = message?.role === 'ai' ? 'assistant' : message?.role
+  if (role === 'user' || role === 'assistant') {
+    return { role, content: message?.content || '' }
+  }
+  return { role: 'assistant', content: message?.content || '' }
+}
+
+function normalizePracticeCard(card) {
+  return {
+    sessionId: card?.sessionId,
+    node: card?.node || null,
+    questions: (card?.questions || []).map((question) => ({
+      questionId: question.questionId,
+      c: question.chapter,
+      q: question.stem,
+      o: (question.options || []).map((option) => option.text),
+      optionKeys: (question.options || []).map((option) => option.key),
+      type: question.type || 1
+    }))
   }
 }
 
-// 打开已有会话
+function createPracticeMessage(card) {
+  return {
+    role: 'practice',
+    card: normalizePracticeCard(card),
+    phase: 'answering',
+    currentIndex: 0,
+    answers: {
+      single: {},
+      multi: {},
+      text: {}
+    },
+    skippedSet: {},
+    submitResult: null,
+    submitError: ''
+  }
+}
+
+function createToolMessage(event, ok = null) {
+  return {
+    role: 'tool',
+    name: event?.name || 'tool',
+    label: event?.label || event?.name || '工具',
+    ok
+  }
+}
+
+function toolStateClass(message) {
+  if (message.ok === true) return 'is-ok'
+  if (message.ok === false) return 'is-fail'
+  return 'is-running'
+}
+
+function toolStateText(message) {
+  if (message.ok === true) return '完成'
+  if (message.ok === false) return '失败'
+  return '运行中'
+}
+
+function practiceQuestionCount(message) {
+  return message.card?.questions?.length || 0
+}
+
+function practiceCurrentQuestion(message) {
+  return message.card?.questions?.[message.currentIndex] || null
+}
+
+function practiceSelected(message) {
+  return message.answers.single[message.currentIndex]
+}
+
+function practiceSelectedSet(message) {
+  return message.answers.multi[message.currentIndex] || []
+}
+
+function practiceTextValue(message) {
+  return message.answers.text[message.currentIndex] || ''
+}
+
+function practiceIsMulti(message) {
+  return practiceCurrentQuestion(message)?.type === 2
+}
+
+function practiceIsShort(message) {
+  return practiceCurrentQuestion(message)?.type === 4
+}
+
+function practiceIsLast(message) {
+  return message.currentIndex >= practiceQuestionCount(message) - 1
+}
+
+function practiceHasSelection(message) {
+  if (practiceIsShort(message)) return true
+  if (practiceIsMulti(message)) return practiceSelectedSet(message).length > 0
+  return typeof practiceSelected(message) === 'number'
+}
+
+function practiceTitle(message) {
+  return message.card?.node?.name || '节点练习'
+}
+
+function practiceMeta(message) {
+  if (message.phase === 'result') return `${practiceQuestionCount(message)} 题`
+  return `${Math.min(message.currentIndex + 1, Math.max(practiceQuestionCount(message), 1))} / ${Math.max(practiceQuestionCount(message), 1)}`
+}
+
+function practiceLastLabel(message) {
+  if (message.phase === 'submitting') return '提交中...'
+  if (message.phase === 'submitError') return '重新提交'
+  return '提交答案'
+}
+
+function lockPractice(message) {
+  return message.phase === 'submitting' || message.phase === 'result'
+}
+
+function clearPracticeError(message) {
+  if (message.submitError) message.submitError = ''
+  if (message.phase === 'submitError') message.phase = 'answering'
+}
+
+function onPracticePick(message, optionIndex) {
+  if (lockPractice(message)) return
+  clearPracticeError(message)
+
+  if (practiceIsMulti(message)) {
+    const current = [...practiceSelectedSet(message)]
+    const existingIndex = current.indexOf(optionIndex)
+    if (existingIndex >= 0) current.splice(existingIndex, 1)
+    else current.push(optionIndex)
+
+    message.answers.multi = {
+      ...message.answers.multi,
+      [message.currentIndex]: current
+    }
+    return
+  }
+
+  message.answers.single = {
+    ...message.answers.single,
+    [message.currentIndex]: optionIndex
+  }
+}
+
+function onPracticeTextInput(message, text) {
+  if (lockPractice(message)) return
+  clearPracticeError(message)
+  message.answers.text = {
+    ...message.answers.text,
+    [message.currentIndex]: text
+  }
+}
+
+function onPracticePrev(message) {
+  if (lockPractice(message)) return
+  if (message.currentIndex > 0) {
+    message.currentIndex -= 1
+    scrollToEnd()
+  }
+}
+
+function onPracticeSkip(message) {
+  if (lockPractice(message)) return
+  clearPracticeError(message)
+  message.skippedSet = {
+    ...message.skippedSet,
+    [message.currentIndex]: true
+  }
+
+  if (practiceIsLast(message)) {
+    submitPracticeMessage(message)
+  } else {
+    message.currentIndex += 1
+    scrollToEnd()
+  }
+}
+
+function onPracticeNext(message) {
+  if (lockPractice(message)) return
+  if (!practiceIsShort(message) && !practiceHasSelection(message)) return
+
+  clearPracticeError(message)
+  if (practiceIsLast(message)) {
+    submitPracticeMessage(message)
+  } else {
+    message.currentIndex += 1
+    scrollToEnd()
+  }
+}
+
+function buildPracticeAnswers(message) {
+  const list = []
+
+  ;(message.card?.questions || []).forEach((question, questionIndex) => {
+    let studentAnswer = null
+
+    if (question.type === 2) {
+      const selected = [...(message.answers.multi[questionIndex] || [])].sort((a, b) => a - b)
+      if (selected.length) {
+        studentAnswer = selected
+          .map((selectedIndex) => question.optionKeys?.[selectedIndex])
+          .filter((value) => value !== undefined)
+          .join(',')
+      }
+    } else if (question.type === 4) {
+      studentAnswer = message.answers.text[questionIndex] !== undefined ? message.answers.text[questionIndex] : ''
+    } else {
+      const optionIndex = message.answers.single[questionIndex]
+      if (typeof optionIndex === 'number' && question.optionKeys?.[optionIndex] !== undefined) {
+        studentAnswer = question.optionKeys[optionIndex]
+      }
+    }
+
+    if (studentAnswer !== null) {
+      list.push({
+        questionId: question.questionId,
+        studentAnswer
+      })
+    }
+  })
+
+  return list
+}
+
+async function submitPracticeMessage(message) {
+  const answers = buildPracticeAnswers(message)
+  if (!answers.length) {
+    message.submitError = '请至少回答一道题后再提交。'
+    message.phase = 'submitError'
+    return
+  }
+
+  message.submitError = ''
+  message.phase = 'submitting'
+  scrollToEnd()
+
+  try {
+    const result = await submitPractice(message.card.sessionId, {
+      studentId: STUDENT_ID,
+      answers
+    })
+    message.submitResult = result
+    message.phase = 'result'
+  } catch (error) {
+    message.submitError = error.message || '提交失败，请稍后重试。'
+    message.phase = 'submitError'
+  }
+
+  scrollToEnd()
+}
+
+function practiceMasteryDelta(message) {
+  if (!message.submitResult) return null
+  const before = message.submitResult.masteryBefore
+  const after = message.submitResult.masteryAfter
+  if (before == null || after == null) return null
+  return Math.round(after - before)
+}
+
+function practiceWeakSummary(items) {
+  return items.map((item) => `${item.name}${item.hitCount > 1 ? ` ×${item.hitCount}` : ''}`).join('，')
+}
+
+function practiceStatusSummary(message) {
+  const bits = []
+  bits.push(message.submitResult?.itemCompleted ? '已完成当前路径项' : '已记录本次练习')
+  if (message.submitResult?.pathRegenerated) bits.push('学习路径已调整')
+  return bits.join(' · ')
+}
+
+function practiceGradeTitle(message, grade, gradeIndex) {
+  const questionIndex = (message.card?.questions || []).findIndex((question) => question.questionId === grade.questionId)
+  if (questionIndex >= 0) return `第 ${questionIndex + 1} 题`
+  return `第 ${gradeIndex + 1} 题`
+}
+
+function practiceGradeState(grade) {
+  if (grade.correct === true) return '正确'
+  if (grade.correct === false) return '需复习'
+  return '已提交'
+}
+
+function formatPct(value) {
+  return value == null ? '--' : `${Math.round(value)}%`
+}
+
+function deltaClass(delta) {
+  if (delta > 0) return 'is-up'
+  if (delta < 0) return 'is-down'
+  return 'is-flat'
+}
+
+function formatDelta(delta) {
+  if (delta == null) return ''
+  if (delta > 0) return `+${delta}`
+  return `${delta}`
+}
+
+async function loadConversations() {
+  try {
+    if (!courseId.value) return
+    const data = await listConversations(STUDENT_ID, courseId.value)
+    conversations.value = data || []
+  } catch (error) {
+    console.error('Failed to load conversations:', error)
+  }
+}
+
 async function openConversation(id) {
   conversationId.value = id
   try {
-    const conv = await fetchConversation(id)
-    msgs.value = Array.isArray(conv) ? conv : (conv.messages || [])
+    const conversation = await fetchConversation(id)
+    const messages = Array.isArray(conversation) ? conversation : (conversation?.messages || [])
+    msgs.value = messages.map(normalizeConversationMessage)
     await nextTick()
     scrollToEnd()
-  } catch (e) {
-    console.error('Failed to fetch conversation:', e)
+  } catch (error) {
+    console.error('Failed to fetch conversation:', error)
     msgs.value = []
   }
 }
 
-// 新对话
 function newChat() {
   conversationId.value = null
   msgs.value = []
@@ -167,125 +581,143 @@ function newChat() {
   ctxNodeCode.value = null
 }
 
-// 删除会话
 async function handleDelete(id) {
   try {
     await deleteConversation(id)
-    // 如果删除的是当前会话，清空聊天
     if (conversationId.value === id) {
       conversationId.value = null
       msgs.value = []
     }
     await loadConversations()
-  } catch (e) {
-    console.error('删除会话失败:', e)
+  } catch (error) {
+    console.error('删除会话失败:', error)
   }
 }
 
-// 发送消息
+function findPendingToolMessage(name) {
+  for (let i = msgs.value.length - 1; i >= 0; i--) {
+    const message = msgs.value[i]
+    if (message.role === 'tool' && message.name === name && message.ok == null) {
+      return message
+    }
+  }
+  return null
+}
+
+function appendToAssistant(content) {
+  const idx = lastAssistantIdx.value
+  if (idx >= 0) {
+    msgs.value[idx].content += content
+  }
+}
+
+function sendStarter(starter) {
+  input.value = starter
+  sendText()
+}
+
 async function sendText() {
   const text = input.value.trim()
   if (!text || typing.value) return
 
-  // 添加用户消息
   msgs.value.push({ role: 'user', content: text })
-  input.value = ''
-
-  // 添加空 AI 消息占位
   msgs.value.push({ role: 'assistant', content: '' })
-
+  input.value = ''
   typing.value = true
+
   await nextTick()
   scrollToEnd()
 
   const payload = {
-    studentId: DEMO_STUDENT_ID,
+    studentId: STUDENT_ID,
     courseId: courseId.value,
     message: text
   }
 
-  if (conversationId.value) {
-    payload.conversationId = conversationId.value
-  }
-
-  if (ctxNodeCode.value) {
-    payload.contextNodeCode = ctxNodeCode.value
-  }
+  if (conversationId.value) payload.conversationId = conversationId.value
+  if (ctxNodeCode.value) payload.contextNodeCode = ctxNodeCode.value
 
   try {
     await chatStream(payload, {
-      onMeta: (meta) => {
-        // 第一次流式响应时，设置 conversationId
-        if (meta.conversationId && !conversationId.value) {
+      onMeta: async (meta) => {
+        if (meta?.conversationId && !conversationId.value) {
           conversationId.value = meta.conversationId
-          loadConversations() // 刷新会话列表
+          await loadConversations()
         }
+      },
+      onToolStart: (event) => {
+        msgs.value.push(createToolMessage(event))
+        scrollToEnd()
+      },
+      onToolResult: (event) => {
+        const existing = findPendingToolMessage(event?.name)
+        if (existing) {
+          existing.ok = !!event?.ok
+        } else {
+          msgs.value.push(createToolMessage(event, !!event?.ok))
+        }
+        scrollToEnd()
+      },
+      onPracticeCard: (event) => {
+        msgs.value.push(createPracticeMessage(event))
+        scrollToEnd()
       },
       onToken: (token) => {
-        // 追加 token 到最后一条 AI 消息
-        const idx = lastAiIdx.value
-        if (idx >= 0) {
-          msgs.value[idx].content += token
-        }
+        appendToAssistant(token)
         scrollToEnd()
       },
-      onDone: () => {
+      onDone: async () => {
         typing.value = false
+        await loadConversations()
         scrollToEnd()
       },
-      onError: (errMsg) => {
+      onError: (message) => {
         typing.value = false
-        const idx = lastAiIdx.value
-        if (idx >= 0) {
-          msgs.value[idx].content = `[错误] ${errMsg}`
-        }
+        const prefix = lastAssistantIdx.value >= 0 && msgs.value[lastAssistantIdx.value].content ? '\n\n' : ''
+        appendToAssistant(`${prefix}[错误] ${message}`)
+        scrollToEnd()
       }
     })
-  } catch (e) {
+  } catch (error) {
     typing.value = false
-    const idx = lastAiIdx.value
-    if (idx >= 0) {
-      msgs.value[idx].content = `[网络错误] ${e.message}`
-    }
+    const prefix = lastAssistantIdx.value >= 0 && msgs.value[lastAssistantIdx.value].content ? '\n\n' : ''
+    appendToAssistant(`${prefix}[网络错误] ${error.message}`)
+    scrollToEnd()
   }
 }
 
-// 键盘事件
-function onKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault()
+function onKey(event) {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault()
     sendText()
   }
 }
 
-// 滚动到底部
 function scrollToEnd() {
   if (!scrollEl.value) return
   nextTick(() => {
+    if (!scrollEl.value) return
     scrollEl.value.scrollTop = scrollEl.value.scrollHeight
   })
 }
 
-// 格式化时间
-function formatTime(ts) {
-  if (!ts) return ''
-  const d = new Date(ts)
+function formatTime(value) {
+  if (!value) return ''
+  const date = new Date(value)
   const now = new Date()
-  const diff = now - d
+  const diff = now - date
   const days = Math.floor(diff / (1000 * 60 * 60 * 24))
   if (days === 0) return '今天'
   if (days === 1) return '昨天'
   if (days < 7) return `${days} 天前`
-  return d.toLocaleDateString('zh-CN')
+  return date.toLocaleDateString('zh-CN')
 }
 
-watch(courseId, (id) => {
-  if (id) loadConversations()
+watch(courseId, (value) => {
+  if (value) loadConversations()
 }, { immediate: true })
 
-onMounted(async () => {
-
-  // DEV 钩子
+onMounted(() => {
   if (import.meta.env.DEV) {
     window.__wjCompanion = {
       msgs,
@@ -298,7 +730,8 @@ onMounted(async () => {
       loadConversations,
       openConversation,
       newChat,
-      sendText
+      sendText,
+      submitPracticeMessage
     }
   }
 })
@@ -314,14 +747,13 @@ onMounted(async () => {
   overflow: hidden;
 }
 
-/* ========== 侧栏 ========== */
 .cp-sidebar {
   width: 260px;
   flex: none;
-  background: var(--card);
-  border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: var(--card);
   overflow: hidden;
 }
 
@@ -331,13 +763,12 @@ onMounted(async () => {
   justify-content: space-between;
   padding: 18px 16px;
   border-bottom: 1px solid var(--line);
-  flex: none;
 }
 
 .cp-sidebar-title {
+  margin: 0;
   font-size: 15px;
   font-weight: 600;
-  margin: 0;
 }
 
 .cp-btn-new {
@@ -347,15 +778,16 @@ onMounted(async () => {
   border-radius: 7px;
   background: transparent;
   color: var(--ink);
-  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
 }
 
 .cp-btn-new:hover {
   background: var(--hover);
+  border-color: var(--mut);
 }
 
 .cp-conversations {
@@ -366,10 +798,10 @@ onMounted(async () => {
 
 .cp-conv-item {
   position: relative;
-  padding: 12px 32px 12px 14px;
+  padding: 12px 34px 12px 14px;
   border-radius: 9px;
-  cursor: pointer;
   margin-bottom: 4px;
+  cursor: pointer;
   transition: background 0.15s;
 }
 
@@ -377,10 +809,29 @@ onMounted(async () => {
   background: var(--hover);
 }
 
+.cp-conv-item.active {
+  background: var(--card2);
+  border: 1px solid var(--line);
+}
+
+.cp-conv-title {
+  margin-bottom: 4px;
+  font-size: 13.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-conv-meta {
+  font-size: 11.5px;
+  color: var(--mut);
+}
+
 .cp-conv-del {
   position: absolute;
-  right: 6px;
   top: 50%;
+  right: 6px;
   transform: translateY(-50%);
   width: 22px;
   height: 22px;
@@ -388,11 +839,10 @@ onMounted(async () => {
   border-radius: 5px;
   background: transparent;
   color: var(--mut);
-  font-size: 15px;
-  cursor: pointer;
   display: none;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
   line-height: 1;
 }
 
@@ -405,42 +855,22 @@ onMounted(async () => {
   color: var(--acc);
 }
 
-.cp-conv-item.active {
-  background: var(--card2);
-  border: 1px solid var(--line);
-}
-
-.cp-conv-title {
-  font-size: 13.5px;
-  font-weight: 500;
-  margin-bottom: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cp-conv-meta {
-  font-size: 11.5px;
-  color: var(--mut);
-}
-
 .cp-conv-empty {
+  padding: 40px 16px;
   text-align: center;
   color: var(--mut);
   font-size: 13px;
-  padding: 40px 16px;
 }
 
-/* ========== 主区域 ========== */
 .cp-main {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-width: 0;
   overflow: hidden;
-  position: relative;
 }
 
-/* 空状态 */
 .cp-empty {
   flex: 1;
   display: flex;
@@ -452,39 +882,40 @@ onMounted(async () => {
 }
 
 .cp-empty-title {
+  margin: 0 0 12px;
   font-family: 'Noto Serif SC', serif;
   font-size: 26px;
   font-weight: 600;
-  margin: 0 0 12px;
 }
 
 .cp-empty-sub {
-  font-size: 14px;
-  color: var(--mut);
-  line-height: 1.7;
   max-width: 480px;
-  margin: 0 0 32px;
+  margin: 0 0 28px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--mut);
 }
 
 .cp-starters {
+  width: 100%;
+  max-width: 440px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: 100%;
-  max-width: 420px;
 }
 
 .cp-starter {
-  padding: 14px 20px;
-  background: var(--card);
+  width: 100%;
+  padding: 14px 18px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  font-size: 13.5px;
+  background: var(--card);
   color: var(--ink);
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.15s, border-color 0.15s;
   font-family: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
 }
 
 .cp-starter:hover {
@@ -492,7 +923,6 @@ onMounted(async () => {
   border-color: var(--acc);
 }
 
-/* 消息列表 */
 .cp-messages {
   flex: 1;
   min-height: 0;
@@ -508,34 +938,249 @@ onMounted(async () => {
 }
 
 .cp-msg-role {
-  flex: none;
   width: 38px;
   height: 38px;
+  flex: none;
   border-radius: 50%;
+  background: var(--card2);
+  color: var(--mut);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 12px;
   font-weight: 600;
-  background: var(--card2);
-  color: var(--mut);
 }
 
-.cp-msg.user .cp-msg-role {
+.cp-msg.is-user .cp-msg-role {
   background: var(--acc);
   color: #fffdf8;
 }
 
-.cp-msg-body {
+.cp-msg-main {
   flex: 1;
+  min-width: 0;
+}
+
+.cp-msg-body {
+  padding-top: 8px;
   font-size: 14px;
   line-height: 1.75;
-  padding-top: 8px;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-/* 输入中提示 */
+.cp-tool-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  max-width: 100%;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--mut);
+  font-size: 12.5px;
+  line-height: 1;
+}
+
+.cp-tool-capsule.is-running {
+  border-color: rgba(84, 102, 137, 0.24);
+  color: var(--ink);
+}
+
+.cp-tool-capsule.is-ok {
+  border-color: rgba(46, 125, 50, 0.24);
+  background: rgba(46, 125, 50, 0.06);
+  color: #2e6a31;
+}
+
+.cp-tool-capsule.is-fail {
+  border-color: rgba(198, 40, 40, 0.24);
+  background: rgba(198, 40, 40, 0.05);
+  color: #a53f3f;
+}
+
+.cp-tool-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.75;
+}
+
+.cp-tool-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-tool-state {
+  color: inherit;
+  opacity: 0.78;
+  white-space: nowrap;
+}
+
+.cp-practice {
+  max-width: 760px;
+  padding: 16px 18px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.cp-practice-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.cp-practice-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.cp-practice-meta {
+  flex: none;
+  color: var(--mut);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.cp-practice-note,
+.cp-practice-empty,
+.cp-practice-line,
+.cp-grade-extra {
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.cp-practice-note {
+  margin-top: 10px;
+  color: var(--mut);
+}
+
+.cp-practice-note.is-error {
+  color: #b24b4b;
+}
+
+.cp-practice-result {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cp-practice-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.cp-practice-summary-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.cp-summary-label {
+  color: var(--mut);
+  font-size: 12px;
+}
+
+.cp-summary-value {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.cp-summary-arrow {
+  padding: 0 4px;
+  color: var(--mut);
+}
+
+.cp-summary-delta {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.cp-summary-delta.is-up {
+  color: #2e6a31;
+}
+
+.cp-summary-delta.is-down {
+  color: #a53f3f;
+}
+
+.cp-summary-delta.is-flat {
+  color: var(--mut);
+}
+
+.cp-summary-badge {
+  flex: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--card2);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.cp-practice-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--mut);
+}
+
+.cp-grades {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cp-grade-item {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.cp-grade-item.is-correct {
+  border-color: rgba(46, 125, 50, 0.18);
+}
+
+.cp-grade-item.is-wrong {
+  border-color: rgba(198, 40, 40, 0.18);
+}
+
+.cp-grade-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.cp-grade-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cp-grade-state {
+  flex: none;
+  color: var(--mut);
+  font-size: 12px;
+}
+
 .cp-typing {
   display: flex;
   gap: 6px;
@@ -560,7 +1205,9 @@ onMounted(async () => {
 }
 
 @keyframes typing-bounce {
-  0%, 80%, 100% {
+  0%,
+  80%,
+  100% {
     transform: translateY(0);
     opacity: 0.5;
   }
@@ -570,20 +1217,19 @@ onMounted(async () => {
   }
 }
 
-/* 上下文 chip */
 .cp-context-chip {
   position: absolute;
-  bottom: 100px;
   left: 24px;
+  bottom: 100px;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 8px;
-  font-size: 12.5px;
+  background: var(--card);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  font-size: 12.5px;
 }
 
 .cp-chip-label {
@@ -592,31 +1238,25 @@ onMounted(async () => {
 
 .cp-chip-code {
   font-weight: 500;
-  color: var(--ink);
 }
 
 .cp-chip-close {
   width: 18px;
   height: 18px;
   border: none;
+  border-radius: 4px;
   background: transparent;
   color: var(--mut);
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  transition: background 0.15s;
+  cursor: pointer;
 }
 
 .cp-chip-close:hover {
   background: var(--hover);
 }
 
-/* 输入区 */
 .cp-input-area {
   flex: none;
   display: flex;
@@ -660,10 +1300,10 @@ onMounted(async () => {
   border-radius: 9px;
   background: var(--acc);
   color: #fffdf8;
-  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
   transition: opacity 0.15s;
 }
 
@@ -681,7 +1321,12 @@ onMounted(async () => {
   font-weight: 600;
 }
 
-/* 响应式 */
+@media (max-width: 960px) {
+  .cp-practice {
+    max-width: 100%;
+  }
+}
+
 @media (max-width: 760px) {
   .cp-sidebar {
     width: 220px;
@@ -693,6 +1338,55 @@ onMounted(async () => {
 
   .cp-messages {
     padding: 16px;
+  }
+
+  .cp-input-area {
+    padding: 14px 16px;
+  }
+
+  .cp-context-chip {
+    left: 16px;
+    right: 16px;
+    bottom: 92px;
+    max-width: calc(100% - 32px);
+  }
+}
+
+@media (max-width: 640px) {
+  .wj-companion {
+    flex-direction: column;
+  }
+
+  .cp-sidebar {
+    width: 100%;
+    height: 168px;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .cp-msg {
+    gap: 10px;
+  }
+
+  .cp-msg-role {
+    width: 32px;
+    height: 32px;
+  }
+
+  .cp-practice {
+    padding: 14px;
+  }
+
+  .cp-practice-head,
+  .cp-practice-summary,
+  .cp-grade-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cp-tool-capsule {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 </style>
