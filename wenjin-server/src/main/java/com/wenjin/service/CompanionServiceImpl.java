@@ -26,6 +26,7 @@ import com.wenjin.service.companion.ToolContext;
 import com.wenjin.service.companion.ToolExecutionResult;
 import com.wenjin.service.companion.ToolExecutionState;
 import com.wenjin.service.companion.ToolGovernor;
+import com.wenjin.support.CompanionFinalTextSanitizer;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -223,6 +224,11 @@ public class CompanionServiceImpl implements CompanionService {
         saveAiMessage(conversationId, fullReply.toString());
     }
 
+    private static final String FALLBACK_AFTER_PRACTICE =
+            "练习已生成，可以直接在上方卡片里作答。有问题随时问我。";
+    private static final String FALLBACK_AFTER_TOOLS =
+            "我已根据工具结果整理完毕。你还想继续了解哪一块？";
+
     private void streamWithTools(Long conversationId,
                                  CompanionConversation conversation,
                                  String systemPrompt,
@@ -234,6 +240,7 @@ public class CompanionServiceImpl implements CompanionService {
         Map<String, String> toolLabels = buildToolLabels(tools);
         ToolExecutionState state = new ToolExecutionState(maxToolCalls());
         ToolContext context = new ToolContext(conversation.getStudentId(), conversation.getCourseId());
+        boolean practiceStarted = false;
 
         for (int round = 0; round < maxRounds(); round++) {
             CompanionAiClient.TurnOutcome outcome;
@@ -248,7 +255,8 @@ public class CompanionServiceImpl implements CompanionService {
                         conversation.getNodeCode(),
                         false);
                 if (hasToolContext(messages)) {
-                    streamFinalMessages(conversationId, withSystemPrompt(messages, fallbackPrompt), sink);
+                    streamFinalMessages(conversationId, withSystemPrompt(messages, fallbackPrompt),
+                            practiceStarted, sink);
                     return;
                 }
                 streamWithLegacyPath(conversationId, fallbackPrompt, history, sink);
@@ -269,23 +277,29 @@ public class CompanionServiceImpl implements CompanionService {
                 messages.add(toolMessage(result));
                 sink.toolResult(toolName, result.ok());
                 if (result.practiceCard() != null) {
+                    practiceStarted = true;
                     sink.practiceCard(result.practiceCard());
+                } else if (result.ok() && "start_practice".equals(toolName)) {
+                    practiceStarted = true;
                 }
             }
         }
 
-        streamFinalMessages(conversationId, messages, sink);
+        streamFinalMessages(conversationId, messages, practiceStarted, sink);
     }
 
     private void streamFinalMessages(Long conversationId,
                                      List<Map<String, Object>> messages,
+                                     boolean practiceStarted,
                                      CompanionStreamSink sink) {
         StringBuilder fullReply = new StringBuilder();
-        aiClient.streamMessages(messages, token -> {
-            fullReply.append(token);
-            sink.token(token);
-        });
-        saveAiMessage(conversationId, fullReply.toString());
+        aiClient.streamMessages(messages, fullReply::append);
+        String clean = CompanionFinalTextSanitizer.sanitize(fullReply.toString());
+        if (clean.isEmpty()) {
+            clean = practiceStarted ? FALLBACK_AFTER_PRACTICE : FALLBACK_AFTER_TOOLS;
+        }
+        sink.token(clean);
+        saveAiMessage(conversationId, clean);
     }
 
     private boolean hasToolContext(List<Map<String, Object>> messages) {

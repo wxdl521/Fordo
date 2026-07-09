@@ -482,6 +482,46 @@ class CompanionServiceImplTest {
     }
 
     @Test
+    void streamReplyStripsDsmlFinalTokensAndPersistsCleanText() {
+        Long conversationId = 401L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("给我出两道软件工程概述的题")));
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "start_practice",
+                "正在生成节点练习…",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        when(aiClient.completeWithTools(any(), any())).thenReturn(
+                new CompanionAiClient.ToolCalls(List.of(
+                        new CompanionAiClient.ToolCall("call-1", "start_practice",
+                                "{\"nodeName\":\"软件工程概述\",\"size\":2}"))),
+                new CompanionAiClient.FinalText(""));
+        PracticeStartVO card = practiceCard(901L, 12L, "KT12", "软件工程概述", "What is software engineering?");
+        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+                new ToolExecutionResult("call-1", "start_practice", true, "{\"ok\":true}", card));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(1);
+            onToken.accept("<|DSML|tool_calls>junk</|DSML|tool_calls>");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(conversationId, sink);
+
+        String joined = String.join("", sink.tokens);
+        assertThat(joined).doesNotContain("DSML");
+        assertThat(joined).doesNotContain("tool_calls");
+        assertThat(joined).isNotBlank();
+        assertThat(joined).contains("练习");
+        assertThat(sink.practiceCards).containsExactly(card);
+
+        ArgumentCaptor<CompanionMessage> captor = ArgumentCaptor.forClass(CompanionMessage.class);
+        verify(messageMapper).insert(captor.capture());
+        assertThat(captor.getValue().getContent()).doesNotContain("DSML");
+        assertThat(captor.getValue().getContent()).isEqualTo(joined);
+    }
+
+    @Test
     void streamReplyWithPracticeCardResultEmitsCardToSinkAndKeepsToolMessageMinimal() {
         Long conversationId = 310L;
         stubConversationAndPrompt(conversationId, List.of(userMessage("start practice")));
@@ -593,7 +633,8 @@ class CompanionServiceImplTest {
         RecordingSink sink = new RecordingSink();
         service.streamReply(conversationId, sink);
 
-        assertEquals(List.of("先补", "二次函数基础"), sink.tokens);
+        // Final path collects full stream then emits sanitized text once (not raw token-by-token).
+        assertEquals(List.of("先补二次函数基础"), sink.tokens);
         assertEquals(List.of("query_mastery|查询掌握度"), sink.toolStarts);
         assertEquals(List.of("query_mastery|true"), sink.toolResults);
 
