@@ -43,6 +43,11 @@ public class StartPracticeTool implements CompanionTool {
     }
 
     @Override
+    public boolean sideEffecting() {
+        return true;
+    }
+
+    @Override
     public Map<String, Object> schema() {
         Map<String, Object> parameters = new LinkedHashMap<>();
         parameters.put("type", "object");

@@ -205,6 +205,7 @@ import { listConversations, fetchConversation, deleteConversation, chatStream } 
 import { submitPractice } from '../api/practice.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
 import { buildCompanionChatPayload, readCompanionNodeCode } from '../utils/companionContext.js'
+import { createDebouncedPersist } from '../utils/companionPersistence.js'
 import {
   applyToolResult,
   buildPracticeAnswerList,
@@ -237,6 +238,7 @@ const conversationId = ref(null)
 const conversations = ref([])
 const ctxNodeCode = ref(null)
 const scrollEl = ref(null)
+let snapshotPersist
 
 const starters = computed(() => [
   '我在“数组”这里卡住了，应该先补哪一部分？',
@@ -350,6 +352,7 @@ function readConversationSnapshot(targetConversationId) {
 }
 
 function clearConversationSnapshot(targetConversationId = conversationId.value) {
+  snapshotPersist?.cancel()
   const key = currentSnapshotKey(targetConversationId)
   if (!key) return
   localStorage.removeItem(key)
@@ -365,6 +368,8 @@ function persistTypedSnapshot() {
     console.warn('Failed to persist companion snapshot:', error)
   }
 }
+
+snapshotPersist = createDebouncedPersist(persistTypedSnapshot, 250)
 
 function clearPracticeError(message) {
   if (message.submitError) message.submitError = ''
@@ -609,7 +614,7 @@ async function sendText() {
       onMeta: async (meta) => {
         if (meta?.conversationId && !conversationId.value) {
           conversationId.value = meta.conversationId
-          persistTypedSnapshot()
+          snapshotPersist.flush()
           await loadConversations()
         }
       },
@@ -631,11 +636,13 @@ async function sendText() {
       },
       onDone: async () => {
         typing.value = false
+        snapshotPersist.flush()
         await loadConversations()
         scrollToEnd()
       },
       onError: (message) => {
         typing.value = false
+        snapshotPersist.flush()
         const prefix = lastAssistantIdx.value >= 0 && msgs.value[lastAssistantIdx.value].content ? '\n\n' : ''
         appendToAssistant(`${prefix}[错误] ${message}`)
         scrollToEnd()
@@ -643,6 +650,7 @@ async function sendText() {
     })
   } catch (error) {
     typing.value = false
+    snapshotPersist.flush()
     const prefix = lastAssistantIdx.value >= 0 && msgs.value[lastAssistantIdx.value].content ? '\n\n' : ''
     appendToAssistant(`${prefix}[网络错误] ${error.message}`)
     scrollToEnd()
@@ -685,7 +693,7 @@ watch(() => route.query.nodeCode, (value) => {
 }, { immediate: true })
 
 watch(msgs, () => {
-  persistTypedSnapshot()
+  snapshotPersist.schedule()
 }, { deep: true })
 
 onMounted(() => {

@@ -240,13 +240,17 @@ public class CompanionServiceImpl implements CompanionService {
             try {
                 outcome = aiClient.completeWithTools(messages, toolSchemas);
             } catch (Exception ex) {
-                log.warn("Companion tool resolution failed for conversationId={}, falling back to legacy stream",
+                log.warn("Companion tool resolution failed for conversationId={}, falling back to no-tool stream",
                         conversationId, ex);
                 String fallbackPrompt = buildSystemPromptForStudent(
                         conversation.getStudentId(),
                         conversation.getCourseId(),
                         conversation.getNodeCode(),
                         false);
+                if (hasToolContext(messages)) {
+                    streamFinalMessages(conversationId, withSystemPrompt(messages, fallbackPrompt), sink);
+                    return;
+                }
                 streamWithLegacyPath(conversationId, fallbackPrompt, history, sink);
                 return;
             }
@@ -270,12 +274,33 @@ public class CompanionServiceImpl implements CompanionService {
             }
         }
 
+        streamFinalMessages(conversationId, messages, sink);
+    }
+
+    private void streamFinalMessages(Long conversationId,
+                                     List<Map<String, Object>> messages,
+                                     CompanionStreamSink sink) {
         StringBuilder fullReply = new StringBuilder();
         aiClient.streamMessages(messages, token -> {
             fullReply.append(token);
             sink.token(token);
         });
         saveAiMessage(conversationId, fullReply.toString());
+    }
+
+    private boolean hasToolContext(List<Map<String, Object>> messages) {
+        return messages.stream().anyMatch(message -> Objects.equals(message.get("role"), "tool"));
+    }
+
+    private List<Map<String, Object>> withSystemPrompt(List<Map<String, Object>> messages, String systemPrompt) {
+        List<Map<String, Object>> copy = new ArrayList<>(messages);
+        if (!copy.isEmpty()) {
+            Map<String, Object> system = new LinkedHashMap<>();
+            system.put("role", "system");
+            system.put("content", systemPrompt);
+            copy.set(0, system);
+        }
+        return copy;
     }
 
     private List<Map<String, Object>> buildMessages(String systemPrompt, List<CompanionMessage> history) {

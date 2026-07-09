@@ -65,6 +65,12 @@ public class ToolGovernor {
         String argsJson = call.argumentsJson() == null ? "{}" : call.argumentsJson();
         ToolExecutionResult result;
 
+        if (!state.tryConsume()) {
+            result = failed(toolCallId, toolName, "tool_budget_exceeded", "Tool call budget exceeded");
+            audit(ctx, toolName, argsJson, started, result);
+            return result;
+        }
+
         CompanionTool tool = registry.get(toolName);
         if (tool == null) {
             result = failed(toolCallId, toolName, "unknown_tool", "Tool is not registered: " + toolName);
@@ -90,13 +96,9 @@ public class ToolGovernor {
             return result;
         }
 
-        if (state == null || !state.tryConsume()) {
-            result = failed(toolCallId, toolName, "tool_budget_exceeded", "Tool call budget exceeded");
-            audit(ctx, toolName, argsJson, started, result);
-            return result;
-        }
-
-        result = executeWithTimeout(ctx, call, tool, args);
+        result = tool.sideEffecting()
+                ? executeInline(ctx, call, tool, args)
+                : executeWithTimeout(ctx, call, tool, args);
         audit(ctx, toolName, argsJson, started, result);
         return result;
     }
@@ -223,23 +225,7 @@ public class ToolGovernor {
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
         Future<ToolExecutionResult> future = executor.submit(() -> tool.executeForGovernor(call.id(), ctx, args));
         try {
-            ToolExecutionResult result = future.get(timeoutMs(), TimeUnit.MILLISECONDS);
-            if (result == null) {
-                return failed(call.id(), call.name(), "tool_error", "Tool execution failed");
-            }
-            if (!result.ok()) {
-                return new ToolExecutionResult(
-                        result.toolCallId(),
-                        result.toolName(),
-                        false,
-                        result.content());
-            }
-            return new ToolExecutionResult(
-                    result.toolCallId(),
-                    result.toolName(),
-                    true,
-                    truncateSuccessfulContent(result.content()),
-                    result.practiceCard());
+            return normalizeResult(call, future.get(timeoutMs(), TimeUnit.MILLISECONDS));
         } catch (TimeoutException e) {
             future.cancel(true);
             return failed(call.id(), call.name(), "tool_timeout", "Tool timed out");
@@ -253,6 +239,36 @@ public class ToolGovernor {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    private ToolExecutionResult executeInline(ToolContext ctx,
+                                              CompanionAiClient.ToolCall call,
+                                              CompanionTool tool,
+                                              JsonNode args) {
+        try {
+            return normalizeResult(call, tool.executeForGovernor(call.id(), ctx, args));
+        } catch (Exception e) {
+            return failed(call.id(), call.name(), "tool_error", e.getMessage());
+        }
+    }
+
+    private ToolExecutionResult normalizeResult(CompanionAiClient.ToolCall call, ToolExecutionResult result) {
+        if (result == null) {
+            return failed(call.id(), call.name(), "tool_error", "Tool execution failed");
+        }
+        if (!result.ok()) {
+            return new ToolExecutionResult(
+                    result.toolCallId(),
+                    result.toolName(),
+                    false,
+                    result.content());
+        }
+        return new ToolExecutionResult(
+                result.toolCallId(),
+                result.toolName(),
+                true,
+                truncateSuccessfulContent(result.content()),
+                result.practiceCard());
     }
 
     private long timeoutMs() {

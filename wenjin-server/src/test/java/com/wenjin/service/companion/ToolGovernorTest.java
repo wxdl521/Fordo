@@ -67,7 +67,7 @@ class ToolGovernorTest {
         assertThat(result.toolName()).isEqualTo("missing_tool");
         assertThat(result.ok()).isFalse();
         assertThat(errorCode(result)).isEqualTo("unknown_tool");
-        assertThat(state.used()).isZero();
+        assertThat(state.used()).isEqualTo(1);
     }
 
     @Test
@@ -87,7 +87,7 @@ class ToolGovernorTest {
         assertThat(result.ok()).isFalse();
         assertThat(errorCode(result)).isEqualTo("invalid_arguments");
         assertThat(executions).hasValue(0);
-        assertThat(state.used()).isZero();
+        assertThat(state.used()).isEqualTo(1);
     }
 
     @Test
@@ -107,7 +107,7 @@ class ToolGovernorTest {
         assertThat(result.ok()).isFalse();
         assertThat(errorCode(result)).isEqualTo("invalid_arguments");
         assertThat(executions).hasValue(0);
-        assertThat(state.used()).isZero();
+        assertThat(state.used()).isEqualTo(1);
     }
 
     @Test
@@ -128,7 +128,7 @@ class ToolGovernorTest {
         assertThat(result.ok()).isFalse();
         assertThat(errorCode(result)).isEqualTo("invalid_arguments");
         assertThat(executions).hasValue(0);
-        assertThat(state.used()).isZero();
+        assertThat(state.used()).isEqualTo(1);
     }
 
     @Test
@@ -149,7 +149,7 @@ class ToolGovernorTest {
         assertThat(result.ok()).isFalse();
         assertThat(errorCode(result)).isEqualTo("invalid_arguments");
         assertThat(executions).hasValue(0);
-        assertThat(state.used()).isZero();
+        assertThat(state.used()).isEqualTo(1);
     }
 
     @Test
@@ -190,7 +190,38 @@ class ToolGovernorTest {
         assertThat(errorCode(result)).isEqualTo("invalid_arguments");
         assertThat(errorMessage(result)).isEqualTo("Missing required tool argument: one of nodeCode,nodeName");
         assertThat(executions).hasValue(0);
-        assertThat(state.used()).isZero();
+        assertThat(state.used()).isEqualTo(1);
+    }
+
+    @Test
+    void invalidToolCallAttemptsConsumeBudgetAndBlockLaterCalls() throws Exception {
+        AtomicInteger executions = new AtomicInteger();
+        ToolGovernor governor = new ToolGovernor(
+                List.of(new StrictTool("start_practice", executions, "{\"ok\":true}")),
+                objectMapper,
+                properties(5_000, 2_000));
+        ToolExecutionState state = new ToolExecutionState(2);
+        ToolContext ctx = new ToolContext(1L, 10L);
+
+        ToolExecutionResult unknown = governor.execute(
+                ctx,
+                new CompanionAiClient.ToolCall("call_1", "missing_tool", "{}"),
+                state);
+        ToolExecutionResult malformed = governor.execute(
+                ctx,
+                new CompanionAiClient.ToolCall("call_2", "start_practice", "{bad"),
+                state);
+        ToolExecutionResult blocked = governor.execute(
+                ctx,
+                new CompanionAiClient.ToolCall("call_3", "start_practice",
+                        "{\"nodeName\":\"Quadratic Functions\"}"),
+                state);
+
+        assertThat(errorCode(unknown)).isEqualTo("unknown_tool");
+        assertThat(errorCode(malformed)).isEqualTo("invalid_arguments");
+        assertThat(errorCode(blocked)).isEqualTo("tool_budget_exceeded");
+        assertThat(executions).hasValue(0);
+        assertThat(state.used()).isEqualTo(2);
     }
 
     @Test
@@ -301,6 +332,28 @@ class ToolGovernorTest {
     }
 
     @Test
+    void sideEffectingToolRunsInlineInsteadOfReturningTimeout() {
+        AtomicInteger executions = new AtomicInteger();
+        ToolGovernor governor = new ToolGovernor(
+                List.of(new SideEffectingSlowTool("start_practice", executions)),
+                objectMapper,
+                properties(10, 2_000));
+        ToolExecutionState state = new ToolExecutionState(3);
+
+        ToolExecutionResult result = assertTimeoutPreemptively(
+                Duration.ofMillis(500),
+                () -> governor.execute(
+                        new ToolContext(1L, 10L),
+                        new CompanionAiClient.ToolCall("call_1", "start_practice", "{}"),
+                        state));
+
+        assertThat(result.ok()).isTrue();
+        assertThat(result.content()).isEqualTo("{\"ok\":true}");
+        assertThat(executions).hasValue(1);
+        assertThat(state.used()).isEqualTo(1);
+    }
+
+    @Test
     void executePreservesPracticeCardSideChannelFromToolOutput() {
         PracticeStartVO card = new PracticeStartVO();
         card.setSessionId(901L);
@@ -401,6 +454,29 @@ class ToolGovernorTest {
         public String execute(ToolContext ctx, JsonNode args) throws ToolException {
             try {
                 Thread.sleep(1_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new ToolException("interrupted");
+            }
+            return "{\"ok\":true}";
+        }
+    }
+
+    private record SideEffectingSlowTool(String name, AtomicInteger executions) implements CompanionTool {
+        @Override
+        public Map<String, Object> schema() {
+            return Map.of("type", "function", "function", Map.of("name", name));
+        }
+
+        public boolean sideEffecting() {
+            return true;
+        }
+
+        @Override
+        public String execute(ToolContext ctx, JsonNode args) throws ToolException {
+            executions.incrementAndGet();
+            try {
+                Thread.sleep(80);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new ToolException("interrupted");

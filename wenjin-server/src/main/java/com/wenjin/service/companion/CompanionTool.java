@@ -30,6 +30,14 @@ public interface CompanionTool {
         return name();
     }
 
+    /**
+     * Side-effecting tools run inline so the caller never receives a timeout while
+     * the work may still commit in the background after cooperative cancellation.
+     */
+    default boolean sideEffecting() {
+        return false;
+    }
+
     String execute(ToolContext ctx, JsonNode args) throws ToolException;
 
     default ToolExecutionResult executeForGovernor(String toolCallId,

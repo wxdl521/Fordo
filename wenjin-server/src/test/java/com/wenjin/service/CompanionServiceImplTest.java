@@ -741,6 +741,51 @@ class CompanionServiceImplTest {
     }
 
     @Test
+    void streamReplyWhenLaterToolResolutionFailsStreamsWithAccumulatedToolContext() {
+        Long conversationId = 313L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("need evidence fallback")));
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "query_mastery",
+                "query mastery",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        when(aiClient.completeWithTools(any(), any())).thenReturn(
+                new CompanionAiClient.ToolCalls(List.of(
+                        new CompanionAiClient.ToolCall("call-1", "query_mastery", "{\"nodeCode\":\"KT12\"}"))))
+                .thenThrow(new IllegalStateException("second round boom"));
+        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+                new ToolExecutionResult("call-1", "query_mastery", true,
+                        "{\"nodeCode\":\"KT12\",\"effectiveScore\":42}"));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(1);
+            onToken.accept("fallback uses tool context");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(conversationId, sink);
+
+        assertEquals(List.of("fallback uses tool context"), sink.tokens);
+        verify(aiClient, times(2)).completeWithTools(any(), any());
+        verify(aiClient, never()).stream(any(), any(), any(), any());
+
+        ArgumentCaptor<List<Map<String, Object>>> streamMessagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(aiClient).streamMessages(streamMessagesCaptor.capture(), any());
+        List<Map<String, Object>> messages = streamMessagesCaptor.getValue();
+        assertThat(messages).hasSize(4);
+        assertThat(messages.get(2)).containsEntry("role", "assistant").containsKey("tool_calls");
+        assertThat(messages.get(3))
+                .containsEntry("role", "tool")
+                .containsEntry("tool_call_id", "call-1")
+                .containsEntry("content", "{\"nodeCode\":\"KT12\",\"effectiveScore\":42}");
+
+        ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
+        verify(messageMapper).insert(messageCaptor.capture());
+        assertEquals("fallback uses tool context", messageCaptor.getValue().getContent());
+    }
+
+    @Test
     void buildPromptOmitsWeakPointSectionAndAddsToolGuidance() {
         LearningPathVO.NodeRef targetNode = new LearningPathVO.NodeRef();
         targetNode.setNodeCode("KT20");
