@@ -27,6 +27,8 @@ import com.wenjin.service.companion.ToolExecutionResult;
 import com.wenjin.service.companion.ToolExecutionState;
 import com.wenjin.service.companion.ToolGovernor;
 import com.wenjin.support.CompanionFinalTextSanitizer;
+import com.wenjin.support.PracticeIntent;
+import com.wenjin.support.PracticeIntentDetector;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -242,6 +244,11 @@ public class CompanionServiceImpl implements CompanionService {
         ToolContext context = new ToolContext(conversation.getStudentId(), conversation.getCourseId());
         boolean practiceStarted = false;
 
+        if (tryForceStartPracticeFromIntent(
+                conversationId, conversation, history, tools, toolLabels, messages, context, state, sink)) {
+            return;
+        }
+
         for (int round = 0; round < maxRounds(); round++) {
             CompanionAiClient.TurnOutcome outcome;
             try {
@@ -271,21 +278,132 @@ public class CompanionServiceImpl implements CompanionService {
 
             messages.add(assistantToolCallMessage(toolCalls.calls()));
             for (CompanionAiClient.ToolCall call : toolCalls.calls()) {
-                String toolName = call.name() == null ? "" : call.name();
-                sink.toolStart(toolName, toolLabels.getOrDefault(toolName, toolName));
-                ToolExecutionResult result = toolGovernor.execute(context, call, state);
-                messages.add(toolMessage(result));
-                sink.toolResult(toolName, result.ok());
-                if (result.practiceCard() != null) {
-                    practiceStarted = true;
-                    sink.practiceCard(result.practiceCard());
-                } else if (result.ok() && "start_practice".equals(toolName)) {
-                    practiceStarted = true;
-                }
+                practiceStarted = applyToolCall(call, toolLabels, messages, context, state, sink)
+                        || practiceStarted;
             }
         }
 
         streamFinalMessages(conversationId, messages, practiceStarted, sink);
+    }
+
+    /**
+     * 自然语言练习意图：强制合成 start_practice，走既有 governor/sink 路径后 final 总结，跳过 completeWithTools。
+     *
+     * @return true 表示本请求已处理完毕
+     */
+    private boolean tryForceStartPracticeFromIntent(Long conversationId,
+                                                    CompanionConversation conversation,
+                                                    List<CompanionMessage> history,
+                                                    List<CompanionTool> tools,
+                                                    Map<String, String> toolLabels,
+                                                    List<Map<String, Object>> messages,
+                                                    ToolContext context,
+                                                    ToolExecutionState state,
+                                                    CompanionStreamSink sink) {
+        if (toolProperties == null || !toolProperties.isIntentRoutingEnabled()) {
+            return false;
+        }
+        if (tools == null || tools.stream().noneMatch(tool -> "start_practice".equals(tool.name()))) {
+            return false;
+        }
+
+        String latestUser = (history == null || history.isEmpty())
+                ? null
+                : history.get(history.size() - 1).getContent();
+
+        List<PracticeIntentDetector.NodeRef> nodeRefs = loadCourseNodeRefs(conversation.getCourseId());
+        String focusCode = conversation.getNodeCode();
+        String focusName = resolveFocusName(focusCode, nodeRefs);
+
+        PracticeIntent intent = PracticeIntentDetector.detect(latestUser, nodeRefs, focusCode, focusName)
+                .orElse(null);
+        if (intent == null) {
+            return false;
+        }
+
+        CompanionAiClient.ToolCall call = new CompanionAiClient.ToolCall(
+                "intent-start-practice",
+                "start_practice",
+                buildStartPracticeArgsJson(intent));
+
+        messages.add(assistantToolCallMessage(List.of(call)));
+        boolean practiceStarted = applyToolCall(call, toolLabels, messages, context, state, sink);
+        streamFinalMessages(conversationId, messages, practiceStarted, sink);
+        return true;
+    }
+
+    private boolean applyToolCall(CompanionAiClient.ToolCall call,
+                                  Map<String, String> toolLabels,
+                                  List<Map<String, Object>> messages,
+                                  ToolContext context,
+                                  ToolExecutionState state,
+                                  CompanionStreamSink sink) {
+        String toolName = call.name() == null ? "" : call.name();
+        sink.toolStart(toolName, toolLabels.getOrDefault(toolName, toolName));
+        ToolExecutionResult result = toolGovernor.execute(context, call, state);
+        messages.add(toolMessage(result));
+        sink.toolResult(toolName, result.ok());
+        if (result.practiceCard() != null) {
+            sink.practiceCard(result.practiceCard());
+            return true;
+        }
+        return result.ok() && "start_practice".equals(toolName);
+    }
+
+    private List<PracticeIntentDetector.NodeRef> loadCourseNodeRefs(Long courseId) {
+        if (courseId == null) {
+            return List.of();
+        }
+        List<KgNode> allNodes = nodeMapper.selectList(
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId));
+        if (allNodes == null || allNodes.isEmpty()) {
+            return List.of();
+        }
+        return allNodes.stream()
+                .filter(Objects::nonNull)
+                .map(node -> new PracticeIntentDetector.NodeRef(node.getNodeCode(), node.getName()))
+                .toList();
+    }
+
+    private static String resolveFocusName(String focusCode, List<PracticeIntentDetector.NodeRef> nodeRefs) {
+        if (focusCode == null || focusCode.isBlank() || nodeRefs == null) {
+            return null;
+        }
+        for (PracticeIntentDetector.NodeRef ref : nodeRefs) {
+            if (ref != null && focusCode.equals(ref.nodeCode())) {
+                return ref.name();
+            }
+        }
+        return null;
+    }
+
+    private static String buildStartPracticeArgsJson(PracticeIntent intent) {
+        StringBuilder sb = new StringBuilder("{");
+        boolean hasCode = intent.nodeCode() != null && !intent.nodeCode().isBlank();
+        boolean hasName = intent.nodeName() != null && !intent.nodeName().isBlank();
+        if (hasCode) {
+            sb.append("\"nodeCode\":\"").append(escapeJson(intent.nodeCode())).append('"');
+        } else if (hasName) {
+            sb.append("\"nodeName\":\"").append(escapeJson(intent.nodeName())).append('"');
+        }
+        if (hasCode || hasName) {
+            sb.append(',');
+        }
+        sb.append("\"size\":").append(intent.size()).append('}');
+        return sb.toString();
+    }
+
+    private static String escapeJson(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        return raw
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 
     private void streamFinalMessages(Long conversationId,

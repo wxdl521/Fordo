@@ -424,7 +424,8 @@ class CompanionServiceImplTest {
         namedNode.setId(99L);
         namedNode.setNodeCode("KT99");
         namedNode.setName("数组");
-        stubConversationAndPrompt(conversationId, List.of(userMessage("给我出两道数组的题")),
+        // Intent routing would short-circuit on practice phrasing; this test targets system prompt only.
+        stubConversationAndPrompt(conversationId, List.of(userMessage("介绍一下数组")),
                 List.of(focusNode, namedNode), focusNode);
         configureTools(true, 2, 3, List.of(fakeTool(
                 "start_practice",
@@ -443,6 +444,119 @@ class CompanionServiceImplTest {
         String systemPrompt = (String) messagesCaptor.getValue().get(0).get("content");
         assertThat(systemPrompt).contains("- 数组（nodeCode: KT99）");
         assertThat(systemPrompt).contains("能确定 nodeCode 就用 nodeCode，否则传精确 nodeName 让服务端解析");
+    }
+
+    @Test
+    void streamReplyWithPracticeIntentForcesStartPracticeWithoutCompleteWithTools() {
+        Long conversationId = 501L;
+        KgNode seNode = new KgNode();
+        seNode.setId(1L);
+        seNode.setNodeCode("KT01");
+        seNode.setName("软件工程概述");
+        stubConversationAndPrompt(conversationId,
+                List.of(userMessage("给我出两道关于软件工程概述的题")),
+                List.of(seNode), seNode);
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "start_practice",
+                "正在生成节点练习…",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        PracticeStartVO card = practiceCard(901L, 1L, "KT01", "软件工程概述", "What is software engineering?");
+        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+                new ToolExecutionResult("intent-start-practice", "start_practice", true,
+                        "{\"sessionId\":901,\"questionCount\":2}", card));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(1);
+            onToken.accept("练习已准备好");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(conversationId, sink);
+
+        verify(aiClient, never()).completeWithTools(any(), any());
+        ArgumentCaptor<CompanionAiClient.ToolCall> callCaptor =
+                ArgumentCaptor.forClass(CompanionAiClient.ToolCall.class);
+        verify(toolGovernor).execute(any(ToolContext.class), callCaptor.capture(), any(ToolExecutionState.class));
+        CompanionAiClient.ToolCall forced = callCaptor.getValue();
+        assertEquals("intent-start-practice", forced.id());
+        assertEquals("start_practice", forced.name());
+        assertThat(forced.argumentsJson()).contains("nodeCode");
+        assertThat(forced.argumentsJson()).contains("KT01");
+        assertThat(forced.argumentsJson()).contains("\"size\":2");
+
+        assertThat(sink.toolStarts).containsExactly("start_practice|正在生成节点练习…");
+        assertThat(sink.toolResults).containsExactly("start_practice|true");
+        assertThat(sink.practiceCards).containsExactly(card);
+        assertEquals(List.of("练习已准备好"), sink.tokens);
+        verify(aiClient).streamMessages(any(), any());
+    }
+
+    @Test
+    void streamReplyWithPureQuestionStillUsesCompleteWithTools() {
+        Long conversationId = 502L;
+        KgNode seNode = new KgNode();
+        seNode.setId(1L);
+        seNode.setNodeCode("KT01");
+        seNode.setName("软件工程概述");
+        stubConversationAndPrompt(conversationId,
+                List.of(userMessage("软件工程概述是什么？")),
+                List.of(seNode), seNode);
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "start_practice",
+                "正在生成节点练习…",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        when(aiClient.completeWithTools(any(), any()))
+                .thenReturn(new CompanionAiClient.FinalText("software engineering overview"));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(1);
+            onToken.accept("软件工程概述是…");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(conversationId, sink);
+
+        verify(aiClient, times(1)).completeWithTools(any(), any());
+        verify(toolGovernor, never()).execute(any(), any(), any());
+        assertThat(sink.practiceCards).isEmpty();
+        assertEquals(List.of("软件工程概述是…"), sink.tokens);
+    }
+
+    @Test
+    void streamReplyWhenIntentRoutingDisabledStillUsesCompleteWithToolsForPracticePhrase() {
+        Long conversationId = 503L;
+        KgNode seNode = new KgNode();
+        seNode.setId(1L);
+        seNode.setNodeCode("KT01");
+        seNode.setName("软件工程概述");
+        stubConversationAndPrompt(conversationId,
+                List.of(userMessage("给我出两道关于软件工程概述的题")),
+                List.of(seNode), seNode);
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "start_practice",
+                "正在生成节点练习…",
+                Map.of("type", "object", "properties", Map.of()))), false);
+
+        when(aiClient.completeWithTools(any(), any()))
+                .thenReturn(new CompanionAiClient.FinalText("model chose to chat"));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(1);
+            onToken.accept("你可以自己练习一下");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(conversationId, sink);
+
+        verify(aiClient, times(1)).completeWithTools(any(), any());
+        verify(toolGovernor, never()).execute(any(), any(), any());
+        assertThat(sink.practiceCards).isEmpty();
+        assertEquals(List.of("你可以自己练习一下"), sink.tokens);
     }
 
     @Test
@@ -484,20 +598,16 @@ class CompanionServiceImplTest {
     @Test
     void streamReplyStripsDsmlFinalTokensAndPersistsCleanText() {
         Long conversationId = 401L;
+        // Practice phrasing + focus node → intent routing forces start_practice (no completeWithTools).
         stubConversationAndPrompt(conversationId, List.of(userMessage("给我出两道软件工程概述的题")));
         configureTools(true, 2, 3, List.of(fakeTool(
                 "start_practice",
                 "正在生成节点练习…",
                 Map.of("type", "object", "properties", Map.of()))));
 
-        when(aiClient.completeWithTools(any(), any())).thenReturn(
-                new CompanionAiClient.ToolCalls(List.of(
-                        new CompanionAiClient.ToolCall("call-1", "start_practice",
-                                "{\"nodeName\":\"软件工程概述\",\"size\":2}"))),
-                new CompanionAiClient.FinalText(""));
         PracticeStartVO card = practiceCard(901L, 12L, "KT12", "软件工程概述", "What is software engineering?");
         when(toolGovernor.execute(any(), any(), any())).thenReturn(
-                new ToolExecutionResult("call-1", "start_practice", true, "{\"ok\":true}", card));
+                new ToolExecutionResult("intent-start-practice", "start_practice", true, "{\"ok\":true}", card));
         doAnswer(invocation -> {
             Consumer<String> onToken = invocation.getArgument(1);
             onToken.accept("<|DSML|tool_calls>junk</|DSML|tool_calls>");
@@ -514,6 +624,7 @@ class CompanionServiceImplTest {
         assertThat(joined).isNotBlank();
         assertThat(joined).contains("练习");
         assertThat(sink.practiceCards).containsExactly(card);
+        verify(aiClient, never()).completeWithTools(any(), any());
 
         ArgumentCaptor<CompanionMessage> captor = ArgumentCaptor.forClass(CompanionMessage.class);
         verify(messageMapper).insert(captor.capture());
@@ -935,10 +1046,19 @@ class CompanionServiceImplTest {
     }
 
     private void configureTools(boolean enabled, int maxRounds, int maxToolCalls, List<CompanionTool> tools) {
+        configureTools(enabled, maxRounds, maxToolCalls, tools, true);
+    }
+
+    private void configureTools(boolean enabled,
+                                int maxRounds,
+                                int maxToolCalls,
+                                List<CompanionTool> tools,
+                                boolean intentRoutingEnabled) {
         CompanionToolProperties properties = new CompanionToolProperties();
         properties.setEnabled(enabled);
         properties.setMaxRounds(maxRounds);
         properties.setMaxToolCalls(maxToolCalls);
+        properties.setIntentRoutingEnabled(intentRoutingEnabled);
         ReflectionTestUtils.setField(service, "toolProperties", properties);
         ReflectionTestUtils.setField(service, "companionTools", tools);
         ReflectionTestUtils.setField(service, "toolGovernor", toolGovernor);
