@@ -49,3 +49,24 @@ test('createDebouncedPersist can cancel a pending snapshot write', () => {
   assert.deepEqual(cancelled, [7])
   assert.deepEqual(writes, [])
 })
+
+test('createDebouncedPersist flushes the scheduled snapshot arguments', () => {
+  const writes = []
+  const scheduled = []
+  const persist = createDebouncedPersist(
+    (key, snapshot) => writes.push([key, snapshot]),
+    250,
+    (callback) => {
+      scheduled.push(callback)
+      return scheduled.length
+    },
+    () => {}
+  )
+
+  persist.schedule('conversation-A', { messages: ['A'] })
+  persist.flush()
+
+  assert.deepEqual(writes, [['conversation-A', { messages: ['A'] }]])
+  scheduled[0]()
+  assert.deepEqual(writes, [['conversation-A', { messages: ['A'] }]])
+})

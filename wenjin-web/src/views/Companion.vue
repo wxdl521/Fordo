@@ -352,21 +352,28 @@ function readConversationSnapshot(targetConversationId) {
 }
 
 function clearConversationSnapshot(targetConversationId = conversationId.value) {
-  snapshotPersist?.cancel()
+  if (targetConversationId === conversationId.value) {
+    snapshotPersist?.cancel()
+  }
   const key = currentSnapshotKey(targetConversationId)
   if (!key) return
   localStorage.removeItem(key)
 }
 
-function persistTypedSnapshot() {
-  const key = currentSnapshotKey()
+function persistTypedSnapshot(key = currentSnapshotKey(), snapshot = createTypedMessagesSnapshot(msgs.value)) {
   if (!key) return
 
   try {
-    localStorage.setItem(key, JSON.stringify(createTypedMessagesSnapshot(msgs.value)))
+    localStorage.setItem(key, JSON.stringify(snapshot))
   } catch (error) {
     console.warn('Failed to persist companion snapshot:', error)
   }
+}
+
+function scheduleTypedSnapshot() {
+  const key = currentSnapshotKey()
+  if (!key) return
+  snapshotPersist.schedule(key, createTypedMessagesSnapshot(msgs.value))
 }
 
 snapshotPersist = createDebouncedPersist(persistTypedSnapshot, 250)
@@ -530,6 +537,7 @@ async function loadConversations() {
 }
 
 async function openConversation(id) {
+  snapshotPersist.flush()
   conversationId.value = id
   try {
     const conversation = await fetchConversation(id)
@@ -552,6 +560,7 @@ async function openConversation(id) {
 }
 
 function newChat() {
+  snapshotPersist.flush()
   conversationId.value = null
   msgs.value = []
   input.value = ''
@@ -693,7 +702,7 @@ watch(() => route.query.nodeCode, (value) => {
 }, { immediate: true })
 
 watch(msgs, () => {
-  snapshotPersist.schedule()
+  scheduleTypedSnapshot()
 }, { deep: true })
 
 onMounted(() => {
