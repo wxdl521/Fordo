@@ -4,7 +4,7 @@
 //   1. 打开 AI 伴侣, 询问薄弱点 -> 对话流出现工具胶囊。
 //   2. 请求指定节点练习 -> 对话流出现内嵌 practice_card。
 //   3. 至少作答一道题(优先客观题)并提交 -> 结果区显示掌握度/完成摘要。
-//   4. 诱导模型连续调用超过预算 -> 第 4+ 次工具被 tool_budget_exceeded 拦截, 对话仍正常终答。
+//   4. 诱导模型连续调用超过预算 -> 第 N+1 次工具被 tool_budget_exceeded 拦截, 对话仍正常终答。
 //   5. 图谱外节点注入 M4_OUT_OF_GRAPH_NODE -> 工具校验失败, 不产生 practice_card。
 //   6. WJ_EXPECT_TOOLS_DISABLED=1 且后端 tools.enabled=false -> 对话无工具胶囊, 仍正常终答。
 //      该模式需同时设置 WJ_TOOLS_DISABLED_ASSERT=wenjin.companion.tools.enabled=false, 避免误跑。
@@ -16,6 +16,7 @@ const base = process.env.WJ_BASE || 'http://localhost:5173'
 const preferredCourse = Number(process.env.WJ_COURSE || 5)
 const expectToolsDisabled = process.env.WJ_EXPECT_TOOLS_DISABLED === '1'
 const toolsDisabledAssert = process.env.WJ_TOOLS_DISABLED_ASSERT || ''
+const toolBudgetLimit = readPositiveInt(process.env.WJ_TOOL_BUDGET_MAX, 3)
 const serverLog = process.env.WJ_SERVER_LOG || ''
 const auditStartOffset = initialAuditOffset()
 const shots = '../测试截图'
@@ -30,6 +31,11 @@ const check = (name, cond, extra = '') => {
   if (!cond) fail.push(name)
 }
 const info = (message) => console.log('  ·', message)
+
+function readPositiveInt(value, fallback) {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
 
 async function api(method, path, token, body) {
   return await page.evaluate(async ({ method, path, token, body }) => {
@@ -364,6 +370,7 @@ try {
 
     const bodyText = await page.locator('body').innerText()
     check('结果文本包含掌握度或完成摘要', /掌握度|已记录本次练习|已完成当前路径项/.test(bodyText))
+    await waitCompanion('practice-submit-idle', (state) => !state.typing, 180, 500)
 
     const budgetRun = await sendAndWaitDone(
       `诱导模型连续调用超过预算：请严格按顺序发起五次工具调用，分别查询弱点概览、查询“${target.name}”详情、查询“${target.name}”掌握度、再次查询“${target.name}”详情、最后再尝试给“${target.name}”出 1 道题。不要省略工具调用。`,
@@ -371,11 +378,12 @@ try {
       240
     )
     const budgetTools = messagesSince(budgetRun.state, budgetRun.startIndex, (message) => message.role === 'tool')
+    const budgetBlockedIndex = toolBudgetLimit
     check(
-      '诱导模型连续调用超过预算时第 4 次工具被拦截',
-      budgetTools.length >= 4
-        && budgetTools.slice(0, 3).every((message) => message.ok === true)
-        && budgetTools[3]?.ok === false,
+      `诱导模型连续调用超过预算时第 ${toolBudgetLimit + 1} 次工具被拦截`,
+      budgetTools.length >= toolBudgetLimit + 1
+        && budgetTools.slice(0, toolBudgetLimit).every((message) => message.ok === true)
+        && budgetTools[budgetBlockedIndex]?.ok === false,
       JSON.stringify(budgetTools)
     )
     check('诱导模型连续调用超过预算后对话仍正常终答',
