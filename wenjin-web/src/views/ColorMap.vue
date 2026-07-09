@@ -42,18 +42,6 @@
       </button>
     </div>
 
-    <!-- 今日复习面板 -->
-    <ReviewPanel
-      v-if="currentUser && reviewOpen"
-      :items="reviewItems"
-      :total-decaying-count="reviewTotalCount"
-      :course-id="courseId"
-      :loading="reviewLoading"
-      :error="reviewError"
-      @refresh="loadReview"
-      @close="reviewOpen = false"
-    />
-
     <!-- 画布 -->
     <div ref="canvasRef" class="wj-canvas-container" :style="{ flex: 1, position: 'relative', overflow: 'hidden', touchAction: 'none' }">
 
@@ -124,7 +112,20 @@
       </div>
 
       <!-- 加载态 -->
-      <div v-else :style="{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mut)', fontSize: '13px' }">正在绘制知识图谱……</div>
+      <div v-if="currentUser && !layout" :style="{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mut)', fontSize: '13px' }">正在绘制知识图谱……</div>
+
+      <!-- 今日复习侧边栏 -->
+      <div v-if="currentUser && reviewOpen" class="wj-review-drawer">
+        <ReviewPanel
+          :items="reviewItems"
+          :total-decaying-count="reviewTotalCount"
+          :course-id="courseId"
+          :loading="reviewLoading"
+          :error="reviewError"
+          @refresh="loadReview"
+          @close="reviewOpen = false"
+        />
+      </div>
 
       <!-- 缩放工具栏 -->
       <div v-if="layout && currentUser" :style="{ position: 'absolute', top: '14px', right: '14px', display: 'flex', alignItems: 'center', gap: '2px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '10px', padding: '4px', zIndex: 15, transition: 'background-color 0.35s, border-color 0.35s' }">
@@ -179,9 +180,10 @@
         </div>
         <div :style="{ height: '1px', background: 'var(--line)', margin: '11px 0 9px' }"></div>
         <div :style="{ fontSize: '11.5px', color: 'var(--mut)' }">已掌握 {{ stats.ok }}<template v-if="stats.decaying"> · 正在遗忘 {{ stats.decaying }}</template> · 薄弱 {{ stats.warn }} · 未学 {{ stats.dim }}</div>
+        <div v-show="width >= 640 && layout && currentUser" :style="{ marginTop: '7px', paddingTop: '7px', borderTop: '1px solid var(--line)', fontSize: '11.5px', color: 'var(--mut)', lineHeight: 1.55, maxWidth: '240px' }">滚轮缩放 · 拖动画布平移 · 右下角缩略图导航</div>
       </div>
 
-      <div v-show="width >= 640 && layout && currentUser" :style="{ position: 'absolute', left: '20px', bottom: '20px', fontSize: '12px', color: 'var(--mut)', opacity: 0.75, zIndex: 10, maxWidth: '420px', lineHeight: 1.6 }">滚轮缩放 · 拖动画布平移 · 右下角缩略图导航</div>
+      <div v-show="width >= 640 && layout && currentUser && rootCause" :style="{ position: 'absolute', left: '20px', bottom: '20px', fontSize: '12px', color: 'var(--mut)', opacity: 0.75, zIndex: 10, maxWidth: '420px', lineHeight: 1.6 }">滚轮缩放 · 拖动画布平移 · 右下角缩略图导航</div>
       <div v-show="width >= 640" :style="{ position: 'absolute', right: '20px', bottom: width >= 900 && layout && currentUser ? '128px' : '20px', fontSize: '12px', color: 'var(--mut)', opacity: 0.75, zIndex: 10 }">悬停节点查看前置链 · 点击查看详情</div>
 
       <!-- 抽屉 -->
@@ -329,7 +331,11 @@ async function loadReview() {
 
 function toggleReview() {
   reviewOpen.value = !reviewOpen.value
-  if (reviewOpen.value && !reviewLoading.value) loadReview()
+  if (reviewOpen.value) {
+    selectedId.value = null
+    hoverId.value = null
+    if (!reviewLoading.value) loadReview()
+  }
 }
 const chapterFilter = ref('全部章节')
 const query = ref('')
@@ -1002,5 +1008,15 @@ radiusOf
 }
 .wj-zoom-btn:hover {
   background: var(--line) !important;
+}
+.wj-review-drawer {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  bottom: 16px;
+  width: min(420px, calc(100% - 32px));
+  z-index: 28;
+  box-sizing: border-box;
+  animation: wjDrawerIn 0.34s cubic-bezier(0.22,1,0.36,1) both;
 }
 </style>

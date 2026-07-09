@@ -125,9 +125,14 @@ function goPractice(item) {
 
 <style scoped>
 .wj-review-panel {
-  flex: none;
-  border-bottom: 1px solid var(--line);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 14px;
   background: var(--card);
+  box-shadow: 0 12px 36px rgba(0,0,0,0.16);
+  overflow: hidden;
   transition: background-color 0.35s, border-color 0.35s;
 }
 
@@ -232,7 +237,8 @@ function goPractice(item) {
 }
 
 .wj-review-list {
-  max-height: min(280px, 38vh);
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 8px 12px 12px;
   display: flex;
