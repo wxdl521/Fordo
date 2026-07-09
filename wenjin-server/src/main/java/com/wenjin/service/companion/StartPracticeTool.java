@@ -68,7 +68,8 @@ public class StartPracticeTool implements CompanionTool {
 
         Map<String, Object> function = new LinkedHashMap<>();
         function.put("name", name());
-        function.put("description", "Start a short practice session for one node.");
+        function.put("description",
+                "When the student asks for practice questions, a quiz, or to drill a knowledge node (e.g. 出两道题/练一下), start a short graded practice session. Prefer nodeCode; else exact nodeName. size 1-3 default 2.");
         function.put("parameters", parameters);
 
         Map<String, Object> schema = new LinkedHashMap<>();
