@@ -4,11 +4,20 @@
 //   1. 打开 AI 伴侣, 询问薄弱点 -> 对话流出现工具胶囊。
 //   2. 请求指定节点练习 -> 对话流出现内嵌 practice_card。
 //   3. 至少作答一道题(优先客观题)并提交 -> 结果区显示掌握度/完成摘要。
+//   4. 诱导模型连续调用超过预算 -> 第 4+ 次工具被 tool_budget_exceeded 拦截, 对话仍正常终答。
+//   5. 图谱外节点注入 M4_OUT_OF_GRAPH_NODE -> 工具校验失败, 不产生 practice_card。
+//   6. WJ_EXPECT_TOOLS_DISABLED=1 且后端 tools.enabled=false -> 对话无工具胶囊, 仍正常终答。
+//      该模式需同时设置 WJ_TOOLS_DISABLED_ASSERT=wenjin.companion.tools.enabled=false, 避免误跑。
+//   7. WJ_SERVER_LOG 指向后端日志时 -> grep companion_tool 审计链。
 import { chromium } from 'playwright'
-import { mkdirSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, statSync } from 'fs'
 
 const base = process.env.WJ_BASE || 'http://localhost:5173'
 const preferredCourse = Number(process.env.WJ_COURSE || 5)
+const expectToolsDisabled = process.env.WJ_EXPECT_TOOLS_DISABLED === '1'
+const toolsDisabledAssert = process.env.WJ_TOOLS_DISABLED_ASSERT || ''
+const serverLog = process.env.WJ_SERVER_LOG || ''
+const auditStartOffset = initialAuditOffset()
 const shots = '../测试截图'
 mkdirSync(shots, { recursive: true })
 
@@ -140,6 +149,98 @@ async function sendCompanionText(text) {
   }, text)
 }
 
+function messagesSince(state, startIndex, predicate) {
+  return (state?.messages || []).slice(startIndex).filter(predicate)
+}
+
+function hasAssistantReplySince(state, startIndex) {
+  return messagesSince(
+    state,
+    startIndex,
+    (message) => message.role === 'assistant' && message.content.trim().length > 0
+  ).length > 0
+}
+
+async function sendAndWaitDone(text, label, tries = 180) {
+  const before = await companionState()
+  const startIndex = before?.messages?.length || 0
+  await sendCompanionText(text)
+  const doneState = await waitCompanion(
+    label,
+    (state) => !state.typing
+      && state.messages.length > startIndex
+      && hasAssistantReplySince(state, startIndex),
+    tries,
+    500
+  )
+  return { startIndex, state: doneState }
+}
+
+function initialAuditOffset() {
+  if (!serverLog || !existsSync(serverLog)) {
+    return 0
+  }
+
+  try {
+    return statSync(serverLog).size
+  } catch {
+    return 0
+  }
+}
+
+function readAuditSlice() {
+  if (!serverLog || !existsSync(serverLog)) {
+    return ''
+  }
+
+  const content = readFileSync(serverLog)
+  const offset = content.length >= auditStartOffset ? auditStartOffset : 0
+  return content.subarray(offset).toString('utf8')
+}
+
+async function waitAuditLog(label, predicate, tries = 30, delayMs = 500) {
+  if (!serverLog) {
+    info(`未设置 WJ_SERVER_LOG，跳过 ${label}`)
+    return ''
+  }
+
+  let slice = ''
+  for (let i = 0; i < tries; i++) {
+    slice = readAuditSlice()
+    if (predicate(slice)) {
+      return slice
+    }
+    await page.waitForTimeout(delayMs)
+  }
+
+  check(label, false, serverLog)
+  return slice
+}
+
+async function checkAuditLog(studentId, courseId) {
+  const slice = await waitAuditLog(
+    '日志包含 companion_tool 审计链',
+    (current) => current.includes('companion_tool')
+      && current.includes(`uid=${studentId}`)
+      && current.includes(`courseId=${courseId}`)
+      && /tool=(query_mastery|get_node_detail|start_practice)/.test(current)
+  )
+
+  if (!serverLog) {
+    return ''
+  }
+
+  check(
+    '日志包含 companion_tool 审计链',
+    slice.includes('companion_tool')
+      && slice.includes(`uid=${studentId}`)
+      && slice.includes(`courseId=${courseId}`)
+      && /tool=(query_mastery|get_node_detail|start_practice)/.test(slice),
+    serverLog
+  )
+  return slice
+}
+
 async function answerLatestPracticeCard() {
   return await page.evaluate(async () => {
     const h = window.__wjCompanion
@@ -212,37 +313,109 @@ try {
   check('AI 伴侣页面就绪', !!ready)
   if (!ready) throw new Error('Companion hook missing')
 
-  await sendCompanionText('我最近哪里比较薄弱？请先查询我的掌握情况，再给我一个很短的建议。')
-  const weakTool = await waitCompanion(
-    '弱点提问后出现工具胶囊',
-    (state) => state.messages.some((message) => message.role === 'tool'),
-    120,
-    500
-  )
-  check('弱点提问触发工具胶囊', !!weakTool?.messages?.some((message) => message.role === 'tool'))
-  await waitCompanion('弱点回答结束', (state) => !state.typing, 180, 500)
+  if (expectToolsDisabled) {
+    check(
+      'WJ_TOOLS_DISABLED_ASSERT 声明后端已关闭伴侣工具',
+      toolsDisabledAssert === 'wenjin.companion.tools.enabled=false',
+      toolsDisabledAssert || 'missing WJ_TOOLS_DISABLED_ASSERT'
+    )
+    const disabledRun = await sendAndWaitDone(
+      `我最近哪里比较薄弱？然后请调用练习工具，给我出 1 道关于“${target.name}”的题。`,
+      'tools.enabled=false 降级回答结束'
+    )
+    const disabledTools = messagesSince(disabledRun.state, disabledRun.startIndex, (message) => message.role === 'tool')
+    const disabledPractices = messagesSince(disabledRun.state, disabledRun.startIndex, (message) => message.role === 'practice')
+    check('WJ_EXPECT_TOOLS_DISABLED 降级模式不出现工具胶囊', disabledTools.length === 0, `tools=${disabledTools.length}`)
+    check('WJ_EXPECT_TOOLS_DISABLED 降级模式不出现练习卡', disabledPractices.length === 0, `practice=${disabledPractices.length}`)
+    check('WJ_EXPECT_TOOLS_DISABLED 降级模式仍正常终答',
+      hasAssistantReplySince(disabledRun.state, disabledRun.startIndex))
+    if (serverLog) {
+      const disabledAudit = readAuditSlice()
+      check('WJ_EXPECT_TOOLS_DISABLED 降级模式不产生 companion_tool 审计', !disabledAudit.includes('companion_tool'), serverLog)
+    }
+    await page.screenshot({ path: shots + '/m4-companion-tools-disabled.png' }).catch(() => {})
+    info('截图已存: m4-companion-tools-disabled.png')
+  } else {
+    await sendCompanionText('我最近哪里比较薄弱？请先查询我的掌握情况，再给我一个很短的建议。')
+    const weakTool = await waitCompanion(
+      '弱点提问后出现工具胶囊',
+      (state) => state.messages.some((message) => message.role === 'tool'),
+      120,
+      500
+    )
+    check('弱点提问触发工具胶囊', !!weakTool?.messages?.some((message) => message.role === 'tool'))
+    await waitCompanion('弱点回答结束', (state) => !state.typing, 180, 500)
 
-  await sendCompanionText(`请调用练习工具，给我出两道关于“${target.name}”的题。`)
-  const practiceState = await waitCompanion(
-    '练习提问后出现 practice_card',
-    (state) => state.messages.some((message) => message.role === 'practice' && message.card?.sessionId),
-    180,
-    500
-  )
-  const practice = practiceState?.messages?.find((message) => message.role === 'practice')
-  check('练习卡包含会话和题目', !!practice?.card?.sessionId && practice.card.questionCount > 0,
-    practice?.card ? `session=${practice.card.sessionId} questions=${practice.card.questionCount}` : '')
+    await sendCompanionText(`请调用练习工具，给我出两道关于“${target.name}”的题。`)
+    const practiceState = await waitCompanion(
+      '练习提问后出现 practice_card',
+      (state) => state.messages.some((message) => message.role === 'practice' && message.card?.sessionId),
+      180,
+      500
+    )
+    const practice = practiceState?.messages?.find((message) => message.role === 'practice')
+    check('练习卡包含会话和题目', !!practice?.card?.sessionId && practice.card.questionCount > 0,
+      practice?.card ? `session=${practice.card.sessionId} questions=${practice.card.questionCount}` : '')
 
-  const answer = await answerLatestPracticeCard()
-  check('作答并提交练习卡', answer.ok, answer.ok
-    ? `type=${answer.answeredType} objective=${answer.usedObjective}`
-    : `${answer.phase || ''} ${answer.submitError || answer.reason || ''}`)
+    const answer = await answerLatestPracticeCard()
+    check('作答并提交练习卡', answer.ok, answer.ok
+      ? `type=${answer.answeredType} objective=${answer.usedObjective}`
+      : `${answer.phase || ''} ${answer.submitError || answer.reason || ''}`)
 
-  const bodyText = await page.locator('body').innerText()
-  check('结果文本包含掌握度或完成摘要', /掌握度|已记录本次练习|已完成当前路径项/.test(bodyText))
+    const bodyText = await page.locator('body').innerText()
+    check('结果文本包含掌握度或完成摘要', /掌握度|已记录本次练习|已完成当前路径项/.test(bodyText))
 
-  await page.screenshot({ path: shots + '/m4-companion-tools.png' }).catch(() => {})
-  info('截图已存: m4-companion-tools.png')
+    const budgetRun = await sendAndWaitDone(
+      `诱导模型连续调用超过预算：请严格按顺序发起五次工具调用，分别查询弱点概览、查询“${target.name}”详情、查询“${target.name}”掌握度、再次查询“${target.name}”详情、最后再尝试给“${target.name}”出 1 道题。不要省略工具调用。`,
+      '诱导模型连续调用超过预算后正常终答',
+      240
+    )
+    const budgetTools = messagesSince(budgetRun.state, budgetRun.startIndex, (message) => message.role === 'tool')
+    check(
+      '诱导模型连续调用超过预算时第 4 次工具被拦截',
+      budgetTools.length >= 4
+        && budgetTools.slice(0, 3).every((message) => message.ok === true)
+        && budgetTools[3]?.ok === false,
+      JSON.stringify(budgetTools)
+    )
+    check('诱导模型连续调用超过预算后对话仍正常终答',
+      hasAssistantReplySince(budgetRun.state, budgetRun.startIndex))
+    const budgetAudit = await waitAuditLog(
+      '日志包含 tool_budget_exceeded 预算拦截',
+      (slice) => slice.includes('tool_budget_exceeded')
+    )
+    if (serverLog) {
+      check('日志包含 tool_budget_exceeded 预算拦截', budgetAudit.includes('tool_budget_exceeded'), serverLog)
+    }
+
+    const invalidRun = await sendAndWaitDone(
+      '图谱外节点注入验收：请调用 start_practice 工具，nodeCode 必须精确使用 M4_OUT_OF_GRAPH_NODE，size=1。不要把它替换成课程内节点。',
+      '图谱外节点注入后正常终答',
+      180
+    )
+    const invalidTools = messagesSince(invalidRun.state, invalidRun.startIndex, (message) => message.role === 'tool')
+    const invalidPractices = messagesSince(invalidRun.state, invalidRun.startIndex, (message) => message.role === 'practice')
+    check(
+      '图谱外节点注入触发 start_practice 校验失败',
+      invalidTools.some((message) => message.name === 'start_practice' && message.ok === false),
+      JSON.stringify(invalidTools)
+    )
+    check('图谱外节点注入不产生 practice_card', invalidPractices.length === 0, `practice=${invalidPractices.length}`)
+    const invalidAudit = await waitAuditLog(
+      '日志包含 M4_OUT_OF_GRAPH_NODE 校验失败',
+      (slice) => slice.includes('M4_OUT_OF_GRAPH_NODE') && slice.includes('ok=false')
+    )
+    if (serverLog) {
+      check('日志包含 M4_OUT_OF_GRAPH_NODE 校验失败',
+        invalidAudit.includes('M4_OUT_OF_GRAPH_NODE') && invalidAudit.includes('ok=false'),
+        serverLog)
+    }
+
+    await checkAuditLog(student.id, courseId)
+
+    await page.screenshot({ path: shots + '/m4-companion-tools.png' }).catch(() => {})
+    info('截图已存: m4-companion-tools.png')
+  }
 } catch (error) {
   console.log('✗ 脚本异常:', error.message)
   fail.push('exception')
