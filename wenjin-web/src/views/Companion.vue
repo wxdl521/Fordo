@@ -44,16 +44,16 @@
       </div>
 
       <div v-else ref="scrollEl" class="cp-messages">
+        <template v-for="(msg, index) in msgs" :key="index">
         <div
-          v-for="(msg, index) in msgs"
-          :key="index"
+          v-if="shouldRenderMessage(msg)"
           class="cp-msg"
           :class="`is-${msg.role}`"
         >
           <div class="cp-msg-role">{{ roleLabel(msg.role) }}</div>
 
           <div class="cp-msg-main">
-            <div v-if="isPlainMessage(msg)" class="cp-msg-body">
+            <div v-if="isPlainMessage(msg) && msg.content" class="cp-msg-body">
               {{ msg.content }}
             </div>
 
@@ -158,6 +158,7 @@
             </div>
           </div>
         </div>
+        </template>
 
         <div v-if="typing" class="cp-typing">
           <span class="cp-typing-dot"></span>
@@ -207,6 +208,7 @@ import { useStudentCourse } from '../composables/useStudentCourse.js'
 import { buildCompanionChatPayload, readCompanionNodeCode } from '../utils/companionContext.js'
 import { createDebouncedPersist } from '../utils/companionPersistence.js'
 import {
+  appendAssistantToken,
   applyToolResult,
   buildPracticeAnswerList,
   conversationSnapshotKey,
@@ -248,12 +250,14 @@ const starters = computed(() => [
 
 const hasText = computed(() => input.value.trim().length > 0)
 
-const lastAssistantIdx = computed(() => {
-  for (let i = msgs.value.length - 1; i >= 0; i--) {
-    if (msgs.value[i].role === 'assistant') return i
+/** Index of assistant in the current turn only (stop at user). */
+function currentTurnAssistantIdx(list = msgs.value) {
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i]?.role === 'assistant') return i
+    if (list[i]?.role === 'user') break
   }
   return -1
-})
+}
 
 function roleLabel(role) {
   if (role === 'user') return '你'
@@ -264,6 +268,12 @@ function roleLabel(role) {
 
 function isPlainMessage(message) {
   return message.role === 'user' || message.role === 'assistant'
+}
+
+/** Hide empty assistant placeholders so tools/practice appear first without a blank AI row. */
+function shouldRenderMessage(message) {
+  if (message?.role === 'assistant' && !message.content) return false
+  return true
 }
 
 function toolStateClass(message) {
@@ -587,10 +597,7 @@ async function handleDelete(id) {
 }
 
 function appendToAssistant(content) {
-  const idx = lastAssistantIdx.value
-  if (idx >= 0) {
-    msgs.value[idx].content += content
-  }
+  msgs.value = appendAssistantToken(msgs.value, content)
 }
 
 function sendStarter(starter) {
@@ -602,8 +609,8 @@ async function sendText() {
   const text = input.value.trim()
   if (!text || typing.value) return
 
+  // Do not pre-push empty assistant — tools/practice must land before final AI reply.
   msgs.value.push({ role: 'user', content: text })
-  msgs.value.push({ role: 'assistant', content: '' })
   input.value = ''
   typing.value = true
 
@@ -652,7 +659,8 @@ async function sendText() {
       onError: (message) => {
         typing.value = false
         snapshotPersist.flush()
-        const prefix = lastAssistantIdx.value >= 0 && msgs.value[lastAssistantIdx.value].content ? '\n\n' : ''
+        const idx = currentTurnAssistantIdx()
+        const prefix = idx >= 0 && msgs.value[idx].content ? '\n\n' : ''
         appendToAssistant(`${prefix}[错误] ${message}`)
         scrollToEnd()
       }
@@ -660,7 +668,8 @@ async function sendText() {
   } catch (error) {
     typing.value = false
     snapshotPersist.flush()
-    const prefix = lastAssistantIdx.value >= 0 && msgs.value[lastAssistantIdx.value].content ? '\n\n' : ''
+    const idx = currentTurnAssistantIdx()
+    const prefix = idx >= 0 && msgs.value[idx].content ? '\n\n' : ''
     appendToAssistant(`${prefix}[网络错误] ${error.message}`)
     scrollToEnd()
   }

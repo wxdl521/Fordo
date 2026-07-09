@@ -51,6 +51,35 @@ export function createToolMessage(event, ok = null) {
   }
 }
 
+/**
+ * Append a streaming token to the current-turn assistant bubble.
+ * If no assistant exists after the last user message, push a new one at the end
+ * so tools/practice that arrived earlier stay above the final reply.
+ * Stops scanning when a user message is hit (does not append to previous turns).
+ */
+export function appendAssistantToken(messages, token) {
+  const next = Array.isArray(messages) ? messages.slice() : []
+  const text = token == null ? '' : String(token)
+  let idx = -1
+  for (let i = next.length - 1; i >= 0; i--) {
+    if (next[i]?.role === 'assistant') {
+      idx = i
+      break
+    }
+    if (next[i]?.role === 'user') break
+  }
+  if (idx < 0) {
+    next.push({ role: 'assistant', content: text })
+  } else {
+    const current = next[idx]
+    next[idx] = {
+      ...current,
+      content: (current.content || '') + text
+    }
+  }
+  return next
+}
+
 export function applyToolResult(messages, event) {
   const pendingIndex = messages.findIndex((message) => (
     message?.role === 'tool'

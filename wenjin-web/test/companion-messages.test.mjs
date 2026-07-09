@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  appendAssistantToken,
   applyToolResult,
   buildPracticeAnswerList,
   createPracticeMessage,
@@ -110,6 +111,31 @@ test('buildPracticeAnswerList stays compatible with NodePractice answer semantic
     { questionId: 12, studentAnswer: 'A,C' },
     { questionId: 13, studentAnswer: 'loop invariant' }
   ])
+})
+
+test('assistant token appears after tools', () => {
+  let msgs = [{ role: 'user', content: '出两道题' }]
+  msgs = [...msgs, { role: 'tool', name: 'start_practice', label: '正在生成节点练习…', ok: true }]
+  msgs = appendAssistantToken(msgs, '练习已生成')
+  assert.equal(msgs[0].role, 'user')
+  assert.equal(msgs[1].role, 'tool')
+  assert.equal(msgs[2].role, 'assistant')
+  assert.equal(msgs[2].content, '练习已生成')
+})
+
+test('appendAssistantToken appends to current-turn assistant after tools and practice', () => {
+  let msgs = [
+    { role: 'user', content: 'prev' },
+    { role: 'assistant', content: 'old reply' },
+    { role: 'user', content: '出两道题' },
+    { role: 'tool', name: 'start_practice', label: '正在生成节点练习…', ok: true },
+    { role: 'practice', card: { sessionId: 1, questions: [] } }
+  ]
+  msgs = appendAssistantToken(msgs, '练习')
+  msgs = appendAssistantToken(msgs, '已生成')
+  assert.equal(msgs.map((m) => m.role).join(','), 'user,assistant,user,tool,practice,assistant')
+  assert.equal(msgs[1].content, 'old reply')
+  assert.equal(msgs[5].content, '练习已生成')
 })
 
 test('restoreTypedMessagesFromSnapshot uses saved typed messages only when transcript still matches', () => {
