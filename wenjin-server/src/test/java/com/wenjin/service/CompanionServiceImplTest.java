@@ -853,6 +853,8 @@ class CompanionServiceImplTest {
         assertThat(prompt).contains("节点详情");
         assertThat(prompt).contains("练习");
         assertThat(prompt).contains("禁止编造掌握度");
+        assertThat(prompt).contains("禁止在回复正文中输出");
+        assertThat(prompt).contains("只用自然语言总结结果");
         assertThat(prompt).contains("当前学习路径");
         assertThat(prompt).contains("当前焦点节点");
     }

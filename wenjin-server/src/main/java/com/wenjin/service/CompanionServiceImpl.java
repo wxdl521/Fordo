@@ -603,7 +603,9 @@ public class CompanionServiceImpl implements CompanionService {
         sb.append("- 涉及节点详情、前置关系、后继关系时，先通过工具获取节点详情，再组织解释。\n");
         sb.append("- 需要发起练习、推荐练习或确认练习入口时，先通过工具获取练习信息。\n");
         sb.append("- 用户只说节点名称时，先从课程知识点范围匹配名称；能确定 nodeCode 就用 nodeCode，否则传精确 nodeName 让服务端解析。\n");
-        sb.append("- 禁止编造掌握度；没有工具证据时，要明确说明暂未查询到。\n\n");
+        sb.append("- 禁止编造掌握度；没有工具证据时，要明确说明暂未查询到。\n");
+        sb.append("- 工具只能通过接口提供的 function/tool_calls 通道调用；禁止在回复正文中输出 DSML、XML、tool_calls、invoke、伪标签或任何工具协议原文。\n");
+        sb.append("- 工具执行完成后，只用自然语言总结结果，不要重复工具参数或协议。\n\n");
 
         sb.append("## 对话规则\n");
         sb.append("- 只回答《").append(cn).append("》课程范围内的问题；超出范围时，礼貌地把话题引回当前焦点节点或学习路径目标。\n");
