@@ -16,4 +16,7 @@ public class CompanionToolProperties {
     private long timeoutMs = 5000;
 
     private int maxResultChars = 2000;
+
+    /** 练习意图路由：自然语言要题时强制 start_practice */
+    private boolean intentRoutingEnabled = true;
 }

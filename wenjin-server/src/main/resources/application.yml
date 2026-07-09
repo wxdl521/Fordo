@@ -58,6 +58,8 @@ wenjin:
       max-tool-calls: 3
       timeout-ms: 5000
       max-result-chars: 2000
+      intent-routing-enabled: true  # 练习意图路由：自然语言要题时强制 start_practice
+
   diagnostic:                                    # 入口诊断组卷（T6）
     paper-size: 25                               # 诊断试卷目标题数（分层抽样上限）
     adaptive:                                     # 图引导自适应诊断（M2）
