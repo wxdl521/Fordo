@@ -65,13 +65,15 @@ public class ToolGovernor {
         String argsJson = call.argumentsJson() == null ? "{}" : call.argumentsJson();
         ToolExecutionResult result;
 
-        if (!state.tryConsume()) {
+        CompanionTool tool = registry.get(toolName);
+        boolean sideEffecting = tool != null && tool.sideEffecting();
+        // 先解析是否副作用工具，再扣预算：为 start_practice 等预留槽位
+        if (!state.tryConsume(sideEffecting)) {
             result = failed(toolCallId, toolName, "tool_budget_exceeded", "Tool call budget exceeded");
             audit(ctx, toolName, argsJson, started, result);
             return result;
         }
 
-        CompanionTool tool = registry.get(toolName);
         if (tool == null) {
             result = failed(toolCallId, toolName, "unknown_tool", "Tool is not registered: " + toolName);
             audit(ctx, toolName, argsJson, started, result);

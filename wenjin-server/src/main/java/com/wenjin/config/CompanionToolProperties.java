@@ -11,7 +11,8 @@ public class CompanionToolProperties {
 
     private int maxRounds = 2;
 
-    private int maxToolCalls = 3;
+    /** 单轮对话工具总次数上限（含为 side-effect 预留的 1 次，见 ToolExecutionState） */
+    private int maxToolCalls = 4;
 
     private long timeoutMs = 5000;
 

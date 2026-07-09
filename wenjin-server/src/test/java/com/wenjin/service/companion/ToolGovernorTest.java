@@ -225,26 +225,56 @@ class ToolGovernorTest {
     }
 
     @Test
-    void toolCallBudgetBlocksFourthCall() throws Exception {
+    void toolCallBudgetBlocksExtraNonSideEffectingCalls() throws Exception {
         AtomicInteger executions = new AtomicInteger();
         ToolGovernor governor = new ToolGovernor(
                 List.of(new FakeTool("echo", executions, "{\"ok\":true}")),
                 objectMapper,
                 properties(5_000, 2_000));
+        // max=3 时预留 1 给 side-effect → 只读最多 2 次
         ToolExecutionState state = new ToolExecutionState(3);
         ToolContext ctx = new ToolContext(1L, 10L);
 
         assertThat(governor.execute(ctx, new CompanionAiClient.ToolCall("call_1", "echo", "{}"), state).ok()).isTrue();
         assertThat(governor.execute(ctx, new CompanionAiClient.ToolCall("call_2", "echo", "{}"), state).ok()).isTrue();
-        assertThat(governor.execute(ctx, new CompanionAiClient.ToolCall("call_3", "echo", "{}"), state).ok()).isTrue();
         ToolExecutionResult blocked = governor.execute(
                 ctx,
-                new CompanionAiClient.ToolCall("call_4", "echo", "{}"),
+                new CompanionAiClient.ToolCall("call_3", "echo", "{}"),
                 state);
 
         assertThat(blocked.ok()).isFalse();
         assertThat(errorCode(blocked)).isEqualTo("tool_budget_exceeded");
-        assertThat(executions).hasValue(3);
+        assertThat(executions).hasValue(2);
+        assertThat(state.used()).isEqualTo(2);
+        assertThat(state.nonSideCap()).isEqualTo(2);
+    }
+
+    @Test
+    void sideEffectingToolUsesReservedBudgetAfterReadOnlyCap() throws Exception {
+        AtomicInteger readExec = new AtomicInteger();
+        AtomicInteger practiceExec = new AtomicInteger();
+        ToolGovernor governor = new ToolGovernor(
+                List.of(
+                        new FakeTool("echo", readExec, "{\"ok\":true}"),
+                        new StrictTool("start_practice", practiceExec, "{\"ok\":true}")),
+                objectMapper,
+                properties(5_000, 2_000));
+        ToolExecutionState state = new ToolExecutionState(3);
+        ToolContext ctx = new ToolContext(1L, 10L);
+
+        assertThat(governor.execute(ctx, new CompanionAiClient.ToolCall("c1", "echo", "{}"), state).ok()).isTrue();
+        assertThat(governor.execute(ctx, new CompanionAiClient.ToolCall("c2", "echo", "{}"), state).ok()).isTrue();
+        // 第 3 次只读应失败；start_practice 仍可用预留槽
+        assertThat(governor.execute(ctx, new CompanionAiClient.ToolCall("c3", "echo", "{}"), state).ok()).isFalse();
+        ToolExecutionResult practice = governor.execute(
+                ctx,
+                new CompanionAiClient.ToolCall("c4", "start_practice",
+                        "{\"nodeName\":\"Quadratic Functions\"}"),
+                state);
+
+        assertThat(practice.ok()).isTrue();
+        assertThat(readExec).hasValue(2);
+        assertThat(practiceExec).hasValue(1);
         assertThat(state.used()).isEqualTo(3);
     }
 
@@ -418,6 +448,12 @@ class ToolGovernorTest {
                                     "anyOf", List.of(
                                             Map.of("required", List.of("nodeCode")),
                                             Map.of("required", List.of("nodeName"))))));
+        }
+
+        @Override
+        public boolean sideEffecting() {
+            // 与生产 start_practice 一致：占用副作用预留槽
+            return "start_practice".equals(name);
         }
 
         @Override

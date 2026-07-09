@@ -55,7 +55,7 @@ wenjin:
     tools:
       enabled: true
       max-rounds: 2
-      max-tool-calls: 3
+      max-tool-calls: 4              # 含 1 次副作用预留：最多约 3 次只读 + 1 次 start_practice
       timeout-ms: 5000
       max-result-chars: 2000
       intent-routing-enabled: true  # 练习意图路由：自然语言要题时强制 start_practice
