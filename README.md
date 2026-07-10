@@ -44,11 +44,11 @@
 | 层 | 选型 |
 | --- | --- |
 | 前端 | Vue 3、Vite 5、Pinia、Vue Router、ECharts、axios、原生 fetch SSE |
-| 后端 | Spring Boot 3.3.5、Java 21、MyBatis-Plus、MySQL 8 |
+| 后端 | Spring Boot 3.3.5、Java 21、MyBatis-Plus、MySQL 8、Flyway（默认关闭） |
 | AI | OpenAI 兼容 `/chat/completions`，文本模型默认 DeepSeek，视觉模型默认 GLM，可用环境变量替换 |
 | 文档解析 | Apache POI、PDFBox |
 | 安全 | 自研 HMAC Bearer 令牌、BCrypt 密码、教师拦截器、学生资源归属校验 |
-| 测试 | JUnit 5、Mockito、Spring Boot Test、Node test、Playwright + 系统 Edge |
+| 测试 | JUnit 5、Mockito、Spring Boot Test、Testcontainers MySQL、Node test、Playwright + 系统 Edge |
 
 ## 目录结构
 
@@ -63,7 +63,8 @@ Fordo/
 │  │  ├─ security/                    # HMAC 令牌与生产密钥守卫
 │  │  └─ config/                      # 拦截器、当前用户、AI/工具配置
 │  ├─ src/main/resources/
-│  │  ├─ schema.sql                   # 本地重建库脚本，20 张表
+│  │  ├─ db/migration/                # Flyway 版本化迁移（V1 baseline + 增量）
+│  │  ├─ schema.sql                   # 仅本地空库重建快照（会删数据，生产禁用）
 │  │  ├─ data.sql                     # 本地演示账号和课程
 │  │  └─ application*.yml             # 开发/生产配置
 │  └─ seed/                           # 软件工程图谱与题库种子
@@ -85,7 +86,11 @@ Fordo/
 
 ## 数据与种子
 
-- `schema.sql` 当前建 20 张表，覆盖用户、课程、图谱、题库、学情、路径、练习、自适应诊断、资源、伴侣会话、抽取审核。
+- **生产 / CI schema 演进**：`wenjin-server/src/main/resources/db/migration/`（Flyway）。
+  - `V1__baseline_schema.sql`：空库建全部 20 张表（`CREATE TABLE IF NOT EXISTS`，无 DROP / 种子）。
+  - `V2__legacy_milestones.sql`：标记 m01/m02 已并入 V1（`SELECT 1;`）；既有库 `baseline-version: 2` 后从 V3 起。
+  - 应用默认 `spring.flyway.enabled=false`（`WENJIN_FLYWAY_ENABLED`）；发布流水线用 migrator 凭据单独跑迁移，成功后再启普通应用实例。
+- `schema.sql`：仅本地空库重建快照（含 `DROP TABLE`，**会删数据**），与 V1 最终 DDL 同步；**生产禁用**。
 - 软件工程演示图谱：`wenjin-server/seed/问津_软件工程图谱_v0.3.json`，42 个节点，53 条边。
 - 软件工程演示题库：`wenjin-server/seed/问津_软件工程题库_v0.1.json`，25 道种子题。
 - 本地演示账号来自 `data.sql`：
@@ -93,7 +98,14 @@ Fordo/
   - 学生：`demo_student / demo`
   - 演示课程：`软件工程`，课程编码 `52015CC4B4`，课程 ID 默认 `1`
 
-注意：`schema.sql` 会重建表，适合本地新库或重置环境；生产不要直接用它覆盖已有数据。
+### 迁移集成测试
+
+需要本机 Docker（Testcontainers 拉 `mysql:8.4`）。CI 必须执行，不可因本机无 Docker 而跳过。
+
+```powershell
+Set-Location wenjin-server
+.\mvnw.cmd -q -Dtest=SchemaMigrationIT test
+```
 
 ## 快速开始
 
@@ -102,13 +114,23 @@ Fordo/
 - JDK 21
 - Node.js 18+ 或 20+
 - MySQL 8
+- 集成测试另需 Docker
 - Windows PowerShell，或能等价执行下列命令的终端
 
 ### 2. 初始化数据库
 
+**本地空库（可重复、会删数据）**：
+
 ```powershell
 mysql -u root -p < wenjin-server/src/main/resources/schema.sql
 mysql -u root -p wenjin < wenjin-server/src/main/resources/data.sql
+```
+
+**等价空库路径（受控迁移）**：创建空库 `wenjin` 后，用具备 DDL 的 migrator 账号启动一次：
+
+```powershell
+$env:WENJIN_FLYWAY_ENABLED = "true"
+# DB_USER / DB_PASSWORD 指向 migrator，然后 spring-boot:run 或专用 migrate 作业
 ```
 
 ### 3. 配置环境变量

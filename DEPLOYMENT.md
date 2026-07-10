@@ -89,27 +89,93 @@ wenjin:
 
 > 改完补一个 `WebConfig` 的小测试（dev 默认 `*`、prod 取配置值），保持仓库测试习惯。
 
-### 2.3 数据库专用账号 + 删除演示弱口令账号
+### 2.3 数据库账号分离（migrator / app）+ 受控迁移 + 演示弱口令
 
-**专用账号（别用 root/root）**，并用环境变量覆盖：
+**禁止**在生产对已有库执行 `schema.sql`（含 `DROP TABLE`，会删数据）。Schema 只走 Flyway：`classpath:db/migration`。
+
+#### 两类数据库账号
+
+| 账号 | 权限 | 用途 |
+| --- | --- | --- |
+| `wenjin_migrator` | DDL + DML（`ALL` 或至少 CREATE/ALTER/INDEX + DML） | 发布流水线**一次性**迁移作业 |
+| `wenjin`（app） | 仅 `SELECT, INSERT, UPDATE, DELETE` | 长期运行的应用实例，**无 DDL** |
 
 ```sql
-CREATE USER 'wenjin'@'localhost' IDENTIFIED BY '足够强的随机密码';
+CREATE DATABASE IF NOT EXISTS wenjin
+  DEFAULT CHARACTER SET utf8mb4
+  DEFAULT COLLATE utf8mb4_0900_ai_ci;
+
+-- 迁移账号（仅迁移作业使用，勿配进常驻应用）
+CREATE USER 'wenjin_migrator'@'localhost' IDENTIFIED BY '足够强的随机密码_migrator';
+GRANT ALL PRIVILEGES ON wenjin.* TO 'wenjin_migrator'@'localhost';
+
+-- 应用账号（生产常驻）
+CREATE USER 'wenjin'@'localhost' IDENTIFIED BY '足够强的随机密码_app';
 GRANT SELECT, INSERT, UPDATE, DELETE ON wenjin.* TO 'wenjin'@'localhost';
-FLUSH PRIVILEGES;   -- 不授 DDL：建表已由 schema.sql 一次性完成
+FLUSH PRIVILEGES;
 ```
 
 ```bash
+# 常驻应用：只用 app 账号，且不要开 Flyway
 export DB_USER=wenjin
-export DB_PASSWORD='足够强的随机密码'
+export DB_PASSWORD='足够强的随机密码_app'
+# WENJIN_FLYWAY_ENABLED 不设置或 false
 ```
 
-**清除演示账号**：`schema.sql` 会种入 `demo_teacher` / `demo_student`，初始密码均为 `demo`（弱口令）。生产二选一：
+#### 发布迁移流程（失败即停）
 
-- **推荐：生产不导演示数据**。用干净库 + 真实教师账号（见 2.3.1 运维开通）；不要运行 `data.sql`，并把 `schema.sql` 末尾的演示 `INSERT`（`sys_user` / `course` / `student_course`）删掉再建库。
-- **或：保留库但改强密**。注意演示课程 `course.teacher_id=1` 指向 `demo_teacher`，**直接删 `demo_teacher` 会让该课程作者悬空**——若仍需保留演示课，请改密而非删除：
+配置要点（已在 `application.yml`）：
+
+- `spring.flyway.enabled=${WENJIN_FLYWAY_ENABLED:false}`
+- `baseline-on-migrate: true`、`baseline-version: 2`、`validate-on-migrate: true`
+- 既有生产库（已含 m01/m02 结构）首次接入时 baseline 到 2，之后只跑 **V3+**
+- 空库：作业会执行 V1（建表）+ V2（里程碑标记）+ 后续增量
+
+推荐步骤：
+
+1. **备份**（迁移前必做）  
+   ```bash
+   mysqldump -u root -p --single-transaction --routines --triggers wenjin \
+     > "wenjin-backup-$(date +%Y%m%d%H%M%S).sql"
+   ```
+2. **info**（确认待执行版本）  
+   ```bash
+   export DB_USER=wenjin_migrator
+   export DB_PASSWORD='足够强的随机密码_migrator'
+   export WENJIN_FLYWAY_ENABLED=true
+   # 使用与线上一致的 jar / 同一 classpath:db/migration
+   java -jar wenjin-server.jar --spring.main.web-application-type=none \
+     # 或在流水线中调用 Flyway CLI / 专用 migrate 入口
+   # 等价检查：确认 flyway_schema_history 与待应用 Vn
+   ```
+   也可用 Flyway CLI（版本与 Boot BOM 对齐）：
+   ```bash
+   flyway -url=jdbc:mysql://localhost:3306/wenjin \
+     -user=wenjin_migrator -password=... \
+     -locations=filesystem:wenjin-server/src/main/resources/db/migration \
+     -baselineOnMigrate=true -baselineVersion=2 \
+     info
+   ```
+3. **migrate**  
+   ```bash
+   flyway ... migrate
+   # 或：WENJIN_FLYWAY_ENABLED=true + migrator 凭据启动一次性迁移作业，成功后立即退出
+   ```
+4. **校验** `flyway info` 全部 Success；抽查关键表结构。
+5. **再启动** 普通应用实例（`DB_USER=wenjin`，`WENJIN_FLYWAY_ENABLED=false` 或不设）。
+
+**失败停止与回滚规则**：
+
+- migrate 非 0 退出码 → **禁止**滚动应用新版本；保留旧实例。
+- 不得在生产「重跑 schema.sql」或手工 `DROP` 救火。
+- 回滚优先：恢复迁移前逻辑备份（mysqldump），再排查失败的 `Vn`；Flyway 默认不对已成功版本自动 undo。
+- 修复脚本以**新的 Vn+1** 正向修补，避免改写已发布迁移的 checksum（`validate-on-migrate=true` 会拒绝篡改历史）。
+
+**演示弱口令**：生产**不要**加载 `data.sql`。本地演示账号 `demo_teacher` / `demo_student`（密码 `demo`）仅存在于 `data.sql`。
+
+- **推荐：生产干净库** + 真实教师/管理员（见 2.3.1）。
+- **或：库中已有演示账号则改强密**（勿直接删 `demo_teacher` 若课程仍引用其 `teacher_id`）：
   ```sql
-  -- 用一个 BCrypt 哈希替换明文（可用应用内注册流程生成，或任意 BCrypt 工具）
   UPDATE sys_user SET password = '$2a$10$....' WHERE username IN ('demo_teacher','demo_student');
   ```
 
@@ -325,7 +391,7 @@ npm run build        # 产出 dist/
 - **HTTPS（强烈建议）**：令牌存于浏览器 `localStorage`，无 HTTPS 易被窃听 / 中间人。用 Let's Encrypt（certbot）签证书，nginx 终止 TLS。
 - **健康检查（actuator）**：当前未引入。加 `spring-boot-starter-actuator`，仅暴露 `/actuator/health` 供负载均衡 / 探活（配置见第 4 节）。该端点不在 `/api/**` 下，不受现有鉴权拦截器影响。
 - **令牌撤销 / 轮换**：当前令牌签发后 7 天内无法主动失效（无黑名单 / 版本号）。若有「强制下线 / 改密即失效」需求，需加一层（如随用户 `tokenVersion` 校验）——属增量功能，可推迟。
-- **数据库迁移与备份**：`schema.sql` 当前为手动执行（`spring.sql.init.mode=never`，正确）。生产建议引入受控迁移流程并配置定期备份；生产 schema 演进只走增量 migration，不要对生产库重跑 `schema.sql`。
+- **数据库迁移与备份**：生产 schema **只走 Flyway**（`db/migration`，migrator 账号 + `WENJIN_FLYWAY_ENABLED=true` 作业）。`schema.sql` 仅本地空库重建，**禁止**对生产执行。配置定期 `mysqldump`；迁移前必备份（见 2.3）。
 - **限流 / 防滥用**：登录端点与 AI 调用端点可在 nginx 或应用层加限流。
 
 ---
@@ -337,7 +403,7 @@ npm run build        # 产出 dist/
 | 新增 | `wenjin-server/src/main/resources/application-prod.yml` | 生产覆盖：日志、SQL 关闭、CORS、actuator | 小 |
 | 改 | `wenjin-server/.../config/WebConfig.java` | CORS 来源外部化（若用方案 B）+ 测试 | 小 |
 | 改（可选） | `wenjin-server/pom.xml` | 加 `spring-boot-starter-actuator` | 极小 |
-| 改（建库时） | `schema.sql` / 不跑 `data.sql` | 去演示账号 | 小 |
+| 运维 | Flyway migrator 作业 + app DML 账号 | 见 2.3；不跑 `data.sql` / 不跑生产 `schema.sql` | 中 |
 
 **`application-prod.yml` 参考全文**（profile 名即文件名后缀，`SPRING_PROFILES_ACTIVE=prod` 时自动合并覆盖 `application.yml`）：
 
@@ -376,16 +442,22 @@ management:
 ### 5.1 服务器准备
 - JDK 21、MySQL 8、nginx；后端 8080 仅监听 `127.0.0.1`，对外只放 nginx 80/443。
 
-### 5.2 建库（生产：不导演示数据）
+### 5.2 建库与迁移（生产：不导演示数据，禁止 schema.sql）
 ```bash
-# 用去掉演示 INSERT 的 schema 建表（见 2.3），或建库后清理演示账号
-mysql -u root -p < wenjin-server/src/main/resources/schema.sql
-# 建专用账号（见 2.3）
-# 开通真实教师/管理员：见 2.3.1（BCrypt 审计 SQL）
+# 1) 创建空库 + migrator/app 账号（见 2.3）——不要 mysql < schema.sql
+# 2) 备份（若库中已有数据）
+# 3) 迁移作业（migrator + WENJIN_FLYWAY_ENABLED=true）
+export DB_USER=wenjin_migrator
+export DB_PASSWORD='替换为 migrator 强密码'
+export WENJIN_FLYWAY_ENABLED=true
+# flyway info && flyway migrate   或等价一次性 Spring 迁移作业
+# 失败则停止发布（见 2.3 回滚规则）
+# 4) 开通真实教师/管理员：见 2.3.1
 ```
 
 ### 5.3 配置环境变量（systemd 示例，见 5.5）
-至少：`SPRING_PROFILES_ACTIVE=prod`、`WENJIN_AUTH_SECRET`、`DB_USER`、`DB_PASSWORD`、`WENJIN_AI_API_KEY`、`WENJIN_AI_VISION_API_KEY`、`WENJIN_CORS_ORIGINS`。
+至少：`SPRING_PROFILES_ACTIVE=prod`、`WENJIN_AUTH_SECRET`、`DB_USER`（app 账号）、`DB_PASSWORD`、`WENJIN_AI_API_KEY`、`WENJIN_AI_VISION_API_KEY`、`WENJIN_CORS_ORIGINS`。  
+常驻进程**不要**设置 `WENJIN_FLYWAY_ENABLED=true`。
 
 ### 5.4 打包后端
 ```bash
@@ -406,6 +478,7 @@ Environment=SPRING_PROFILES_ACTIVE=prod
 Environment=WENJIN_AUTH_SECRET=替换为强随机值
 Environment=DB_USER=wenjin
 Environment=DB_PASSWORD=替换为强密码
+# 不要设置 WENJIN_FLYWAY_ENABLED=true（迁移用独立作业）
 Environment=WENJIN_AI_API_KEY=替换
 Environment=WENJIN_AI_VISION_API_KEY=替换
 Environment=WENJIN_CORS_ORIGINS=https://你的域名
