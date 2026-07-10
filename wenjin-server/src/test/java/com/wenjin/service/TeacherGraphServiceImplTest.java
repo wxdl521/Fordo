@@ -239,6 +239,9 @@ class TeacherGraphServiceImplTest {
         req.setName("新节点");
 
         KgNode existing = new KgNode();
+        existing.setId(50L);
+        existing.setNodeCode("N1");
+        // archivedAt == null → 生效节点，拒绝重复编码
         when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(existing));
 
         assertThatThrownBy(() -> service.createNode(1L, req))
@@ -246,6 +249,33 @@ class TeacherGraphServiceImplTest {
                 .hasMessageContaining("节点编码已存在");
 
         verify(nodeMapper, never()).insert(any(KgNode.class));
+        verify(nodeMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void createNodeRestoresArchivedNodeWithSameCode() {
+        NodeUpsertRequest req = new NodeUpsertRequest();
+        req.setNodeCode("N1");
+        req.setName("恢复节点");
+        req.setChapter("第二章");
+        req.setDifficulty(2);
+        req.setIsKey(false);
+        req.setDescription("恢复后描述");
+
+        KgNode archived = new KgNode();
+        archived.setId(77L);
+        archived.setCourseId(1L);
+        archived.setNodeCode("N1");
+        archived.setName("旧名");
+        archived.setArchivedAt(java.time.LocalDateTime.now());
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(archived));
+        when(nodeMapper.update(any(), any())).thenReturn(1);
+
+        Long nodeId = service.createNode(1L, req);
+
+        assertThat(nodeId).isEqualTo(77L);
+        verify(nodeMapper, never()).insert(any(KgNode.class));
+        verify(nodeMapper).update(any(), any());
     }
 
     @Test

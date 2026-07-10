@@ -114,6 +114,18 @@ class GraphServiceImplTest {
     }
 
     @Test
+    @DisplayName("同 payload 边业务键重复被拒，明细含 DUPLICATE_EDGE（避免 UK 500）")
+    void rejectsDuplicateEdgesInSameImport() {
+        GraphImportRequest req = req(
+                List.of(node("KT01", "A"), node("KT02", "B")),
+                List.of(edge("KT01", "KT02", "前置"),
+                        edge("KT01", "KT02", "前置")));
+        GraphValidateResult vr = expectValidateFail(req);
+        assertThat(categories(vr)).contains("DUPLICATE_EDGE");
+        assertThat(messages(vr)).anyMatch(m -> m.contains("KT01") && m.contains("KT02"));
+    }
+
+    @Test
     @DisplayName("边端点不在节点集时被拒，明细含 MISSING_NODE 且指出缺失 ID")
     void rejectsMissingEdgeEndpoint() {
         GraphImportRequest req = req(

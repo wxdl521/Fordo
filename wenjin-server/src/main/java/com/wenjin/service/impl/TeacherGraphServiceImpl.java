@@ -177,14 +177,29 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
             throw new IllegalArgumentException("节点编码不能为空");
         }
 
-        // 含归档节点：uk_course_code 仍占用
+        // 含归档节点：uk_course_code 仍占用；若仅归档则恢复并更新字段（与 import 一致）
         List<KgNode> existing = nodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>()
                         .eq(KgNode::getCourseId, courseId)
                         .eq(KgNode::getNodeCode, req.getNodeCode().trim())
         );
         if (!existing.isEmpty()) {
-            throw new IllegalArgumentException("节点编码已存在: nodeCode=" + req.getNodeCode());
+            KgNode hit = existing.get(0);
+            if (hit.getArchivedAt() == null) {
+                throw new IllegalArgumentException("节点编码已存在: nodeCode=" + req.getNodeCode());
+            }
+            applyRequest(hit, req);
+            // updateById 忽略 null：用 UpdateWrapper 清 archived_at
+            nodeMapper.update(null, new UpdateWrapper<KgNode>()
+                    .eq("id", hit.getId())
+                    .set("name", hit.getName())
+                    .set("chapter", hit.getChapter())
+                    .set("difficulty", hit.getDifficulty())
+                    .set("is_key", hit.getIsKey())
+                    .set("description", hit.getDescription())
+                    .set("node_note", hit.getNodeNote())
+                    .set("archived_at", null));
+            return hit.getId();
         }
 
         KgNode node = new KgNode();

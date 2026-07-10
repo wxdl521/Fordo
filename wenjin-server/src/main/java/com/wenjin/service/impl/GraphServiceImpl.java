@@ -233,6 +233,8 @@ public class GraphServiceImpl implements GraphService {
                     edge.setRelationType(typeCode);
                     edge.setRelationNote(item.getNote());
                     edgeMapper.insert(edge);
+                    // 防御：若校验漏掉同键重复，后续同键走更新而非二次 insert（避免 UK 500）
+                    byKey.put(key, edge);
                 } else {
                     edgeMapper.update(null, new UpdateWrapper<KgEdge>()
                             .eq("id", row.getId())
@@ -296,9 +298,11 @@ public class GraphServiceImpl implements GraphService {
             vr.add("DUPLICATE_NODE_ID", "节点 ID 重复：" + dup);
         }
 
-        // b. 边端点存在性 + 关系类型合法性
+        // b. 边端点存在性 + 关系类型合法性 + 业务键（source|target|type）唯一
         List<GraphImportRequest.EdgeItem> edges = request.getEdges() == null
                 ? List.of() : request.getEdges();
+        Set<String> edgeKeys = new HashSet<>();
+        Set<String> duplicatedEdges = new LinkedHashSet<>();
         for (int i = 0; i < edges.size(); i++) {
             GraphImportRequest.EdgeItem e = edges.get(i);
             String src = e.getSource() == null ? null : e.getSource().trim();
@@ -310,10 +314,20 @@ public class GraphServiceImpl implements GraphService {
             if (!StringUtils.hasText(tgt) || !nodeIds.contains(tgt)) {
                 vr.add("MISSING_NODE", "第 " + line + " 条边的 target「" + e.getTarget() + "」在节点集中不存在");
             }
-            if (RelationType.fromLabel(e.getType()) == null) {
+            RelationType rt = RelationType.fromLabel(e.getType());
+            if (rt == null) {
                 vr.add("BAD_RELATION_TYPE", "第 " + line + " 条边的关系类型「" + e.getType()
                         + "」非法（仅允许：前置/包含/相关/应用）");
+            } else if (StringUtils.hasText(src) && StringUtils.hasText(tgt)) {
+                // 与 reconcileEdges 业务键一致：source|target|typeCode（payload 侧用编码）
+                String bizKey = src + "|" + tgt + "|" + rt.getCode();
+                if (!edgeKeys.add(bizKey)) {
+                    duplicatedEdges.add(src + " → " + tgt + "（" + e.getType() + "）");
+                }
             }
+        }
+        for (String dup : duplicatedEdges) {
+            vr.add("DUPLICATE_EDGE", "边重复：" + dup);
         }
 
         // c. 「前置」边环检测（仅对端点均存在的前置边构图）

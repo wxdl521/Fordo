@@ -652,8 +652,10 @@ public class CompanionServiceImpl implements CompanionService {
         }
 
         List<Long> nodeIds = weakMasteries.stream().map(StudentMastery::getNodeId).toList();
+        // 归档节点不进入弱掌握上下文，避免 AI 推荐已下线知识点
         Map<Long, KgNode> nodeMap = nodeMapper.selectBatchIds(nodeIds).stream()
                 .filter(Objects::nonNull)
+                .filter(node -> node.getArchivedAt() == null)
                 .collect(Collectors.toMap(KgNode::getId, node -> node, (left, right) -> left));
 
         return weakMasteries.stream()
