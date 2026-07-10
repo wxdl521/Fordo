@@ -1,8 +1,8 @@
 import { http } from './http.js'
 
-/** 注册 */
-export function register({ username, password, realName, role }) {
-  return http.post('/register', { username, password, realName, role })
+/** 注册（公开注册仅学生；不接受/不提交 role，防止客户端提权） */
+export function register({ username, password, realName }) {
+  return http.post('/register', { username, password, realName })
 }
 
 /** 登录 */

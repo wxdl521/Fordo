@@ -57,13 +57,7 @@
           <input v-model="regConfirm" type="password" placeholder="请再次输入密码" class="wj-input" :style="inputStyle" />
 
           <label :style="{ fontSize: '12px', color: 'var(--mut)', marginBottom: '7px' }">真实姓名</label>
-          <input v-model="regRealName" placeholder="请输入真实姓名" class="wj-input" :style="inputStyle" />
-
-          <label :style="{ fontSize: '12px', color: 'var(--mut)', marginBottom: '7px' }">角色</label>
-          <div :style="{ display: 'flex', gap: '10px', marginBottom: '20px' }">
-            <button @click="regRole = 2" :style="regRole === 2 ? roleBtnActive : roleBtnInactive" class="wj-role-btn">学生</button>
-            <button @click="regRole = 1" :style="regRole === 1 ? roleBtnActive : roleBtnInactive" class="wj-role-btn">教师</button>
-          </div>
+          <input v-model="regRealName" placeholder="请输入真实姓名" class="wj-input" :style="{ ...inputStyle, marginBottom: '20px' }" />
 
           <button @click="handleRegister" class="wj-btn-acc" :style="{ height: '46px', background: 'var(--acc)', border: 'none', borderRadius: '10px', color: '#FFFDF8', fontSize: '14.5px', fontWeight: 500, cursor: 'pointer', marginBottom: '16px' }">注 册</button>
           <button @click="step = 'login'; regError = ''" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px', alignSelf: 'center' }">已有账号？登录</button>
@@ -164,7 +158,6 @@ const regUsername = ref('')
 const regPassword = ref('')
 const regConfirm = ref('')
 const regRealName = ref('')
-const regRole = ref(2)
 const regError = ref('')
 
 // 登录后存储的用户信息
@@ -213,28 +206,6 @@ const courseCard = {
   transition: 'background-color 0.35s, border-color 0.2s, transform 0.25s ease, box-shadow 0.25s ease'
 }
 
-const roleBtnBase = {
-  flex: 1,
-  height: '40px',
-  borderRadius: '10px',
-  fontSize: '14px',
-  fontWeight: 500,
-  cursor: 'pointer',
-  transition: 'all 0.18s'
-}
-const roleBtnActive = {
-  ...roleBtnBase,
-  background: 'var(--acc)',
-  border: '1px solid var(--acc)',
-  color: '#FFFDF8'
-}
-const roleBtnInactive = {
-  ...roleBtnBase,
-  background: 'transparent',
-  border: '1px solid var(--line)',
-  color: 'var(--mut)'
-}
-
 async function handleLogin() {
   loginError.value = ''
   if (!sid.value || !pwd.value) {
@@ -281,8 +252,7 @@ async function handleRegister() {
     await apiRegister({
       username: regUsername.value,
       password: regPassword.value,
-      realName: regRealName.value,
-      role: regRole.value
+      realName: regRealName.value
     })
     // 注册不发令牌，紧接着用同一凭据登录拿令牌（保持"注册即进入"的体验）
     const data = await apiLogin({ username: regUsername.value, password: regPassword.value })
@@ -355,8 +325,5 @@ onMounted(() => {
   transform: translateY(-2px);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.07);
   border-color: var(--mut);
-}
-.wj-role-btn:hover {
-  opacity: 0.85;
 }
 </style>

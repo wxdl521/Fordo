@@ -27,8 +27,10 @@ public class UserController {
     }
 
     /**
-     * 注册。
+     * 公开注册（仅学生）。
      * POST /api/register
+     * <p>客户端不得指定角色：遗留 JSON 字段 {@code role} 在 DTO 中仅兼容接收并忽略，
+     * 服务端无条件写入学生角色。教师/管理员开通见运维流程（DEPLOYMENT.md）或后续 ADMIN 入口。
      */
     @PostMapping("/register")
     public Result<UserVO> register(@RequestBody RegisterRequest request) {

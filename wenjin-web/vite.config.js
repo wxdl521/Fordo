@@ -4,6 +4,10 @@ import vue from '@vitejs/plugin-vue'
 // 前端开发服务器：端口 5173，/api 请求代理到后端 8080
 export default defineConfig({
   plugins: [vue()],
+  test: {
+    environment: 'happy-dom',
+    globals: false
+  },
   server: {
     port: 5173,
     proxy: {
