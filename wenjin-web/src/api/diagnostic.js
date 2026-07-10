@@ -1,22 +1,28 @@
 import { http } from './http.js'
 
 /**
- * 获取诊断试卷（答案已剥离）
+ * 获取诊断试卷（答案已剥离；含冻结 sessionToken）
  * @param {number} courseId
- * @returns {Promise<PaperVO>} { courseId, total, questions: [{ questionId, stem, chapter, type, options: [{ key, text }] }] }
+ * @returns {Promise<PaperVO>} { courseId, sessionToken, total, questions: [{ questionId, stem, chapter, type, options: [{ key, text }] }] }
  */
 export function fetchPaper(courseId) {
   return http.get('/diagnostic/paper', { params: { courseId } })
 }
 
 /**
- * 提交诊断答卷（身份由服务端 principal 派生）
- * @param {{ courseId: number, answers: Array<{ questionId: number, optionKey: string }> }} payload
+ * 提交诊断答卷（身份由服务端 principal 派生；须带 sessionToken）
+ * @param {{ sessionToken: string, answers: Array<{ questionId: number, optionKey: string|null }>, courseId?: number }} payload
  * @returns {Promise<SubmitResult>} { total, correctCount, grades: [{ questionId, correct, correctKey }] }
  */
 export function submitPaper(payload) {
-  const body = { ...payload }
-  delete body.studentId
+  const body = {
+    sessionToken: payload.sessionToken,
+    answers: payload.answers
+  }
+  // courseId 可选（服务端以会话为准）；不再传 studentId
+  if (payload.courseId != null) {
+    body.courseId = payload.courseId
+  }
   return http.post('/diagnostic/submit', body)
 }
 

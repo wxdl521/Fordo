@@ -14,3 +14,7 @@ wenjin:
       enabled: false
   ai:
     enabled: false
+  features:
+    fixed-diagnostic-enabled: true
+    graph-reconcile-enabled: true
+    ai-job-dispatch-enabled: true

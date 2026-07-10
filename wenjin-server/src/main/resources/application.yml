@@ -67,6 +67,10 @@ wenjin:
       max-result-chars: 2000
       intent-routing-enabled: true  # 练习意图路由：自然语言要题时强制 start_practice
 
+  features:                                      # 功能开关（开发/测试默认开；生产见 application-prod.yml）
+    fixed-diagnostic-enabled: true
+    graph-reconcile-enabled: true
+    ai-job-dispatch-enabled: true
   diagnostic:                                    # 入口诊断组卷（T6）
     paper-size: 25                               # 诊断试卷目标题数（分层抽样上限）
     adaptive:                                     # 图引导自适应诊断（M2）

@@ -17,11 +17,18 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    /** 业务异常：返回业务码 + 信息 + 明细。HTTP 状态用 200，由 code 区分成败。 */
+    /**
+     * 业务异常：默认 HTTP 200，由业务 code 区分成败；
+     * 503（特性开关关闭等）映射为 HTTP 503。
+     */
     @ExceptionHandler(BusinessException.class)
-    public Result<Object> handleBusiness(BusinessException ex) {
+    public ResponseEntity<Result<Object>> handleBusiness(BusinessException ex) {
         log.warn("业务异常: code={}, message={}", ex.getCode(), ex.getMessage());
-        return Result.fail(ex.getCode(), ex.getMessage(), ex.getDetail());
+        Result<Object> body = Result.fail(ex.getCode(), ex.getMessage(), ex.getDetail());
+        if (ex.getCode() == ResultCode.SERVICE_UNAVAILABLE.getCode()) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
+        }
+        return ResponseEntity.ok(body);
     }
 
     /** 参数校验异常（@Valid） */

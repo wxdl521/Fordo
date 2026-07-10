@@ -173,6 +173,8 @@ const questions = ref([])
 const total = ref(0)
 const loading = ref(false)
 const error = ref('')
+/** 组卷冻结会话令牌；交卷必带；缺失则强制重新组卷 */
+const sessionToken = ref(null)
 
 const idx = ref(0)        // 当前题目索引（0-based）
 const answers = ref({})   // { [idx]: optionIndex }  —— 选的是索引
@@ -213,6 +215,7 @@ async function load() {
   if (!courseId.value) {
     questions.value = []
     total.value = 0
+    sessionToken.value = null
     error.value = '请先从首页选择一门课程'
     return
   }
@@ -229,8 +232,10 @@ async function load() {
       optionKeys: (pq.options || []).map((opt) => opt.key)
     }))
     total.value = paper.total ?? questions.value.length
+    sessionToken.value = paper.sessionToken || null
   } catch (e) {
     error.value = e.message || '未知错误'
+    sessionToken.value = null
   } finally {
     loading.value = false
   }
@@ -271,18 +276,28 @@ function finish() {
 // ─── 提交 ────────────────────────────────────────────────────────────────────
 async function submitAnswers() {
   if (submitting.value) return   // 防重入：末题双击"跳过/完成"不会触发两次 POST
+
+  // 缺少冻结令牌 → 强制重新组卷（不可用旧题集交卷）
+  if (!sessionToken.value) {
+    submitError.value = '试卷会话已失效，请重新组卷后再提交'
+    done.value = false
+    await load()
+    return
+  }
+
   submitting.value = true
   submitError.value = ''
   result.value = null
 
-  // 构建 answers 数组：仅含实际选了答案的题（跳过的不传）
+  // 精确集合：提交冻结卷全部题目；跳过的 optionKey 为 null
   const payload = {
+    sessionToken: sessionToken.value,
     courseId: courseId.value,
-    answers: Object.entries(answers.value).map(([idxStr, optIdx]) => {
-      const q = questions.value[Number(idxStr)]
+    answers: questions.value.map((q, i) => {
+      const optIdx = answers.value[i]
       return {
         questionId: q.questionId,
-        optionKey: q.optionKeys[optIdx]
+        optionKey: typeof optIdx === 'number' ? q.optionKeys[optIdx] : null
       }
     })
   }
@@ -306,6 +321,8 @@ function restart() {
   submitError.value = ''
   error.value = ''
   result.value = null
+  sessionToken.value = null
+  load()
 }
 
 // 无条件 load:courseId 为空时由 load 内部守卫给出选课引导(不静默回落课程1)
@@ -338,7 +355,7 @@ onMounted(() => {
   if (import.meta.env.DEV) {
     window.__wjDiag = {
       mode,                              // 模式选择层状态（null/'full'）
-      loading, error, idx, total, done, result,
+      loading, error, idx, total, done, result, sessionToken,
       questions, answers, skipped, submitting, submitError,
       answeredCount, skippedCount, hasSel, last,
       chooseFull, chooseQuick,           // 选完整卷 / 跳快速诊断

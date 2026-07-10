@@ -48,14 +48,21 @@ public class DiagnosticController {
     }
 
     /**
-     * 学生交卷判分：逐题比对正确答案，落库 answer_record，返回得分明细。
+     * 学生交卷判分：按 sessionToken 绑定冻结会话，精确题集匹配后判分。
      * POST /api/diagnostic/submit
      */
     @PostMapping("/submit")
     public Result<SubmitResult> submit(@RequestBody SubmitRequest req) {
-        long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
+        // 身份一律从 principal 派生；可选 body.studentId 仅用于 AccessGuard 自检
+        long studentId = AccessGuard.requireSelfStudent(req == null ? null : req.getStudentId());
+        if (req == null) {
+            req = new SubmitRequest();
+        }
         req.setStudentId(studentId);
-        courseService.assertAccessibleByStudent(studentId, req.getCourseId());
+        // 课程访问：优先用 body.courseId；缺省时由 service 按会话 course_id 约束
+        if (req.getCourseId() != null) {
+            courseService.assertAccessibleByStudent(studentId, req.getCourseId());
+        }
         return Result.ok(diagnosticService.submit(req));
     }
 

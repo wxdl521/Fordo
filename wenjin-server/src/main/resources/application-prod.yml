@@ -14,6 +14,11 @@ wenjin:
   auth:
     # 生产必须显式注入；缺少 WENJIN_AUTH_SECRET 时 Spring 启动失败，禁止继承开发默认密钥
     secret: ${WENJIN_AUTH_SECRET}
+  features:
+    # 生产默认关闭，显式注入环境变量后开启
+    fixed-diagnostic-enabled: ${WENJIN_FEATURE_FIXED_DIAGNOSTIC:false}
+    graph-reconcile-enabled: ${WENJIN_FEATURE_GRAPH_RECONCILE:false}
+    ai-job-dispatch-enabled: ${WENJIN_FEATURE_AI_JOB_DISPATCH:false}
 
 # 仅在引入 actuator 后生效
 management:

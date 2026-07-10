@@ -26,14 +26,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 受控迁移两条路径：
  * <ul>
- *   <li>空库：执行 V1+V2 建出全部业务表，二次 migrate 无变更且 checksum 稳定</li>
- *   <li>遗留库：先加载当前 {@code schema.sql}，baseline version 2 接管，仅执行 V3+（当前无增量）</li>
+ *   <li>空库：执行 V1+V2+V3 建出全部业务表，二次 migrate 无变更且 checksum 稳定</li>
+ *   <li>遗留库：先加载当前 {@code schema.sql}，baseline version 2 接管，仅执行 V3+</li>
  * </ul>
  */
 class SchemaMigrationIT extends MySqlContainerSupport {
 
-    /** 与 schema.sql / V1 对齐的 20 张业务表（不含 flyway_schema_history）。 */
-    private static final List<String> EXPECTED_TABLES = List.of(
+    /** V1/schema.sql 业务表 + V3 固定诊断会话表（不含 flyway_schema_history）。 */
+    private static final List<String> BASELINE_TABLES = List.of(
             "sys_user",
             "course",
             "kg_node",
@@ -56,6 +56,19 @@ class SchemaMigrationIT extends MySqlContainerSupport {
             "extraction_review"
     );
 
+    private static final List<String> V3_TABLES = List.of(
+            "diagnostic_session",
+            "diagnostic_session_question"
+    );
+
+    private static final List<String> EXPECTED_TABLES_AFTER_V3;
+
+    static {
+        List<String> all = new ArrayList<>(BASELINE_TABLES);
+        all.addAll(V3_TABLES);
+        EXPECTED_TABLES_AFTER_V3 = List.copyOf(all);
+    }
+
     @BeforeEach
     void wipeSchema() throws Exception {
         try (Connection conn = MYSQL.createConnection("");
@@ -77,19 +90,20 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     }
 
     @Test
-    @DisplayName("空库：V1+V2 建出 20 张表；二次 migrate 无变更且 checksum 稳定")
+    @DisplayName("空库：V1+V2+V3 建出全部表；二次 migrate 无变更且 checksum 稳定")
     void emptyDatabase_appliesV1AndV2_idempotent() throws Exception {
         Flyway flyway = createFlyway();
 
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        assertThat(first.migrationsExecuted).isEqualTo(2);
+        assertThat(first.migrationsExecuted).isEqualTo(3);
 
-        assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES);
+        assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_V3);
         Map<String, Integer> checksumsAfterFirst = successChecksums();
-        assertThat(checksumsAfterFirst.keySet()).containsExactly("1", "2");
+        assertThat(checksumsAfterFirst.keySet()).containsExactly("1", "2", "3");
         assertThat(checksumsAfterFirst.get("1")).isNotNull();
         assertThat(checksumsAfterFirst.get("2")).isNotNull();
+        assertThat(checksumsAfterFirst.get("3")).isNotNull();
 
         MigrateResult second = flyway.migrate();
         assertThat(second.success).isTrue();
@@ -97,26 +111,26 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
         Map<String, Integer> checksumsAfterSecond = successChecksums();
         assertThat(checksumsAfterSecond).isEqualTo(checksumsAfterFirst);
-        assertThat(countSuccessHistoryRows()).isEqualTo(2);
+        assertThat(countSuccessHistoryRows()).isEqualTo(3);
     }
 
     @Test
-    @DisplayName("遗留库：schema.sql 后 baseline@2 接管，不重跑 V1/V2；二次 migrate 无变更")
+    @DisplayName("遗留库：schema.sql 后 baseline@2 接管，仅执行 V3；二次 migrate 无变更")
     void legacySchema_baselinesAtVersion2_onlyFutureMigrations() throws Exception {
         applyLegacySchemaSql();
-        assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES);
+        assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(BASELINE_TABLES);
 
         Flyway flyway = createFlyway();
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        // 无 V3+：仅 baseline，不执行迁移脚本
-        assertThat(first.migrationsExecuted).isEqualTo(0);
+        // baseline@2 后执行 V3
+        assertThat(first.migrationsExecuted).isEqualTo(1);
 
         Map<String, Integer> history = successChecksums();
-        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移
+        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3
         assertThat(history.keySet()).doesNotContain("1");
-        assertThat(history.keySet()).contains("2");
-        assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES);
+        assertThat(history.keySet()).contains("2", "3");
+        assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_V3);
 
         MigrateResult second = flyway.migrate();
         assertThat(second.success).isTrue();

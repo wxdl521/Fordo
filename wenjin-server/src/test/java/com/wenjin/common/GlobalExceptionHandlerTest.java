@@ -15,16 +15,31 @@ class GlobalExceptionHandlerTest {
     private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
 
     @Test
-    @DisplayName("业务异常透传 code 与明细 data")
+    @DisplayName("业务异常透传 code 与明细 data（HTTP 200）")
     void businessExceptionCarriesCodeAndDetail() {
         Object detail = "issues-detail";
         BusinessException ex = new BusinessException(ResultCode.GRAPH_VALIDATE_FAIL, "校验失败", detail);
 
-        Result<Object> r = handler.handleBusiness(ex);
+        var resp = handler.handleBusiness(ex);
 
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+        Result<Object> r = resp.getBody();
+        assertThat(r).isNotNull();
         assertThat(r.getCode()).isEqualTo(ResultCode.GRAPH_VALIDATE_FAIL.getCode());
         assertThat(r.getMessage()).isEqualTo("校验失败");
         assertThat(r.getData()).isEqualTo(detail);
+    }
+
+    @Test
+    @DisplayName("SERVICE_UNAVAILABLE 映射为 HTTP 503")
+    void serviceUnavailableMapsTo503() {
+        BusinessException ex = new BusinessException(ResultCode.SERVICE_UNAVAILABLE, "固定诊断功能暂未开放");
+
+        var resp = handler.handleBusiness(ex);
+
+        assertThat(resp.getStatusCode().value()).isEqualTo(503);
+        assertThat(resp.getBody()).isNotNull();
+        assertThat(resp.getBody().getCode()).isEqualTo(503);
     }
 
     @Test

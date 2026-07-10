@@ -367,6 +367,7 @@ class AdaptiveVsFixedEvalTest {
         SubmitRequest req = new SubmitRequest();
         req.setStudentId(studentId);
         req.setCourseId(COURSE_ID);
+        req.setSessionToken(paper.getSessionToken());
         req.setAnswers(answers);
 
         CurrentUser.set(studentId);

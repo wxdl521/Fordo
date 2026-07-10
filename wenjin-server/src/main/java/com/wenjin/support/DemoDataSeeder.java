@@ -1,6 +1,7 @@
 package com.wenjin.support;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.PaperQuestionVO;
 import com.wenjin.dto.PaperVO;
 import com.wenjin.dto.SubmitRequest;
@@ -19,6 +20,8 @@ import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.mapper.SysUserMapper;
+import com.wenjin.security.CurrentPrincipal;
+import com.wenjin.security.UserRole;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.DiagnosticService;
 import org.slf4j.Logger;
@@ -175,15 +178,18 @@ public class DemoDataSeeder implements CommandLineRunner {
             return;
         }
 
-        // 组卷一次：三个学生共用同一套题面，只是作答模式不同
-        PaperVO paper = diagnosticService.composePaper(courseId);
-        if (paper.getQuestions() == null || paper.getQuestions().isEmpty()) {
+        // 题面元数据：直接从已审核题库取（每人各自 compose 冻结会话，不再共享一张卷）
+        List<Question> approved = questionMapper.selectList(
+                new LambdaQueryWrapper<Question>()
+                        .eq(Question::getCourseId, courseId)
+                        .eq(Question::getStatus, QuestionStatus.APPROVED)
+                        .orderByAsc(Question::getId)
+                        .last("LIMIT 50"));
+        if (approved.isEmpty()) {
             log.warn("[seed] 诊断卷为空，跳过播种。");
             return;
         }
-        List<Long> qids = paper.getQuestions().stream()
-                .map(PaperQuestionVO::getQuestionId).toList();
-
+        List<Long> qids = approved.stream().map(Question::getId).toList();
         Map<Long, QMeta> metaById = loadMeta(qids);
 
         // 选 B 的目标前置点 Y：被最多干扰项映射到的 point_node_code
@@ -198,9 +204,9 @@ public class DemoDataSeeder implements CommandLineRunner {
                 .max((a, b) -> Integer.compare(metaById.get(a).difficulty(), metaById.get(b).difficulty()))
                 .orElse(qids.get(0));
 
-        seedStudent("demo_a", "演示学生A·基础薄弱", Persona.A_WEAK, qids, metaById, targetPrereq, hardestQid);
-        seedStudent("demo_b", "演示学生B·中间卡顿", Persona.B_STUCK, qids, metaById, targetPrereq, hardestQid);
-        seedStudent("demo_c", "演示学生C·接近掌握", Persona.C_NEAR, qids, metaById, targetPrereq, hardestQid);
+        seedStudent("demo_a", "演示学生A·基础薄弱", Persona.A_WEAK, metaById, targetPrereq, hardestQid);
+        seedStudent("demo_b", "演示学生B·中间卡顿", Persona.B_STUCK, metaById, targetPrereq, hardestQid);
+        seedStudent("demo_c", "演示学生C·接近掌握", Persona.C_NEAR, metaById, targetPrereq, hardestQid);
 
         SysUser decayDemo = userMapper.selectOne(
                 new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, DECAY_DEMO_USERNAME));
@@ -278,9 +284,9 @@ public class DemoDataSeeder implements CommandLineRunner {
         }
     }
 
-    /** 创建/复用学生 → 选课 → 两轮真实 submit。已有作答记录则跳过（幂等）。 */
+    /** 创建/复用学生 → 选课 → 两轮真实 compose+submit。已有作答记录则跳过（幂等）。 */
     private void seedStudent(String username, String realName, Persona persona,
-                             List<Long> qids, Map<Long, QMeta> metaById,
+                             Map<Long, QMeta> metaById,
                              String targetPrereq, Long hardestQid) {
         Long studentId = findOrCreateStudent(username, realName);
         courseService.enroll(studentId, courseId);
@@ -295,20 +301,42 @@ public class DemoDataSeeder implements CommandLineRunner {
         }
 
         // 两轮：round 0 = 初测（更弱），round 1 = 复测（更准），形成上升的成长曲线
+        // 每轮独立 compose 冻结会话（session 不可复用）
         for (int round = 0; round < 2; round++) {
-            SubmitRequest req = new SubmitRequest();
-            req.setStudentId(studentId);
-            req.setCourseId(courseId);
-            List<SubmitRequest.Answer> answers = new ArrayList<>(qids.size());
-            for (int i = 0; i < qids.size(); i++) {
-                QMeta m = metaById.get(qids.get(i));
-                SubmitRequest.Answer a = new SubmitRequest.Answer();
-                a.setQuestionId(m.questionId());
-                a.setOptionKey(chooseAnswer(persona, round, i, m, targetPrereq, hardestQid));
-                answers.add(a);
+            CurrentUser.set(new CurrentPrincipal(studentId, UserRole.STUDENT));
+            try {
+                PaperVO paper = diagnosticService.composePaper(courseId);
+                if (paper.getQuestions() == null || paper.getQuestions().isEmpty()) {
+                    log.warn("[seed] 学生 {} 组卷为空，跳过。", username);
+                    return;
+                }
+                List<PaperQuestionVO> questions = paper.getQuestions();
+                SubmitRequest req = new SubmitRequest();
+                req.setStudentId(studentId);
+                req.setCourseId(courseId);
+                req.setSessionToken(paper.getSessionToken());
+                List<SubmitRequest.Answer> answers = new ArrayList<>(questions.size());
+                for (int i = 0; i < questions.size(); i++) {
+                    Long qid = questions.get(i).getQuestionId();
+                    QMeta m = metaById.get(qid);
+                    if (m == null) {
+                        // 卷内题若未在 meta 缓存中，兜底用正确键 A
+                        SubmitRequest.Answer a = new SubmitRequest.Answer();
+                        a.setQuestionId(qid);
+                        a.setOptionKey("A");
+                        answers.add(a);
+                        continue;
+                    }
+                    SubmitRequest.Answer a = new SubmitRequest.Answer();
+                    a.setQuestionId(m.questionId());
+                    a.setOptionKey(chooseAnswer(persona, round, i, m, targetPrereq, hardestQid));
+                    answers.add(a);
+                }
+                req.setAnswers(answers);
+                diagnosticService.submit(req);
+            } finally {
+                CurrentUser.clear();
             }
-            req.setAnswers(answers);
-            diagnosticService.submit(req);
         }
         log.info("[seed] 学生 {}(id={}) 播种完成（人设 {}）。", username, studentId, persona);
     }

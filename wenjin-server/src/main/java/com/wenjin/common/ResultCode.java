@@ -24,7 +24,9 @@ public enum ResultCode {
     /** 用户名或密码错误 */
     LOGIN_FAIL(1004, "用户名或密码错误"),
     /** 服务器内部错误 */
-    INTERNAL_ERROR(500, "服务器内部错误");
+    INTERNAL_ERROR(500, "服务器内部错误"),
+    /** 功能暂时不可用（特性开关关闭等） */
+    SERVICE_UNAVAILABLE(503, "服务暂时不可用");
 
     private final int code;
     private final String message;

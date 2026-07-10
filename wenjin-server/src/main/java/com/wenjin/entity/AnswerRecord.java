@@ -39,4 +39,7 @@ public class AnswerRecord {
 
     /** 练习会话ID（scene=2 时非空，逻辑外键→practice_session.id；M1补充） */
     private Long sessionId;
+
+    /** 固定诊断会话ID（scene=1 固定卷时非空，逻辑外键→diagnostic_session.id） */
+    private Long fixedDiagnosticSessionId;
 }
