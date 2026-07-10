@@ -1,8 +1,125 @@
 # 问津 · 生产部署与加固指南
 
-本文档记录生产部署底线与账号开通流程。公开注册**只能**创建学生账号；教师与管理员不得通过 `/api/register` 自助开通。
+> 目标读者：把问津从「演示就绪」推进到「公网生产可用」的部署/运维者。
+> 现状速判：功能完整、后端 300+ 测试绿、认证已加固。**演示 / 内网试用** 设好密钥与 AI Key 即可上；**公网生产** 请先逐项完成下文「第 2 节 必做清单」。
 
-## 角色模型
+本指南分两层：
+
+- **A. 仓库 / 配置加固** —— 在代码与配置层把项目变得「生产安全」，工作量约半天，绝大多数是配置，仅 CORS 一处需改代码。
+- **B. 运维上线** —— 服务器、域名、HTTPS、nginx、生产 MySQL，依赖你的基础设施，本指南给出可照抄的示例。
+
+公开注册**只能**创建学生账号；教师与管理员不得通过 `/api/register` 自助开通（详见第 2.3.1 节）。
+
+---
+
+## 1. 推荐部署架构
+
+```
+                       (HTTPS 443)
+   浏览器  ───────────────────────────►  nginx
+                                          │  ├── /        → 静态前端 dist/（Vue 打包产物）
+                                          │  └── /api/**  → 反向代理
+                                          ▼
+                                   Spring Boot 后端 (127.0.0.1:8080, profile=prod)
+                                          │
+                                          ▼
+                                     MySQL 8 (专用账号，最小权限)
+```
+
+要点：前端构建为静态文件由 nginx 托管；`/api` 经反代到后端，**对外只暴露 nginx 443**，后端 8080 只监听本机；CORS 因此可彻底关闭（同源），或限定到前端域名。
+
+---
+
+## 2. 必做清单（上公网前逐项确认）
+
+| # | 加固项 | 类型 | 状态 |
+|---|--------|------|------|
+| 2.1 | 令牌密钥 `WENJIN_AUTH_SECRET` + 启用 `prod` profile | 配置 | ☐ |
+| 2.2 | 收紧 CORS（写死 `*` → 限定域名 / 关闭） | **改代码** | ☐ |
+| 2.3 | 数据库专用账号 + 删除演示弱口令账号 | 配置/SQL | ☐ |
+| 2.3.1 | 角色模型：公开注册仅学生；教师/管理员走运维审计 SQL | 运维/SQL | ☐ |
+| 2.4 | 日志降噪（关 debug、关 SQL 打印） | 配置 | ☐ |
+| 2.5 | 配置真实可用的 AI Key | 配置 | ☐ |
+| 2.6 | 前端生产构建 + nginx 托管 | 运维 | ☐ |
+
+### 2.1 令牌密钥 + 启用 prod profile（最关键）
+
+**为什么**：令牌用 HMAC 密钥签名。默认值 `dev-secret-change-me-in-prod` 公开在仓库，**不覆盖则任何人可伪造任意用户（含教师/管理员）的令牌**，本项目的认证形同虚设。
+
+**关键陷阱**：兜底守卫 `AuthSecretGuard` 只在 **`prod` profile 激活** 时对默认密钥 fail-fast；本项目默认无 profile，所以——**必须同时**设这两个环境变量，缺一不可：
+
+```bash
+export SPRING_PROFILES_ACTIVE=prod
+export WENJIN_AUTH_SECRET="$(openssl rand -base64 48)"   # 强随机，妥善保存，勿入库
+```
+
+**验证**：在 `prod` profile 下若忘记设密钥（仍为默认值），后端应启动失败并报错中止——这正是预期的部署门禁。
+
+> 令牌有效期 `wenjin.auth.ttl-seconds` 默认 604800（7 天），按需调整。
+
+### 2.2 收紧 CORS（唯一需改代码处）
+
+**现状**：`wenjin-server/.../config/WebConfig.java` 写死 `allowedOriginPatterns("*")`，对生产过于宽松。
+
+**方案 A（推荐，零代码）**：前端与后端经 nginx 同源（都在 `https://你的域名` 下，`/api` 反代），浏览器不发跨域请求，CORS 规则不触发——无需改动，最安全。
+
+**方案 B（前后端分域时）**：把允许来源外部化为配置项。改 `WebConfig`：
+
+```java
+@org.springframework.beans.factory.annotation.Value("${wenjin.cors.allowed-origin-patterns:*}")
+private String corsAllowedOriginPatterns;   // 逗号分隔
+
+@Override
+public void addCorsMappings(CorsRegistry registry) {
+    registry.addMapping("/api/**")
+            .allowedOriginPatterns(corsAllowedOriginPatterns.split(","))
+            .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+            .allowedHeaders("*")
+            .allowCredentials(false);   // 令牌走 Authorization 头、不依赖 Cookie，关闭凭证更安全
+}
+```
+
+dev 默认仍为 `*`；prod 在 `application-prod.yml` 或环境变量里指定：
+
+```yaml
+wenjin:
+  cors:
+    allowed-origin-patterns: ${WENJIN_CORS_ORIGINS:https://你的前端域名}
+```
+
+> 改完补一个 `WebConfig` 的小测试（dev 默认 `*`、prod 取配置值），保持仓库测试习惯。
+
+### 2.3 数据库专用账号 + 删除演示弱口令账号
+
+**专用账号（别用 root/root）**，并用环境变量覆盖：
+
+```sql
+CREATE USER 'wenjin'@'localhost' IDENTIFIED BY '足够强的随机密码';
+GRANT SELECT, INSERT, UPDATE, DELETE ON wenjin.* TO 'wenjin'@'localhost';
+FLUSH PRIVILEGES;   -- 不授 DDL：建表已由 schema.sql 一次性完成
+```
+
+```bash
+export DB_USER=wenjin
+export DB_PASSWORD='足够强的随机密码'
+```
+
+**清除演示账号**：`schema.sql` 会种入 `demo_teacher` / `demo_student`，初始密码均为 `demo`（弱口令）。生产二选一：
+
+- **推荐：生产不导演示数据**。用干净库 + 真实教师账号（见 2.3.1 运维开通）；不要运行 `data.sql`，并把 `schema.sql` 末尾的演示 `INSERT`（`sys_user` / `course` / `student_course`）删掉再建库。
+- **或：保留库但改强密**。注意演示课程 `course.teacher_id=1` 指向 `demo_teacher`，**直接删 `demo_teacher` 会让该课程作者悬空**——若仍需保留演示课，请改密而非删除：
+  ```sql
+  -- 用一个 BCrypt 哈希替换明文（可用应用内注册流程生成，或任意 BCrypt 工具）
+  UPDATE sys_user SET password = '$2a$10$....' WHERE username IN ('demo_teacher','demo_student');
+  ```
+
+> `wenjin.seed.enabled` 必须保持 `false`（默认即 false），避免启动时播种演示数据。
+
+### 2.3.1 角色模型与运维开通教师 / 管理员
+
+公开注册 **只能** 创建学生账号；教师与管理员不得通过 `/api/register` 自助开通。
+
+#### 角色模型
 
 | 角色 | 编码 | 开通方式 |
 | --- | --- | --- |
@@ -12,21 +129,11 @@
 
 客户端提交的遗留 JSON 字段 `role` 在兼容窗口内会被服务端忽略，**不得**用于提权。
 
-## 生产底线
-
-- 必须启用 `prod` profile，并设置强随机 `WENJIN_AUTH_SECRET`。
-- **不要**导入 `data.sql` 中的演示弱口令账号（`demo_teacher` / `demo_student`）。
-- 不要使用 `root/root` 数据库账号。
-- 不要把 AI Key 写入配置文件或提交到仓库。
-- 推荐由 nginx 托管前端静态文件，并反向代理 `/api` 到后端，只对外暴露 HTTPS。
-- CORS 生产域名通过 `WENJIN_CORS_ORIGINS` 配置。
-- 生产 schema 演进只走增量 migration，不要对生产库重跑 `schema.sql`。
-
-## 运维开通教师账号（Task 2 上线前）
+#### 运维开通教师账号（Task 2 上线前）
 
 在 Task 2 的 ADMIN 自助/受控开通入口上线前，生产教师账号**只能**由运维执行经审计的 SQL 创建，密码必须为 **BCrypt** 哈希（与应用 `BCryptPasswordEncoder` 一致），禁止写入明文。
 
-### 1. 生成 BCrypt 哈希
+##### 1. 生成 BCrypt 哈希
 
 任选其一（示例密码请替换为强随机口令）：
 
@@ -49,7 +156,7 @@ public class Gen {
 
 哈希应形如 `$2a$10$...` 或 `$2b$10$...`。
 
-### 2. 审计 SQL 插入教师
+##### 2. 审计 SQL 插入教师
 
 在变更窗口执行，并保留工单号 / 执行人 / 时间：
 
@@ -79,7 +186,7 @@ VALUES (
 );
 ```
 
-### 3. 校验
+##### 3. 校验
 
 ```sql
 SELECT id, username, real_name, role, status, LEFT(password, 4) AS pwd_prefix
@@ -90,8 +197,240 @@ WHERE username IN ('teacher_zhang', 'admin_ops');
 
 用该账号登录一次，确认令牌与教师端拦截器工作正常。成功后通过安全渠道将初始口令交付本人，并要求首次登录后尽快修改（当前若尚无自助改密，则由运维再次用 BCrypt 更新 `password` 列）。
 
-## 禁止事项
+#### 禁止事项（角色与账号）
 
 - 禁止通过公开注册或手工改库把学生账号批量改为教师而无工单。
 - 禁止在生产使用 `data.sql` 演示口令。
 - 禁止将 BCrypt 生成过程中的明文密码写入 git、聊天记录或工单附件。
+
+### 2.4 日志降噪
+
+**现状**：`application.yml` 为 `com.wenjin: debug`，且 MyBatis-Plus `log-impl: StdOutImpl` 会打印**全部 SQL**——生产环境性能受损且可能泄露数据。在 `application-prod.yml` 覆盖（见第 4 节完整示例）：
+
+```yaml
+logging:
+  level:
+    root: warn
+    com.wenjin: info
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+```
+
+### 2.5 AI Key
+
+出题 / 标注 / 课程标准抽取依赖大模型（OpenAI 兼容）。不配 Key 时这些功能不可用（其余功能正常）：
+
+```bash
+export WENJIN_AI_API_KEY="文本模型 Key"          # 默认 DeepSeek（deepseek-v4-pro）
+export WENJIN_AI_VISION_API_KEY="视觉模型 Key"    # 默认 GLM（glm-5v-turbo），图片抽取用
+# 可选覆盖：WENJIN_AI_BASE_URL / WENJIN_AI_MODEL / WENJIN_AI_VISION_BASE_URL / WENJIN_AI_VISION_MODEL
+```
+
+> Key 仅经环境变量注入，**切勿写进仓库或配置文件**。
+
+### 2.6 前端生产构建 + nginx
+
+`vite` 是开发服务器，**不可用于生产**。构建静态产物：
+
+```bash
+cd wenjin-web
+npm ci
+npm run build        # 产出 dist/
+```
+
+把 `dist/` 交给 nginx（配置见第 5.6 节）。
+
+---
+
+## 3. 建议清单（非阻断，但生产应有）
+
+- **HTTPS（强烈建议）**：令牌存于浏览器 `localStorage`，无 HTTPS 易被窃听 / 中间人。用 Let's Encrypt（certbot）签证书，nginx 终止 TLS。
+- **健康检查（actuator）**：当前未引入。加 `spring-boot-starter-actuator`，仅暴露 `/actuator/health` 供负载均衡 / 探活（配置见第 4 节）。该端点不在 `/api/**` 下，不受现有鉴权拦截器影响。
+- **令牌撤销 / 轮换**：当前令牌签发后 7 天内无法主动失效（无黑名单 / 版本号）。若有「强制下线 / 改密即失效」需求，需加一层（如随用户 `tokenVersion` 校验）——属增量功能，可推迟。
+- **数据库迁移与备份**：`schema.sql` 当前为手动执行（`spring.sql.init.mode=never`，正确）。生产建议引入受控迁移流程并配置定期备份；生产 schema 演进只走增量 migration，不要对生产库重跑 `schema.sql`。
+- **限流 / 防滥用**：登录端点与 AI 调用端点可在 nginx 或应用层加限流。
+
+---
+
+## 4. 需新增 / 改动的文件汇总（A 层加固）
+
+| 动作 | 文件 | 说明 | 量 |
+|------|------|------|----|
+| 新增 | `wenjin-server/src/main/resources/application-prod.yml` | 生产覆盖：日志、SQL 关闭、CORS、actuator | 小 |
+| 改 | `wenjin-server/.../config/WebConfig.java` | CORS 来源外部化（若用方案 B）+ 测试 | 小 |
+| 改（可选） | `wenjin-server/pom.xml` | 加 `spring-boot-starter-actuator` | 极小 |
+| 改（建库时） | `schema.sql` / 不跑 `data.sql` | 去演示账号 | 小 |
+
+**`application-prod.yml` 参考全文**（profile 名即文件名后缀，`SPRING_PROFILES_ACTIVE=prod` 时自动合并覆盖 `application.yml`）：
+
+```yaml
+# 仅写需要覆盖 application.yml 的项；其余沿用基线配置
+logging:
+  level:
+    root: warn
+    com.wenjin: info
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl   # 生产关闭 SQL 打印
+
+wenjin:
+  cors:
+    allowed-origin-patterns: ${WENJIN_CORS_ORIGINS:https://你的前端域名}
+
+# 仅在引入 actuator 后生效
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+```
+
+预计 A 层加固整体工作量：**约半天**（配置为主，CORS 改代码 + 测试是唯一代码改动）。
+
+---
+
+## 5. 端到端部署步骤
+
+### 5.1 服务器准备
+- JDK 21、MySQL 8、nginx；后端 8080 仅监听 `127.0.0.1`，对外只放 nginx 80/443。
+
+### 5.2 建库（生产：不导演示数据）
+```bash
+# 用去掉演示 INSERT 的 schema 建表（见 2.3），或建库后清理演示账号
+mysql -u root -p < wenjin-server/src/main/resources/schema.sql
+# 建专用账号（见 2.3）
+# 开通真实教师/管理员：见 2.3.1（BCrypt 审计 SQL）
+```
+
+### 5.3 配置环境变量（systemd 示例，见 5.5）
+至少：`SPRING_PROFILES_ACTIVE=prod`、`WENJIN_AUTH_SECRET`、`DB_USER`、`DB_PASSWORD`、`WENJIN_AI_API_KEY`、`WENJIN_AI_VISION_API_KEY`、`WENJIN_CORS_ORIGINS`。
+
+### 5.4 打包后端
+```bash
+cd wenjin-server
+./mvnw -q -DskipTests package      # 产出 target/wenjin-server.jar
+```
+
+### 5.5 以 systemd 托管后端
+`/etc/systemd/system/wenjin.service`：
+```ini
+[Unit]
+Description=Wenjin Backend
+After=network.target mysql.service
+
+[Service]
+User=wenjin
+Environment=SPRING_PROFILES_ACTIVE=prod
+Environment=WENJIN_AUTH_SECRET=替换为强随机值
+Environment=DB_USER=wenjin
+Environment=DB_PASSWORD=替换为强密码
+Environment=WENJIN_AI_API_KEY=替换
+Environment=WENJIN_AI_VISION_API_KEY=替换
+Environment=WENJIN_CORS_ORIGINS=https://你的域名
+ExecStart=/usr/bin/java -jar /opt/wenjin/wenjin-server.jar
+SuccessExitStatus=143
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now wenjin
+```
+
+### 5.6 前端 + nginx
+```bash
+cd wenjin-web && npm ci && npm run build      # → dist/
+sudo cp -r dist/* /var/www/wenjin/
+```
+nginx server 块：
+```nginx
+server {
+    listen 443 ssl;
+    server_name 你的域名;
+    ssl_certificate     /etc/letsencrypt/live/你的域名/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/你的域名/privkey.pem;
+
+    root /var/www/wenjin;
+    index index.html;
+
+    # Vue history 路由：找不到文件回退到 index.html
+    location / { try_files $uri $uri/ /index.html; }
+
+    # 反代后端；同源，故无需 CORS
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # SSE（AI 伴侣流式）：关闭缓冲、拉长超时
+        proxy_buffering off;
+        proxy_read_timeout 600s;
+    }
+}
+# 80 → 443 跳转
+server { listen 80; server_name 你的域名; return 301 https://$host$request_uri; }
+```
+> `/api/companion/chat` 是 SSE 流式接口，nginx 必须 `proxy_buffering off`，否则前端收不到逐字输出。
+
+### 5.7 导入种子图谱/题库（可选，仅演示课需要）
+见 README「快速开始」第 4 步（生产正式课程通常由教师端建图，不导演示种子）。
+
+---
+
+## 6. 部署后冒烟验证
+
+后端就绪后，用令牌闭环 6 项验证认证生效（把 `https://你的域名` 换成实际地址）：
+
+```bash
+BASE=https://你的域名
+# 1) 登录拿令牌（用真实账号）
+TOK=$(curl -s -X POST $BASE/api/login -H 'Content-Type: application/json' \
+  -d '{"username":"真实用户","password":"真实密码"}' | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+# 2) 带令牌访问本人学情 → code:0
+curl -s -H "Authorization: Bearer $TOK" "$BASE/api/companion/conversations?studentId=本人id&courseId=x"
+# 3) 无令牌 → code:401   4) 伪造令牌 → code:401   5) 跨用户 → code:403
+curl -s "$BASE/api/companion/conversations?studentId=本人id&courseId=x"
+curl -s -H "Authorization: Bearer forged.token.value" "$BASE/api/companion/conversations?studentId=本人id&courseId=x"
+# 6) 学生令牌访问教师路由 → code:403
+curl -s -H "Authorization: Bearer $TOK" "$BASE/api/teacher/courses"
+```
+
+额外确认：
+- [ ] 浏览器访问走 HTTPS、无证书告警
+- [ ] 后端日志已无逐条 SQL、无 debug 噪声
+- [ ] `WENJIN_AUTH_SECRET` 已非默认值（启动日志无「使用默认开发密钥」WARN）
+- [ ] 演示弱口令账号 `demo_teacher/demo_student` 已删除或改强密
+- [ ] 教师/管理员由运维 BCrypt 审计 SQL 开通，非公开注册（见 2.3.1）
+- [ ] AI 伴侣流式对话能逐字输出（SSE 反代生效）
+
+---
+
+## 7. 环境变量速查表
+
+| 变量 | 用途 | 默认 | 生产建议 |
+|------|------|------|----------|
+| `SPRING_PROFILES_ACTIVE` | 激活 profile | （无） | **`prod`（必设）** |
+| `WENJIN_AUTH_SECRET` | 令牌签名密钥 | `dev-secret-change-me-in-prod`（公开） | **强随机值（必设）** |
+| `DB_USER` / `DB_PASSWORD` | 数据库账号 | `root` / `root` | 专用账号 + 强密码 |
+| `WENJIN_CORS_ORIGINS` | 允许的前端来源 | `*` | 前端域名（或同源不开 CORS） |
+| `WENJIN_AI_API_KEY` | 文本模型 Key | 空 | 真实 Key |
+| `WENJIN_AI_VISION_API_KEY` | 视觉模型 Key | 空 | 真实 Key（用图片抽取时） |
+| `WENJIN_AI_BASE_URL` / `WENJIN_AI_MODEL` | 文本模型地址/型号 | DeepSeek / deepseek-v4-pro | 按所用服务 |
+| `WENJIN_AI_VISION_BASE_URL` / `WENJIN_AI_VISION_MODEL` | 视觉模型地址/型号 | GLM / glm-5v-turbo | 按所用服务 |
+| `wenjin.auth.ttl-seconds` | 令牌有效期(秒) | 604800（7天） | 按需 |
+| `wenjin.seed.enabled` | 演示数据播种 | false | **保持 false** |
+
+---
+
+## 8. 小结
+
+- **代码/配置加固（A 层）**：约半天，按第 2、4 节做完即可让仓库「生产安全」，唯一代码改动是 CORS 外部化。
+- **运维上线（B 层）**：照第 5 节走，快慢取决于你的服务器/域名/证书是否就绪。
+- **角色开通**：公开注册仅学生（`role=2`）；教师/管理员见 2.3.1，Task 2 前用 BCrypt 审计 SQL。
+- 最容易翻车也最致命的一项：**`SPRING_PROFILES_ACTIVE=prod` 与 `WENJIN_AUTH_SECRET` 必须同时设**——这是认证安全的总开关。
