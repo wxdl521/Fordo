@@ -161,7 +161,9 @@ public class DiagnosticServiceImpl implements DiagnosticService {
 
         // ── 3. 取课程所有图谱节点，构建 nodeId → KgNode ──────────────────────
         List<KgNode> kgNodes = kgNodeMapper.selectList(
-                new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId));
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt));
 
         Map<Long, KgNode> nodeMap = new HashMap<>();
         for (KgNode n : kgNodes) {

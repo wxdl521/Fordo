@@ -3,6 +3,7 @@ package com.wenjin.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.dto.NodeUpsertRequest;
 import com.wenjin.dto.PendingEdgeVO;
 import com.wenjin.dto.TeacherGraphVO;
@@ -10,14 +11,12 @@ import com.wenjin.entity.KgEdge;
 import com.wenjin.entity.KgNode;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
-import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.impl.TeacherGraphServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -28,7 +27,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -41,16 +39,16 @@ class TeacherGraphServiceImplTest {
     private KgEdgeMapper edgeMapper;
 
     @Mock
-    private QuestionNodeMapper questionNodeMapper;
-
-    @Mock
     private CourseAccessService courseAccessService;
 
-    @InjectMocks
+    private FeatureFlagsProperties featureFlags;
     private TeacherGraphServiceImpl service;
 
     @BeforeEach
-    void allowAccess() {
+    void setUp() {
+        featureFlags = new FeatureFlagsProperties();
+        featureFlags.setGraphReconcileEnabled(true);
+        service = new TeacherGraphServiceImpl(nodeMapper, edgeMapper, courseAccessService, featureFlags);
         lenient().doNothing().when(courseAccessService).assertManageCourse(anyLong());
         lenient().when(courseAccessService.assertManageNode(anyLong())).thenReturn(1L);
         lenient().when(courseAccessService.assertManageEdge(anyLong())).thenReturn(1L);
@@ -58,7 +56,6 @@ class TeacherGraphServiceImplTest {
 
     @Test
     void getGraphReturnsFullGraphWithPendingFlag() {
-        // Given
         KgNode n1 = new KgNode();
         n1.setId(1L);
         n1.setNodeCode("N1");
@@ -83,7 +80,7 @@ class TeacherGraphServiceImplTest {
         e1.setId(10L);
         e1.setFromNodeId(1L);
         e1.setToNodeId(2L);
-        e1.setRelationType(1); // 前置
+        e1.setRelationType(1);
         e1.setRelationNote("『待复核』AI推荐");
         e1.setConfidence(75);
 
@@ -91,17 +88,15 @@ class TeacherGraphServiceImplTest {
         e2.setId(11L);
         e2.setFromNodeId(2L);
         e2.setToNodeId(3L);
-        e2.setRelationType(3); // 相关
+        e2.setRelationType(3);
         e2.setRelationNote("正常描述");
         e2.setConfidence(90);
 
         when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(n1, n2, n3));
         when(edgeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(e1, e2));
 
-        // When
         TeacherGraphVO result = service.getGraph(1L);
 
-        // Then
         assertThat(result.getNodes()).hasSize(3);
         assertThat(result.getNodes().get(0).getNodeCode()).isEqualTo("N1");
 
@@ -120,7 +115,6 @@ class TeacherGraphServiceImplTest {
 
     @Test
     void pendingEdgesSortedByConfidenceDesc() {
-        // Given
         KgNode n1 = new KgNode();
         n1.setId(1L);
         n1.setNodeCode("N1");
@@ -138,7 +132,7 @@ class TeacherGraphServiceImplTest {
         e1.setId(10L);
         e1.setFromNodeId(1L);
         e1.setToNodeId(2L);
-        e1.setRelationType(1); // 前置
+        e1.setRelationType(1);
         e1.setRelationNote("『待复核』低置信度");
         e1.setConfidence(65);
 
@@ -146,7 +140,7 @@ class TeacherGraphServiceImplTest {
         e2.setId(11L);
         e2.setFromNodeId(2L);
         e2.setToNodeId(3L);
-        e2.setRelationType(1); // 前置
+        e2.setRelationType(1);
         e2.setRelationNote("正常边");
         e2.setConfidence(90);
 
@@ -154,7 +148,7 @@ class TeacherGraphServiceImplTest {
         e3.setId(12L);
         e3.setFromNodeId(1L);
         e3.setToNodeId(3L);
-        e3.setRelationType(3); // 相关
+        e3.setRelationType(3);
         e3.setRelationNote("『待复核』高置信度");
         e3.setConfidence(80);
 
@@ -163,10 +157,8 @@ class TeacherGraphServiceImplTest {
         when(edgeMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(Arrays.asList(e1, e2, e3));
 
-        // When
         List<PendingEdgeVO> result = service.pendingEdges(1L);
 
-        // Then
         assertThat(result).hasSize(2);
         assertThat(result.get(0).getId()).isEqualTo(12L);
         assertThat(result.get(0).getConfidence()).isEqualTo(80);
@@ -183,57 +175,61 @@ class TeacherGraphServiceImplTest {
 
     @Test
     void acceptEdgeStripsPrefix() {
-        // Given
         KgEdge edge = new KgEdge();
         edge.setId(10L);
         edge.setRelationNote("『待复核』AI推荐原因");
         when(edgeMapper.selectById(10L)).thenReturn(edge);
         when(edgeMapper.updateById(any(KgEdge.class))).thenReturn(1);
 
-        // When
         service.acceptEdge(10L);
 
-        // Then
         ArgumentCaptor<KgEdge> captor = ArgumentCaptor.forClass(KgEdge.class);
         verify(edgeMapper).updateById(captor.capture());
         assertThat(captor.getValue().getRelationNote()).isEqualTo("AI推荐原因");
     }
 
     @Test
-    void rejectEdgeDeletesRow() {
-        // Given
+    void rejectEdgeArchivesRow() {
         KgEdge edge = new KgEdge();
         edge.setId(10L);
         when(edgeMapper.selectById(10L)).thenReturn(edge);
-        when(edgeMapper.deleteById(10L)).thenReturn(1);
+        when(edgeMapper.updateById(any(KgEdge.class))).thenReturn(1);
 
-        // When
         service.rejectEdge(10L);
 
-        // Then
-        verify(edgeMapper).selectById(10L);
-        verify(edgeMapper).deleteById(10L);
+        ArgumentCaptor<KgEdge> captor = ArgumentCaptor.forClass(KgEdge.class);
+        verify(edgeMapper).updateById(captor.capture());
+        assertThat(captor.getValue().getArchivedAt()).isNotNull();
+        verify(edgeMapper, never()).deleteById(any(Long.class));
     }
 
     @Test
-    void deleteNodeCascadesEdgesAndQuestionNodes() {
-        // Given
+    void deleteNodeArchivesNodeAndEdges_noHardDeleteOfQuestionNodes() {
         KgNode node = new KgNode();
         node.setId(1L);
         node.setNodeCode("N1");
         when(nodeMapper.selectById(1L)).thenReturn(node);
-        when(edgeMapper.delete(any(LambdaQueryWrapper.class))).thenReturn(2);
-        when(questionNodeMapper.delete(any(LambdaQueryWrapper.class))).thenReturn(3);
-        when(nodeMapper.deleteById(1L)).thenReturn(1);
+        when(edgeMapper.update(any(), any())).thenReturn(2);
+        when(nodeMapper.updateById(any(KgNode.class))).thenReturn(1);
 
-        // When
         service.deleteNode(1L);
 
-        // Then
-        // Should delete edges by fromNodeId and toNodeId (2 calls)
-        verify(edgeMapper, times(2)).delete(any(LambdaQueryWrapper.class));
-        verify(questionNodeMapper).delete(any(LambdaQueryWrapper.class));
-        verify(nodeMapper).deleteById(1L);
+        verify(edgeMapper).update(any(), any());
+        ArgumentCaptor<KgNode> captor = ArgumentCaptor.forClass(KgNode.class);
+        verify(nodeMapper).updateById(captor.capture());
+        assertThat(captor.getValue().getArchivedAt()).isNotNull();
+        verify(nodeMapper, never()).deleteById(any(Long.class));
+        verify(edgeMapper, never()).delete(any());
+    }
+
+    @Test
+    void deleteNode_featureDisabled_503() {
+        featureFlags.setGraphReconcileEnabled(false);
+        assertThatThrownBy(() -> service.deleteNode(1L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
+        verify(nodeMapper, never()).updateById(any(KgNode.class));
     }
 
     @Test
@@ -245,7 +241,6 @@ class TeacherGraphServiceImplTest {
         KgNode existing = new KgNode();
         when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(existing));
 
-        // When/Then
         assertThatThrownBy(() -> service.createNode(1L, req))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("节点编码已存在");
@@ -271,10 +266,8 @@ class TeacherGraphServiceImplTest {
             return 1;
         });
 
-        // When
         Long nodeId = service.createNode(1L, req);
 
-        // Then
         assertThat(nodeId).isEqualTo(100L);
         ArgumentCaptor<KgNode> captor = ArgumentCaptor.forClass(KgNode.class);
         verify(nodeMapper).insert(captor.capture());
@@ -295,7 +288,6 @@ class TeacherGraphServiceImplTest {
 
     @Test
     void updateNodeModifiesFields() {
-        // Given
         KgNode existing = new KgNode();
         existing.setId(1L);
         existing.setNodeCode("N1");
@@ -303,7 +295,6 @@ class TeacherGraphServiceImplTest {
         when(nodeMapper.updateById(any(KgNode.class))).thenReturn(1);
 
         NodeUpsertRequest req = new NodeUpsertRequest();
-        // 不设置 nodeCode，或设置为 null，避免触发修改检查
         req.setName("新名称");
         req.setChapter("新章节");
         req.setDifficulty(5);
@@ -311,14 +302,12 @@ class TeacherGraphServiceImplTest {
         req.setDescription("新描述");
         req.setNote("新备注");
 
-        // When
         service.updateNode(1L, req);
 
-        // Then
         ArgumentCaptor<KgNode> captor = ArgumentCaptor.forClass(KgNode.class);
         verify(nodeMapper).updateById(captor.capture());
         KgNode updated = captor.getValue();
-        assertThat(updated.getNodeCode()).isEqualTo("N1");  // nodeCode 保持原值
+        assertThat(updated.getNodeCode()).isEqualTo("N1");
         assertThat(updated.getName()).isEqualTo("新名称");
         assertThat(updated.getChapter()).isEqualTo("新章节");
         assertThat(updated.getDifficulty()).isEqualTo(5);
@@ -326,8 +315,6 @@ class TeacherGraphServiceImplTest {
         assertThat(updated.getDescription()).isEqualTo("新描述");
         assertThat(updated.getNodeNote()).isEqualTo("新备注");
     }
-
-    // ========== 新增测试用例：C1 输入验证 ==========
 
     @Test
     void getGraphRejectsNullCourseId() {
@@ -411,8 +398,6 @@ class TeacherGraphServiceImplTest {
                 .hasMessageContaining("nodeId 无效");
     }
 
-    // ========== 新增测试用例：C2 边存在性检查 ==========
-
     @Test
     void acceptEdgeRejectsNonexistentEdge() {
         when(edgeMapper.selectById(999L)).thenReturn(null);
@@ -429,11 +414,8 @@ class TeacherGraphServiceImplTest {
                 .hasMessageContaining("边不存在: edgeId=999");
     }
 
-    // ========== 新增测试用例：C3 脏数据处理 ==========
-
     @Test
     void pendingEdgesSkipsDirtyEdges() {
-        // Given: 一条边指向已删除的节点
         KgNode n1 = new KgNode();
         n1.setId(1L);
         n1.setNodeCode("N1");
@@ -442,7 +424,7 @@ class TeacherGraphServiceImplTest {
         KgEdge validEdge = new KgEdge();
         validEdge.setId(10L);
         validEdge.setFromNodeId(1L);
-        validEdge.setToNodeId(2L);  // 节点2不存在
+        validEdge.setToNodeId(2L);
         validEdge.setRelationType(1);
         validEdge.setRelationNote("『待复核』孤儿边");
         validEdge.setConfidence(70);
@@ -450,7 +432,7 @@ class TeacherGraphServiceImplTest {
         KgEdge validEdge2 = new KgEdge();
         validEdge2.setId(11L);
         validEdge2.setFromNodeId(1L);
-        validEdge2.setToNodeId(1L);  // 指向自己，有效
+        validEdge2.setToNodeId(1L);
         validEdge2.setRelationType(1);
         validEdge2.setRelationNote("『待复核』自环边");
         validEdge2.setConfidence(80);
@@ -458,17 +440,13 @@ class TeacherGraphServiceImplTest {
         when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(n1));
         when(edgeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Arrays.asList(validEdge, validEdge2));
 
-        // When
         List<PendingEdgeVO> result = service.pendingEdges(1L);
 
-        // Then: 只返回有效边
         assertThat(result).hasSize(1);
         assertThat(result.get(0).getId()).isEqualTo(11L);
         assertThat(result.get(0).getFromCode()).isEqualTo("N1");
         assertThat(result.get(0).getToCode()).isEqualTo("N1");
     }
-
-    // ========== I5 课程归属 / 存在性校验 ==========
 
     @Test
     void createNodeRejectsNonexistentCourse() {
@@ -498,28 +476,22 @@ class TeacherGraphServiceImplTest {
             return 1;
         });
 
-        // When
         Long nodeId = service.createNode(1L, req);
 
-        // Then
         assertThat(nodeId).isEqualTo(100L);
         verify(courseAccessService).assertManageCourse(1L);
     }
 
-    // ========== 新增测试用例：I6 拒绝修改 nodeCode ==========
-
     @Test
     void updateNodeRejectsNodeCodeChange() {
-        // Given
         KgNode existing = new KgNode();
         existing.setId(1L);
         existing.setNodeCode("N1");
         when(nodeMapper.selectById(1L)).thenReturn(existing);
 
         NodeUpsertRequest req = new NodeUpsertRequest();
-        req.setNodeCode("N2");  // 尝试修改 nodeCode
+        req.setNodeCode("N2");
 
-        // When/Then
         assertThatThrownBy(() -> service.updateNode(1L, req))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("节点编码不可修改: nodeCode=N1");
@@ -529,7 +501,6 @@ class TeacherGraphServiceImplTest {
 
     @Test
     void updateNodeAllowsSameNodeCode() {
-        // Given
         KgNode existing = new KgNode();
         existing.setId(1L);
         existing.setNodeCode("N1");
@@ -537,13 +508,11 @@ class TeacherGraphServiceImplTest {
         when(nodeMapper.updateById(any(KgNode.class))).thenReturn(1);
 
         NodeUpsertRequest req = new NodeUpsertRequest();
-        req.setNodeCode("N1");  // 相同的 nodeCode 应该允许
+        req.setNodeCode("N1");
         req.setName("更新名称");
 
-        // When
         service.updateNode(1L, req);
 
-        // Then
         verify(nodeMapper).updateById(any(KgNode.class));
     }
 }

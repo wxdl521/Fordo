@@ -472,7 +472,9 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
 
     private List<KgNode> loadCourseNodes(Long courseId) {
         return kgNodeMapper.selectList(
-                new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId));
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt));
     }
 
     /** 一次查前置边（relation_type=1），供内存邻接表使用（循环内绝不查库）。 */
@@ -480,7 +482,8 @@ public class AdaptiveDiagnosticServiceImpl implements AdaptiveDiagnosticService 
         return kgEdgeMapper.selectList(
                 new LambdaQueryWrapper<KgEdge>()
                         .eq(KgEdge::getCourseId, courseId)
-                        .eq(KgEdge::getRelationType, PrereqDirection.RELATION_TYPE_PREREQUISITE));
+                        .eq(KgEdge::getRelationType, PrereqDirection.RELATION_TYPE_PREREQUISITE)
+                        .isNull(KgEdge::getArchivedAt));
     }
 
     /**

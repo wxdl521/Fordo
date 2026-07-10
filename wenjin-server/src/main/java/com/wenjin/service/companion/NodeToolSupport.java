@@ -26,7 +26,8 @@ public class NodeToolSupport {
         }
         KgNode node = nodeMapper.selectOne(new LambdaQueryWrapper<KgNode>()
                 .eq(KgNode::getCourseId, courseId)
-                .eq(KgNode::getNodeCode, nodeCode.trim()));
+                .eq(KgNode::getNodeCode, nodeCode.trim())
+                .isNull(KgNode::getArchivedAt));
         if (node == null) {
             throw new ToolException("nodeCode not found in course: " + nodeCode.trim());
         }
@@ -43,7 +44,8 @@ public class NodeToolSupport {
         String normalizedName = nodeName.trim();
         List<KgNode> matches = nodeMapper.selectList(new LambdaQueryWrapper<KgNode>()
                 .eq(KgNode::getCourseId, courseId)
-                .eq(KgNode::getName, normalizedName));
+                .eq(KgNode::getName, normalizedName)
+                .isNull(KgNode::getArchivedAt));
         if (matches == null || matches.isEmpty()) {
             throw new ToolException("nodeName not found in course: " + normalizedName);
         }

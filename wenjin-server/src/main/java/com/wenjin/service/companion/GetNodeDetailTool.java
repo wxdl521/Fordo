@@ -86,7 +86,8 @@ public class GetNodeDetailTool implements CompanionTool {
 
         List<KgEdge> edges = edgeMapper.selectList(new LambdaQueryWrapper<KgEdge>()
                 .eq(KgEdge::getCourseId, ctx.courseId())
-                .eq(KgEdge::getRelationType, PrereqDirection.RELATION_TYPE_PREREQUISITE));
+                .eq(KgEdge::getRelationType, PrereqDirection.RELATION_TYPE_PREREQUISITE)
+                .isNull(KgEdge::getArchivedAt));
 
         Set<Long> prerequisiteIds = new LinkedHashSet<>();
         Set<Long> dependentIds = new LinkedHashSet<>();

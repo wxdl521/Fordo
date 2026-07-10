@@ -1,8 +1,10 @@
 package com.wenjin.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.dto.GraphDataVO;
 import com.wenjin.dto.GraphImportRequest;
 import com.wenjin.dto.GraphImportResult;
@@ -26,7 +28,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -36,8 +38,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 图谱服务实现。导入流程：归属校验 → 校验（节点ID唯一 / 边端点存在 / 前置环检测）→ 全量替换落库。
- * <p>导入仅覆盖已存在且当前主体可管理的课程（不再隐式按 demoTeacherId 建课）。
+ * 图谱服务实现。导入流程：归属校验 → 结构校验 → 按 (course_id, node_code) 差量对账落库。
+ * <p>节点主键在重导入时保持不变；移除的节点/边软归档（archived_at），不硬删。
  */
 @Service
 public class GraphServiceImpl implements GraphService {
@@ -55,17 +57,20 @@ public class GraphServiceImpl implements GraphService {
     private final StudentMasteryMapper studentMasteryMapper;
     private final MasteryDecayCalculator decayCalculator;
     private final CourseAccessService courseAccessService;
+    private final FeatureFlagsProperties featureFlags;
 
     public GraphServiceImpl(CourseMapper courseMapper, KgNodeMapper nodeMapper,
                             KgEdgeMapper edgeMapper, StudentMasteryMapper studentMasteryMapper,
                             MasteryDecayCalculator decayCalculator,
-                            CourseAccessService courseAccessService) {
+                            CourseAccessService courseAccessService,
+                            FeatureFlagsProperties featureFlags) {
         this.courseMapper = courseMapper;
         this.nodeMapper = nodeMapper;
         this.edgeMapper = edgeMapper;
         this.studentMasteryMapper = studentMasteryMapper;
         this.decayCalculator = decayCalculator;
         this.courseAccessService = courseAccessService;
+        this.featureFlags = featureFlags;
     }
 
     // ───────────────────────────── 导入 ─────────────────────────────
@@ -73,6 +78,8 @@ public class GraphServiceImpl implements GraphService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public GraphImportResult importGraph(String courseCode, GraphImportRequest request) {
+        ensureGraphReconcileEnabled();
+
         if (!StringUtils.hasText(courseCode)) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "courseCode 不能为空");
         }
@@ -96,53 +103,165 @@ public class GraphServiceImpl implements GraphService {
         if (course == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage());
         }
+        boolean courseDirty = false;
         if (request.getCourse() != null && StringUtils.hasText(request.getCourse().getName())) {
-            // 已存在则同步课程名（轻量更新）
             course.setName(request.getCourse().getName());
-            courseMapper.updateById(course);
+            courseDirty = true;
+        }
+        // 重导入解除课程归档
+        if (course.getArchivedAt() != null) {
+            course.setArchivedAt(null);
+            courseDirty = true;
+        }
+        if (courseDirty) {
+            if (course.getArchivedAt() == null) {
+                // updateById 忽略 null：用 UpdateWrapper 清 archived_at
+                courseMapper.update(null, new UpdateWrapper<Course>()
+                        .eq("id", courseId)
+                        .set("name", course.getName())
+                        .set("archived_at", null));
+            } else {
+                courseMapper.updateById(course);
+            }
         }
 
-        // 3) 全量替换：先删后插（同一事务内，先删边后删点）
-        edgeMapper.delete(new LambdaQueryWrapper<KgEdge>().eq(KgEdge::getCourseId, courseId));
-        nodeMapper.delete(new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId));
+        // 3) 差量对账节点：按 (course_id, node_code) 保主键
+        Map<String, Long> codeToId = reconcileNodes(courseId, request.getNodes());
 
-        // 4) 插入节点，记录 业务编码 -> 新主键 映射
+        // 4) 差量对账边：按 (course_id, from_node_id, to_node_id, relation_type)
+        int edgeCount = reconcileEdges(courseId, request.getEdges(), codeToId);
+
+        int nodeCount = request.getNodes().size();
+        log.info("图谱差量导入成功：courseCode={}, courseId={}, 节点={}, 边={}",
+                courseCode, courseId, nodeCount, edgeCount);
+        return new GraphImportResult(courseId, courseCode, course.getName(), nodeCount, edgeCount);
+    }
+
+    /**
+     * 节点差量：存在则更新可变字段并解除归档；不存在则插入；库内多余节点归档。
+     *
+     * @return node_code → kg_node.id（含本次生效节点）
+     */
+    private Map<String, Long> reconcileNodes(Long courseId, List<GraphImportRequest.NodeItem> items) {
+        List<KgNode> existing = nodeMapper.selectList(
+                new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId));
+        Map<String, KgNode> byCode = new HashMap<>();
+        for (KgNode n : existing) {
+            byCode.put(n.getNodeCode(), n);
+        }
+
+        Set<String> seen = new HashSet<>();
         Map<String, Long> codeToId = new HashMap<>();
-        for (GraphImportRequest.NodeItem n : request.getNodes()) {
-            KgNode node = new KgNode();
-            node.setCourseId(courseId);
-            node.setNodeCode(n.getId().trim());
-            node.setName(n.getName());
-            node.setChapter(n.getChapter());
-            node.setDifficulty(n.getDifficulty() == null ? 1 : n.getDifficulty());
-            node.setIsKey(Boolean.TRUE.equals(n.getIsKey()) ? 1 : 0);
-            node.setBloom(n.getBloom());
-            node.setDescription(n.getDescription());
-            node.setNodeNote(n.getNote());
-            nodeMapper.insert(node);
-            codeToId.put(node.getNodeCode(), node.getId());
+        for (GraphImportRequest.NodeItem item : items) {
+            String code = item.getId().trim();
+            seen.add(code);
+            KgNode row = byCode.get(code);
+            if (row == null) {
+                KgNode node = new KgNode();
+                node.setCourseId(courseId);
+                applyNodeFields(node, item);
+                nodeMapper.insert(node);
+                codeToId.put(code, node.getId());
+            } else {
+                applyNodeFields(row, item);
+                // 清归档：updateById 忽略 null，用 UpdateWrapper
+                nodeMapper.update(null, new UpdateWrapper<KgNode>()
+                        .eq("id", row.getId())
+                        .set("name", row.getName())
+                        .set("chapter", row.getChapter())
+                        .set("difficulty", row.getDifficulty())
+                        .set("is_key", row.getIsKey())
+                        .set("bloom", row.getBloom())
+                        .set("description", row.getDescription())
+                        .set("node_note", row.getNodeNote())
+                        .set("archived_at", null));
+                codeToId.put(code, row.getId());
+            }
         }
 
-        // 5) 插入边（关系类型中文标签 -> TINYINT 编码）
+        LocalDateTime now = LocalDateTime.now();
+        for (KgNode leftover : existing) {
+            if (!seen.contains(leftover.getNodeCode()) && leftover.getArchivedAt() == null) {
+                leftover.setArchivedAt(now);
+                nodeMapper.updateById(leftover);
+            }
+        }
+        return codeToId;
+    }
+
+    private void applyNodeFields(KgNode node, GraphImportRequest.NodeItem n) {
+        node.setNodeCode(n.getId().trim());
+        node.setName(n.getName());
+        node.setChapter(n.getChapter());
+        node.setDifficulty(n.getDifficulty() == null ? 1 : n.getDifficulty());
+        node.setIsKey(Boolean.TRUE.equals(n.getIsKey()) ? 1 : 0);
+        node.setBloom(n.getBloom());
+        node.setDescription(n.getDescription());
+        node.setNodeNote(n.getNote());
+        node.setArchivedAt(null);
+    }
+
+    /**
+     * 边差量：存在则更新备注并解除归档；不存在则插入；库内多余边归档。
+     */
+    private int reconcileEdges(Long courseId, List<GraphImportRequest.EdgeItem> edgeItems,
+                               Map<String, Long> codeToId) {
+        List<KgEdge> existing = edgeMapper.selectList(
+                new LambdaQueryWrapper<KgEdge>().eq(KgEdge::getCourseId, courseId));
+        // key: fromId|toId|type
+        Map<String, KgEdge> byKey = new HashMap<>();
+        for (KgEdge e : existing) {
+            byKey.put(edgeKey(e.getFromNodeId(), e.getToNodeId(), e.getRelationType()), e);
+        }
+
+        Set<String> seen = new HashSet<>();
         int edgeCount = 0;
-        if (request.getEdges() != null) {
-            for (GraphImportRequest.EdgeItem e : request.getEdges()) {
-                KgEdge edge = new KgEdge();
-                edge.setCourseId(courseId);
-                edge.setFromNodeId(codeToId.get(e.getSource().trim()));
-                edge.setToNodeId(codeToId.get(e.getTarget().trim()));
-                RelationType rt = RelationType.fromLabel(e.getType());
-                edge.setRelationType(rt.getCode());
-                edge.setRelationNote(e.getNote());
-                edgeMapper.insert(edge);
+        if (edgeItems != null) {
+            for (GraphImportRequest.EdgeItem item : edgeItems) {
+                Long fromId = codeToId.get(item.getSource().trim());
+                Long toId = codeToId.get(item.getTarget().trim());
+                RelationType rt = RelationType.fromLabel(item.getType());
+                int typeCode = rt.getCode();
+                String key = edgeKey(fromId, toId, typeCode);
+                seen.add(key);
+                KgEdge row = byKey.get(key);
+                if (row == null) {
+                    KgEdge edge = new KgEdge();
+                    edge.setCourseId(courseId);
+                    edge.setFromNodeId(fromId);
+                    edge.setToNodeId(toId);
+                    edge.setRelationType(typeCode);
+                    edge.setRelationNote(item.getNote());
+                    edgeMapper.insert(edge);
+                } else {
+                    edgeMapper.update(null, new UpdateWrapper<KgEdge>()
+                            .eq("id", row.getId())
+                            .set("relation_note", item.getNote())
+                            .set("archived_at", null));
+                }
                 edgeCount++;
             }
         }
 
-        int nodeCount = request.getNodes().size();
-        log.info("图谱导入成功：courseCode={}, courseId={}, 节点={}, 边={}",
-                courseCode, courseId, nodeCount, edgeCount);
-        return new GraphImportResult(courseId, courseCode, course.getName(), nodeCount, edgeCount);
+        LocalDateTime now = LocalDateTime.now();
+        for (KgEdge leftover : existing) {
+            String key = edgeKey(leftover.getFromNodeId(), leftover.getToNodeId(), leftover.getRelationType());
+            if (!seen.contains(key) && leftover.getArchivedAt() == null) {
+                leftover.setArchivedAt(now);
+                edgeMapper.updateById(leftover);
+            }
+        }
+        return edgeCount;
+    }
+
+    private static String edgeKey(Long fromId, Long toId, Integer type) {
+        return fromId + "|" + toId + "|" + type;
+    }
+
+    private void ensureGraphReconcileEnabled() {
+        if (featureFlags == null || !featureFlags.isGraphReconcileEnabled()) {
+            throw new BusinessException(ResultCode.SERVICE_UNAVAILABLE, "图谱对账/导入功能暂未开放");
+        }
     }
 
     // ───────────────────────────── 校验 ─────────────────────────────
@@ -212,7 +331,6 @@ public class GraphServiceImpl implements GraphService {
      * @return 第一条检出的环路径（节点编码序列，首尾相接），无环返回 null
      */
     private List<String> detectPrerequisiteCycle(List<GraphImportRequest.EdgeItem> edges, Set<String> nodeIds) {
-        // 构建邻接表：仅取「前置」且两端都在节点集内的边
         Map<String, List<String>> adj = new HashMap<>();
         for (GraphImportRequest.EdgeItem e : edges) {
             if (RelationType.fromLabel(e.getType()) != RelationType.PREREQUISITE) {
@@ -226,7 +344,6 @@ public class GraphServiceImpl implements GraphService {
             adj.computeIfAbsent(src, k -> new ArrayList<>()).add(tgt);
         }
 
-        // 0=未访问, 1=在当前递归栈中, 2=已完成
         Map<String, Integer> state = new HashMap<>();
         List<String> stack = new ArrayList<>();
         for (String start : adj.keySet()) {
@@ -247,7 +364,6 @@ public class GraphServiceImpl implements GraphService {
         for (String next : adj.getOrDefault(node, List.of())) {
             Integer st = state.getOrDefault(next, 0);
             if (st == 1) {
-                // 找到环：从栈中 next 第一次出现处截取，并补上 next 形成闭环
                 int idx = stack.indexOf(next);
                 List<String> cycle = new ArrayList<>(stack.subList(idx, stack.size()));
                 cycle.add(next);
@@ -275,22 +391,26 @@ public class GraphServiceImpl implements GraphService {
     @Override
     public GraphDataVO getGraph(Long courseId, Long studentId) {
         Course course = courseMapper.selectById(courseId);
-        if (course == null) {
+        if (course == null || course.getArchivedAt() != null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "课程不存在：courseId=" + courseId);
         }
 
         List<KgNode> nodes = nodeMapper.selectList(
-                new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId).orderByAsc(KgNode::getId));
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt)
+                        .orderByAsc(KgNode::getId));
         List<KgEdge> edges = edgeMapper.selectList(
-                new LambdaQueryWrapper<KgEdge>().eq(KgEdge::getCourseId, courseId).orderByAsc(KgEdge::getId));
+                new LambdaQueryWrapper<KgEdge>()
+                        .eq(KgEdge::getCourseId, courseId)
+                        .isNull(KgEdge::getArchivedAt)
+                        .orderByAsc(KgEdge::getId));
 
-        // 主键 -> 业务编码（边的端点回填为编码，供前端用）
         Map<Long, String> idToCode = new HashMap<>();
         for (KgNode n : nodes) {
             idToCode.put(n.getId(), n.getNodeCode());
         }
 
-        // 有 studentId 时查掌握度，建 nodeId -> 掌握行
         Map<Long, StudentMastery> masteryByNode = new HashMap<>();
         if (studentId != null) {
             List<StudentMastery> rows = studentMasteryMapper.selectList(
@@ -348,11 +468,10 @@ public class GraphServiceImpl implements GraphService {
 
     /**
      * 读时填充掌握度双轨字段：raw 来自库，effective 由衰减模型计算（不写回 student_mastery）。
-     * daysSinceEvidence 用计算器实例方法算一次，传入 effectiveScoreOf 重载避免内部重算偏差，同时填 VO 字段。
      */
     private void applyMasteryWithDecay(GraphDataVO.NodeVO nv, StudentMastery sm) {
         double raw = sm.getMasteryScore().doubleValue();
-        double days = decayCalculator.daysSinceEvidence(sm.getUpdatedAt()); // compute once, passed to overload
+        double days = decayCalculator.daysSinceEvidence(sm.getUpdatedAt());
         double effective = decayCalculator.effectiveScoreOf(sm, days);
         int effectiveLevel = decayCalculator.effectiveLevelOf(effective);
         double threshold = decayCalculator.getMasteredThreshold();

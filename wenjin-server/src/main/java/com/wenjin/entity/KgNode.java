@@ -45,4 +45,7 @@ public class KgNode {
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;
+
+    /** 软归档时间；NULL=生效 */
+    private LocalDateTime archivedAt;
 }

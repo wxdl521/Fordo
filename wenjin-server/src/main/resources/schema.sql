@@ -58,8 +58,10 @@ CREATE TABLE `course` (
     `status`      TINYINT      NOT NULL DEFAULT 1      COMMENT '状态：1=启用, 0=停用',
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP                          COMMENT '创建时间',
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `archived_at` DATETIME     DEFAULT NULL            COMMENT '软归档时间；NULL=生效【V4】',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_code` (`code`)
+    UNIQUE KEY `uk_code` (`code`),
+    KEY `idx_course_owner_active` (`teacher_id`, `archived_at`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='课程表（一门课对应一张图谱）';
 
 DROP TABLE IF EXISTS `kg_node`;
@@ -76,9 +78,11 @@ CREATE TABLE `kg_node` (
     `node_note`   VARCHAR(512) DEFAULT NULL            COMMENT '备注（图谱评审说明等）【PRD外补充字段】',
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP                          COMMENT '创建时间',
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `archived_at` DATETIME     DEFAULT NULL            COMMENT '软归档时间；NULL=生效【V4】',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_course_code` (`course_id`, `node_code`) COMMENT '同一课程内业务ID唯一（对应导入校验：重复ID检测）',
-    KEY `idx_course` (`course_id`)
+    KEY `idx_course` (`course_id`),
+    KEY `idx_node_course_active` (`course_id`, `archived_at`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识点表（图谱节点）';
 
 DROP TABLE IF EXISTS `kg_edge`;
@@ -92,10 +96,12 @@ CREATE TABLE `kg_edge` (
     `confidence`    TINYINT      DEFAULT NULL            COMMENT 'AI 置信度 0–100，NULL=既有生效边【阶段六补充】',
     `created_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP                          COMMENT '创建时间',
     `updated_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `archived_at`   DATETIME     DEFAULT NULL            COMMENT '软归档时间；NULL=生效【V4】',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_edge` (`course_id`, `from_node_id`, `to_node_id`, `relation_type`) COMMENT '防重复边',
     KEY `idx_from` (`from_node_id`),
-    KEY `idx_to` (`to_node_id`)
+    KEY `idx_to` (`to_node_id`),
+    KEY `idx_edge_course_active` (`course_id`, `archived_at`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识点关系表（图谱边）。环检测在应用层执行';
 
 -- ───────────────────────────── 组三：题库与标注 ─────────────────────────────

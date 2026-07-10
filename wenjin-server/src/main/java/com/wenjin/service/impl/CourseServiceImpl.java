@@ -53,9 +53,9 @@ public class CourseServiceImpl implements CourseService {
             throw new BusinessException(ResultCode.FORBIDDEN, "仅学生可选课");
         }
 
-        // 校验课程存在、已发布（status=1；0=停用/未发布）
+        // 校验课程存在、未归档、已发布（status=1；0=停用/未发布）
         Course course = courseMapper.selectById(courseId);
-        if (course == null) {
+        if (course == null || course.getArchivedAt() != null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "课程不存在");
         }
         if (course.getStatus() == null || course.getStatus() != 1) {
@@ -108,11 +108,12 @@ public class CourseServiceImpl implements CourseService {
                         StudentMastery::getCourseId,
                         Collectors.groupingBy(StudentMastery::getMasteryLevel, Collectors.counting())));
 
-        // 4. 组装 VO
+        // 4. 组装 VO（排除归档课程）
         return courseIds.stream()
                 .map(courseId -> {
                     Course c = courseMap.get(courseId);
-                    if (c == null || c.getStatus() == null || c.getStatus() != 1) return null;
+                    if (c == null || c.getArchivedAt() != null
+                            || c.getStatus() == null || c.getStatus() != 1) return null;
 
                     CourseWithMasteryVO vo = new CourseWithMasteryVO();
                     vo.setCourseId(c.getId());
@@ -135,13 +136,14 @@ public class CourseServiceImpl implements CourseService {
     public List<Course> getAvailableCourses() {
         return courseMapper.selectList(
                 new LambdaQueryWrapper<Course>()
-                        .eq(Course::getStatus, 1));
+                        .eq(Course::getStatus, 1)
+                        .isNull(Course::getArchivedAt));
     }
 
     @Override
     public void assertAccessibleByStudent(Long studentId, Long courseId) {
         Course course = courseMapper.selectById(courseId);
-        if (course == null) {
+        if (course == null || course.getArchivedAt() != null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "课程不存在");
         }
         if (course.getStatus() == null || course.getStatus() != 1) {

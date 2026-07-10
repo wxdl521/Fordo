@@ -213,6 +213,7 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
                 new LambdaQueryWrapper<KgNode>()
                         .eq(KgNode::getCourseId, courseId)
                         .eq(KgNode::getNodeCode, nodeCode)
+                        .isNull(KgNode::getArchivedAt)
         );
 
         Set<Long> qids = new HashSet<>();

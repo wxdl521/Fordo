@@ -3,21 +3,21 @@ package com.wenjin.service;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.CurrentUser;
+import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.dto.TeacherCourseVO;
 import com.wenjin.entity.Course;
 import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
-import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.security.CourseAccessService;
 import com.wenjin.security.CurrentPrincipal;
 import com.wenjin.security.UserRole;
 import com.wenjin.service.impl.TeacherCourseServiceImpl;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -39,9 +39,18 @@ class TeacherCourseServiceImplTest {
     @Mock CourseMapper courseMapper;
     @Mock KgNodeMapper nodeMapper;
     @Mock KgEdgeMapper edgeMapper;
-    @Mock QuestionMapper questionMapper;
     @Mock CourseAccessService courseAccessService;
-    @InjectMocks TeacherCourseServiceImpl service;
+
+    private FeatureFlagsProperties featureFlags;
+    private TeacherCourseServiceImpl service;
+
+    @BeforeEach
+    void setUp() {
+        featureFlags = new FeatureFlagsProperties();
+        featureFlags.setGraphReconcileEnabled(true);
+        service = new TeacherCourseServiceImpl(courseMapper, nodeMapper, edgeMapper,
+                courseAccessService, featureFlags);
+    }
 
     @AfterEach
     void clear() {
@@ -68,7 +77,6 @@ class TeacherCourseServiceImplTest {
         assertThat(out).hasSize(1);
         assertThat(out.get(0).getId()).isEqualTo(7L);
         assertThat(out.get(0).isPublished()).isTrue();
-        // wrapper 应带 teacher_id 过滤（无法直接读 wrapper，至少确认 selectList 被调）
         verify(courseMapper).selectList(any());
     }
 
@@ -117,34 +125,56 @@ class TeacherCourseServiceImplTest {
     }
 
     @Test
-    void delete_rejectsWhenHasRelatedData() {
+    void delete_archivesCourseAndRelatedGraph_noHardDelete() {
         asTeacher(9L);
         doNothing().when(courseAccessService).assertManageCourse(5L);
-        when(nodeMapper.selectCount(any())).thenReturn(1L);
-        when(edgeMapper.selectCount(any())).thenReturn(0L);
-        when(questionMapper.selectCount(any())).thenReturn(0L);
+        Course c = new Course();
+        c.setId(5L);
+        c.setStatus(1);
+        when(courseMapper.selectById(5L)).thenReturn(c);
+        when(courseMapper.updateById(any(Course.class))).thenReturn(1);
+        when(nodeMapper.update(any(), any())).thenReturn(2);
+        when(edgeMapper.update(any(), any())).thenReturn(3);
 
-        assertThatThrownBy(() -> service.delete(5L))
-                .isInstanceOf(BusinessException.class)
-                .extracting(e -> ((BusinessException) e).getCode())
-                .isEqualTo(ResultCode.BAD_REQUEST.getCode());
+        service.delete(5L);
+
+        ArgumentCaptor<Course> cap = ArgumentCaptor.forClass(Course.class);
+        verify(courseMapper).updateById(cap.capture());
+        assertThat(cap.getValue().getArchivedAt()).isNotNull();
+        verify(nodeMapper).update(any(), any());
+        verify(edgeMapper).update(any(), any());
+        verify(courseMapper, never()).deleteById(any(Long.class));
+        verify(nodeMapper, never()).delete(any());
+        verify(edgeMapper, never()).delete(any());
+    }
+
+    @Test
+    void delete_withRelatedData_stillArchives() {
+        // 与旧行为相反：有节点/题库也允许归档，不硬删下游
+        asTeacher(9L);
+        doNothing().when(courseAccessService).assertManageCourse(5L);
+        Course c = new Course();
+        c.setId(5L);
+        when(courseMapper.selectById(5L)).thenReturn(c);
+        when(courseMapper.updateById(any(Course.class))).thenReturn(1);
+        when(nodeMapper.update(any(), any())).thenReturn(1);
+        when(edgeMapper.update(any(), any())).thenReturn(1);
+
+        service.delete(5L);
+
+        verify(courseMapper).updateById(any(Course.class));
         verify(courseMapper, never()).deleteById(any(Long.class));
     }
 
     @Test
-    void delete_emptyCourse_deletesRow() {
+    void delete_featureDisabled_503() {
         asTeacher(9L);
-        doNothing().when(courseAccessService).assertManageCourse(5L);
-        when(nodeMapper.selectCount(any())).thenReturn(0L);
-        when(edgeMapper.selectCount(any())).thenReturn(0L);
-        when(questionMapper.selectCount(any())).thenReturn(0L);
-        when(courseMapper.deleteById(5L)).thenReturn(1);
-
-        service.delete(5L);
-
-        verify(courseMapper).deleteById(5L);
-        verify(edgeMapper, never()).delete(any());
-        verify(nodeMapper, never()).delete(any());
+        featureFlags.setGraphReconcileEnabled(false);
+        assertThatThrownBy(() -> service.delete(5L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
+        verify(courseMapper, never()).updateById(any(Course.class));
     }
 
     @Test
@@ -158,6 +188,7 @@ class TeacherCourseServiceImplTest {
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo(404);
         verify(courseMapper, never()).deleteById(any(Long.class));
+        verify(courseMapper, never()).updateById(any(Course.class));
     }
 
     @Test

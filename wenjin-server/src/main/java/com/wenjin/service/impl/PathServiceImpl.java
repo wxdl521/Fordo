@@ -101,7 +101,9 @@ public class PathServiceImpl implements PathService {
         Long courseId = req.getCourseId();
 
         List<KgNode> nodes = kgNodeMapper.selectList(
-                new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId));
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt));
         Map<Long, KgNode> nodeById = new HashMap<>();
         Map<String, Long> idByCode = new HashMap<>();
         for (KgNode n : nodes) {
@@ -134,7 +136,8 @@ public class PathServiceImpl implements PathService {
         List<KgEdge> edges = kgEdgeMapper.selectList(
                 new LambdaQueryWrapper<KgEdge>()
                         .eq(KgEdge::getCourseId, courseId)
-                        .eq(KgEdge::getRelationType, PREREQ));
+                        .eq(KgEdge::getRelationType, PREREQ)
+                        .isNull(KgEdge::getArchivedAt));
         Map<Long, List<Long>> prereqMap = new HashMap<>(); // toNodeId -> [fromNodeId]
         for (KgEdge e : edges) {
             prereqMap.computeIfAbsent(e.getToNodeId(), k -> new ArrayList<>()).add(e.getFromNodeId());
@@ -235,7 +238,9 @@ public class PathServiceImpl implements PathService {
                         .orderByAsc(LearningPathItem::getStepOrder));
 
         List<KgNode> nodes = kgNodeMapper.selectList(
-                new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId));
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt));
         Map<Long, KgNode> nodeById = new HashMap<>();
         for (KgNode n : nodes) {
             nodeById.put(n.getId(), n);
@@ -257,7 +262,8 @@ public class PathServiceImpl implements PathService {
         List<KgEdge> edges = kgEdgeMapper.selectList(
                 new LambdaQueryWrapper<KgEdge>()
                         .eq(KgEdge::getCourseId, courseId)
-                        .eq(KgEdge::getRelationType, PREREQ));
+                        .eq(KgEdge::getRelationType, PREREQ)
+                        .isNull(KgEdge::getArchivedAt));
         Map<Long, List<Long>> prereqMap = new HashMap<>();
         for (KgEdge e : edges) {
             prereqMap.computeIfAbsent(e.getToNodeId(), k -> new ArrayList<>()).add(e.getFromNodeId());

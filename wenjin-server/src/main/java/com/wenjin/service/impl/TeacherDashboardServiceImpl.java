@@ -46,7 +46,9 @@ public class TeacherDashboardServiceImpl implements TeacherDashboardService {
         List<StudentMastery> rows = masteryMapper.selectList(new LambdaQueryWrapper<StudentMastery>()
                 .eq(StudentMastery::getCourseId, courseId));
         List<KgNode> nodes = nodeMapper.selectList(new LambdaQueryWrapper<KgNode>()
-                .eq(KgNode::getCourseId, courseId).orderByAsc(KgNode::getId));
+                .eq(KgNode::getCourseId, courseId)
+                .isNull(KgNode::getArchivedAt)
+                .orderByAsc(KgNode::getId));
 
         // 总学生数 = distinct student_id
         Set<Long> students = rows.stream().map(StudentMastery::getStudentId).collect(Collectors.toSet());

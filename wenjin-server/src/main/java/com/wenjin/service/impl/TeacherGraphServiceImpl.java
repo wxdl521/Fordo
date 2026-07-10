@@ -1,6 +1,10 @@
 package com.wenjin.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.wenjin.common.BusinessException;
+import com.wenjin.common.ResultCode;
+import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.dto.NodeUpsertRequest;
 import com.wenjin.dto.PendingEdgeVO;
 import com.wenjin.dto.TeacherGraphVO;
@@ -8,7 +12,6 @@ import com.wenjin.entity.KgEdge;
 import com.wenjin.entity.KgNode;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
-import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.TeacherGraphService;
 import com.wenjin.support.RelationType;
@@ -16,6 +19,7 @@ import com.wenjin.support.ReviewMarker;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -27,17 +31,17 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
 
     private final KgNodeMapper nodeMapper;
     private final KgEdgeMapper edgeMapper;
-    private final QuestionNodeMapper questionNodeMapper;
     private final CourseAccessService courseAccessService;
+    private final FeatureFlagsProperties featureFlags;
 
     public TeacherGraphServiceImpl(KgNodeMapper nodeMapper,
                                     KgEdgeMapper edgeMapper,
-                                    QuestionNodeMapper questionNodeMapper,
-                                    CourseAccessService courseAccessService) {
+                                    CourseAccessService courseAccessService,
+                                    FeatureFlagsProperties featureFlags) {
         this.nodeMapper = nodeMapper;
         this.edgeMapper = edgeMapper;
-        this.questionNodeMapper = questionNodeMapper;
         this.courseAccessService = courseAccessService;
+        this.featureFlags = featureFlags;
     }
 
     @Override
@@ -48,13 +52,16 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         courseAccessService.assertManageCourse(courseId);
 
         List<KgNode> nodes = nodeMapper.selectList(
-                new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId)
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt)
         );
         List<KgEdge> edges = edgeMapper.selectList(
-                new LambdaQueryWrapper<KgEdge>().eq(KgEdge::getCourseId, courseId)
+                new LambdaQueryWrapper<KgEdge>()
+                        .eq(KgEdge::getCourseId, courseId)
+                        .isNull(KgEdge::getArchivedAt)
         );
 
-        // Build id->code mapping for edges
         Map<Long, String> idToCode = new HashMap<>();
         for (KgNode n : nodes) {
             idToCode.put(n.getId(), n.getNodeCode());
@@ -74,7 +81,9 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         courseAccessService.assertManageCourse(courseId);
 
         List<KgNode> nodes = nodeMapper.selectList(
-                new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId)
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt)
         );
 
         Map<Long, KgNode> idToNode = new HashMap<>();
@@ -83,7 +92,9 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         }
 
         List<KgEdge> edges = edgeMapper.selectList(
-                new LambdaQueryWrapper<KgEdge>().eq(KgEdge::getCourseId, courseId)
+                new LambdaQueryWrapper<KgEdge>()
+                        .eq(KgEdge::getCourseId, courseId)
+                        .isNull(KgEdge::getArchivedAt)
         );
 
         return edges.stream()
@@ -94,7 +105,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
                     KgNode fromNode = idToNode.get(e.getFromNodeId());
                     KgNode toNode = idToNode.get(e.getToNodeId());
 
-                    // 跳过脏数据边（节点已删除）
+                    // 跳过脏数据边（节点已删除/归档）
                     if (fromNode == null || toNode == null) {
                         return null;
                     }
@@ -121,11 +132,10 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         if (edgeId == null || edgeId <= 0) {
             throw new IllegalArgumentException("edgeId 无效: " + edgeId);
         }
-        // 归属校验优先：跨教师 / 不存在统一 404，避免先读边再比较
         courseAccessService.assertManageEdge(edgeId);
 
         KgEdge edge = edgeMapper.selectById(edgeId);
-        if (edge == null) {
+        if (edge == null || edge.getArchivedAt() != null) {
             throw new IllegalArgumentException("边不存在: edgeId=" + edgeId);
         }
 
@@ -139,14 +149,17 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         if (edgeId == null || edgeId <= 0) {
             throw new IllegalArgumentException("edgeId 无效: " + edgeId);
         }
+        ensureGraphReconcileEnabled();
         courseAccessService.assertManageEdge(edgeId);
 
         KgEdge edge = edgeMapper.selectById(edgeId);
-        if (edge == null) {
+        if (edge == null || edge.getArchivedAt() != null) {
             throw new IllegalArgumentException("边不存在: edgeId=" + edgeId);
         }
 
-        edgeMapper.deleteById(edgeId);
+        // 软归档，不硬删
+        edge.setArchivedAt(LocalDateTime.now());
+        edgeMapper.updateById(edge);
     }
 
     @Override
@@ -155,6 +168,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         if (courseId == null || courseId <= 0) {
             throw new IllegalArgumentException("courseId 无效: " + courseId);
         }
+        ensureGraphReconcileEnabled();
         courseAccessService.assertManageCourse(courseId);
         if (req == null) {
             throw new IllegalArgumentException("请求参数不能为空");
@@ -163,7 +177,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
             throw new IllegalArgumentException("节点编码不能为空");
         }
 
-        // Check duplicate
+        // 含归档节点：uk_course_code 仍占用
         List<KgNode> existing = nodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>()
                         .eq(KgNode::getCourseId, courseId)
@@ -186,17 +200,17 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         if (nodeId == null || nodeId <= 0) {
             throw new IllegalArgumentException("nodeId 无效: " + nodeId);
         }
+        ensureGraphReconcileEnabled();
         courseAccessService.assertManageNode(nodeId);
         if (req == null) {
             throw new IllegalArgumentException("请求参数不能为空");
         }
 
         KgNode node = nodeMapper.selectById(nodeId);
-        if (node == null) {
+        if (node == null || node.getArchivedAt() != null) {
             throw new IllegalArgumentException("节点不存在: nodeId=" + nodeId);
         }
 
-        // 拒绝修改 nodeCode
         if (req.getNodeCode() != null && !req.getNodeCode().equals(node.getNodeCode())) {
             throw new IllegalArgumentException("节点编码不可修改: nodeCode=" + node.getNodeCode());
         }
@@ -211,25 +225,29 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         if (nodeId == null || nodeId <= 0) {
             throw new IllegalArgumentException("nodeId 无效: " + nodeId);
         }
+        ensureGraphReconcileEnabled();
         courseAccessService.assertManageNode(nodeId);
 
         KgNode node = nodeMapper.selectById(nodeId);
-        if (node == null) {
+        if (node == null || node.getArchivedAt() != null) {
             throw new IllegalArgumentException("节点不存在: nodeId=" + nodeId);
         }
 
-        // Delete edges where this node is from or to (by nodeId, not code)
-        edgeMapper.delete(new LambdaQueryWrapper<KgEdge>().eq(KgEdge::getFromNodeId, nodeId));
-        edgeMapper.delete(new LambdaQueryWrapper<KgEdge>().eq(KgEdge::getToNodeId, nodeId));
+        LocalDateTime now = LocalDateTime.now();
+        // 归档关联边；不硬删 question_node / mastery
+        edgeMapper.update(null, new UpdateWrapper<KgEdge>()
+                .and(w -> w.eq("from_node_id", nodeId).or().eq("to_node_id", nodeId))
+                .isNull("archived_at")
+                .set("archived_at", now));
 
-        // Delete question_node associations (by nodeId)
-        questionNodeMapper.delete(
-                new LambdaQueryWrapper<com.wenjin.entity.QuestionNode>()
-                        .eq(com.wenjin.entity.QuestionNode::getNodeId, nodeId)
-        );
+        node.setArchivedAt(now);
+        nodeMapper.updateById(node);
+    }
 
-        // Delete the node itself
-        nodeMapper.deleteById(nodeId);
+    private void ensureGraphReconcileEnabled() {
+        if (featureFlags == null || !featureFlags.isGraphReconcileEnabled()) {
+            throw new BusinessException(ResultCode.SERVICE_UNAVAILABLE, "图谱对账/导入功能暂未开放");
+        }
     }
 
     private TeacherGraphVO.NodeVO toNodeVO(KgNode node) {
@@ -251,7 +269,6 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         vo.setSource(idToCode.getOrDefault(edge.getFromNodeId(), ""));
         vo.setTarget(idToCode.getOrDefault(edge.getToNodeId(), ""));
         vo.setType(RelationType.labelOf(edge.getRelationType()));
-        // 保留原始 relationNote（含"待复核"前缀），pending 字段已标记状态，教师端需完整信息
         vo.setNote(edge.getRelationNote());
         vo.setConfidence(edge.getConfidence());
         vo.setPending(ReviewMarker.isPending(edge.getRelationNote()));
@@ -259,7 +276,6 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     }
 
     private void applyRequest(KgNode node, NodeUpsertRequest req) {
-        // nodeCode 仅在创建时设置，更新时不可改
         if (node.getId() == null && req.getNodeCode() != null) {
             node.setNodeCode(req.getNodeCode());
         }

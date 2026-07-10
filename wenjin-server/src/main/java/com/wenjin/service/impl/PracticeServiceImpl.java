@@ -509,6 +509,7 @@ public class PracticeServiceImpl implements PracticeService {
         List<KgNode> nodes = kgNodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>()
                         .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt)
                         .in(KgNode::getNodeCode, weakNodeCodes));
         Map<String, String> codeToName = nodes.stream()
                 .collect(Collectors.toMap(KgNode::getNodeCode, KgNode::getName, (a, b) -> a));
@@ -686,6 +687,7 @@ public class PracticeServiceImpl implements PracticeService {
         List<KgNode> nodes = kgNodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>()
                         .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt)
                         .in(KgNode::getNodeCode, nodeCodes));
         if (nodes.isEmpty()) {
             return false; // 找不到节点，保守不触发

@@ -356,7 +356,8 @@ public class CompanionServiceImpl implements CompanionService {
         }
         List<KgNode> allNodes = nodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>()
-                        .eq(KgNode::getCourseId, courseId));
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt));
         if (allNodes == null || allNodes.isEmpty()) {
             return List.of();
         }
@@ -546,7 +547,8 @@ public class CompanionServiceImpl implements CompanionService {
             KgNode node = nodeMapper.selectOne(
                     new LambdaQueryWrapper<KgNode>()
                             .eq(KgNode::getCourseId, req.getCourseId())
-                            .eq(KgNode::getNodeCode, req.getNodeCode()));
+                            .eq(KgNode::getNodeCode, req.getNodeCode())
+                            .isNull(KgNode::getArchivedAt));
             if (node != null) {
                 return node.getName() + "：" + truncated;
             }
@@ -587,7 +589,8 @@ public class CompanionServiceImpl implements CompanionService {
                                              boolean includeWeakPoints) {
         List<KgNode> allNodes = nodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>()
-                        .eq(KgNode::getCourseId, courseId));
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt));
         List<String> whitelist = allNodes.stream().map(CompanionServiceImpl::nodePromptLabel).collect(Collectors.toList());
 
         LearningPathVO path = null;
@@ -617,7 +620,8 @@ public class CompanionServiceImpl implements CompanionService {
             KgNode focusNode = nodeMapper.selectOne(
                     new LambdaQueryWrapper<KgNode>()
                             .eq(KgNode::getCourseId, courseId)
-                            .eq(KgNode::getNodeCode, focusNodeCode));
+                            .eq(KgNode::getNodeCode, focusNodeCode)
+                            .isNull(KgNode::getArchivedAt));
             if (focusNode != null) {
                 focusNodeName = focusNode.getName();
             }

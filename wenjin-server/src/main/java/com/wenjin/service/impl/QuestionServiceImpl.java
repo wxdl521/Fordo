@@ -91,7 +91,9 @@ public class QuestionServiceImpl implements QuestionService {
 
         // 2. 课程节点：建 code→name / code→chapter，并解析目标名称/章节
         List<KgNode> nodes = nodeMapper.selectList(
-                new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId));
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt));
         Map<String, String> codeToName = new HashMap<>();
         Map<String, String> codeToChapter = new HashMap<>();
         for (KgNode n : nodes) {
@@ -304,7 +306,9 @@ public class QuestionServiceImpl implements QuestionService {
     /** 课程节点 code→name 映射（缺名时由调用方回退到 code）。 */
     private Map<String, String> codeToNameMap(Long courseId) {
         List<KgNode> nodes = nodeMapper.selectList(
-                new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId));
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt));
         Map<String, String> codeToName = new HashMap<>();
         for (KgNode n : nodes) {
             codeToName.put(n.getNodeCode(), n.getName());
