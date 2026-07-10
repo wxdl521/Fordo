@@ -4,6 +4,8 @@ import com.wenjin.ai.QuestionAiClient;
 import com.wenjin.ai.dto.AiAnnotation;
 import com.wenjin.ai.dto.AiDistractor;
 import com.wenjin.ai.dto.AiQuestion;
+import com.wenjin.common.BusinessException;
+import com.wenjin.common.ResultCode;
 import com.wenjin.dto.AnnotateItemResult;
 import com.wenjin.dto.AnnotateRequest;
 import com.wenjin.dto.GenerateResult;
@@ -11,6 +13,7 @@ import com.wenjin.entity.KgNode;
 import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
+import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
@@ -18,30 +21,36 @@ import com.wenjin.mapper.QuestionOptionMapper;
 import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.impl.QuestionServiceImpl;
 import com.wenjin.support.QuestionStatus;
+import com.wenjin.support.StemHash;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.Mockito.doNothing;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * QuestionServiceImpl.generate 单元测试：用 Mockito 隔离数据库/AI，覆盖
- *   A 全合法落库、B 非法丢弃并重试、C 题干去重、D 答案非法丢弃。
+ * QuestionServiceImpl.generate 单元测试：AI 在事务外、数量封顶、指纹去重、校验丢弃。
  */
 @ExtendWith(MockitoExtension.class)
 class QuestionServiceImplTest {
@@ -52,19 +61,21 @@ class QuestionServiceImplTest {
     @Mock QuestionMapper questionMapper;
     @Mock QuestionOptionMapper questionOptionMapper;
     @Mock QuestionNodeMapper questionNodeMapper;
+    @Mock CourseMapper courseMapper;
     @Mock CourseAccessService courseAccessService;
 
     private static final Long COURSE_ID = 1L;
 
     private QuestionServiceImpl service() {
         lenient().doNothing().when(courseAccessService).assertManageCourse(anyLong());
+        QuestionWriteService writeService = new QuestionWriteService(
+                questionMapper, questionOptionMapper, questionNodeMapper,
+                courseMapper, graphQueryService);
         return new QuestionServiceImpl(
                 graphQueryService, questionAiClient, kgNodeMapper,
-                questionMapper, questionOptionMapper, questionNodeMapper,
-                courseAccessService);
+                questionMapper, courseAccessService, writeService);
     }
 
-    /** 默认白名单与节点环境：whitelist={KT07,KT05,KT04}，目标 KT07。 */
     private void stubGraph() {
         when(graphQueryService.whitelistOf(COURSE_ID, "KT07", 2))
                 .thenReturn(Set.of("KT07", "KT05", "KT04"));
@@ -76,7 +87,6 @@ class QuestionServiceImplTest {
                 kgNode(40L, "KT04", "封装")));
     }
 
-    /** 让 questionMapper.insert 模拟自增主键。 */
     private void stubInsertAutoId() {
         AtomicLong seq = new AtomicLong(1000L);
         when(questionMapper.insert(any(Question.class))).thenAnswer(inv -> {
@@ -88,13 +98,16 @@ class QuestionServiceImplTest {
     // ───────────────────────── 用例 A：全合法 ─────────────────────────
 
     @Test
-    @DisplayName("A 全合法：2 道合法题全部落库，status=PENDING，主点 weight=1")
+    @DisplayName("A 全合法：2 道合法题全部落库，status=PENDING，主点 weight=1，stemHash 已写")
     void allValidPersisted() {
         stubGraph();
         stubInsertAutoId();
         when(questionMapper.selectList(any())).thenReturn(new ArrayList<>());
-        when(questionAiClient.generate(any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(), any()))
-                .thenReturn(List.of(validQuestion("继承表示？"), validQuestion("封装表示？")));
+        when(questionAiClient.generate(any(), any(), any(), anyInt(), any()))
+                .thenAnswer(inv -> {
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                    return List.of(validQuestion("继承表示？"), validQuestion("封装表示？"));
+                });
 
         GenerateResult result = service().generate(COURSE_ID, "KT07", 2);
 
@@ -103,21 +116,19 @@ class QuestionServiceImplTest {
         assertThat(result.getDuplicated()).isZero();
         assertThat(result.getQuestionIds()).hasSize(2);
 
-        // 只调一次 AI（第一轮已满足）
         verify(questionAiClient, times(1))
-                .generate(any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(), any());
+                .generate(any(), any(), any(), eq(2), any());
 
-        // question 落库 2 次，status=PENDING，source=2，type=1
         ArgumentCaptor<Question> qCaptor = ArgumentCaptor.forClass(Question.class);
         verify(questionMapper, times(2)).insert(qCaptor.capture());
         assertThat(qCaptor.getAllValues()).allSatisfy(q -> {
             assertThat(q.getStatus()).isEqualTo(QuestionStatus.PENDING);
             assertThat(q.getSource()).isEqualTo(2);
             assertThat(q.getType()).isEqualTo(1);
-            assertThat(q.getAnswer()).isEqualTo("A"); // validQuestion 正确项是 A
+            assertThat(q.getAnswer()).isEqualTo("A");
+            assertThat(q.getStemHash()).isEqualTo(StemHash.sha256Hex(q.getStem()));
         });
 
-        // question_node 含 weight=1 主点（每题：1 主 + 1 次）
         ArgumentCaptor<QuestionNode> nCaptor = ArgumentCaptor.forClass(QuestionNode.class);
         verify(questionNodeMapper, times(4)).insert(nCaptor.capture());
         assertThat(nCaptor.getAllValues())
@@ -125,7 +136,6 @@ class QuestionServiceImplTest {
         assertThat(nCaptor.getAllValues())
                 .filteredOn(n -> n.getWeight() == 1).hasSize(2);
 
-        // 选项落库：每题 3 个选项
         verify(questionOptionMapper, times(6)).insert(any(QuestionOption.class));
     }
 
@@ -140,20 +150,23 @@ class QuestionServiceImplTest {
 
         AiQuestion legal = validQuestion("第一轮合法题");
         AiQuestion illegal = validQuestion("第一轮非法题");
-        // 把某干扰项考点改为白名单外 KTXX
         illegal.getOptions().get(1).setPointNodeCode("KTXX");
-
         AiQuestion legal2 = validQuestion("第二轮合法题");
 
-        when(questionAiClient.generate(any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(), any()))
-                .thenReturn(List.of(legal, illegal))   // 第一轮：1 合法 1 非法
-                .thenReturn(List.of(legal2));          // 第二轮：补 1 合法
+        when(questionAiClient.generate(any(), any(), any(), anyInt(), any()))
+                .thenAnswer(inv -> {
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                    return List.of(legal, illegal);
+                })
+                .thenAnswer(inv -> {
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                    return List.of(legal2);
+                });
 
         GenerateResult result = service().generate(COURSE_ID, "KT07", 2);
 
-        // AI 被调两次（重试一次）
         verify(questionAiClient, times(2))
-                .generate(any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(), any());
+                .generate(any(), any(), any(), anyInt(), any());
         assertThat(result.getDropped()).isGreaterThanOrEqualTo(1);
         assertThat(result.getGenerated()).isEqualTo(2);
     }
@@ -161,38 +174,36 @@ class QuestionServiceImplTest {
     // ───────────────────────── 用例 C：去重 ─────────────────────────
 
     @Test
-    @DisplayName("C 题干已存在：跳过该题，duplicated==1，不抛异常")
+    @DisplayName("C 题干指纹已存在：跳过该题，duplicated==1，不抛异常")
     void duplicateSkipped() {
         stubGraph();
-        // 去重在落库前发生，无需 stub insert
-        // 任意 selectList 都返回非空 → 该题视为已存在
         when(questionMapper.selectList(any())).thenReturn(List.of(new Question()));
-        when(questionAiClient.generate(any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(), any()))
-                .thenReturn(List.of(validQuestion("重复题干")));
+        when(questionAiClient.generate(any(), any(), any(), anyInt(), any()))
+                .thenAnswer(inv -> {
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                    return List.of(validQuestion("重复题干"));
+                });
 
         GenerateResult result = service().generate(COURSE_ID, "KT07", 1);
 
         assertThat(result.getDuplicated()).isEqualTo(1);
         assertThat(result.getGenerated()).isZero();
-        // 去重不落库
         verify(questionMapper, times(0)).insert(any(Question.class));
     }
 
-    // ──────────────── 用例 D：答案非法（无 correct / 答案不在选项内） ────────────────
+    // ──────────────── 用例 D：答案非法 ────────────────
 
     @Test
     @DisplayName("D 无正确项的题被丢弃，不落库")
     void noCorrectDropped() {
         stubGraph();
-        // 落库相关 stub 用 lenient，避免 D 不触发落库时 strict stubbing 报错
         lenient().when(questionMapper.selectList(any())).thenReturn(new ArrayList<>());
 
         AiQuestion noCorrect = validQuestion("没有正确项");
         for (AiDistractor opt : noCorrect.getOptions()) {
             opt.setCorrect(false);
         }
-        // 期望 1 道但第一轮 0 道有效 → 会重试，第二轮也返回同样非法 → 仍 0 道
-        when(questionAiClient.generate(any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(), any()))
+        when(questionAiClient.generate(any(), any(), any(), anyInt(), any()))
                 .thenReturn(List.of(noCorrect))
                 .thenReturn(List.of(noCorrect));
 
@@ -206,7 +217,7 @@ class QuestionServiceImplTest {
     // ──────────────── 用例 E：存量题标注 在纲 → 落库 ────────────────
 
     @Test
-    @DisplayName("E 在纲存量题：mainPoint=KT10 → 落库，question_node 主点 weight=1，persisted=true")
+    @DisplayName("E 在纲存量题：mainPoint=KT10 → 落库，AI 不在事务内")
     void annotateInScopePersisted() {
         when(graphQueryService.allNodeCodes(COURSE_ID))
                 .thenReturn(Set.of("KT10", "KT05", "KT04"));
@@ -223,7 +234,10 @@ class QuestionServiceImplTest {
         ann.setSubPoints(List.of("KT05"));
         ann.setDistractors(List.of(option("B", "干扰项1", false, "KT05")));
         ann.setReason("命中多态");
-        when(questionAiClient.annotate(any(), any(), any())).thenReturn(ann);
+        when(questionAiClient.annotate(any(), any(), any())).thenAnswer(inv -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return ann;
+        });
 
         AnnotateRequest req = request(item("多态指什么？",
                 reqOption("A", "正确项", true),
@@ -239,7 +253,6 @@ class QuestionServiceImplTest {
         assertThat(r.getSubPoints()).containsExactly("KT05");
         assertThat(r.getReason()).isEqualTo("命中多态");
 
-        // question 落库一次：status=PENDING、source=1、type=1、答案=A
         ArgumentCaptor<Question> qCaptor = ArgumentCaptor.forClass(Question.class);
         verify(questionMapper, times(1)).insert(qCaptor.capture());
         Question q = qCaptor.getValue();
@@ -247,11 +260,10 @@ class QuestionServiceImplTest {
         assertThat(q.getSource()).isEqualTo(1);
         assertThat(q.getType()).isEqualTo(1);
         assertThat(q.getAnswer()).isEqualTo("A");
+        assertThat(q.getStemHash()).isEqualTo(StemHash.sha256Hex("多态指什么？"));
 
-        // 选项落库 3 个
         verify(questionOptionMapper, times(3)).insert(any(QuestionOption.class));
 
-        // question_node：主点 KT10(weight=1) + 次点 KT05(weight=2)
         ArgumentCaptor<QuestionNode> nCaptor = ArgumentCaptor.forClass(QuestionNode.class);
         verify(questionNodeMapper, times(2)).insert(nCaptor.capture());
         assertThat(nCaptor.getAllValues())
@@ -263,7 +275,7 @@ class QuestionServiceImplTest {
     // ──────────────── 用例 F：存量题标注 超纲 → 不强标 ────────────────
 
     @Test
-    @DisplayName("F 超纲存量题：mainPoint=null → 不落库，persisted=false，reason 透传")
+    @DisplayName("F 超纲存量题：mainPoint=null → 不落库，persisted=false")
     void annotateOutOfScopeNotPersisted() {
         lenient().when(graphQueryService.allNodeCodes(COURSE_ID))
                 .thenReturn(Set.of("KT10", "KT05", "KT04"));
@@ -289,15 +301,69 @@ class QuestionServiceImplTest {
         assertThat(r.getMainPoint()).isNull();
         assertThat(r.getReason()).isEqualTo("超出本课程范围");
 
-        // 超纲不落库：question / option / question_node 都不写
         verify(questionMapper, times(0)).insert(any(Question.class));
         verify(questionOptionMapper, times(0)).insert(any(QuestionOption.class));
         verify(questionNodeMapper, times(0)).insert(any(QuestionNode.class));
     }
 
+    // ──────────────── 用例 G：remaining + 封顶 ────────────────
+
+    @Test
+    @DisplayName("G count=5：首轮 3 合法，次轮 remaining=2 且 AI 回 8 时最终 persist≤5")
+    void remainingRequestedAndCapAtTarget() {
+        stubGraph();
+        stubInsertAutoId();
+        when(questionMapper.selectList(any())).thenReturn(new ArrayList<>());
+
+        List<AiQuestion> firstBatch = List.of(
+                validQuestion("r1-q1"), validQuestion("r1-q2"), validQuestion("r1-q3"));
+        List<AiQuestion> secondBatch = new ArrayList<>();
+        for (int i = 1; i <= 8; i++) {
+            secondBatch.add(validQuestion("r2-q" + i));
+        }
+
+        AtomicInteger call = new AtomicInteger();
+        ArgumentCaptor<Integer> countCap = ArgumentCaptor.forClass(Integer.class);
+        when(questionAiClient.generate(any(), any(), any(), countCap.capture(), any()))
+                .thenAnswer(inv -> {
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                    int n = call.incrementAndGet();
+                    if (n == 1) {
+                        assertThat(inv.getArgument(3, Integer.class)).isEqualTo(5);
+                        return firstBatch;
+                    }
+                    assertThat(inv.getArgument(3, Integer.class)).isEqualTo(2);
+                    return secondBatch;
+                });
+
+        GenerateResult result = service().generate(COURSE_ID, "KT07", 5);
+
+        assertThat(result.getGenerated()).isEqualTo(5);
+        assertThat(result.getGenerated()).isLessThanOrEqualTo(5);
+        verify(questionAiClient, times(2)).generate(any(), any(), any(), anyInt(), any());
+        assertThat(countCap.getAllValues()).containsExactly(5, 2);
+        verify(questionMapper, times(5)).insert(any(Question.class));
+    }
+
+    // ──────────────── 用例 H：count 非法 400 且不调 AI ────────────────
+
+    @Test
+    @DisplayName("H count=0 或 21 → BAD_REQUEST，不调 AI")
+    void invalidCountRejectedBeforeAi() {
+        assertThatThrownBy(() -> service().generate(COURSE_ID, "KT07", 0))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.BAD_REQUEST.getCode()));
+        assertThatThrownBy(() -> service().generate(COURSE_ID, "KT07", 21))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.BAD_REQUEST.getCode()));
+
+        verify(questionAiClient, never()).generate(any(), any(), any(), anyInt(), any());
+    }
+
     // ───────────────────────── 测试辅助 ─────────────────────────
 
-    /** 一道合法单选题：3 选项（A 正确；B、C 为白名单内干扰项），主点 KT07，次点 KT05。 */
     private AiQuestion validQuestion(String stem) {
         AiQuestion q = new AiQuestion();
         q.setStem(stem);

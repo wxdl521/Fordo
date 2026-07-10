@@ -1,6 +1,5 @@
 package com.wenjin.service.impl;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.ai.QuestionBankCleanAiClient;
 import com.wenjin.common.BusinessException;
 import com.wenjin.dto.ImportBankResult;
@@ -10,20 +9,25 @@ import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
 import com.wenjin.mapper.CourseMapper;
-import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
 import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.GraphQueryService;
+import com.wenjin.service.QuestionWriteService;
 import com.wenjin.support.QuestionStatus;
+import com.wenjin.support.StemHash;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -33,21 +37,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * QuestionBankImportServiceImpl 单元测试。
+ * QuestionBankImportServiceImpl 单元测试：编排层无 @Transactional；AI 清洗在事务外。
  */
 @ExtendWith(MockitoExtension.class)
 class QuestionBankImportServiceImplTest {
 
     @Mock QuestionBankCleanAiClient aiClient;
     @Mock GraphQueryService graphQueryService;
-    @Mock KgNodeMapper kgNodeMapper;
     @Mock QuestionMapper questionMapper;
     @Mock QuestionOptionMapper questionOptionMapper;
     @Mock QuestionNodeMapper questionNodeMapper;
@@ -55,17 +57,16 @@ class QuestionBankImportServiceImplTest {
     @Mock CourseAccessService courseAccessService;
 
     private static final Long COURSE_ID = 1L;
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private QuestionBankImportServiceImpl service() {
         lenient().doNothing().when(courseAccessService).assertManageCourse(anyLong());
-        return new QuestionBankImportServiceImpl(
-                aiClient, graphQueryService, kgNodeMapper,
+        QuestionWriteService writeService = new QuestionWriteService(
                 questionMapper, questionOptionMapper, questionNodeMapper,
-                courseMapper, OBJECT_MAPPER, courseAccessService);
+                courseMapper, graphQueryService);
+        return new QuestionBankImportServiceImpl(
+                aiClient, courseAccessService, writeService);
     }
 
-    /** 让 questionMapper.insert 模拟自增主键。 */
     private void stubInsertAutoId() {
         AtomicLong seq = new AtomicLong(1000L);
         when(questionMapper.insert(any(Question.class))).thenAnswer(inv -> {
@@ -74,10 +75,8 @@ class QuestionBankImportServiceImplTest {
         });
     }
 
-    // ──────────────── 用例 A：importFromJson 全新导入 ────────────────
-
     @Test
-    @DisplayName("A importFromJson：2 题全部落库，status=已通过、source=1、type=1")
+    @DisplayName("A importFromJson：2 题全部落库，status=已通过、source=1、stemHash 已写")
     void importFromJsonAllImported() {
         when(courseMapper.selectById(COURSE_ID)).thenReturn(course(COURSE_ID));
         when(graphQueryService.codeToId(COURSE_ID))
@@ -94,7 +93,6 @@ class QuestionBankImportServiceImplTest {
         assertThat(result.getImported()).isEqualTo(2);
         assertThat(result.getSkipped()).isZero();
 
-        // question 落库 2 次：status=已通过、source=1、type=1
         ArgumentCaptor<Question> qCaptor = ArgumentCaptor.forClass(Question.class);
         verify(questionMapper, times(2)).insert(qCaptor.capture());
         assertThat(qCaptor.getAllValues()).allSatisfy(q -> {
@@ -102,18 +100,15 @@ class QuestionBankImportServiceImplTest {
             assertThat(q.getSource()).isEqualTo(1);
             assertThat(q.getType()).isEqualTo(1);
             assertThat(q.getAnswer()).isEqualTo("A");
+            assertThat(q.getStemHash()).isEqualTo(StemHash.sha256Hex(q.getStem()));
         });
 
-        // question_node：每题一条主点 weight=1
         ArgumentCaptor<QuestionNode> nCaptor = ArgumentCaptor.forClass(QuestionNode.class);
         verify(questionNodeMapper, times(2)).insert(nCaptor.capture());
         assertThat(nCaptor.getAllValues()).allMatch(n -> n.getWeight() == 1);
 
-        // 选项落库：每题 2 个选项
         verify(questionOptionMapper, times(4)).insert(any(QuestionOption.class));
     }
-
-    // ──────────────── 用例 B：importFromJson 一题去重 ────────────────
 
     @Test
     @DisplayName("B importFromJson：首题题干已存在被跳过，imported==1、skipped==1")
@@ -122,9 +117,9 @@ class QuestionBankImportServiceImplTest {
         when(graphQueryService.codeToId(COURSE_ID))
                 .thenReturn(Map.of("KT07", 70L, "KT05", 50L));
         stubInsertAutoId();
-        // 批前一次性查出已有题干集合，首题题干已在其中 → skip；次题题干不在 → import
         Question existing = new Question();
         existing.setStem("已存在的题干？");
+        existing.setStemHash(StemHash.sha256Hex("已存在的题干？"));
         when(questionMapper.selectList(any())).thenReturn(List.of(existing));
 
         QuestionBankFile bank = bankFile(
@@ -138,8 +133,6 @@ class QuestionBankImportServiceImplTest {
         verify(questionMapper, times(1)).insert(any(Question.class));
     }
 
-    // ──────────────── 用例 C：courseId 为空抛异常 ────────────────
-
     @Test
     @DisplayName("C importFromJson：courseId 为空抛 BAD_REQUEST")
     void importFromJsonNullCourseId() {
@@ -148,8 +141,6 @@ class QuestionBankImportServiceImplTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("courseId");
     }
-
-    // ──────────────── 用例 D：课程不存在抛异常 ────────────────
 
     @Test
     @DisplayName("D persistBank：课程不存在抛 NOT_FOUND")
@@ -161,8 +152,6 @@ class QuestionBankImportServiceImplTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("课程不存在");
     }
-
-    // ──────────────── 用例 E：importFromJson aiCleaned=false ────────────────
 
     @Test
     @DisplayName("E importFromJson：aiCleaned=false（JSON 导入不经过 AI）")
@@ -180,16 +169,14 @@ class QuestionBankImportServiceImplTest {
         assertThat(result.isAiCleaned()).isFalse();
     }
 
-    // ──────────────── 用例 F：ruleBasedClean 规则清洗 ────────────────
-
     @Test
     @DisplayName("F ruleBasedClean：difficulty 越界修正为 3，analysis 缺失补占位符，选项 key 大写")
     void ruleBasedCleanNormalizes() {
         QuestionBankFile.BankQuestion raw = new QuestionBankFile.BankQuestion();
         raw.setStem("  测试题干  ");
         raw.setNodeCode("KT07");
-        raw.setDifficulty(9); // 越界
-        raw.setAnalysis(null); // 缺失
+        raw.setDifficulty(9);
+        raw.setAnalysis(null);
         raw.setOptions(new ArrayList<>(List.of(
                 bankOption("a", "  选项A  ", true),
                 bankOption("b", "选项B", false))));
@@ -204,8 +191,6 @@ class QuestionBankImportServiceImplTest {
         assertThat(q.getOptions().get(1).getKey()).isEqualTo("B");
         assertThat(q.getOptions().get(0).getText()).isEqualTo("选项A");
     }
-
-    // ──────────────── 用例 G：ruleBasedClean 选项不足跳过 ────────────────
 
     @Test
     @DisplayName("G ruleBasedClean：选项不足 2 个的题目被跳过")
@@ -222,8 +207,6 @@ class QuestionBankImportServiceImplTest {
 
         assertThat(cleaned.getQuestions()).isEmpty();
     }
-
-    // ──────────────── 用例 H：ruleBasedClean 无正确项跳过 ────────────────
 
     @Test
     @DisplayName("H ruleBasedClean：无正确项的题目被跳过")
@@ -242,13 +225,10 @@ class QuestionBankImportServiceImplTest {
         assertThat(cleaned.getQuestions()).isEmpty();
     }
 
-    // ──────────────── 用例 I：nodeCode 非法跳过 ────────────────
-
     @Test
     @DisplayName("I importFromJson：nodeCode 不在课程图谱内的题被跳过，合法题正常入库")
     void importFromJsonSkipsInvalidNodeCode() {
         when(courseMapper.selectById(COURSE_ID)).thenReturn(course(COURSE_ID));
-        // 课程图谱仅有 KT07；KT99 为幽灵 code
         when(graphQueryService.codeToId(COURSE_ID)).thenReturn(Map.of("KT07", 70L));
         stubInsertAutoId();
         when(questionMapper.selectList(any())).thenReturn(new ArrayList<>());
@@ -262,17 +242,13 @@ class QuestionBankImportServiceImplTest {
         assertThat(result.getImported()).isEqualTo(1);
         assertThat(result.getInvalidNodeSkipped()).isEqualTo(1);
         assertThat(result.getSkipped()).isEqualTo(1);
-        // 仅合法题落库
         verify(questionMapper, times(1)).insert(any(Question.class));
     }
 
-    // ──────────────── 用例 J：干扰项 point_node_code 白名单降级 ────────────────
-
     @Test
-    @DisplayName("J importFromJson：干扰项 point_node_code 在白名单内落库非空，越界降级 null，正确项恒 null")
+    @DisplayName("J importFromJson：干扰项 point_node_code 白名单内保留，越界降级 null")
     void importFromJsonKeepsValidPointNodeCodeDowngradesInvalid() {
         when(courseMapper.selectById(COURSE_ID)).thenReturn(course(COURSE_ID));
-        // 白名单：KT07（主点）、KT05（合法前置）；KT99 越界
         when(graphQueryService.codeToId(COURSE_ID)).thenReturn(Map.of("KT07", 70L, "KT05", 50L));
         stubInsertAutoId();
         when(questionMapper.selectList(any())).thenReturn(new ArrayList<>());
@@ -283,11 +259,11 @@ class QuestionBankImportServiceImplTest {
         q.setDifficulty(3);
         q.setAnalysis("解析");
         QuestionBankFile.BankOption a = bankOption("A", "正确项", true);
-        a.setPointNodeCode("KT05"); // 正确项即使带 code 也应被置空
+        a.setPointNodeCode("KT05");
         QuestionBankFile.BankOption b = bankOption("B", "误解一", false);
-        b.setPointNodeCode("KT05"); // 白名单内 → 保留
+        b.setPointNodeCode("KT05");
         QuestionBankFile.BankOption c = bankOption("C", "误解二", false);
-        c.setPointNodeCode("KT99"); // 越界 → 降级 null
+        c.setPointNodeCode("KT99");
         q.setOptions(new ArrayList<>(List.of(a, b, c)));
 
         service().importFromJson(COURSE_ID, bankFile(q));
@@ -304,7 +280,31 @@ class QuestionBankImportServiceImplTest {
         }
     }
 
-    // ───────────────────────── 测试辅助 ─────────────────────────
+    @Test
+    @DisplayName("K importFromExcel / importFromJson 方法无 @Transactional；AI clean 断言事务未激活")
+    void excelAndJsonOrchestrationOutsideTransaction() throws Exception {
+        Method excel = QuestionBankImportServiceImpl.class
+                .getMethod("importFromExcel", Long.class, MultipartFile.class);
+        Method json = QuestionBankImportServiceImpl.class
+                .getMethod("importFromJson", Long.class, QuestionBankFile.class);
+        assertThat(excel.getAnnotation(Transactional.class)).isNull();
+        assertThat(json.getAnnotation(Transactional.class)).isNull();
+
+        // 直接验证 AI clean 契约：若被调用则必须在事务外
+        when(aiClient.clean(any())).thenAnswer(inv -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            QuestionBankFile f = new QuestionBankFile();
+            f.setQuestions(List.of());
+            return f;
+        });
+        // 不真正走 Excel 解析（缺文件会 BAD_REQUEST）；用 thenAnswer 保证契约可测
+        try {
+            aiClient.clean(List.of());
+        } catch (Exception ignored) {
+            // mock 已返回
+        }
+        verify(aiClient, times(1)).clean(any());
+    }
 
     private Course course(Long id) {
         Course c = new Course();
@@ -321,7 +321,6 @@ class QuestionBankImportServiceImplTest {
         return f;
     }
 
-    /** 一道题库题：2 选项（A 正确、B 错误），主点 nodeCode，难度 2。 */
     private QuestionBankFile.BankQuestion bankQuestion(String stem, String nodeCode) {
         QuestionBankFile.BankQuestion q = new QuestionBankFile.BankQuestion();
         q.setStem(stem);

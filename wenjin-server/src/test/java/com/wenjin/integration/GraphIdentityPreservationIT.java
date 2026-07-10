@@ -137,6 +137,7 @@ class GraphIdentityPreservationIT extends MySqlContainerSupport {
         Question q = new Question();
         q.setCourseId(courseId);
         q.setStem("题干");
+        q.setStemHash(com.wenjin.support.StemHash.sha256Hex("题干"));
         q.setType(1);
         q.setDifficulty(2);
         q.setAnswer("A");

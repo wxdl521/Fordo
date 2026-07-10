@@ -1,7 +1,6 @@
 package com.wenjin.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wenjin.ai.QuestionAiClient;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
@@ -29,6 +28,8 @@ import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.StudentCourseMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.DiagnosticResultService;
+import com.wenjin.service.LearningPathWriter;
+import com.wenjin.service.LearningPathWriter.PreparedPathStep;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.PathService;
 import com.wenjin.support.QuestionStatus;
@@ -36,12 +37,8 @@ import com.wenjin.support.RelationType;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DeadlockLoserDataAccessException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.SQLException;
-import java.time.LocalDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -56,18 +53,13 @@ import java.util.stream.Collectors;
 
 /**
  * 学习路径服务实现（PRD 8.3）。
- * <p>聚焦卡点：从 target 沿前置边逆向 BFS 收集未掌握(薄弱+未学)前置（遇已掌握剪枝），
- * 对节点集做 Kahn 拓扑排序（同层按掌握度升序），落库 learning_path(+item)。
- * <p>并发：读快照与 AI 理由在事务外；短事务内对 {@code student_course FOR UPDATE} 后
- * 失效旧路径、插入新路径并写 {@code current_path_id}。getCurrent 只读指针。
+ * <p>聚焦卡点：从 target 沿前置边逆向 BFS 收集未掌握前置，Kahn 拓扑排序后落库。
+ * <p>并发：读快照与 AI 理由在事务外；短写由 {@link LearningPathWriter}（REQUIRES_NEW）完成。
  */
 @Service
 public class PathServiceImpl implements PathService {
 
     private static final int PREREQ = RelationType.PREREQUISITE.getCode();
-    private static final int STATUS_ACTIVE = 1;
-    private static final int STATUS_INACTIVE = 0;
-    private static final int ITEM_PENDING = 0;
     private static final int ITEM_DONE = 1;
     private static final String CONCLUSION_TEXT = "从根因补起，沿前置链逐步推进——根基稳了，卡点自然松动。";
     private static final int MAX_DEADLOCK_ATTEMPTS = 3;
@@ -84,7 +76,7 @@ public class PathServiceImpl implements PathService {
     private final QuestionNodeMapper questionNodeMapper;
     private final QuestionMapper questionMapper;
     private final MasteryDecayCalculator decayCalculator;
-    private final TransactionTemplate requiresNewTx;
+    private final LearningPathWriter learningPathWriter;
 
     public PathServiceImpl(StudentMasteryMapper studentMasteryMapper, KgNodeMapper kgNodeMapper,
                            KgEdgeMapper kgEdgeMapper, LearningPathMapper learningPathMapper,
@@ -95,7 +87,7 @@ public class PathServiceImpl implements PathService {
                            QuestionNodeMapper questionNodeMapper,
                            QuestionMapper questionMapper,
                            MasteryDecayCalculator decayCalculator,
-                           PlatformTransactionManager transactionManager) {
+                           LearningPathWriter learningPathWriter) {
         this.studentMasteryMapper = studentMasteryMapper;
         this.kgNodeMapper = kgNodeMapper;
         this.kgEdgeMapper = kgEdgeMapper;
@@ -107,9 +99,7 @@ public class PathServiceImpl implements PathService {
         this.questionNodeMapper = questionNodeMapper;
         this.questionMapper = questionMapper;
         this.decayCalculator = decayCalculator;
-        this.requiresNewTx = new TransactionTemplate(transactionManager);
-        this.requiresNewTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        this.requiresNewTx.setName("path-generate");
+        this.learningPathWriter = learningPathWriter;
     }
 
     @Override
@@ -155,7 +145,7 @@ public class PathServiceImpl implements PathService {
                         .eq(KgEdge::getCourseId, courseId)
                         .eq(KgEdge::getRelationType, PREREQ)
                         .isNull(KgEdge::getArchivedAt));
-        Map<Long, List<Long>> prereqMap = new HashMap<>(); // toNodeId -> [fromNodeId]
+        Map<Long, List<Long>> prereqMap = new HashMap<>();
         for (KgEdge e : edges) {
             prereqMap.computeIfAbsent(e.getToNodeId(), k -> new ArrayList<>()).add(e.getFromNodeId());
         }
@@ -182,32 +172,32 @@ public class PathServiceImpl implements PathService {
         String targetName = nodeById.get(targetId).getName();
         Map<Long, Integer> availCountMap = buildAvailableCountMap(ordered);
 
-        // ── 事务外：AI / 模板理由（绝不持 FOR UPDATE 调 AI） ───────────────
-        List<PreparedStep> prepared = new ArrayList<>();
+        // ── 事务外：AI / 模板理由（绝不持锁调 AI） ─────────────────────────
+        List<PreparedPathStep> prepared = new ArrayList<>();
         int order = 1;
         for (Long id : ordered) {
             String role = roleOf(id, targetId, rootSet);
             String reason = resolveReason(nodeById.get(id).getName(), role, targetName, req.isUseAi());
-            prepared.add(new PreparedStep(id, order, role, reason));
+            prepared.add(new PreparedPathStep(id, order, role, reason));
             order++;
         }
 
-        // ── 短事务：锁选课行 → 失效旧路径 → 插入新路径 → 写指针 ──────────
+        // ── 短事务写路径（LearningPathWriter REQUIRES_NEW） ───────────────
         final Long finalTargetId = targetId;
-        LearningPath path = runWithDeadlockRetry(() -> requiresNewTx.execute(status ->
-                persistPath(studentId, courseId, finalTargetId, prepared)));
+        LearningPath path = runWithDeadlockRetry(() ->
+                learningPathWriter.persistPath(studentId, courseId, finalTargetId, prepared));
 
         List<StepVO> steps = new ArrayList<>();
-        for (PreparedStep ps : prepared) {
+        for (PreparedPathStep ps : prepared) {
             LearningPathItem item = new LearningPathItem();
-            item.setId(ps.itemId);
+            item.setId(ps.itemId());
             item.setPathId(path.getId());
-            item.setNodeId(ps.nodeId);
-            item.setStepOrder(ps.stepOrder);
-            item.setStatus(ITEM_PENDING);
-            item.setReason(ps.reason);
-            steps.add(toStep(item, nodeById.get(ps.nodeId), mById.get(ps.nodeId), ps.role,
-                    availCountMap.getOrDefault(ps.nodeId, 0)));
+            item.setNodeId(ps.nodeId());
+            item.setStepOrder(ps.stepOrder());
+            item.setStatus(0);
+            item.setReason(ps.reason());
+            steps.add(toStep(item, nodeById.get(ps.nodeId()), mById.get(ps.nodeId()), ps.role(),
+                    availCountMap.getOrDefault(ps.nodeId(), 0)));
         }
 
         LearningPathVO vo = new LearningPathVO();
@@ -225,53 +215,8 @@ public class PathServiceImpl implements PathService {
         return vo;
     }
 
-    /**
-     * 短事务写路径：FOR UPDATE 选课行，保证同一学生×课程仅一条 active 路径且指针一致。
-     */
-    private LearningPath persistPath(Long studentId, Long courseId, Long targetId,
-                                     List<PreparedStep> prepared) {
-        StudentCourse sc = studentCourseMapper.selectForUpdate(studentId, courseId);
-        if (sc == null) {
-            throw new BusinessException(ResultCode.BAD_REQUEST, "未选课，无法生成学习路径");
-        }
-
-        // 旧路径失效（active_guard 唯一约束要求先清 active 再插新 active）
-        learningPathMapper.update(null, new UpdateWrapper<LearningPath>()
-                .eq("student_id", studentId)
-                .eq("course_id", courseId)
-                .eq("status", STATUS_ACTIVE)
-                .set("status", STATUS_INACTIVE));
-
-        LearningPath path = new LearningPath();
-        path.setStudentId(studentId);
-        path.setCourseId(courseId);
-        path.setTargetNodeId(targetId);
-        path.setStatus(STATUS_ACTIVE);
-        path.setGeneratedAt(LocalDateTime.now());
-        learningPathMapper.insert(path);
-
-        for (PreparedStep ps : prepared) {
-            LearningPathItem item = new LearningPathItem();
-            item.setPathId(path.getId());
-            item.setNodeId(ps.nodeId);
-            item.setStepOrder(ps.stepOrder);
-            item.setStatus(ITEM_PENDING);
-            item.setReason(ps.reason);
-            learningPathItemMapper.insert(item);
-            ps.itemId = item.getId();
-        }
-
-        StudentCourse scUpd = new StudentCourse();
-        scUpd.setId(sc.getId());
-        scUpd.setCurrentPathId(path.getId());
-        studentCourseMapper.updateById(scUpd);
-
-        return path;
-    }
-
     @Override
     public LearningPathVO getCurrent(Long studentId, Long courseId) {
-        // 唯一事实源：student_course.current_path_id（不再扫 status=1 猜最新）
         StudentCourse sc = studentCourseMapper.selectOne(
                 new LambdaQueryWrapper<StudentCourse>()
                         .eq(StudentCourse::getStudentId, studentId)
@@ -364,16 +309,15 @@ public class PathServiceImpl implements PathService {
         LearningPath path = learningPathMapper.selectById(item.getPathId());
         AccessGuard.assertSelf(path == null ? null : path.getStudentId());
         if (item.getStatus() != null && item.getStatus() == ITEM_DONE) {
-            return; // 幂等
+            return;
         }
         LearningPathItem upd = new LearningPathItem();
         upd.setId(itemId);
         upd.setStatus(ITEM_DONE);
-        upd.setCompletedAt(LocalDateTime.now());
+        upd.setCompletedAt(java.time.LocalDateTime.now());
         learningPathItemMapper.updateById(upd);
     }
 
-    // ── 拓扑排序 ───────────────────────────────────────────
     private List<Long> topoSort(Set<Long> setNodes, Map<Long, List<Long>> prereqMap,
                                 Map<Long, StudentMastery> mById) {
         Map<Long, Integer> indeg = new HashMap<>();
@@ -415,7 +359,6 @@ public class PathServiceImpl implements PathService {
         return result;
     }
 
-    /** 子图内无未掌握前置者（入度 0）的集合——即「根因」候选，可能多个。 */
     private Set<Long> rootNodeIds(Set<Long> setNodes, Map<Long, List<Long>> prereqMap) {
         Set<Long> roots = new HashSet<>();
         for (Long n : setNodes) {
@@ -433,7 +376,6 @@ public class PathServiceImpl implements PathService {
         return roots;
     }
 
-    /** 角色：卡点本身=stuck（优先）；子图入度 0=root；其余=prereq。 */
     private String roleOf(Long id, Long targetId, Set<Long> rootSet) {
         if (id.equals(targetId)) {
             return "stuck";
@@ -441,7 +383,6 @@ public class PathServiceImpl implements PathService {
         return rootSet.contains(id) ? "root" : "prereq";
     }
 
-    // ── reason ─────────────────────────────────────────────
     private String resolveReason(String nodeName, String role, String targetName, boolean useAi) {
         if (useAi) {
             try {
@@ -473,7 +414,6 @@ public class PathServiceImpl implements PathService {
         };
     }
 
-    // ── 工具 ───────────────────────────────────────────────
     private boolean isMastered(Map<Long, StudentMastery> mById, Long id) {
         StudentMastery m = mById.get(id);
         if (m == null || m.getMasteryScore() == null) {
@@ -589,21 +529,5 @@ public class PathServiceImpl implements PathService {
             t = t.getCause();
         }
         return false;
-    }
-
-    /** 事务外预计算的步骤（理由已解析；itemId 在落库后回填）。 */
-    private static final class PreparedStep {
-        final Long nodeId;
-        final int stepOrder;
-        final String role;
-        final String reason;
-        Long itemId;
-
-        PreparedStep(Long nodeId, int stepOrder, String role, String reason) {
-            this.nodeId = nodeId;
-            this.stepOrder = stepOrder;
-            this.role = role;
-            this.reason = reason;
-        }
     }
 }

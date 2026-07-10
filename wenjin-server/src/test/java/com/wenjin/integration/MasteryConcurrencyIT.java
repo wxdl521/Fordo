@@ -128,6 +128,7 @@ class MasteryConcurrencyIT extends MySqlContainerSupport {
         Question q = new Question();
         q.setCourseId(courseId);
         q.setStem(stem);
+        q.setStemHash(com.wenjin.support.StemHash.sha256Hex(stem));
         q.setType(1);
         q.setDifficulty(3);
         q.setStatus(QuestionStatus.APPROVED);

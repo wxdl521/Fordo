@@ -147,6 +147,7 @@ class FixedDiagnosticSessionIT extends MySqlContainerSupport {
             Question q = new Question();
             q.setCourseId(courseId);
             q.setStem("题干" + i);
+            q.setStemHash(com.wenjin.support.StemHash.sha256Hex("题干" + i));
             q.setType(1);
             q.setDifficulty(2);
             q.setStatus(QuestionStatus.APPROVED);

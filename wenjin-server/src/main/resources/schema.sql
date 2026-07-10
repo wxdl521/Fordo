@@ -111,6 +111,7 @@ CREATE TABLE `question` (
     `id`         BIGINT   NOT NULL AUTO_INCREMENT COMMENT '题目ID',
     `course_id`  BIGINT   NOT NULL                COMMENT '所属课程（逻辑外键→course.id）',
     `stem`       TEXT     NOT NULL                COMMENT '题干',
+    `stem_hash`  CHAR(64) NOT NULL                COMMENT '题干 SHA-256 十六进制指纹（trim 后，与应用 StemHash 一致）',
     `type`       TINYINT  NOT NULL                COMMENT '题型：1=单选, 2=多选, 3=判断, 4=简答',
     `difficulty` TINYINT  DEFAULT 1               COMMENT '难度 1–5',
     `answer`     TEXT     DEFAULT NULL            COMMENT '标准答案（客观题存选项标识，简答存参考答案）',
@@ -121,6 +122,7 @@ CREATE TABLE `question` (
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP                          COMMENT '创建时间',
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_question_course_stem_hash` (`course_id`, `stem_hash`),
     KEY `idx_course` (`course_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='题目表（题干、题型、难度、答案）';
 

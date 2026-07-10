@@ -23,6 +23,7 @@ import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.StudentCourseMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.service.LearningPathWriter;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.impl.PathServiceImpl;
 import com.wenjin.support.QuestionStatus;
@@ -37,9 +38,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -53,7 +52,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -76,7 +74,6 @@ class PathServiceImplTest {
     @Mock QuestionAiClient questionAiClient;
     @Mock QuestionNodeMapper questionNodeMapper;
     @Mock QuestionMapper questionMapper;
-    @Mock PlatformTransactionManager transactionManager;
 
     private static final Long S = 2L, C = 1L;
 
@@ -88,16 +85,13 @@ class PathServiceImplTest {
 
     /**
      * 默认 stub：questionNodeMapper/questionMapper 返回空列表，令现有测试不因新增 buildAvailableCountMap 调用而 NPE。
-     * 选课行 FOR UPDATE + 事务管理器透传，覆盖 generate 持久化路径。
+     * 选课行 FOR UPDATE 覆盖 generate 持久化路径（LearningPathWriter 短事务）。
      * LENIENT 模式下未用到也不报错。
      */
     @BeforeEach
     void stubAvailCountDefaults() {
         when(questionNodeMapper.selectList(any())).thenReturn(List.of());
         when(questionMapper.selectList(any())).thenReturn(List.of());
-        when(transactionManager.getTransaction(any(TransactionDefinition.class)))
-                .thenReturn(new SimpleTransactionStatus());
-        doNothing().when(transactionManager).commit(any());
         StudentCourse sc = new StudentCourse();
         sc.setId(900L);
         sc.setStudentId(S);
@@ -130,10 +124,12 @@ class PathServiceImplTest {
     }
 
     private PathServiceImpl implWithDecay(boolean decayEnabled) {
+        LearningPathWriter writer = new LearningPathWriter(
+                learningPathMapper, learningPathItemMapper, studentCourseMapper);
         return new PathServiceImpl(studentMasteryMapper, kgNodeMapper, kgEdgeMapper,
                 learningPathMapper, learningPathItemMapper, studentCourseMapper,
                 diagnosticResultService, questionAiClient,
-                questionNodeMapper, questionMapper, calculator(decayEnabled), transactionManager);
+                questionNodeMapper, questionMapper, calculator(decayEnabled), writer);
     }
 
     private KgNode node(long id, String code, String name) {
@@ -282,7 +278,11 @@ class PathServiceImplTest {
         when(studentMasteryMapper.selectList(any())).thenReturn(List.of(mastery(4, "30.00", 0)));
         stubInsertPathId();
         when(questionAiClient.explainLearningStep(anyString(), anyString(), anyString()))
-                .thenThrow(new BusinessException(ResultCode.AI_ERROR, "boom"));
+                .thenAnswer(inv -> {
+                    // AI 必须在事务外（不得持 FOR UPDATE 调网络）
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                    throw new BusinessException(ResultCode.AI_ERROR, "boom");
+                });
 
         PathGenerateRequest req = new PathGenerateRequest();
         req.setStudentId(S); req.setCourseId(C); req.setTargetNodeId(4L); req.setUseAi(true);
@@ -291,6 +291,28 @@ class PathServiceImplTest {
 
         verify(questionAiClient, times(1)).explainLearningStep(anyString(), anyString(), anyString());
         assertThat(vo.getSteps().get(0).getReason()).isNotBlank(); // 回退模板，非空
+    }
+
+    @Test
+    @DisplayName("E2 useAi=true：AI 成功返回时亦在事务外调用")
+    void useAiOutsideTransaction() {
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(node(4, "T", "卡点")));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of());
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(mastery(4, "30.00", 0)));
+        stubInsertPathId();
+        when(questionAiClient.explainLearningStep(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> {
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                    return "AI 理由";
+                });
+
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setStudentId(S); req.setCourseId(C); req.setTargetNodeId(4L); req.setUseAi(true);
+
+        LearningPathVO vo = impl().generate(req);
+
+        assertThat(vo.getSteps().get(0).getReason()).isEqualTo("AI 理由");
+        verify(learningPathMapper, times(1)).insert(any(LearningPath.class));
     }
 
     @Test
