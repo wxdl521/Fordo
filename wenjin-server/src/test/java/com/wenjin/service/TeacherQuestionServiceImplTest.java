@@ -12,6 +12,7 @@ import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.impl.TeacherQuestionServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,6 +46,9 @@ class TeacherQuestionServiceImplTest {
     @Mock
     private KgNodeMapper nodeMapper;
 
+    @Mock
+    private CourseAccessService courseAccessService;
+
     @InjectMocks
     private TeacherQuestionServiceImpl service;
 
@@ -55,6 +59,9 @@ class TeacherQuestionServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        lenient().doNothing().when(courseAccessService).assertManageCourse(anyLong());
+        lenient().doNothing().when(courseAccessService)
+                .assertQuestionsBelongToCourse(anyLong(), any());
         // Questions with different confidence levels
         q1 = new Question();
         q1.setId(101L);

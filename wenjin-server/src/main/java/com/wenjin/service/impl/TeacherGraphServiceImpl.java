@@ -4,13 +4,12 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.dto.NodeUpsertRequest;
 import com.wenjin.dto.PendingEdgeVO;
 import com.wenjin.dto.TeacherGraphVO;
-import com.wenjin.entity.Course;
 import com.wenjin.entity.KgEdge;
 import com.wenjin.entity.KgNode;
-import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.TeacherGraphService;
 import com.wenjin.support.RelationType;
 import com.wenjin.support.ReviewMarker;
@@ -29,16 +28,16 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     private final KgNodeMapper nodeMapper;
     private final KgEdgeMapper edgeMapper;
     private final QuestionNodeMapper questionNodeMapper;
-    private final CourseMapper courseMapper;
+    private final CourseAccessService courseAccessService;
 
     public TeacherGraphServiceImpl(KgNodeMapper nodeMapper,
                                     KgEdgeMapper edgeMapper,
                                     QuestionNodeMapper questionNodeMapper,
-                                    CourseMapper courseMapper) {
+                                    CourseAccessService courseAccessService) {
         this.nodeMapper = nodeMapper;
         this.edgeMapper = edgeMapper;
         this.questionNodeMapper = questionNodeMapper;
-        this.courseMapper = courseMapper;
+        this.courseAccessService = courseAccessService;
     }
 
     @Override
@@ -46,6 +45,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         if (courseId == null || courseId <= 0) {
             throw new IllegalArgumentException("courseId 无效: " + courseId);
         }
+        courseAccessService.assertManageCourse(courseId);
 
         List<KgNode> nodes = nodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId)
@@ -71,6 +71,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         if (courseId == null || courseId <= 0) {
             throw new IllegalArgumentException("courseId 无效: " + courseId);
         }
+        courseAccessService.assertManageCourse(courseId);
 
         List<KgNode> nodes = nodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId)
@@ -120,6 +121,8 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         if (edgeId == null || edgeId <= 0) {
             throw new IllegalArgumentException("edgeId 无效: " + edgeId);
         }
+        // 归属校验优先：跨教师 / 不存在统一 404，避免先读边再比较
+        courseAccessService.assertManageEdge(edgeId);
 
         KgEdge edge = edgeMapper.selectById(edgeId);
         if (edge == null) {
@@ -136,6 +139,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         if (edgeId == null || edgeId <= 0) {
             throw new IllegalArgumentException("edgeId 无效: " + edgeId);
         }
+        courseAccessService.assertManageEdge(edgeId);
 
         KgEdge edge = edgeMapper.selectById(edgeId);
         if (edge == null) {
@@ -151,17 +155,12 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         if (courseId == null || courseId <= 0) {
             throw new IllegalArgumentException("courseId 无效: " + courseId);
         }
+        courseAccessService.assertManageCourse(courseId);
         if (req == null) {
             throw new IllegalArgumentException("请求参数不能为空");
         }
         if (req.getNodeCode() == null || req.getNodeCode().trim().isEmpty()) {
             throw new IllegalArgumentException("节点编码不能为空");
-        }
-
-        // 检查课程存在性
-        Course course = courseMapper.selectById(courseId);
-        if (course == null) {
-            throw new IllegalArgumentException("课程不存在: courseId=" + courseId);
         }
 
         // Check duplicate
@@ -187,6 +186,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         if (nodeId == null || nodeId <= 0) {
             throw new IllegalArgumentException("nodeId 无效: " + nodeId);
         }
+        courseAccessService.assertManageNode(nodeId);
         if (req == null) {
             throw new IllegalArgumentException("请求参数不能为空");
         }
@@ -211,6 +211,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         if (nodeId == null || nodeId <= 0) {
             throw new IllegalArgumentException("nodeId 无效: " + nodeId);
         }
+        courseAccessService.assertManageNode(nodeId);
 
         KgNode node = nodeMapper.selectById(nodeId);
         if (node == null) {

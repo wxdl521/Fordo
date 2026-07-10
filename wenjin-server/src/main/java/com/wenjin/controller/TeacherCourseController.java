@@ -1,7 +1,6 @@
 package com.wenjin.controller;
 
 import com.wenjin.common.Result;
-import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.CreateCourseRequest;
 import com.wenjin.dto.TeacherCourseVO;
 import com.wenjin.service.TeacherCourseService;
@@ -9,7 +8,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-/** 老师端课程管理（受 TeacherAuthInterceptor 保护）。 */
+/** 老师端课程管理（受 TeacherAuthInterceptor 保护；owner 由服务层从 CurrentUser 取）。 */
 @RestController
 @RequestMapping("/api/teacher/courses")
 public class TeacherCourseController {
@@ -27,9 +26,7 @@ public class TeacherCourseController {
 
     @PostMapping
     public Result<TeacherCourseVO> create(@RequestBody CreateCourseRequest req) {
-        // owner 取自已验证的当前用户（教师拦截器已确保是教师）
-        Long teacherId = CurrentUser.get();
-        return Result.ok(teacherCourseService.create(req.getName(), teacherId));
+        return Result.ok(teacherCourseService.create(req.getName()));
     }
 
     @DeleteMapping("/{id}")

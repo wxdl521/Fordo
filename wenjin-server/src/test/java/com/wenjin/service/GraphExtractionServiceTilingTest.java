@@ -3,9 +3,12 @@ package com.wenjin.service;
 import com.wenjin.ai.ImageToMarkdownAiClient;
 import com.wenjin.ai.SyllabusGraphAiClient;
 import com.wenjin.dto.GraphImportRequest;
+import com.wenjin.mapper.CourseAccessMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.impl.GraphExtractionServiceImpl;
 import com.wenjin.support.DocumentTextExtractor;
 import com.wenjin.support.ImagePreprocessor;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockMultipartFile;
 
@@ -13,6 +16,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * 不依赖 Mockito 的切片管线验证(本机 byte-buddy 自挂载 agent 在内存压力下会失败,
@@ -51,14 +58,25 @@ class GraphExtractionServiceTilingTest {
             return draft;
         };
 
+        CourseAccessMapper accessMapper = mock(CourseAccessMapper.class);
+        when(accessMapper.courseIdByCode(anyString())).thenReturn(1L);
+        when(accessMapper.isOwnedCourse(anyLong(), anyLong())).thenReturn(true);
+        CourseAccessService access = new CourseAccessService(accessMapper);
+        com.wenjin.config.CurrentUser.set(
+                new com.wenjin.security.CurrentPrincipal(11L, com.wenjin.security.UserRole.TEACHER));
+
         GraphExtractionServiceImpl service =
-                new GraphExtractionServiceImpl(pre, vision, syllabus, new DocumentTextExtractor());
+                new GraphExtractionServiceImpl(pre, vision, syllabus, new DocumentTextExtractor(), access);
 
-        MockMultipartFile f = new MockMultipartFile("file", "doc.png", "image/png", new byte[]{9, 9});
-        GraphImportRequest result = service.extract("C1", f);
+        try {
+            MockMultipartFile f = new MockMultipartFile("file", "doc.png", "image/png", new byte[]{9, 9});
+            GraphImportRequest result = service.extract("C1", f);
 
-        assertThat(result).isSameAs(draft);
-        assertThat(seen).containsExactly(t1, t2, t3);             // 每片都送了视觉模型
-        assertThat(captured[0]).isEqualTo("# part1\n\n## part3");  // 拼接且跳过空白片
+            assertThat(result).isSameAs(draft);
+            assertThat(seen).containsExactly(t1, t2, t3);             // 每片都送了视觉模型
+            assertThat(captured[0]).isEqualTo("# part1\n\n## part3");  // 拼接且跳过空白片
+        } finally {
+            com.wenjin.config.CurrentUser.clear();
+        }
     }
 }

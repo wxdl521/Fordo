@@ -5,6 +5,7 @@ import com.wenjin.ai.SyllabusGraphAiClient;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.dto.GraphImportRequest;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.GraphExtractionService;
 import com.wenjin.support.DocumentTextExtractor;
 import com.wenjin.support.ImagePreprocessor;
@@ -25,15 +26,18 @@ public class GraphExtractionServiceImpl implements GraphExtractionService {
     private final ImageToMarkdownAiClient imageToMarkdownAiClient;
     private final SyllabusGraphAiClient syllabusGraphAiClient;
     private final DocumentTextExtractor documentTextExtractor;
+    private final CourseAccessService courseAccessService;
 
     public GraphExtractionServiceImpl(ImagePreprocessor imagePreprocessor,
                                       ImageToMarkdownAiClient imageToMarkdownAiClient,
                                       SyllabusGraphAiClient syllabusGraphAiClient,
-                                      DocumentTextExtractor documentTextExtractor) {
+                                      DocumentTextExtractor documentTextExtractor,
+                                      CourseAccessService courseAccessService) {
         this.imagePreprocessor = imagePreprocessor;
         this.imageToMarkdownAiClient = imageToMarkdownAiClient;
         this.syllabusGraphAiClient = syllabusGraphAiClient;
         this.documentTextExtractor = documentTextExtractor;
+        this.courseAccessService = courseAccessService;
     }
 
     @Override
@@ -44,6 +48,8 @@ public class GraphExtractionServiceImpl implements GraphExtractionService {
         if (file == null || file.isEmpty()) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "上传文件不能为空");
         }
+        // 归属优先：避免对无权课程做 AI 抽取
+        courseAccessService.assertManageCourseCode(courseCode);
         String ext = extension(file.getOriginalFilename());
         String text;
         if (IMAGE_EXT.contains(ext)) {

@@ -15,13 +15,13 @@ import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.GraphService;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.support.RelationType;
 import com.wenjin.support.ReviewMarker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -36,7 +36,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 图谱服务实现。导入流程：校验（节点ID唯一 / 边端点存在 / 前置环检测）→ 全量替换落库。
+ * 图谱服务实现。导入流程：归属校验 → 校验（节点ID唯一 / 边端点存在 / 前置环检测）→ 全量替换落库。
+ * <p>导入仅覆盖已存在且当前主体可管理的课程（不再隐式按 demoTeacherId 建课）。
  */
 @Service
 public class GraphServiceImpl implements GraphService {
@@ -52,21 +53,19 @@ public class GraphServiceImpl implements GraphService {
     private final KgNodeMapper nodeMapper;
     private final KgEdgeMapper edgeMapper;
     private final StudentMasteryMapper studentMasteryMapper;
-
-    /** 演示教师ID（新建课程时作为创建者） */
-    @Value("${wenjin.demo.teacher-id:1}")
-    private Long demoTeacherId;
-
     private final MasteryDecayCalculator decayCalculator;
+    private final CourseAccessService courseAccessService;
 
     public GraphServiceImpl(CourseMapper courseMapper, KgNodeMapper nodeMapper,
                             KgEdgeMapper edgeMapper, StudentMasteryMapper studentMasteryMapper,
-                            MasteryDecayCalculator decayCalculator) {
+                            MasteryDecayCalculator decayCalculator,
+                            CourseAccessService courseAccessService) {
         this.courseMapper = courseMapper;
         this.nodeMapper = nodeMapper;
         this.edgeMapper = edgeMapper;
         this.studentMasteryMapper = studentMasteryMapper;
         this.decayCalculator = decayCalculator;
+        this.courseAccessService = courseAccessService;
     }
 
     // ───────────────────────────── 导入 ─────────────────────────────
@@ -81,6 +80,9 @@ public class GraphServiceImpl implements GraphService {
             throw new BusinessException(ResultCode.BAD_REQUEST, "图谱数据为空：nodes 不能为空");
         }
 
+        // 0) 归属：课程须已存在且当前教师可管理（跨教师 / 不存在统一 404）
+        Long courseId = courseAccessService.assertManageCourseCode(courseCode);
+
         // 1) 校验：任一不通过则整体拒绝，返回逐条明细
         GraphValidateResult vr = validate(request);
         if (!vr.isValid()) {
@@ -89,22 +91,16 @@ public class GraphServiceImpl implements GraphService {
             throw new BusinessException(ResultCode.GRAPH_VALIDATE_FAIL, summary, vr);
         }
 
-        // 2) 定位/创建课程（按业务编码）
-        Course course = courseMapper.selectOne(
-                new LambdaQueryWrapper<Course>().eq(Course::getCode, courseCode));
+        // 2) 定位课程（assert 已保证存在与归属）
+        Course course = courseMapper.selectById(courseId);
         if (course == null) {
-            course = new Course();
-            course.setCode(courseCode);
-            course.setName(resolveCourseName(request, courseCode));
-            course.setTeacherId(demoTeacherId);
-            course.setStatus(1);
-            courseMapper.insert(course);
-        } else if (request.getCourse() != null && StringUtils.hasText(request.getCourse().getName())) {
+            throw new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage());
+        }
+        if (request.getCourse() != null && StringUtils.hasText(request.getCourse().getName())) {
             // 已存在则同步课程名（轻量更新）
             course.setName(request.getCourse().getName());
             courseMapper.updateById(course);
         }
-        Long courseId = course.getId();
 
         // 3) 全量替换：先删后插（同一事务内，先删边后删点）
         edgeMapper.delete(new LambdaQueryWrapper<KgEdge>().eq(KgEdge::getCourseId, courseId));
@@ -147,13 +143,6 @@ public class GraphServiceImpl implements GraphService {
         log.info("图谱导入成功：courseCode={}, courseId={}, 节点={}, 边={}",
                 courseCode, courseId, nodeCount, edgeCount);
         return new GraphImportResult(courseId, courseCode, course.getName(), nodeCount, edgeCount);
-    }
-
-    private String resolveCourseName(GraphImportRequest request, String courseCode) {
-        if (request.getCourse() != null && StringUtils.hasText(request.getCourse().getName())) {
-            return request.getCourse().getName();
-        }
-        return "课程-" + courseCode;
     }
 
     // ───────────────────────────── 校验 ─────────────────────────────

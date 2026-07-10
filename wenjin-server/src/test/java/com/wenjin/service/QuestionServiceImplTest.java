@@ -15,6 +15,7 @@ import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.impl.QuestionServiceImpl;
 import com.wenjin.support.QuestionStatus;
 import org.junit.jupiter.api.DisplayName;
@@ -31,6 +32,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -49,13 +52,16 @@ class QuestionServiceImplTest {
     @Mock QuestionMapper questionMapper;
     @Mock QuestionOptionMapper questionOptionMapper;
     @Mock QuestionNodeMapper questionNodeMapper;
+    @Mock CourseAccessService courseAccessService;
 
     private static final Long COURSE_ID = 1L;
 
     private QuestionServiceImpl service() {
+        lenient().doNothing().when(courseAccessService).assertManageCourse(anyLong());
         return new QuestionServiceImpl(
                 graphQueryService, questionAiClient, kgNodeMapper,
-                questionMapper, questionOptionMapper, questionNodeMapper);
+                questionMapper, questionOptionMapper, questionNodeMapper,
+                courseAccessService);
     }
 
     /** 默认白名单与节点环境：whitelist={KT07,KT05,KT04}，目标 KT07。 */

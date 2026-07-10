@@ -6,6 +6,7 @@ import com.wenjin.entity.KgNode;
 import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.TeacherDashboardService;
 import org.springframework.stereotype.Service;
@@ -28,16 +29,20 @@ public class TeacherDashboardServiceImpl implements TeacherDashboardService {
     private final StudentMasteryMapper masteryMapper;
     private final KgNodeMapper nodeMapper;
     private final MasteryDecayCalculator decayCalculator;
+    private final CourseAccessService courseAccessService;
 
     public TeacherDashboardServiceImpl(StudentMasteryMapper masteryMapper, KgNodeMapper nodeMapper,
-                                       MasteryDecayCalculator decayCalculator) {
+                                       MasteryDecayCalculator decayCalculator,
+                                       CourseAccessService courseAccessService) {
         this.masteryMapper = masteryMapper;
         this.nodeMapper = nodeMapper;
         this.decayCalculator = decayCalculator;
+        this.courseAccessService = courseAccessService;
     }
 
     @Override
     public DashboardVO dashboard(Long courseId) {
+        courseAccessService.assertManageCourse(courseId);
         List<StudentMastery> rows = masteryMapper.selectList(new LambdaQueryWrapper<StudentMastery>()
                 .eq(StudentMastery::getCourseId, courseId));
         List<KgNode> nodes = nodeMapper.selectList(new LambdaQueryWrapper<KgNode>()

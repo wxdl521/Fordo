@@ -11,6 +11,7 @@ import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.GraphQueryService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,9 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -44,15 +48,17 @@ class QuestionBankImportDedupTest {
     @Mock QuestionOptionMapper questionOptionMapper;
     @Mock QuestionNodeMapper questionNodeMapper;
     @Mock CourseMapper courseMapper;
+    @Mock CourseAccessService courseAccessService;
 
     private static final Long COURSE_ID = 1L;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private QuestionBankImportServiceImpl service() {
+        lenient().doNothing().when(courseAccessService).assertManageCourse(anyLong());
         return new QuestionBankImportServiceImpl(
                 aiClient, graphQueryService, kgNodeMapper,
                 questionMapper, questionOptionMapper, questionNodeMapper,
-                courseMapper, OBJECT_MAPPER);
+                courseMapper, OBJECT_MAPPER, courseAccessService);
     }
 
     private void stubInsertAutoId() {

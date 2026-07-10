@@ -14,6 +14,7 @@ import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.impl.GraphServiceImpl;
 import org.junit.jupiter.api.DisplayName;
@@ -33,6 +34,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -50,6 +53,7 @@ class GraphServiceImplTest {
     @Mock KgNodeMapper nodeMapper;
     @Mock KgEdgeMapper edgeMapper;
     @Mock StudentMasteryMapper studentMasteryMapper;
+    @Mock CourseAccessService courseAccessService;
 
     private GraphServiceImpl service() {
         return serviceWithDecay(true);
@@ -67,7 +71,10 @@ class GraphServiceImplTest {
     }
 
     private GraphServiceImpl serviceWithDecay(boolean decayEnabled) {
-        return new GraphServiceImpl(courseMapper, nodeMapper, edgeMapper, studentMasteryMapper, calculator(decayEnabled));
+        // 默认放行归属；导入成功路径另 stub selectById
+        lenient().when(courseAccessService.assertManageCourseCode(anyString())).thenReturn(1L);
+        return new GraphServiceImpl(courseMapper, nodeMapper, edgeMapper, studentMasteryMapper,
+                calculator(decayEnabled), courseAccessService);
     }
 
     // ───────── 校验类（校验先于落库，无需 stub mapper） ─────────
@@ -143,7 +150,7 @@ class GraphServiceImplTest {
     @DisplayName("多节点多类型边的合法 DAG 不报环，整图落库")
     void validDagWithMixedEdgesImports() {
         Course course = course(1L, "C1", "课程一");
-        when(courseMapper.selectOne(any())).thenReturn(course);
+        when(courseMapper.selectById(1L)).thenReturn(course);
         when(nodeMapper.insert(any(KgNode.class))).thenAnswer(inv -> {
             KgNode n = inv.getArgument(0);
             n.setId(Long.parseLong(n.getNodeCode().substring(2))); // KT01->1, KT02->2, KT03->3
@@ -177,7 +184,7 @@ class GraphServiceImplTest {
     @DisplayName("非前置边（包含）反向不算环，应通过校验并落库")
     void containsEdgeReverseIsNotCycle() {
         Course course = course(1L, "C1", "课程一");
-        when(courseMapper.selectOne(any())).thenReturn(course);
+        when(courseMapper.selectById(1L)).thenReturn(course);
         when(nodeMapper.insert(any(KgNode.class))).thenAnswer(inv -> {
             KgNode n = inv.getArgument(0);
             n.setId("KT01".equals(n.getNodeCode()) ? 10L : 11L);
@@ -199,7 +206,7 @@ class GraphServiceImplTest {
     @DisplayName("导入对已存在课程先删边再删点（全量替换），并正确映射边端点与关系编码")
     void importFullReplaceAndMapping() {
         Course course = course(1L, "C1", "课程一");
-        when(courseMapper.selectOne(any())).thenReturn(course);
+        when(courseMapper.selectById(1L)).thenReturn(course);
         when(nodeMapper.insert(any(KgNode.class))).thenAnswer(inv -> {
             KgNode n = inv.getArgument(0);
             n.setId("KT01".equals(n.getNodeCode()) ? 10L : 11L);
@@ -235,7 +242,7 @@ class GraphServiceImplTest {
     @DisplayName("is_key=true 的节点落库为 1，缺省难度补 1")
     void nodeKeyAndDifficultyMapping() {
         Course course = course(1L, "C1", "课程一");
-        when(courseMapper.selectOne(any())).thenReturn(course);
+        when(courseMapper.selectById(1L)).thenReturn(course);
         ArgumentCaptor<KgNode> nodeCaptor = ArgumentCaptor.forClass(KgNode.class);
         when(nodeMapper.insert(nodeCaptor.capture())).thenReturn(1);
 

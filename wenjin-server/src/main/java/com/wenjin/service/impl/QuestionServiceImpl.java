@@ -18,6 +18,7 @@ import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.GraphQueryService;
 import com.wenjin.service.QuestionService;
 import com.wenjin.support.QuestionStatus;
@@ -36,7 +37,7 @@ import java.util.Set;
 
 /**
  * 题目服务实现。出题流水线（Prompt 2，AI 出题即标注）：
- *   取白名单 → 调 AI 出题 → 逐题代码侧校验（恰一个正确项、答案在选项内、考点⊆白名单）
+ *   归属校验 → 取白名单 → 调 AI 出题 → 逐题代码侧校验（恰一个正确项、答案在选项内、考点⊆白名单）
  *   → 有效题不足整体重试一次 → 题干去重 → 落库 question/option/question_node。
  * 校验/去重在代码侧兜底，不信任 AI 输出。
  */
@@ -62,23 +63,28 @@ public class QuestionServiceImpl implements QuestionService {
     private final QuestionMapper questionMapper;
     private final QuestionOptionMapper questionOptionMapper;
     private final QuestionNodeMapper questionNodeMapper;
+    private final CourseAccessService courseAccessService;
+
     public QuestionServiceImpl(GraphQueryService graphQueryService,
                                QuestionAiClient aiClient,
                                KgNodeMapper nodeMapper,
                                QuestionMapper questionMapper,
                                QuestionOptionMapper questionOptionMapper,
-                               QuestionNodeMapper questionNodeMapper) {
+                               QuestionNodeMapper questionNodeMapper,
+                               CourseAccessService courseAccessService) {
         this.graphQueryService = graphQueryService;
         this.aiClient = aiClient;
         this.nodeMapper = nodeMapper;
         this.questionMapper = questionMapper;
         this.questionOptionMapper = questionOptionMapper;
         this.questionNodeMapper = questionNodeMapper;
+        this.courseAccessService = courseAccessService;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public GenerateResult generate(Long courseId, String nodeCode, int count) {
+        courseAccessService.assertManageCourse(courseId);
 
         // 1. 白名单（codes）：目标 + 1–2 层前置
         Set<String> whitelist = graphQueryService.whitelistOf(courseId, nodeCode, WHITELIST_DEPTH);
@@ -148,6 +154,7 @@ public class QuestionServiceImpl implements QuestionService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public List<AnnotateItemResult> annotate(Long courseId, AnnotateRequest req) {
+        courseAccessService.assertManageCourse(courseId);
         List<AnnotateItemResult> results = new ArrayList<>();
         if (req == null || req.getItems() == null || req.getItems().isEmpty()) {
             return results;

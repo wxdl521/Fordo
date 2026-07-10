@@ -1,16 +1,17 @@
 package com.wenjin.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wenjin.common.BusinessException;
+import com.wenjin.common.ResultCode;
 import com.wenjin.dto.NodeUpsertRequest;
 import com.wenjin.dto.PendingEdgeVO;
 import com.wenjin.dto.TeacherGraphVO;
-import com.wenjin.entity.Course;
 import com.wenjin.entity.KgEdge;
 import com.wenjin.entity.KgNode;
-import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.impl.TeacherGraphServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,6 +27,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -42,10 +44,17 @@ class TeacherGraphServiceImplTest {
     private QuestionNodeMapper questionNodeMapper;
 
     @Mock
-    private CourseMapper courseMapper;
+    private CourseAccessService courseAccessService;
 
     @InjectMocks
     private TeacherGraphServiceImpl service;
+
+    @BeforeEach
+    void allowAccess() {
+        lenient().doNothing().when(courseAccessService).assertManageCourse(anyLong());
+        lenient().when(courseAccessService.assertManageNode(anyLong())).thenReturn(1L);
+        lenient().when(courseAccessService.assertManageEdge(anyLong())).thenReturn(1L);
+    }
 
     @Test
     void getGraphReturnsFullGraphWithPendingFlag() {
@@ -229,11 +238,6 @@ class TeacherGraphServiceImplTest {
 
     @Test
     void createNodeRejectsDuplicateCode() {
-        // Given
-        Course course = new Course();
-        course.setId(1L);
-        when(courseMapper.selectById(1L)).thenReturn(course);
-
         NodeUpsertRequest req = new NodeUpsertRequest();
         req.setNodeCode("N1");
         req.setName("新节点");
@@ -251,11 +255,6 @@ class TeacherGraphServiceImplTest {
 
     @Test
     void createNodeInsertsWhenCodeUnique() {
-        // Given
-        Course course = new Course();
-        course.setId(1L);
-        when(courseMapper.selectById(1L)).thenReturn(course);
-
         NodeUpsertRequest req = new NodeUpsertRequest();
         req.setNodeCode("N1");
         req.setName("新节点");
@@ -281,6 +280,17 @@ class TeacherGraphServiceImplTest {
         verify(nodeMapper).insert(captor.capture());
         assertThat(captor.getValue().getNodeCode()).isEqualTo("N1");
         assertThat(captor.getValue().getCourseId()).isEqualTo(1L);
+    }
+
+    @Test
+    void teacherCannotAcceptEdgeFromAnotherTeachersCourse() {
+        doThrow(new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage()))
+                .when(courseAccessService).assertManageEdge(900L);
+
+        assertThatThrownBy(() -> service.acceptEdge(900L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(404);
+        verify(edgeMapper, never()).updateById(any(KgEdge.class));
     }
 
     @Test
@@ -458,7 +468,7 @@ class TeacherGraphServiceImplTest {
         assertThat(result.get(0).getToCode()).isEqualTo("N1");
     }
 
-    // ========== 新增测试用例：I5 课程存在性校验 ==========
+    // ========== I5 课程归属 / 存在性校验 ==========
 
     @Test
     void createNodeRejectsNonexistentCourse() {
@@ -466,20 +476,17 @@ class TeacherGraphServiceImplTest {
         req.setNodeCode("N1");
         req.setName("新节点");
 
-        when(courseMapper.selectById(999L)).thenReturn(null);
+        doThrow(new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage()))
+                .when(courseAccessService).assertManageCourse(999L);
 
         assertThatThrownBy(() -> service.createNode(999L, req))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("课程不存在: courseId=999");
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(404);
+        verify(nodeMapper, never()).insert(any(KgNode.class));
     }
 
     @Test
     void createNodeSucceedsWhenCourseExists() {
-        // Given
-        Course course = new Course();
-        course.setId(1L);
-        when(courseMapper.selectById(1L)).thenReturn(course);
-
         NodeUpsertRequest req = new NodeUpsertRequest();
         req.setNodeCode("N1");
         req.setName("新节点");
@@ -496,7 +503,7 @@ class TeacherGraphServiceImplTest {
 
         // Then
         assertThat(nodeId).isEqualTo(100L);
-        verify(courseMapper).selectById(1L);
+        verify(courseAccessService).assertManageCourse(1L);
     }
 
     // ========== 新增测试用例：I6 拒绝修改 nodeCode ==========

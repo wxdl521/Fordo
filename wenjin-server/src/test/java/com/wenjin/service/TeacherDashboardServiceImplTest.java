@@ -5,6 +5,7 @@ import com.wenjin.entity.KgNode;
 import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.impl.TeacherDashboardServiceImpl;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,9 @@ import java.util.Arrays;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -29,6 +33,7 @@ class TeacherDashboardServiceImplTest {
 
     @Mock StudentMasteryMapper masteryMapper;
     @Mock KgNodeMapper nodeMapper;
+    @Mock CourseAccessService courseAccessService;
 
     private TeacherDashboardServiceImpl service;
 
@@ -48,7 +53,9 @@ class TeacherDashboardServiceImplTest {
 
     @BeforeEach
     void setDecayConfig() {
-        service = new TeacherDashboardServiceImpl(masteryMapper, nodeMapper, calculator(true));
+        lenient().doNothing().when(courseAccessService).assertManageCourse(anyLong());
+        service = new TeacherDashboardServiceImpl(masteryMapper, nodeMapper, calculator(true),
+                courseAccessService);
     }
 
     private StudentMastery sm(long stu, long node, String score, int lvl) {

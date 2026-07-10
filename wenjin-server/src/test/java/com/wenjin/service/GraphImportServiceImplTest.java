@@ -5,6 +5,7 @@ import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.dto.GraphImportRequest;
 import com.wenjin.dto.GraphImportResult;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.impl.GraphImportServiceImpl;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -25,7 +26,9 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -37,9 +40,11 @@ class GraphImportServiceImplTest {
 
     @Mock GraphService graphService;
     @Mock GraphCleanAiClient graphCleanAiClient;
+    @Mock CourseAccessService courseAccessService;
 
     private GraphImportServiceImpl service() {
-        return new GraphImportServiceImpl(graphService, graphCleanAiClient);
+        lenient().when(courseAccessService.assertManageCourseCode(anyString())).thenReturn(1L);
+        return new GraphImportServiceImpl(graphService, graphCleanAiClient, courseAccessService);
     }
 
     // ============================ 参数校验 ============================

@@ -10,6 +10,7 @@ import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.impl.TeacherQuestionServiceImpl;
 import com.wenjin.support.QuestionStatus;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,6 +47,9 @@ class ReviewAllTest {
     @Mock
     private KgNodeMapper nodeMapper;
 
+    @Mock
+    private CourseAccessService courseAccessService;
+
     @InjectMocks
     private TeacherQuestionServiceImpl service;
 
@@ -55,6 +59,7 @@ class ReviewAllTest {
 
     @BeforeEach
     void setUp() {
+        lenient().doNothing().when(courseAccessService).assertManageCourse(anyLong());
         // q1: 待审核（PENDING）
         q1 = new Question();
         q1.setId(101L);

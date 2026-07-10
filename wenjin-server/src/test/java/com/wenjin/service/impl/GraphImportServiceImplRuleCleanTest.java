@@ -2,6 +2,7 @@ package com.wenjin.service.impl;
 
 import com.wenjin.ai.GraphCleanAiClient;
 import com.wenjin.dto.GraphImportRequest;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.GraphService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -21,9 +22,10 @@ class GraphImportServiceImplRuleCleanTest {
 
     @Mock GraphService graphService;
     @Mock GraphCleanAiClient graphCleanAiClient;
+    @Mock CourseAccessService courseAccessService;
 
     private GraphImportServiceImpl service() {
-        return new GraphImportServiceImpl(graphService, graphCleanAiClient);
+        return new GraphImportServiceImpl(graphService, graphCleanAiClient, courseAccessService);
     }
 
     @Test

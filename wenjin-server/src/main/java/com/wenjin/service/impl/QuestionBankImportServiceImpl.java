@@ -16,6 +16,7 @@ import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.GraphQueryService;
 import com.wenjin.service.QuestionBankImportService;
 import com.wenjin.support.QuestionStatus;
@@ -97,6 +98,7 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
     private final QuestionNodeMapper questionNodeMapper;
     private final CourseMapper courseMapper;
     private final ObjectMapper objectMapper;
+    private final CourseAccessService courseAccessService;
 
     public QuestionBankImportServiceImpl(QuestionBankCleanAiClient aiClient,
                                          GraphQueryService graphQueryService,
@@ -105,7 +107,8 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
                                          QuestionOptionMapper questionOptionMapper,
                                          QuestionNodeMapper questionNodeMapper,
                                          CourseMapper courseMapper,
-                                         ObjectMapper objectMapper) {
+                                         ObjectMapper objectMapper,
+                                         CourseAccessService courseAccessService) {
         this.aiClient = aiClient;
         this.graphQueryService = graphQueryService;
         this.nodeMapper = nodeMapper;
@@ -114,6 +117,7 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
         this.questionNodeMapper = questionNodeMapper;
         this.courseMapper = courseMapper;
         this.objectMapper = objectMapper;
+        this.courseAccessService = courseAccessService;
     }
 
     @Override
@@ -122,6 +126,7 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
         if (courseId == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "courseId 不能为空");
         }
+        courseAccessService.assertManageCourse(courseId);
         if (bank == null || bank.getQuestions() == null || bank.getQuestions().isEmpty()) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "题库数据为空");
         }
@@ -134,6 +139,7 @@ public class QuestionBankImportServiceImpl implements QuestionBankImportService 
         if (courseId == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "courseId 不能为空");
         }
+        courseAccessService.assertManageCourse(courseId);
         if (file == null || file.isEmpty()) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "上传文件不能为空");
         }

@@ -17,6 +17,7 @@ import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.TeacherQuestionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -35,12 +36,14 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
     private final QuestionOptionMapper questionOptionMapper;
     private final QuestionNodeMapper questionNodeMapper;
     private final KgNodeMapper nodeMapper;
+    private final CourseAccessService courseAccessService;
 
     @Override
     public TeacherQuestionPageVO list(Long courseId, Integer status, String nodeCode, String conf, int page, int size) {
         if (courseId == null || courseId <= 0) {
             throw new IllegalArgumentException("courseId 无效: " + courseId);
         }
+        courseAccessService.assertManageCourse(courseId);
 
         // C4: Validate pagination parameters
         if (page < 1) page = 1;
@@ -104,6 +107,7 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
         if (courseId == null || courseId <= 0) {
             throw new IllegalArgumentException("courseId 无效: " + courseId);
         }
+        courseAccessService.assertManageCourse(courseId);
         if (req == null) {
             throw new IllegalArgumentException("request 不能为空");
         }
@@ -113,6 +117,8 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
         if (req.getAction() == null || req.getAction().trim().isEmpty()) {
             throw new IllegalArgumentException("action 不能为空");
         }
+        // 批量：全部题目须存在且仅属于目标课程
+        courseAccessService.assertQuestionsBelongToCourse(courseId, req.getIds());
 
         int target;
         switch (req.getAction().toLowerCase()) {
@@ -145,6 +151,7 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
         if (courseId == null || courseId <= 0) {
             throw new IllegalArgumentException("courseId 无效: " + courseId);
         }
+        courseAccessService.assertManageCourse(courseId);
         if (req == null) {
             throw new IllegalArgumentException("request 不能为空");
         }

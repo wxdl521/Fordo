@@ -14,6 +14,7 @@ import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.GraphQueryService;
 import com.wenjin.support.QuestionStatus;
 import org.junit.jupiter.api.DisplayName;
@@ -31,6 +32,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -48,15 +52,17 @@ class QuestionBankImportServiceImplTest {
     @Mock QuestionOptionMapper questionOptionMapper;
     @Mock QuestionNodeMapper questionNodeMapper;
     @Mock CourseMapper courseMapper;
+    @Mock CourseAccessService courseAccessService;
 
     private static final Long COURSE_ID = 1L;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private QuestionBankImportServiceImpl service() {
+        lenient().doNothing().when(courseAccessService).assertManageCourse(anyLong());
         return new QuestionBankImportServiceImpl(
                 aiClient, graphQueryService, kgNodeMapper,
                 questionMapper, questionOptionMapper, questionNodeMapper,
-                courseMapper, OBJECT_MAPPER);
+                courseMapper, OBJECT_MAPPER, courseAccessService);
     }
 
     /** 让 questionMapper.insert 模拟自增主键。 */
