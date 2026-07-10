@@ -8,6 +8,7 @@ import com.wenjin.dto.GraphImportRequest;
 import com.wenjin.dto.GraphImportResult;
 import com.wenjin.entity.ExtractionReview;
 import com.wenjin.mapper.ExtractionReviewMapper;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.support.GraphDraftStore;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,17 +26,20 @@ public class GraphExtractReviewService {
     private final ExtractionMetricsCalculator metricsCalculator;
     private final GraphService graphService;
     private final ExtractionReviewMapper reviewMapper;
+    private final CourseAccessService courseAccessService;
 
     public GraphExtractReviewService(GraphExtractionService graphExtractionService,
                                      GraphDraftStore draftStore,
                                      ExtractionMetricsCalculator metricsCalculator,
                                      GraphService graphService,
-                                     ExtractionReviewMapper reviewMapper) {
+                                     ExtractionReviewMapper reviewMapper,
+                                     CourseAccessService courseAccessService) {
         this.graphExtractionService = graphExtractionService;
         this.draftStore = draftStore;
         this.metricsCalculator = metricsCalculator;
         this.graphService = graphService;
         this.reviewMapper = reviewMapper;
+        this.courseAccessService = courseAccessService;
     }
 
     public GraphExtractDraftResponse extractAndStash(String courseCode, MultipartFile file) {
@@ -60,6 +64,7 @@ public class GraphExtractReviewService {
     }
 
     public List<ExtractionReview> history(String courseCode) {
+        courseAccessService.assertManageCourseCode(courseCode);
         return reviewMapper.selectList(new QueryWrapper<ExtractionReview>()
                 .eq("course_code", courseCode)
                 .orderByDesc("created_at", "id"));
