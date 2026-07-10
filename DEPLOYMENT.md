@@ -37,7 +37,7 @@
 | 2.1 | 令牌密钥 `WENJIN_AUTH_SECRET` + 启用 `prod` profile | 配置 | ☐ |
 | 2.2 | 收紧 CORS（写死 `*` → 限定域名 / 关闭） | **改代码** | ☐ |
 | 2.3 | 数据库专用账号 + 删除演示弱口令账号 | 配置/SQL | ☐ |
-| 2.3.1 | 角色模型：公开注册仅学生；教师/管理员走运维审计 SQL | 运维/SQL | ☐ |
+| 2.3.1 | 角色模型：公开注册仅学生；首个 ADMIN 用一次性 bootstrap，其后用 ADMIN API / SQL 备份 | 运维/配置 | ☐ |
 | 2.4 | 日志降噪（关 debug、关 SQL 打印） | 配置 | ☐ |
 | 2.5 | 配置真实可用的 AI Key | 配置 | ☐ |
 | 2.6 | 前端生产构建 + nginx 托管 | 运维 | ☐ |
@@ -123,15 +123,84 @@ export DB_PASSWORD='足够强的随机密码'
 
 | 角色 | 编码 | 开通方式 |
 | --- | --- | --- |
-| 教师 | `1` | 运维审计 SQL（下文）或后续 Task 2 的 ADMIN 入口 |
+| 教师 | `1` | 首个 ADMIN 就绪后：`PATCH /api/system-admin/users/{id}/role`；或运维审计 SQL（备份路径） |
 | 学生 | `2` | 公开注册 `/api/register`（服务端强制） |
-| 管理员 | `3` | 运维审计 SQL；后续由 ADMIN 受控入口管理 |
+| 管理员 | `3` | **一次性 bootstrap** 创建首个 ADMIN；其后一般不再引导；SQL 仍可作为灾备备份 |
 
 客户端提交的遗留 JSON 字段 `role` 在兼容窗口内会被服务端忽略，**不得**用于提权。
 
-#### 运维开通教师账号（Task 2 上线前）
+#### A. 一次性 bootstrap 创建首个管理员（推荐）
 
-在 Task 2 的 ADMIN 自助/受控开通入口上线前，生产教师账号**只能**由运维执行经审计的 SQL 创建，密码必须为 **BCrypt** 哈希（与应用 `BCryptPasswordEncoder` 一致），禁止写入明文。
+应用提供受控引导：`AdminBootstrapRunner` 仅在 `wenjin.bootstrap.admin.enabled=true` 时加载。仅当库中 **尚无任何 ADMIN** 时，用环境变量中的用户名/密码创建一个 BCrypt 管理员；已有 ADMIN 时启动 fail-fast。
+
+| 配置 / 环境变量 | 含义 |
+| --- | --- |
+| `wenjin.bootstrap.admin.enabled` | 开关；**默认必须为 false**。仅创建首个 ADMIN 的那一次启动设为 `true` |
+| `WENJIN_BOOTSTRAP_ADMIN_USERNAME` → `wenjin.bootstrap.admin.username` | 首个管理员登录名（非空） |
+| `WENJIN_BOOTSTRAP_ADMIN_PASSWORD` → `wenjin.bootstrap.admin.password` | 明文初始口令，**长度 ≥ 16**；仅经环境变量注入，勿写入仓库 |
+
+**一键流程（one-shot）——严格按序：**
+
+1. **启用引导**（仅单实例、变更窗口）：
+   ```bash
+   export WENJIN_BOOTSTRAP_ADMIN_ENABLED=true   # 若配置绑定此 env；或在启动参数中设 wenjin.bootstrap.admin.enabled=true
+   export WENJIN_BOOTSTRAP_ADMIN_USERNAME='ops_admin'
+   export WENJIN_BOOTSTRAP_ADMIN_PASSWORD='替换为≥16字符的强随机口令'
+   ```
+   在 `application.yml` / 启动参数中对应：
+   ```yaml
+   wenjin:
+     bootstrap:
+       admin:
+         enabled: true   # 仅本窗口
+         username: ${WENJIN_BOOTSTRAP_ADMIN_USERNAME:}
+         password: ${WENJIN_BOOTSTRAP_ADMIN_PASSWORD:}
+   ```
+2. **单实例启动**后端一次；确认日志出现 `Bootstrap admin created, id=...`（**日志不含密码**），且可用该账号登录拿到 ADMIN 令牌。
+3. **立即关闭开关并移除密码环境变量**，再重启为常态配置：
+   ```bash
+   unset WENJIN_BOOTSTRAP_ADMIN_PASSWORD
+   unset WENJIN_BOOTSTRAP_ADMIN_USERNAME
+   # wenjin.bootstrap.admin.enabled 必须改回 false（或不设置；组件仅在 havingValue=true 时加载）
+   sudo systemctl restart wenjin   # 或你的进程管理方式
+   ```
+
+**硬性要求：永远不要在生产长期保持 bootstrap 启用。** 开关常开会把「创建管理员」能力暴露在每次部署启动路径上；口令 env 残留则等同于明文管理凭据。
+
+若用户名已被占用（非 ADMIN 账号占用 `uk_username`），引导会以明确错误拒绝，而不是抛出原始数据库唯一键异常——请换未占用用户名，或走 SQL 备份路径提升已有账号。
+
+#### B. ADMIN 提升教师 / 学生（bootstrap 之后）
+
+首个 ADMIN 登录后，用其令牌调用：
+
+```http
+PATCH /api/system-admin/users/{id}/role
+Authorization: Bearer <ADMIN_TOKEN>
+Content-Type: application/json
+
+{"role": 1}
+```
+
+- `role` **仅允许** `1`（TEACHER）或 `2`（STUDENT）；不能通过此接口授予 ADMIN。
+- 需要先有目标用户（例如学生先走 `/api/register`，再被提升为教师）。
+- 服务端禁止将**最后一个启用管理员**降级，且角色变更在事务内对目标行 `SELECT ... FOR UPDATE`，避免并发降级把 ADMIN 清零。
+- 非 ADMIN 令牌访问该路由 → 403。
+
+示例：
+
+```bash
+BASE=https://你的域名
+ADMIN_TOK=...   # 首个管理员登录得到的 token
+# 将 userId=42 的学生提升为教师
+curl -s -X PATCH "$BASE/api/system-admin/users/42/role" \
+  -H "Authorization: Bearer $ADMIN_TOK" \
+  -H 'Content-Type: application/json' \
+  -d '{"role":1}'
+```
+
+#### C. 运维审计 SQL（备份路径，仍有效）
+
+bootstrap 不可用、灾备恢复、或需在无应用的情况下建号时，仍可用经审计的 SQL。密码必须为 **BCrypt** 哈希（与应用 `BCryptPasswordEncoder` 一致），禁止写入明文。
 
 ##### 1. 生成 BCrypt 哈希
 
@@ -156,7 +225,7 @@ public class Gen {
 
 哈希应形如 `$2a$10$...` 或 `$2b$10$...`。
 
-##### 2. 审计 SQL 插入教师
+##### 2. 审计 SQL 插入教师 / 管理员
 
 在变更窗口执行，并保留工单号 / 执行人 / 时间：
 
@@ -173,7 +242,7 @@ VALUES (
 );
 ```
 
-管理员（`role=3`）同理，仅在有明确授权时创建：
+管理员（`role=3`）同理，仅在有明确授权、且无法走 bootstrap 时创建：
 
 ```sql
 INSERT INTO `sys_user` (`username`, `password`, `real_name`, `role`, `status`)
@@ -184,6 +253,13 @@ VALUES (
   3,   -- ADMIN
   1
 );
+```
+
+将已有学生提升为教师（备份路径，等价于 ADMIN API）：
+
+```sql
+-- 审计：学生 → 教师
+UPDATE `sys_user` SET `role` = 1 WHERE `id` = <user_id> AND `status` = 1;
 ```
 
 ##### 3. 校验
@@ -199,6 +275,7 @@ WHERE username IN ('teacher_zhang', 'admin_ops');
 
 #### 禁止事项（角色与账号）
 
+- **禁止**在生产长期开启 `wenjin.bootstrap.admin.enabled`，或把 `WENJIN_BOOTSTRAP_ADMIN_PASSWORD` 留在 systemd/unit/环境文件中。
 - 禁止通过公开注册或手工改库把学生账号批量改为教师而无工单。
 - 禁止在生产使用 `data.sql` 演示口令。
 - 禁止将 BCrypt 生成过程中的明文密码写入 git、聊天记录或工单附件。
@@ -406,7 +483,8 @@ curl -s -H "Authorization: Bearer $TOK" "$BASE/api/teacher/courses"
 - [ ] 后端日志已无逐条 SQL、无 debug 噪声
 - [ ] `WENJIN_AUTH_SECRET` 已非默认值（启动日志无「使用默认开发密钥」WARN）
 - [ ] 演示弱口令账号 `demo_teacher/demo_student` 已删除或改强密
-- [ ] 教师/管理员由运维 BCrypt 审计 SQL 开通，非公开注册（见 2.3.1）
+- [ ] 首个 ADMIN 已用 one-shot bootstrap（或 SQL 备份）创建；`wenjin.bootstrap.admin.enabled` 已关闭且密码 env 已移除（见 2.3.1）
+- [ ] 教师由 ADMIN `PATCH /api/system-admin/users/{id}/role`（或 SQL 备份）开通，非公开注册
 - [ ] AI 伴侣流式对话能逐字输出（SSE 反代生效）
 
 ---
@@ -425,6 +503,9 @@ curl -s -H "Authorization: Bearer $TOK" "$BASE/api/teacher/courses"
 | `WENJIN_AI_VISION_BASE_URL` / `WENJIN_AI_VISION_MODEL` | 视觉模型地址/型号 | GLM / glm-5v-turbo | 按所用服务 |
 | `wenjin.auth.ttl-seconds` | 令牌有效期(秒) | 604800（7天） | 按需 |
 | `wenjin.seed.enabled` | 演示数据播种 | false | **保持 false** |
+| `wenjin.bootstrap.admin.enabled` | 一次性首个 ADMIN 引导 | false（未设则组件不加载） | **仅建号启动一次为 true，随后立即 false** |
+| `WENJIN_BOOTSTRAP_ADMIN_USERNAME` | 引导管理员用户名 | 空 | 仅 one-shot 窗口设置 |
+| `WENJIN_BOOTSTRAP_ADMIN_PASSWORD` | 引导管理员明文口令（≥16） | 空 | 仅 one-shot；成功后**立即 unset** |
 
 ---
 
@@ -432,5 +513,5 @@ curl -s -H "Authorization: Bearer $TOK" "$BASE/api/teacher/courses"
 
 - **代码/配置加固（A 层）**：约半天，按第 2、4 节做完即可让仓库「生产安全」，唯一代码改动是 CORS 外部化。
 - **运维上线（B 层）**：照第 5 节走，快慢取决于你的服务器/域名/证书是否就绪。
-- **角色开通**：公开注册仅学生（`role=2`）；教师/管理员见 2.3.1，Task 2 前用 BCrypt 审计 SQL。
+- **角色开通**：公开注册仅学生（`role=2`）；首个 ADMIN 用 one-shot bootstrap（见 2.3.1），教师用 `PATCH /api/system-admin/users/{id}/role`；SQL 审计插入仍是有效备份。
 - 最容易翻车也最致命的一项：**`SPRING_PROFILES_ACTIVE=prod` 与 `WENJIN_AUTH_SECRET` 必须同时设**——这是认证安全的总开关。

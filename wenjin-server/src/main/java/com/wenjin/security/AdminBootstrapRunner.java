@@ -63,13 +63,30 @@ public class AdminBootstrapRunner implements ApplicationRunner {
                     "管理员引导拒绝执行：数据库中已存在 ADMIN 账号，禁止再次引导。");
         }
 
+        String trimmedUsername = username.trim();
+        SysUser existing = userMapper.selectOne(
+                new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, trimmedUsername));
+        if (existing != null) {
+            throw new IllegalStateException(
+                    "管理员引导拒绝执行：用户名已存在（username=" + trimmedUsername
+                            + "）。请换用未占用的用户名，或使用运维 SQL 将已有账号提升为 ADMIN。");
+        }
+
         SysUser admin = new SysUser();
-        admin.setUsername(username.trim());
+        admin.setUsername(trimmedUsername);
         admin.setPassword(passwordEncoder.encode(password));
         admin.setRealName("系统管理员");
         admin.setRole(UserRole.ADMIN.code());
         admin.setStatus(1);
-        userMapper.insert(admin);
+        try {
+            userMapper.insert(admin);
+        } catch (org.springframework.dao.DuplicateKeyException ex) {
+            // 并发建号或竞态下唯一键冲突：给出明确文案，避免启动日志堆栈只有原始 DB 错误
+            throw new IllegalStateException(
+                    "管理员引导拒绝执行：用户名已存在（username=" + trimmedUsername
+                            + "）。请换用未占用的用户名，或使用运维 SQL 将已有账号提升为 ADMIN。",
+                    ex);
+        }
 
         log.info("Bootstrap admin created, id={}", admin.getId());
     }

@@ -36,6 +36,7 @@ class AdminBootstrapRunnerTest {
     @Test
     void createsAdmin_whenNoneExists() {
         when(userMapper.selectCount(any(Wrapper.class))).thenReturn(0L);
+        when(userMapper.selectOne(any(Wrapper.class))).thenReturn(null);
         when(userMapper.insert(any(SysUser.class))).thenAnswer(inv -> {
             ((SysUser) inv.getArgument(0)).setId(100L);
             return 1;
@@ -62,6 +63,36 @@ class AdminBootstrapRunnerTest {
                 .hasMessageContaining("已存在");
 
         verify(userMapper, never()).insert(any(SysUser.class));
+    }
+
+    @Test
+    void refuses_whenUsernameAlreadyTaken() {
+        when(userMapper.selectCount(any(Wrapper.class))).thenReturn(0L);
+        SysUser existing = new SysUser();
+        existing.setId(7L);
+        existing.setUsername("taken_user");
+        existing.setRole(UserRole.STUDENT.code());
+        when(userMapper.selectOne(any(Wrapper.class))).thenReturn(existing);
+
+        assertThatThrownBy(() -> runner("taken_user", "sixteen-char-pw!").run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("用户名已存在")
+                .hasMessageContaining("taken_user");
+
+        verify(userMapper, never()).insert(any(SysUser.class));
+    }
+
+    @Test
+    void refuses_withClearMessage_whenInsertHitsDuplicateKey() {
+        when(userMapper.selectCount(any(Wrapper.class))).thenReturn(0L);
+        when(userMapper.selectOne(any(Wrapper.class))).thenReturn(null);
+        when(userMapper.insert(any(SysUser.class)))
+                .thenThrow(new org.springframework.dao.DuplicateKeyException("uk_username"));
+
+        assertThatThrownBy(() -> runner("race_user", "sixteen-char-pw!").run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("用户名已存在")
+                .hasMessageContaining("race_user");
     }
 
     @Test

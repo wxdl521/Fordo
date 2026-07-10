@@ -9,11 +9,14 @@ import com.wenjin.dto.UserVO;
 import com.wenjin.entity.SysUser;
 import com.wenjin.mapper.SysUserMapper;
 import com.wenjin.security.UserRole;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 系统管理员用户管理（受 {@code AdminAuthInterceptor} 保护）。
@@ -34,8 +37,11 @@ public class SystemAdminUserController {
     /**
      * 变更用户角色。
      * PATCH /api/system-admin/users/{id}/role
+     * <p>事务内对目标用户 {@code SELECT ... FOR UPDATE}；若降级启用管理员，
+     * 再锁定全部启用管理员行，保证并发降级不会把 ADMIN 清零。</p>
      */
     @PatchMapping("/users/{id}/role")
+    @Transactional(rollbackFor = Exception.class)
     public Result<UserVO> changeRole(@PathVariable("id") Long id,
                                      @RequestBody ChangeUserRoleRequest request) {
         if (request == null || request.getRole() == null) {
@@ -51,7 +57,7 @@ public class SystemAdminUserController {
             throw new BusinessException(ResultCode.BAD_REQUEST, "目标角色仅允许教师或学生");
         }
 
-        SysUser user = userMapper.selectById(id);
+        SysUser user = userMapper.selectByIdForUpdate(id);
         if (user == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "用户不存在");
         }
@@ -62,16 +68,17 @@ public class SystemAdminUserController {
             throw new BusinessException(ResultCode.BAD_REQUEST, "禁止将禁用用户提升为教师");
         }
 
-        // 禁止修改最后一个启用管理员
+        // 禁止修改最后一个启用管理员（锁定全部启用 ADMIN 行，避免双并发都看到 count=2）
         if (user.getRole() != null
                 && user.getRole() == UserRole.ADMIN.code()
                 && user.getStatus() != null
                 && user.getStatus() == STATUS_ACTIVE) {
-            Long activeAdmins = userMapper.selectCount(
+            List<SysUser> activeAdmins = userMapper.selectList(
                     new LambdaQueryWrapper<SysUser>()
                             .eq(SysUser::getRole, UserRole.ADMIN.code())
-                            .eq(SysUser::getStatus, STATUS_ACTIVE));
-            if (activeAdmins != null && activeAdmins <= 1) {
+                            .eq(SysUser::getStatus, STATUS_ACTIVE)
+                            .last("FOR UPDATE"));
+            if (activeAdmins == null || activeAdmins.size() <= 1) {
                 throw new BusinessException(ResultCode.BAD_REQUEST, "禁止修改最后一个启用管理员");
             }
         }

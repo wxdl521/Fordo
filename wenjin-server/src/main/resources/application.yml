@@ -82,6 +82,11 @@ wenjin:
   auth:                                          # 令牌认证配置
     secret: ${WENJIN_AUTH_SECRET:dev-secret-change-me-in-prod}
     ttl-seconds: 604800                          # 令牌有效期 7 天
+  bootstrap:                                     # 一次性首个 ADMIN 引导（见 DEPLOYMENT.md 2.3.1）；生产禁止常开
+    admin:
+      enabled: ${WENJIN_BOOTSTRAP_ADMIN_ENABLED:false}
+      username: ${WENJIN_BOOTSTRAP_ADMIN_USERNAME:}
+      password: ${WENJIN_BOOTSTRAP_ADMIN_PASSWORD:}
 
 logging:
   level:

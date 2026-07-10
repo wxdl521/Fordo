@@ -64,7 +64,7 @@ class SystemAdminUserControllerTest {
     @DisplayName("PATCH role → TEACHER：管理员成功变更")
     void changeRole_toTeacher_succeedsForAdmin() {
         SysUser target = activeUser(10L, UserRole.STUDENT);
-        when(userMapper.selectById(10L)).thenReturn(target);
+        when(userMapper.selectByIdForUpdate(10L)).thenReturn(target);
         when(userMapper.updateById(any(SysUser.class))).thenReturn(1);
 
         ChangeUserRoleRequest req = new ChangeUserRoleRequest();
@@ -86,7 +86,7 @@ class SystemAdminUserControllerTest {
     @DisplayName("PATCH role → STUDENT：管理员成功变更")
     void changeRole_toStudent_succeedsForAdmin() {
         SysUser target = activeUser(11L, UserRole.TEACHER);
-        when(userMapper.selectById(11L)).thenReturn(target);
+        when(userMapper.selectByIdForUpdate(11L)).thenReturn(target);
         when(userMapper.updateById(any(SysUser.class))).thenReturn(1);
 
         ChangeUserRoleRequest req = new ChangeUserRoleRequest();
@@ -110,7 +110,7 @@ class SystemAdminUserControllerTest {
                     assertThat(((BusinessException) ex).getCode()).isEqualTo(ResultCode.BAD_REQUEST.getCode());
                     assertThat(ex.getMessage()).contains("目标角色仅允许");
                 });
-        verify(userMapper, never()).selectById(any());
+        verify(userMapper, never()).selectByIdForUpdate(any());
 
         ChangeUserRoleRequest unknown = new ChangeUserRoleRequest();
         unknown.setRole(99);
@@ -129,8 +129,9 @@ class SystemAdminUserControllerTest {
     @DisplayName("禁止降级最后一个启用管理员")
     void changeRole_cannotDemoteLastActiveAdmin() {
         SysUser lastAdmin = activeUser(1L, UserRole.ADMIN);
-        when(userMapper.selectById(1L)).thenReturn(lastAdmin);
-        when(userMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(1L);
+        when(userMapper.selectByIdForUpdate(1L)).thenReturn(lastAdmin);
+        when(userMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(java.util.List.of(lastAdmin));
 
         ChangeUserRoleRequest req = new ChangeUserRoleRequest();
         req.setRole(UserRole.TEACHER.code());
@@ -148,8 +149,10 @@ class SystemAdminUserControllerTest {
     @DisplayName("多个启用管理员时允许降级其中一个")
     void changeRole_canDemoteAdminWhenOthersRemain() {
         SysUser admin = activeUser(1L, UserRole.ADMIN);
-        when(userMapper.selectById(1L)).thenReturn(admin);
-        when(userMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(2L);
+        SysUser otherAdmin = activeUser(2L, UserRole.ADMIN);
+        when(userMapper.selectByIdForUpdate(1L)).thenReturn(admin);
+        when(userMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(java.util.List.of(admin, otherAdmin));
         when(userMapper.updateById(any(SysUser.class))).thenReturn(1);
 
         ChangeUserRoleRequest req = new ChangeUserRoleRequest();
@@ -159,6 +162,7 @@ class SystemAdminUserControllerTest {
         assertThat(result.getCode()).isEqualTo(0);
         assertThat(result.getData().getRole()).isEqualTo(UserRole.STUDENT.code());
         verify(userMapper).updateById(any(SysUser.class));
+        verify(userMapper).selectList(any(LambdaQueryWrapper.class));
     }
 
     @Test
@@ -166,7 +170,7 @@ class SystemAdminUserControllerTest {
     void changeRole_cannotPromoteDisabledUserToTeacher() {
         SysUser disabled = activeUser(20L, UserRole.STUDENT);
         disabled.setStatus(0);
-        when(userMapper.selectById(20L)).thenReturn(disabled);
+        when(userMapper.selectByIdForUpdate(20L)).thenReturn(disabled);
 
         ChangeUserRoleRequest req = new ChangeUserRoleRequest();
         req.setRole(UserRole.TEACHER.code());
@@ -189,7 +193,7 @@ class SystemAdminUserControllerTest {
                         .content("{\"role\":2}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
-        verify(userMapper, never()).selectById(any());
+        verify(userMapper, never()).selectByIdForUpdate(any());
     }
 
     @Test
@@ -201,7 +205,7 @@ class SystemAdminUserControllerTest {
                         .content("{\"role\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
-        verify(userMapper, never()).selectById(any());
+        verify(userMapper, never()).selectByIdForUpdate(any());
     }
 
     private static SysUser activeUser(Long id, UserRole role) {
