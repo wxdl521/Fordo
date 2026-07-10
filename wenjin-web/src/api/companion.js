@@ -1,13 +1,12 @@
 import { http } from './http.js'
 
 /**
- * 获取学生在某课程下的对话会话列表
- * @param {number} studentId
+ * 获取当前登录学生在某课程下的对话会话列表
  * @param {number} courseId
  * @returns {Promise<Array>}
  */
-export function listConversations(studentId, courseId) {
-  return http.get('/companion/conversations', { params: { studentId, courseId } })
+export function listConversations(courseId) {
+  return http.get('/companion/conversations', { params: { courseId } })
 }
 
 /**
@@ -75,7 +74,7 @@ export function dispatchChatStreamEvent(eventType, payload, callbacks = {}) {
 
 /**
  * 流式对话接口（SSE）
- * @param {{ studentId: number, courseId: number, conversationId?: number, nodeCode?: string, message: string }} payload
+ * @param {{ courseId: number, conversationId?: number, nodeCode?: string, message: string }} payload
  * @param {{
  *   onMeta?: (event: any) => void,
  *   onToken?: (token: string) => void,
@@ -97,10 +96,13 @@ export async function chatStream(payload, callbacks = {}) {
     const token = localStorage.getItem('wj_token')
     if (token) headers.Authorization = `Bearer ${token}`
 
+    const body = { ...payload }
+    delete body.studentId
+
     const response = await fetch('/api/companion/chat', {
       method: 'POST',
       headers,
-      body: JSON.stringify(payload)
+      body: JSON.stringify(body)
     })
 
     if (!response.ok) {

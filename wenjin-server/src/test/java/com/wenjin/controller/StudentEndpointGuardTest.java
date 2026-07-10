@@ -4,9 +4,8 @@ import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.CourseWithMasteryVO;
-import com.wenjin.security.CurrentPrincipal;
-import com.wenjin.security.UserRole;
 import com.wenjin.dto.DiagnosticResultVO;
+import com.wenjin.dto.EnrollRequest;
 import com.wenjin.dto.GraphDataVO;
 import com.wenjin.dto.GraphImportRequest;
 import com.wenjin.dto.GraphImportResult;
@@ -16,6 +15,8 @@ import com.wenjin.dto.PathGenerateRequest;
 import com.wenjin.dto.SubmitRequest;
 import com.wenjin.dto.SubmitResult;
 import com.wenjin.entity.Course;
+import com.wenjin.security.CurrentPrincipal;
+import com.wenjin.security.UserRole;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.DiagnosticResultService;
 import com.wenjin.service.DiagnosticService;
@@ -27,13 +28,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 学生侧数据端点的 deep-link 守卫接线验证（用手写 fake，不依赖 Mockito）：
- * 每个端点须在调用下游服务前先调 CourseService.assertAccessibleByStudent，
+ * 每个端点须从 principal 派生学生 ID，并在调用下游服务前调 CourseService.assertAccessibleByStudent，
  * 守卫抛异常时短路（不触达下游服务）。
  */
 class StudentEndpointGuardTest {
@@ -44,11 +46,16 @@ class StudentEndpointGuardTest {
         Long seenCourseId;
         boolean called;
         final boolean reject;
+        final AtomicLong enrolledStudentId = new AtomicLong(-1);
+        final AtomicLong enrolledCourseId = new AtomicLong(-1);
 
         GuardSpy() { this(false); }
         GuardSpy(boolean reject) { this.reject = reject; }
 
-        public void enroll(Long studentId, Long courseId) {}
+        public void enroll(Long studentId, Long courseId) {
+            enrolledStudentId.set(studentId);
+            enrolledCourseId.set(courseId);
+        }
         public List<CourseWithMasteryVO> getMyCourses(Long studentId) { return List.of(); }
         public List<Course> getAvailableCourses() { return List.of(); }
 
@@ -64,27 +71,47 @@ class StudentEndpointGuardTest {
 
     static class GraphServiceFake implements GraphService {
         boolean called;
+        Long seenStudentId;
         public GraphImportResult importGraph(String courseCode, GraphImportRequest request) { return null; }
         public GraphDataVO getGraph(Long courseId) { return null; }
-        public GraphDataVO getGraph(Long courseId, Long studentId) { called = true; return null; }
+        public GraphDataVO getGraph(Long courseId, Long studentId) {
+            called = true;
+            seenStudentId = studentId;
+            return null;
+        }
     }
 
     static class DiagnosticServiceFake implements DiagnosticService {
         boolean paperCalled;
         boolean submitCalled;
+        Long submitStudentId;
         public PaperVO composePaper(Long courseId) { paperCalled = true; return null; }
-        public SubmitResult submit(SubmitRequest req) { submitCalled = true; return null; }
+        public SubmitResult submit(SubmitRequest req) {
+            submitCalled = true;
+            submitStudentId = req.getStudentId();
+            return null;
+        }
     }
 
     static class DiagnosticResultServiceFake implements DiagnosticResultService {
         boolean called;
-        public DiagnosticResultVO getResult(Long studentId, Long courseId) { called = true; return null; }
+        Long seenStudentId;
+        public DiagnosticResultVO getResult(Long studentId, Long courseId) {
+            called = true;
+            seenStudentId = studentId;
+            return null;
+        }
     }
 
     static class PathServiceFake implements PathService {
         boolean generateCalled;
         boolean currentCalled;
-        public LearningPathVO generate(PathGenerateRequest req) { generateCalled = true; return null; }
+        Long generateStudentId;
+        public LearningPathVO generate(PathGenerateRequest req) {
+            generateCalled = true;
+            generateStudentId = req.getStudentId();
+            return null;
+        }
         public LearningPathVO getCurrent(Long studentId, Long courseId) { currentCalled = true; return null; }
         public void completeItem(Long itemId) {}
     }
@@ -100,28 +127,93 @@ class StudentEndpointGuardTest {
         CurrentUser.clear();
     }
 
+    // ---- CourseController /api/course/enroll ----
+
+    @Test
+    void enroll_usesPrincipalStudentId() {
+        CurrentUser.set(2L);
+        GuardSpy guard = new GuardSpy();
+        EnrollRequest req = new EnrollRequest();
+        req.setCourseId(5L);
+        new CourseController(guard).enroll(req);
+
+        assertThat(guard.enrolledStudentId.get()).isEqualTo(2L);
+        assertThat(guard.enrolledCourseId.get()).isEqualTo(5L);
+    }
+
+    @Test
+    void enroll_teacherRole_throwsForbidden() {
+        CurrentUser.set(new CurrentPrincipal(2L, UserRole.TEACHER));
+        GuardSpy guard = new GuardSpy();
+        EnrollRequest req = new EnrollRequest();
+        req.setCourseId(5L);
+
+        assertThatThrownBy(() -> new CourseController(guard).enroll(req))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.FORBIDDEN.getCode()));
+        assertThat(guard.enrolledStudentId.get()).isEqualTo(-1L);
+    }
+
+    @Test
+    void enroll_anonymous_throwsUnauthorized() {
+        GuardSpy guard = new GuardSpy();
+        EnrollRequest req = new EnrollRequest();
+        req.setCourseId(5L);
+
+        assertThatThrownBy(() -> new CourseController(guard).enroll(req))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.UNAUTHORIZED.getCode()));
+    }
+
     // ---- GraphController /api/graph/{courseId} ----
 
     @Test
-    void graph_invokesGuardWithStudentAndCourse() {
-        CurrentUser.set(2L); // assertSelf(2L) 需要当前用户 == studentId
+    void graph_anonymous_publicGraph_noMastery() {
         GuardSpy guard = new GuardSpy();
         GraphServiceFake graph = new GraphServiceFake();
-        new GraphController(graph, guard).getGraph(5L, 2L);
+        new GraphController(graph, guard).getGraph(5L);
+
+        assertThat(guard.seenStudentId).isNull();
+        assertThat(guard.seenCourseId).isEqualTo(5L);
+        assertThat(graph.called).isTrue();
+        assertThat(graph.seenStudentId).isNull();
+    }
+
+    @Test
+    void graph_loggedInStudent_attachesPrincipalMastery() {
+        CurrentUser.set(2L);
+        GuardSpy guard = new GuardSpy();
+        GraphServiceFake graph = new GraphServiceFake();
+        new GraphController(graph, guard).getGraph(5L);
 
         assertThat(guard.seenStudentId).isEqualTo(2L);
         assertThat(guard.seenCourseId).isEqualTo(5L);
+        assertThat(graph.called).isTrue();
+        assertThat(graph.seenStudentId).isEqualTo(2L);
+    }
+
+    @Test
+    void graph_teacherLoggedIn_publicGraph_noMastery() {
+        CurrentUser.set(new CurrentPrincipal(2L, UserRole.TEACHER));
+        GuardSpy guard = new GuardSpy();
+        GraphServiceFake graph = new GraphServiceFake();
+        new GraphController(graph, guard).getGraph(5L);
+
+        assertThat(guard.seenStudentId).isNull();
+        assertThat(graph.seenStudentId).isNull();
         assertThat(graph.called).isTrue();
     }
 
     @Test
     void graph_guardRejection_shortCircuits() {
-        CurrentUser.set(2L); // assertSelf(2L) 先放行，再由 GuardSpy.reject 抛 FORBIDDEN
+        CurrentUser.set(2L);
         GuardSpy guard = new GuardSpy(true);
         GraphServiceFake graph = new GraphServiceFake();
         GraphController c = new GraphController(graph, guard);
 
-        assertThatThrownBy(() -> c.getGraph(5L, 2L)).isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> c.getGraph(5L)).isInstanceOf(BusinessException.class);
         assertThat(graph.called).isFalse();
     }
 
@@ -129,7 +221,7 @@ class StudentEndpointGuardTest {
 
     @Test
     void diagnosticPaper_guardsWithNullStudent_publishGateOnly() {
-        CurrentUser.set(2L); // requireStudent 需要已认证学生
+        CurrentUser.set(2L);
         GuardSpy guard = new GuardSpy();
         DiagnosticServiceFake diag = new DiagnosticServiceFake();
         new DiagnosticController(diag, new DiagnosticResultServiceFake(), guard).paper(5L);
@@ -153,8 +245,8 @@ class StudentEndpointGuardTest {
     }
 
     @Test
-    void diagnosticResult_guardsWithStudentAndCourse_shortCircuitsOnReject() {
-        CurrentUser.set(2L); // assertSelf(2L) 放行，再由 GuardSpy.reject 短路
+    void diagnosticResult_guardsWithPrincipal_shortCircuitsOnReject() {
+        CurrentUser.set(2L);
         GuardSpy guard = new GuardSpy(true);
         DiagnosticResultServiceFake result = new DiagnosticResultServiceFake();
         DiagnosticController c = new DiagnosticController(new DiagnosticServiceFake(), result, guard);
@@ -164,8 +256,20 @@ class StudentEndpointGuardTest {
     }
 
     @Test
+    void diagnosticResult_omittedClientStudentId_usesPrincipal() {
+        CurrentUser.set(2L);
+        GuardSpy guard = new GuardSpy();
+        DiagnosticResultServiceFake result = new DiagnosticResultServiceFake();
+        new DiagnosticController(new DiagnosticServiceFake(), result, guard).result(null, 5L);
+
+        assertThat(guard.seenStudentId).isEqualTo(2L);
+        assertThat(result.seenStudentId).isEqualTo(2L);
+        assertThat(result.called).isTrue();
+    }
+
+    @Test
     void diagnosticSubmit_guardsWithBodyStudentAndCourse() {
-        CurrentUser.set(2L); // assertSelf(2L) 放行：交卷须绑定本人
+        CurrentUser.set(2L);
         GuardSpy guard = new GuardSpy();
         DiagnosticServiceFake diag = new DiagnosticServiceFake();
         SubmitRequest req = new SubmitRequest();
@@ -176,11 +280,25 @@ class StudentEndpointGuardTest {
         assertThat(guard.seenStudentId).isEqualTo(2L);
         assertThat(guard.seenCourseId).isEqualTo(5L);
         assertThat(diag.submitCalled).isTrue();
+        assertThat(diag.submitStudentId).isEqualTo(2L);
+    }
+
+    @Test
+    void diagnosticSubmit_omittedStudentId_usesPrincipal() {
+        CurrentUser.set(2L);
+        GuardSpy guard = new GuardSpy();
+        DiagnosticServiceFake diag = new DiagnosticServiceFake();
+        SubmitRequest req = new SubmitRequest();
+        req.setCourseId(5L);
+        new DiagnosticController(diag, new DiagnosticResultServiceFake(), guard).submit(req);
+
+        assertThat(diag.submitStudentId).isEqualTo(2L);
+        assertThat(guard.seenStudentId).isEqualTo(2L);
     }
 
     @Test
     void diagnosticSubmit_mismatchedUser_throwsForbidden_shortCircuits() {
-        CurrentUser.set(9L); // 当前用户 9，却给 studentId=2 交卷 → 越权
+        CurrentUser.set(9L);
         GuardSpy guard = new GuardSpy();
         DiagnosticServiceFake diag = new DiagnosticServiceFake();
         SubmitRequest req = new SubmitRequest();
@@ -189,15 +307,15 @@ class StudentEndpointGuardTest {
         DiagnosticController c = new DiagnosticController(diag, new DiagnosticResultServiceFake(), guard);
 
         assertThatThrownBy(() -> c.submit(req)).isInstanceOf(BusinessException.class);
-        assertThat(guard.called).isFalse();     // assertSelf 先短路，未触达选课校验
-        assertThat(diag.submitCalled).isFalse(); // 更未触达落库
+        assertThat(guard.called).isFalse();
+        assertThat(diag.submitCalled).isFalse();
     }
 
     // ---- PathController ----
 
     @Test
     void pathCurrent_guardsWithStudentAndCourse() {
-        CurrentUser.set(2L); // assertSelf(2L) 通过
+        CurrentUser.set(2L);
         GuardSpy guard = new GuardSpy();
         PathServiceFake path = new PathServiceFake();
         new PathController(path, guard).current(2L, 5L);
@@ -209,7 +327,7 @@ class StudentEndpointGuardTest {
 
     @Test
     void pathGenerate_guardsWithBodyStudentAndCourse_shortCircuitsOnReject() {
-        CurrentUser.set(2L); // assertSelf(2L) 放行，再由选课校验 reject 短路
+        CurrentUser.set(2L);
         GuardSpy guard = new GuardSpy(true);
         PathServiceFake path = new PathServiceFake();
         PathController c = new PathController(path, guard);
@@ -222,8 +340,22 @@ class StudentEndpointGuardTest {
     }
 
     @Test
+    void pathGenerate_omittedStudentId_usesPrincipal() {
+        CurrentUser.set(2L);
+        GuardSpy guard = new GuardSpy();
+        PathServiceFake path = new PathServiceFake();
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setCourseId(5L);
+        new PathController(path, guard).generate(req);
+
+        assertThat(path.generateCalled).isTrue();
+        assertThat(path.generateStudentId).isEqualTo(2L);
+        assertThat(guard.seenStudentId).isEqualTo(2L);
+    }
+
+    @Test
     void pathGenerate_mismatchedUser_throwsForbidden_shortCircuits() {
-        CurrentUser.set(9L); // 当前用户 9，却给 studentId=2 重算路径 → 越权
+        CurrentUser.set(9L);
         GuardSpy guard = new GuardSpy();
         PathServiceFake path = new PathServiceFake();
         PathController c = new PathController(path, guard);
@@ -240,7 +372,7 @@ class StudentEndpointGuardTest {
 
     @Test
     void growth_guardsWithStudentAndCourse() {
-        CurrentUser.set(2L); // assertSelf(2L) 通过
+        CurrentUser.set(2L);
         GuardSpy guard = new GuardSpy();
         GrowthServiceFake growth = new GrowthServiceFake();
         new GrowthController(growth, guard).getGrowth(2L, 5L);
@@ -252,7 +384,6 @@ class StudentEndpointGuardTest {
 
     @Test
     void growth_teacherWithOwnId_throwsForbidden() {
-        // 教师即使用自身 id 调用学生学情端点，也必须 403
         CurrentUser.set(new CurrentPrincipal(2L, UserRole.TEACHER));
         GuardSpy guard = new GuardSpy();
         GrowthServiceFake growth = new GrowthServiceFake();

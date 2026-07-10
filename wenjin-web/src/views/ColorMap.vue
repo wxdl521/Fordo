@@ -265,7 +265,7 @@ const { courseId: studentCourseId } = useStudentCourse()
 const courseId = computed(() => studentCourseId.value || 1)
 
 // 每次进入页面都重新加载（诊断后 mastery 会更新）
-const { data } = useGraphData(courseId.value, currentUser.value?.id, true)
+const { data } = useGraphData(courseId.value, true)
 
 // 监听 storage 事件（其他标签页登录/退出时同步）
 if (typeof window !== 'undefined') {
@@ -317,7 +317,7 @@ async function loadReview() {
   reviewLoading.value = true
   reviewError.value = ''
   try {
-    const vo = await fetchTodayReview(currentUser.value.id, courseId.value)
+    const vo = await fetchTodayReview(courseId.value)
     reviewItems.value = vo?.items || []
     reviewTotalCount.value = vo?.totalDecayingCount ?? reviewItems.value.length
   } catch (e) {

@@ -283,7 +283,7 @@ async function loadCourses() {
   if (!currentUser.value) return
   courseLoading.value = true
   try {
-    courses.value = await getMyCourses(currentUser.value.id)
+    courses.value = await getMyCourses()
   } catch {
     courses.value = []
   }
@@ -301,7 +301,7 @@ async function loadCourses() {
 async function handleEnroll(courseId) {
   if (!currentUser.value) return
   try {
-    await enroll(currentUser.value.id, courseId)
+    await enroll(courseId)
     await loadCourses()
   } catch (e) {
     alert(e.message || '选课失败')

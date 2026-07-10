@@ -328,7 +328,7 @@ async function load() {
       error.value = '请先从首页选择一门课程'
       return
     }
-    data.value = await fetchGrowth(DEMO_STUDENT_ID, courseId.value)
+    data.value = await fetchGrowth(courseId.value)
   } catch (e) {
     error.value = e.message || '加载失败'
     console.error('Growth load error:', e)

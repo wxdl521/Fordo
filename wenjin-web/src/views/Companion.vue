@@ -476,7 +476,6 @@ async function submitPracticeMessage(message) {
 
   try {
     const result = await submitPractice(message.card.sessionId, {
-      studentId: STUDENT_ID,
       answers
     })
     message.submitResult = result
@@ -539,7 +538,7 @@ function formatDelta(delta) {
 async function loadConversations() {
   try {
     if (!courseId.value) return
-    const data = await listConversations(STUDENT_ID, courseId.value)
+    const data = await listConversations(courseId.value)
     conversations.value = data || []
   } catch (error) {
     console.error('Failed to load conversations:', error)
@@ -618,7 +617,6 @@ async function sendText() {
   scrollToEnd()
 
   const payload = buildCompanionChatPayload({
-    studentId: STUDENT_ID,
     courseId: courseId.value,
     conversationId: conversationId.value,
     nodeCode: ctxNodeCode.value,

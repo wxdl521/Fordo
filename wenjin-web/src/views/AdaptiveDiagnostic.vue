@@ -200,7 +200,7 @@ async function load() {
   askedCount.value = 0
   started.value = false
   try {
-    const resp = await startAdaptive({ studentId: DEMO_STUDENT_ID, courseId: courseId.value })
+    const resp = await startAdaptive({ courseId: courseId.value })
     sessionId.value = resp.sessionId
     started.value = true
     applyResponse(resp)
@@ -218,7 +218,6 @@ async function submitAnswer() {
   submitError.value = ''
   const count = questions.value.length
   const payload = {
-    studentId: DEMO_STUDENT_ID,
     answers: questions.value.map((q, i) => ({
       questionId: q.questionId,
       studentAnswer: q.optionKeys[answers[i]]   // 与固定卷 optionKey 同格式（如 'A'）
@@ -243,7 +242,7 @@ async function onAbandon() {
   abandoning.value = true
   try {
     if (sessionId.value != null) {
-      await abandonAdaptive(sessionId.value, { studentId: DEMO_STUDENT_ID })
+      await abandonAdaptive(sessionId.value)
     }
   } catch {
     // abandon 失败不阻塞离开（会话悬挂无害，M2 无续答）

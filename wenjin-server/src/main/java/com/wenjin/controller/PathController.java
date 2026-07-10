@@ -32,21 +32,20 @@ public class PathController {
     /** 生成（重算）学习路径。POST /api/path/generate */
     @PostMapping("/generate")
     public Result<LearningPathVO> generate(@RequestBody PathGenerateRequest req) {
-        // 重算路径会写 learning_path——仅学生且必须绑定本人，否则可替他人重置学习路径
-        CurrentUser.requireStudent();
-        AccessGuard.assertSelf(req.getStudentId());
-        courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
+        long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
+        req.setStudentId(studentId);
+        courseService.assertAccessibleByStudent(studentId, req.getCourseId());
         return Result.ok(pathService.generate(req));
     }
 
-    /** 加载当前有效路径。GET /api/path/current?studentId=&courseId= */
+    /** 加载当前有效路径。GET /api/path/current?courseId=  （可选兼容参数 studentId） */
     @GetMapping("/current")
-    public Result<LearningPathVO> current(@RequestParam("studentId") Long studentId,
-                                          @RequestParam("courseId") Long courseId) {
-        CurrentUser.requireStudent();
-        AccessGuard.assertSelf(studentId);
-        courseService.assertAccessibleByStudent(studentId, courseId);
-        return Result.ok(pathService.getCurrent(studentId, courseId));
+    public Result<LearningPathVO> current(
+            @RequestParam(value = "studentId", required = false) Long studentId,
+            @RequestParam("courseId") Long courseId) {
+        long id = AccessGuard.requireSelfStudent(studentId);
+        courseService.assertAccessibleByStudent(id, courseId);
+        return Result.ok(pathService.getCurrent(id, courseId));
     }
 
     /** 标记某步完成。POST /api/path/item/complete?itemId= */

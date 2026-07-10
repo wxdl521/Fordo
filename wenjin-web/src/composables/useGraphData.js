@@ -32,34 +32,31 @@ function mapEdge(e) {
 const data = ref(null)
 let loading = null
 let cachedCourseId = null
-let cachedStudentId = null
 
 /** 重置单例（用户切换时调用） */
 export function resetGraphData() {
   data.value = null
   loading = null
   cachedCourseId = null
-  cachedStudentId = null
 }
 
 /**
  * 加载图谱数据（单例，首次调用发请求，后续复用）。
+ * 登录学生的掌握度染色由服务端 principal 自动附加。
  * @param {number} courseId
- * @param {number} [studentId]
  * @param {boolean} [force=false] 强制重新加载（诊断后 mastery 更新时使用）
  * @returns {{ data: import('vue').Ref<{ nodes: Array, edges: Array } | null>, ready: () => boolean }}
  */
-export function useGraphData(courseId = 1, studentId, force = false) {
+export function useGraphData(courseId = 1, force = false) {
   // 参数变化或强制刷新时重新加载
-  if (force || cachedCourseId !== courseId || cachedStudentId !== studentId) {
+  if (force || cachedCourseId !== courseId) {
     data.value = null
     loading = null
     cachedCourseId = courseId
-    cachedStudentId = studentId
   }
 
   if (!data.value && !loading) {
-    loading = fetchGraph(courseId, studentId)
+    loading = fetchGraph(courseId)
       .then((res) => {
         // http 拦截器已拆 Result 信封，res 就是 GraphDataVO
         data.value = {

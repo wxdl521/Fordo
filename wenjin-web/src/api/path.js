@@ -2,12 +2,15 @@ import { http } from './http.js'
 
 /** 生成（重算）学习路径；targetNodeId 省略时服务端取诊断卡点 */
 export function generatePath(payload) {
-  return http.post('/path/generate', payload)
+  // 不发送 studentId：身份由服务端 principal 派生
+  const body = { ...payload }
+  delete body.studentId
+  return http.post('/path/generate', body)
 }
 
 /** 加载当前有效学习路径 */
-export function fetchCurrentPath(studentId, courseId) {
-  return http.get('/path/current', { params: { studentId, courseId } })
+export function fetchCurrentPath(courseId) {
+  return http.get('/path/current', { params: { courseId } })
 }
 
 /** 标记某步完成 */

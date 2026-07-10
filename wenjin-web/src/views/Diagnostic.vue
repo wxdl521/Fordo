@@ -277,7 +277,6 @@ async function submitAnswers() {
 
   // 构建 answers 数组：仅含实际选了答案的题（跳过的不传）
   const payload = {
-    studentId: DEMO_STUDENT_ID,
     courseId: courseId.value,
     answers: Object.entries(answers.value).map(([idxStr, optIdx]) => {
       const q = questions.value[Number(idxStr)]

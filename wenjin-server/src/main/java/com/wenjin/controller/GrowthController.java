@@ -2,7 +2,6 @@ package com.wenjin.controller;
 
 import com.wenjin.common.Result;
 import com.wenjin.config.AccessGuard;
-import com.wenjin.config.CurrentUser;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.GrowthService;
 import com.wenjin.vo.GrowthVO;
@@ -23,14 +22,16 @@ public class GrowthController {
         this.courseService = courseService;
     }
 
+    /**
+     * GET /api/growth?courseId=  （可选兼容参数 studentId）
+     */
     @GetMapping
     public Result<GrowthVO> getGrowth(
-            @RequestParam Long studentId,
+            @RequestParam(value = "studentId", required = false) Long studentId,
             @RequestParam Long courseId) {
-        CurrentUser.requireStudent();
-        AccessGuard.assertSelf(studentId);
-        courseService.assertAccessibleByStudent(studentId, courseId);
-        GrowthVO growth = growthService.getGrowth(studentId, courseId);
+        long id = AccessGuard.requireSelfStudent(studentId);
+        courseService.assertAccessibleByStudent(id, courseId);
+        GrowthVO growth = growthService.getGrowth(id, courseId);
         return Result.ok(growth);
     }
 }

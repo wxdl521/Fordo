@@ -339,7 +339,6 @@ async function startSession() {
   errorMsg.value = ''
   try {
     const vo = await startPractice({
-      studentId: STUDENT_ID,
       courseId: courseId.value,
       nodeId: nodeId.value,
       pathItemId: pathItemId.value  // C1: 带 pathItemId，后端写入 session 供自动通过判定
@@ -464,7 +463,6 @@ async function doSubmit(answers) {
   errorMsg.value = ''
   try {
     const vo = await submitPractice(sessionId.value, {
-      studentId: STUDENT_ID,
       answers: list
     })
     submitResult.value = vo

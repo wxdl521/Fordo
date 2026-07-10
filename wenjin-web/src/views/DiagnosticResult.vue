@@ -149,9 +149,9 @@ async function load() {
       error.value = '请先从首页选择一门课程'
       return
     }
-    data.value = await fetchResult(DEMO_STUDENT_ID, courseId.value)
+    data.value = await fetchResult(courseId.value)
     // 证据卡取数失败时静默忽略（不打扰既有结果页渲染），data=null 也静默不渲染
-    evidence.value = await fetchEvidence(DEMO_STUDENT_ID, courseId.value).catch(() => null)
+    evidence.value = await fetchEvidence(courseId.value).catch(() => null)
   } catch (e) {
     error.value = e.message || '未知错误'
   } finally {
@@ -164,7 +164,7 @@ async function goPath() {
   generating.value = true
   genError.value = ''
   try {
-    await generatePath({ studentId: DEMO_STUDENT_ID, courseId: courseId.value })
+    await generatePath({ courseId: courseId.value })
     router.push({ path: '/path', query: { courseId: courseId.value } })
   } catch (e) {
     genError.value = e.message || '未知错误'

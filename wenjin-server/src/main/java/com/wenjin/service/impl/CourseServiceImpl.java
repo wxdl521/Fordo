@@ -7,9 +7,12 @@ import com.wenjin.dto.CourseWithMasteryVO;
 import com.wenjin.entity.Course;
 import com.wenjin.entity.StudentCourse;
 import com.wenjin.entity.StudentMastery;
+import com.wenjin.entity.SysUser;
 import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.StudentCourseMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.mapper.SysUserMapper;
+import com.wenjin.security.UserRole;
 import com.wenjin.service.CourseService;
 import org.springframework.stereotype.Service;
 
@@ -27,33 +30,45 @@ public class CourseServiceImpl implements CourseService {
     private final StudentCourseMapper studentCourseMapper;
     private final CourseMapper courseMapper;
     private final StudentMasteryMapper studentMasteryMapper;
+    private final SysUserMapper sysUserMapper;
 
     public CourseServiceImpl(StudentCourseMapper studentCourseMapper,
                              CourseMapper courseMapper,
-                             StudentMasteryMapper studentMasteryMapper) {
+                             StudentMasteryMapper studentMasteryMapper,
+                             SysUserMapper sysUserMapper) {
         this.studentCourseMapper = studentCourseMapper;
         this.courseMapper = courseMapper;
         this.studentMasteryMapper = studentMasteryMapper;
+        this.sysUserMapper = sysUserMapper;
     }
 
     @Override
     public void enroll(Long studentId, Long courseId) {
-        // 校验课程存在
+        // 用户存在且角色为学生
+        SysUser user = sysUserMapper.selectById(studentId);
+        if (user == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "用户不存在");
+        }
+        if (user.getRole() == null || user.getRole() != UserRole.STUDENT.code()) {
+            throw new BusinessException(ResultCode.FORBIDDEN, "仅学生可选课");
+        }
+
+        // 校验课程存在、已发布（status=1；0=停用/未发布）
         Course course = courseMapper.selectById(courseId);
         if (course == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "课程不存在");
         }
-        if (course.getStatus() != null && course.getStatus() == 0) {
+        if (course.getStatus() == null || course.getStatus() != 1) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "课程未发布");
         }
 
-        // 检查是否已选
+        // 重复选课幂等（与 uk_student_course 一致）
         Long count = studentCourseMapper.selectCount(
                 new LambdaQueryWrapper<StudentCourse>()
                         .eq(StudentCourse::getStudentId, studentId)
                         .eq(StudentCourse::getCourseId, courseId));
-        if (count > 0) {
-            return; // 已选，幂等
+        if (count != null && count > 0) {
+            return;
         }
 
         StudentCourse sc = new StudentCourse();

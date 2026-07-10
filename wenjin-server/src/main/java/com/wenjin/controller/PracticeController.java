@@ -4,7 +4,6 @@ import com.wenjin.common.BusinessException;
 import com.wenjin.common.Result;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.AccessGuard;
-import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.PracticeHistoryVO;
 import com.wenjin.dto.PracticeStartRequest;
 import com.wenjin.dto.PracticeStartVO;
@@ -28,17 +27,9 @@ import java.util.Objects;
  *
  * <h3>鉴权约定</h3>
  * <ul>
- *   <li>每个方法体先 {@link CurrentUser#requireStudent}（非学生→403），再
- *       {@link AccessGuard#assertSelf} 绑定本人身份（未登录→401，他人→403）。</li>
- *   <li>涉及课程访问的端点还调用 {@link CourseService#assertAccessibleByStudent}（发布状态 + 选课校验）。</li>
- *   <li>submit 端点的 session 归属校验由 {@link PracticeService#submit} 内部完成（service 层防御）。</li>
- * </ul>
- *
- * <h3>入参校验（T3/T4 遗留修复）</h3>
- * <ul>
- *   <li>start: {@code size ≤ 0} 时拒绝（BAD_REQUEST），0 题或负数题数会导致空会话。</li>
- *   <li>submit: 请求体 answers 中存在重复 questionId 时拒绝（BAD_REQUEST），
- *       防止同一题写入两条 answer_record 导致 EWMA 计算偏差。</li>
+ *   <li>学生 ID 一律从 principal 派生；遗留 {@code studentId} 仅用于 mismatch → 403。</li>
+ *   <li>涉及课程访问的端点还调用 {@link CourseService#assertAccessibleByStudent}。</li>
+ *   <li>submit 端点的 session 归属校验由 {@link PracticeService#submit} 内部完成。</li>
  * </ul>
  */
 @RestController
@@ -59,34 +50,27 @@ public class PracticeController {
      */
     @PostMapping("/start")
     public Result<PracticeStartVO> start(@RequestBody PracticeStartRequest req) {
-        // 1. 角色 + 归属：仅学生，且 studentId 必须等于当前登录用户
-        CurrentUser.requireStudent();
-        AccessGuard.assertSelf(req.getStudentId());
-        // 2. 入参校验：size 下界（T3 遗留：size=0/负数会组出空会话）
+        long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
+        req.setStudentId(studentId);
         if (req.getSize() != null && req.getSize() <= 0) {
             throw new BusinessException(ResultCode.BAD_REQUEST,
                     "size 必须为正整数（当前值：" + req.getSize() + "）");
         }
-        // 3. 课程访问校验（已发布 + 已选课）
-        courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
+        courseService.assertAccessibleByStudent(studentId, req.getCourseId());
         return Result.ok(practiceService.start(
-                req.getStudentId(), req.getCourseId(), req.getNodeId(),
+                studentId, req.getCourseId(), req.getNodeId(),
                 req.getPathItemId(), req.getSize()));
     }
 
     /**
      * 提交练习作答：服务端判分 + 掌握度更新。
      * POST /api/practice/{sessionId}/submit
-     *
-     * <p>幂等：session.status=1 时 service 内部直接重建上次结果，Controller 无需额外处理。</p>
      */
     @PostMapping("/{sessionId}/submit")
     public Result<PracticeSubmitVO> submit(@PathVariable Long sessionId,
                                            @RequestBody PracticeSubmitRequest req) {
-        // 1. 角色 + 归属：仅学生，且 studentId 必须等于当前登录用户（先鉴权后校验）
-        CurrentUser.requireStudent();
-        AccessGuard.assertSelf(req.getStudentId());
-        // 2. 入参校验：重复 questionId（T4 遗留：重复提交会写两条 answer_record 污染 EWMA）
+        long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
+        req.setStudentId(studentId);
         if (req.getAnswers() != null) {
             long total = req.getAnswers().stream()
                     .map(PracticeSubmitRequest.AnswerItem::getQuestionId)
@@ -102,24 +86,20 @@ public class PracticeController {
                         "作答列表中存在重复的 questionId，请去重后重试");
             }
         }
-        // 3. service 内部完成 session 归属校验（req.studentId == session.studentId，否则抛 FORBIDDEN）
         return Result.ok(practiceService.submit(sessionId, req));
     }
 
     /**
      * 查询近期练习历史（供前端显示"上次练习 3/5"）。
-     * GET /api/practice/history?studentId=&courseId=&nodeId=
+     * GET /api/practice/history?courseId=&nodeId=  （可选兼容参数 studentId）
      */
     @GetMapping("/history")
     public Result<List<PracticeHistoryVO>> history(
-            @RequestParam Long studentId,
+            @RequestParam(value = "studentId", required = false) Long studentId,
             @RequestParam Long courseId,
             @RequestParam Long nodeId) {
-        // 1. 角色 + 归属
-        CurrentUser.requireStudent();
-        AccessGuard.assertSelf(studentId);
-        // 2. 课程访问校验
-        courseService.assertAccessibleByStudent(studentId, courseId);
-        return Result.ok(practiceService.getHistory(studentId, courseId, nodeId));
+        long id = AccessGuard.requireSelfStudent(studentId);
+        courseService.assertAccessibleByStudent(id, courseId);
+        return Result.ok(practiceService.getHistory(id, courseId, nodeId));
     }
 }

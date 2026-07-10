@@ -169,7 +169,7 @@ async function load() {
       error.value = '请先从首页选择一门课程'
       return
     }
-    const data = await fetchGraph(courseId.value, DEMO_STUDENT_ID)
+    const data = await fetchGraph(courseId.value)
     graph.value = data
   } catch (e) {
     error.value = e.message || '未知错误'

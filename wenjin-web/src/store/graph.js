@@ -29,12 +29,12 @@ export const useGraphStore = defineStore('graph', {
     }
   },
   actions: {
-    /** 加载某课程图谱（可带 studentId 染色） */
-    async load(courseId, studentId) {
+    /** 加载某课程图谱（登录学生的掌握度染色由服务端自动附加） */
+    async load(courseId) {
       this.loading = true
       this.error = ''
       try {
-        const data = await fetchGraph(courseId, studentId)
+        const data = await fetchGraph(courseId)
         this.course = data.course
         this.nodes = data.nodes || []
         this.edges = data.edges || []

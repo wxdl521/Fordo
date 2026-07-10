@@ -53,23 +53,22 @@ public class DiagnosticController {
      */
     @PostMapping("/submit")
     public Result<SubmitResult> submit(@RequestBody SubmitRequest req) {
-        // 交卷会写 answer_record / 掌握度——仅学生且必须绑定本人，否则可替他人交卷污染其学情
-        CurrentUser.requireStudent();
-        AccessGuard.assertSelf(req.getStudentId());
-        courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
+        long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
+        req.setStudentId(studentId);
+        courseService.assertAccessibleByStudent(studentId, req.getCourseId());
         return Result.ok(diagnosticService.submit(req));
     }
 
     /**
      * 诊断回溯结果（自动选最下游薄弱点为卡点）。
-     * GET /api/diagnostic/result?studentId=&courseId=
+     * GET /api/diagnostic/result?courseId=  （可选兼容参数 studentId）
      */
     @GetMapping("/result")
-    public Result<DiagnosticResultVO> result(@RequestParam("studentId") Long studentId,
-                                             @RequestParam("courseId") Long courseId) {
-        CurrentUser.requireStudent();
-        AccessGuard.assertSelf(studentId);
-        courseService.assertAccessibleByStudent(studentId, courseId);
-        return Result.ok(diagnosticResultService.getResult(studentId, courseId));
+    public Result<DiagnosticResultVO> result(
+            @RequestParam(value = "studentId", required = false) Long studentId,
+            @RequestParam("courseId") Long courseId) {
+        long id = AccessGuard.requireSelfStudent(studentId);
+        courseService.assertAccessibleByStudent(id, courseId);
+        return Result.ok(diagnosticResultService.getResult(id, courseId));
     }
 }

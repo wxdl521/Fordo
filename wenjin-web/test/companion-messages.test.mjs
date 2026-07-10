@@ -40,17 +40,15 @@ test('readCompanionNodeCode normalizes route query values', () => {
   assert.equal(readCompanionNodeCode(undefined), null)
 })
 
-test('buildCompanionChatPayload sends nodeCode instead of contextNodeCode', () => {
+test('buildCompanionChatPayload omits studentId and sends nodeCode instead of contextNodeCode', () => {
   assert.deepEqual(
     buildCompanionChatPayload({
-      studentId: 2,
       courseId: 5,
       conversationId: 99,
       nodeCode: 'KT12',
       message: 'help me practice'
     }),
     {
-      studentId: 2,
       courseId: 5,
       conversationId: 99,
       nodeCode: 'KT12',
@@ -60,13 +58,11 @@ test('buildCompanionChatPayload sends nodeCode instead of contextNodeCode', () =
 
   assert.deepEqual(
     buildCompanionChatPayload({
-      studentId: 2,
       courseId: 5,
       nodeCode: null,
       message: 'help me practice'
     }),
     {
-      studentId: 2,
       courseId: 5,
       message: 'help me practice'
     }

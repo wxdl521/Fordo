@@ -137,7 +137,7 @@ async function load() {
       error.value = '请先从首页选择一门课程'
       return
     }
-    data.value = await fetchCurrentPath(DEMO_STUDENT_ID, courseId.value)
+    data.value = await fetchCurrentPath(courseId.value)
   } catch (e) {
     error.value = e.message || '未知错误'
   } finally {

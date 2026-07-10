@@ -72,13 +72,13 @@ public class CompanionController {
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chat(@RequestBody CompanionChatRequest req) {
         // 必须在请求线程（此处）校验——CurrentUser 是 ThreadLocal，进入 executor 后不可见
-        CurrentUser.requireStudent();
-        AccessGuard.assertSelf(req.getStudentId());
-        courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
+        long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
+        req.setStudentId(studentId);
+        courseService.assertAccessibleByStudent(studentId, req.getCourseId());
         SseEmitter emitter = new SseEmitter(180_000L); // 3 minutes timeout
 
         // 在请求线程取出身份，透传给虚拟线程（ThreadLocal 不跨线程）
-        final Long uid = CurrentUser.get();
+        final Long uid = studentId;
 
         executor.execute(() -> {
             // 把请求线程的身份注入当前虚拟线程；finally 保证清理（虚拟线程每任务新建，清理是好习惯）
@@ -142,16 +142,15 @@ public class CompanionController {
 
     /**
      * 查询学生的所有会话（按更新时间倒序）。
-     * GET /api/companion/conversations?studentId=&courseId=
+     * GET /api/companion/conversations?courseId=  （可选兼容参数 studentId）
      */
     @GetMapping("/conversations")
     public Result<List<CompanionConversationVO>> listConversations(
-            @RequestParam("studentId") Long studentId,
+            @RequestParam(value = "studentId", required = false) Long studentId,
             @RequestParam("courseId") Long courseId) {
-        CurrentUser.requireStudent();
-        AccessGuard.assertSelf(studentId);
-        courseService.assertAccessibleByStudent(studentId, courseId);
-        return Result.ok(companionService.listConversations(studentId, courseId));
+        long id = AccessGuard.requireSelfStudent(studentId);
+        courseService.assertAccessibleByStudent(id, courseId);
+        return Result.ok(companionService.listConversations(id, courseId));
     }
 
     /**
