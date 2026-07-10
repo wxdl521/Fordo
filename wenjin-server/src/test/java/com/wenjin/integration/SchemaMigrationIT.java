@@ -26,13 +26,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 受控迁移两条路径：
  * <ul>
- *   <li>空库：执行 V1+V2+V3 建出全部业务表，二次 migrate 无变更且 checksum 稳定</li>
- *   <li>遗留库：先加载当前 {@code schema.sql}，baseline version 2 接管，仅执行 V3+</li>
+ *   <li>空库：执行 V1…V5 建出全部业务表与后续增量，二次 migrate 无变更且 checksum 稳定</li>
+ *   <li>遗留库：先加载 V1 级结构（m01/m02），baseline version 2 接管，执行 V3+（含 V4、V5）</li>
  * </ul>
+ * <p>说明：本地 {@code schema.sql} 是「当前最终 DDL」快照（已含 V4/V5 列），不能直接当作
+ * 遗留库输入，否则 baseline@2 后重跑 V4/V5 会因列已存在而失败。遗留路径因此以
+ * {@code V1__baseline_schema.sql} 模拟接入 Flyway 前的生产库。
  */
 class SchemaMigrationIT extends MySqlContainerSupport {
 
-    /** V1/schema.sql 业务表 + V3 固定诊断会话表（不含 flyway_schema_history）。 */
+    /** V1 业务表（不含 flyway_schema_history；与 m01/m02 遗留结构对齐）。 */
     private static final List<String> BASELINE_TABLES = List.of(
             "sys_user",
             "course",
@@ -61,12 +64,13 @@ class SchemaMigrationIT extends MySqlContainerSupport {
             "diagnostic_session_question"
     );
 
-    private static final List<String> EXPECTED_TABLES_AFTER_V3;
+    /** 空库跑完 V1…V5 后应有的业务表（V4/V5 为 ALTER，不增表）。 */
+    private static final List<String> EXPECTED_TABLES_AFTER_ALL;
 
     static {
         List<String> all = new ArrayList<>(BASELINE_TABLES);
         all.addAll(V3_TABLES);
-        EXPECTED_TABLES_AFTER_V3 = List.copyOf(all);
+        EXPECTED_TABLES_AFTER_ALL = List.copyOf(all);
     }
 
     @BeforeEach
@@ -90,20 +94,22 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     }
 
     @Test
-    @DisplayName("空库：V1+V2+V3 建出全部表；二次 migrate 无变更且 checksum 稳定")
-    void emptyDatabase_appliesV1AndV2_idempotent() throws Exception {
+    @DisplayName("空库：V1…V5 建出全部表；二次 migrate 无变更且 checksum 稳定")
+    void emptyDatabase_appliesV1ThroughV5_idempotent() throws Exception {
         Flyway flyway = createFlyway();
 
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        assertThat(first.migrationsExecuted).isEqualTo(3);
+        assertThat(first.migrationsExecuted).isEqualTo(5);
 
-        assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_V3);
+        assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
         Map<String, Integer> checksumsAfterFirst = successChecksums();
-        assertThat(checksumsAfterFirst.keySet()).containsExactly("1", "2", "3");
+        assertThat(checksumsAfterFirst.keySet()).containsExactly("1", "2", "3", "4", "5");
         assertThat(checksumsAfterFirst.get("1")).isNotNull();
         assertThat(checksumsAfterFirst.get("2")).isNotNull();
         assertThat(checksumsAfterFirst.get("3")).isNotNull();
+        assertThat(checksumsAfterFirst.get("4")).isNotNull();
+        assertThat(checksumsAfterFirst.get("5")).isNotNull();
 
         MigrateResult second = flyway.migrate();
         assertThat(second.success).isTrue();
@@ -111,26 +117,26 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
         Map<String, Integer> checksumsAfterSecond = successChecksums();
         assertThat(checksumsAfterSecond).isEqualTo(checksumsAfterFirst);
-        assertThat(countSuccessHistoryRows()).isEqualTo(3);
+        assertThat(countSuccessHistoryRows()).isEqualTo(5);
     }
 
     @Test
-    @DisplayName("遗留库：schema.sql 后 baseline@2 接管，仅执行 V3；二次 migrate 无变更")
+    @DisplayName("遗留库：V1 结构 + baseline@2 接管，执行 V3+V4+V5；二次 migrate 无变更")
     void legacySchema_baselinesAtVersion2_onlyFutureMigrations() throws Exception {
-        applyLegacySchemaSql();
+        applyLegacyBaselineSchema();
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(BASELINE_TABLES);
 
         Flyway flyway = createFlyway();
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        // baseline@2 后执行 V3
-        assertThat(first.migrationsExecuted).isEqualTo(1);
+        // baseline@2 后执行 V3、V4、V5
+        assertThat(first.migrationsExecuted).isEqualTo(3);
 
         Map<String, Integer> history = successChecksums();
-        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3
+        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3/V4/V5
         assertThat(history.keySet()).doesNotContain("1");
-        assertThat(history.keySet()).contains("2", "3");
-        assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_V3);
+        assertThat(history.keySet()).contains("2", "3", "4", "5");
+        assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
 
         MigrateResult second = flyway.migrate();
         assertThat(second.success).isTrue();
@@ -149,24 +155,21 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     }
 
     /**
-     * 加载当前本地快照 schema.sql，模拟「已有 m01/m02 结构」的遗留库。
-     * 跳过 CREATE DATABASE / USE（容器库已存在，测试账号通常无全局建库权）。
+     * 加载 V1 baseline DDL，模拟「已有 m01/m02 结构、尚未跑 V3+」的遗留库。
+     * <p>不用当前 {@code schema.sql}：该文件是本地最终快照，已含 V4/V5 列与约束。
      */
-    private static void applyLegacySchemaSql() throws Exception {
+    private static void applyLegacyBaselineSchema() throws Exception {
         final String raw;
         try {
-            raw = new ClassPathResource("schema.sql").getContentAsString(StandardCharsets.UTF_8);
+            raw = new ClassPathResource("db/migration/V1__baseline_schema.sql")
+                    .getContentAsString(StandardCharsets.UTF_8);
         } catch (IOException e) {
-            throw new IllegalStateException("无法读取 classpath:schema.sql", e);
+            throw new IllegalStateException("无法读取 classpath:db/migration/V1__baseline_schema.sql", e);
         }
-        String filtered = Arrays.stream(raw.split("\\R"))
-                .filter(line -> !line.matches("(?i)\\s*CREATE\\s+DATABASE\\b.*"))
-                .filter(line -> !line.matches("(?i)\\s*USE\\b.*"))
-                .collect(Collectors.joining("\n"));
         try (Connection conn = MYSQL.createConnection("");
              Statement st = conn.createStatement()) {
-            // 按语句切分；注释中的分号极少，schema 快照可安全按 ; 拆分
-            for (String statement : filtered.split(";")) {
+            // 按语句切分；注释中的分号极少，V1 脚本可安全按 ; 拆分
+            for (String statement : raw.split(";")) {
                 String sql = statement.trim();
                 if (sql.isEmpty() || sql.startsWith("--")) {
                     continue;
