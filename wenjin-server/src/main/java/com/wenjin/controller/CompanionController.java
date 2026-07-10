@@ -72,6 +72,7 @@ public class CompanionController {
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chat(@RequestBody CompanionChatRequest req) {
         // 必须在请求线程（此处）校验——CurrentUser 是 ThreadLocal，进入 executor 后不可见
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(req.getStudentId());
         courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
         SseEmitter emitter = new SseEmitter(180_000L); // 3 minutes timeout
@@ -147,6 +148,7 @@ public class CompanionController {
     public Result<List<CompanionConversationVO>> listConversations(
             @RequestParam("studentId") Long studentId,
             @RequestParam("courseId") Long courseId) {
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(studentId);
         courseService.assertAccessibleByStudent(studentId, courseId);
         return Result.ok(companionService.listConversations(studentId, courseId));
@@ -158,6 +160,7 @@ public class CompanionController {
      */
     @GetMapping("/conversations/{id}")
     public Result<List<CompanionMessageVO>> getMessages(@PathVariable("id") Long id) {
+        CurrentUser.requireStudent();
         return Result.ok(companionService.getMessages(id));
     }
 
@@ -167,6 +170,7 @@ public class CompanionController {
      */
     @DeleteMapping("/conversations/{id}")
     public Result<Void> deleteConversation(@PathVariable("id") Long id) {
+        CurrentUser.requireStudent();
         companionService.deleteConversation(id);
         return Result.ok(null);
     }

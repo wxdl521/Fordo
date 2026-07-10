@@ -2,6 +2,7 @@ package com.wenjin.controller;
 
 import com.wenjin.common.Result;
 import com.wenjin.config.AccessGuard;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.AdaptiveAnswerRequest;
 import com.wenjin.dto.AdaptiveDiagnosticVO;
 import com.wenjin.dto.EvidenceVO;
@@ -20,7 +21,8 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <h3>鉴权约定（对齐 DiagnosticController / PracticeController）</h3>
  * <ul>
- *   <li>每个方法体第一行 {@link AccessGuard#assertSelf} 绑定本人身份（未登录→401，他人→403）。</li>
+ *   <li>每个方法体先 {@link CurrentUser#requireStudent}（非学生→403），再
+ *       {@link AccessGuard#assertSelf} 绑定本人身份（未登录→401，他人→403）。</li>
  *   <li>start 额外调 {@link CourseService#assertAccessibleByStudent}（课程存在+已发布+该生已选），
  *       对齐课程发布里程碑约定：边界调用，不侵入深层 service。</li>
  *   <li>answer/abandon 的 session 属主反查由 {@link AdaptiveDiagnosticService} 内部完成（T4 实现），
@@ -50,7 +52,8 @@ public class AdaptiveDiagnosticController {
      */
     @PostMapping("/start")
     public Result<AdaptiveDiagnosticVO> start(@RequestBody AdaptiveStartRequest req) {
-        // 1. 归属校验：studentId 必须等于当前登录用户
+        // 1. 角色 + 归属：仅学生，且 studentId 必须等于当前登录用户
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(req.getStudentId());
         // 2. 课程访问校验（已发布 + 已选课）——T4 评审移交项
         courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
@@ -64,7 +67,8 @@ public class AdaptiveDiagnosticController {
     @PostMapping("/{sessionId}/answer")
     public Result<AdaptiveDiagnosticVO> answer(@PathVariable Long sessionId,
                                                @RequestBody AdaptiveAnswerRequest req) {
-        // 1. 归属校验：studentId 必须等于当前登录用户
+        // 1. 角色 + 归属：仅学生，且 studentId 必须等于当前登录用户
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(req.getStudentId());
         // 2. service 内部完成 session 属主反查（T4 实现）
         return Result.ok(adaptiveDiagnosticService.answer(sessionId, req));
@@ -77,7 +81,8 @@ public class AdaptiveDiagnosticController {
     @PostMapping("/{sessionId}/abandon")
     public Result<Void> abandon(@PathVariable Long sessionId,
                                 @RequestBody AdaptiveAbandonRequest req) {
-        // 1. 归属校验：studentId 必须等于当前登录用户
+        // 1. 角色 + 归属：仅学生，且 studentId 必须等于当前登录用户
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(req.getStudentId());
         // 2. service 内部完成 session 属主反查（T4 实现）
         adaptiveDiagnosticService.abandon(sessionId, req.getStudentId());
@@ -93,7 +98,8 @@ public class AdaptiveDiagnosticController {
      */
     @GetMapping("/evidence")
     public Result<EvidenceVO> evidence(@RequestParam Long studentId, @RequestParam Long courseId) {
-        // 1. 归属校验：studentId 必须等于当前登录用户
+        // 1. 角色 + 归属：仅学生，且 studentId 必须等于当前登录用户
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(studentId);
         // 2. 课程访问校验（已发布 + 已选课）——对齐 start 端点
         courseService.assertAccessibleByStudent(studentId, courseId);

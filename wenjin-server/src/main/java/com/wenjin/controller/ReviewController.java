@@ -2,6 +2,7 @@ package com.wenjin.controller;
 
 import com.wenjin.common.Result;
 import com.wenjin.config.AccessGuard;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.ReviewTodayVO;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.ReviewService;
@@ -29,6 +30,7 @@ public class ReviewController {
     @GetMapping("/today")
     public Result<ReviewTodayVO> today(@RequestParam("studentId") Long studentId,
                                        @RequestParam("courseId") Long courseId) {
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(studentId);
         courseService.assertAccessibleByStudent(studentId, courseId);
         return Result.ok(reviewService.getToday(studentId, courseId));

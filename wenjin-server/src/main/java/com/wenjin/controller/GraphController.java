@@ -2,6 +2,7 @@ package com.wenjin.controller;
 
 import com.wenjin.common.Result;
 import com.wenjin.config.AccessGuard;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.GraphDataVO;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.GraphService;
@@ -34,7 +35,9 @@ public class GraphController {
     public Result<GraphDataVO> getGraph(@PathVariable("courseId") Long courseId,
                                         @RequestParam(value = "studentId", required = false) Long studentId) {
         // studentId 为 null 表示匿名看图（统一 unlearned 染色），不校验归属
+        // studentId 非空为学情染色：仅学生且必须绑定本人
         if (studentId != null) {
+            CurrentUser.requireStudent();
             AccessGuard.assertSelf(studentId);
         }
         courseService.assertAccessibleByStudent(studentId, courseId);

@@ -2,6 +2,7 @@ package com.wenjin.controller;
 
 import com.wenjin.common.Result;
 import com.wenjin.config.AccessGuard;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.LearningPathVO;
 import com.wenjin.dto.PathGenerateRequest;
 import com.wenjin.service.CourseService;
@@ -31,7 +32,8 @@ public class PathController {
     /** 生成（重算）学习路径。POST /api/path/generate */
     @PostMapping("/generate")
     public Result<LearningPathVO> generate(@RequestBody PathGenerateRequest req) {
-        // 重算路径会写 learning_path——必须绑定本人，否则可替他人重置学习路径
+        // 重算路径会写 learning_path——仅学生且必须绑定本人，否则可替他人重置学习路径
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(req.getStudentId());
         courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
         return Result.ok(pathService.generate(req));
@@ -41,6 +43,7 @@ public class PathController {
     @GetMapping("/current")
     public Result<LearningPathVO> current(@RequestParam("studentId") Long studentId,
                                           @RequestParam("courseId") Long courseId) {
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(studentId);
         courseService.assertAccessibleByStudent(studentId, courseId);
         return Result.ok(pathService.getCurrent(studentId, courseId));
@@ -49,6 +52,7 @@ public class PathController {
     /** 标记某步完成。POST /api/path/item/complete?itemId= */
     @PostMapping("/item/complete")
     public Result<Void> complete(@RequestParam("itemId") Long itemId) {
+        CurrentUser.requireStudent();
         pathService.completeItem(itemId);
         return Result.ok();
     }

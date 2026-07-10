@@ -4,6 +4,8 @@ import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.CourseWithMasteryVO;
+import com.wenjin.security.CurrentPrincipal;
+import com.wenjin.security.UserRole;
 import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.GraphDataVO;
 import com.wenjin.dto.GraphImportRequest;
@@ -127,6 +129,7 @@ class StudentEndpointGuardTest {
 
     @Test
     void diagnosticPaper_guardsWithNullStudent_publishGateOnly() {
+        CurrentUser.set(2L); // requireStudent 需要已认证学生
         GuardSpy guard = new GuardSpy();
         DiagnosticServiceFake diag = new DiagnosticServiceFake();
         new DiagnosticController(diag, new DiagnosticResultServiceFake(), guard).paper(5L);
@@ -135,6 +138,18 @@ class StudentEndpointGuardTest {
         assertThat(guard.seenStudentId).isNull();
         assertThat(guard.seenCourseId).isEqualTo(5L);
         assertThat(diag.paperCalled).isTrue();
+    }
+
+    @Test
+    void diagnosticPaper_teacherRole_throwsForbidden() {
+        CurrentUser.set(new CurrentPrincipal(2L, UserRole.TEACHER));
+        DiagnosticController c =
+                new DiagnosticController(new DiagnosticServiceFake(), new DiagnosticResultServiceFake(), new GuardSpy());
+
+        assertThatThrownBy(() -> c.paper(5L))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.FORBIDDEN.getCode()));
     }
 
     @Test
@@ -233,5 +248,21 @@ class StudentEndpointGuardTest {
         assertThat(guard.seenStudentId).isEqualTo(2L);
         assertThat(guard.seenCourseId).isEqualTo(5L);
         assertThat(growth.called).isTrue();
+    }
+
+    @Test
+    void growth_teacherWithOwnId_throwsForbidden() {
+        // 教师即使用自身 id 调用学生学情端点，也必须 403
+        CurrentUser.set(new CurrentPrincipal(2L, UserRole.TEACHER));
+        GuardSpy guard = new GuardSpy();
+        GrowthServiceFake growth = new GrowthServiceFake();
+        GrowthController c = new GrowthController(growth, guard);
+
+        assertThatThrownBy(() -> c.getGrowth(2L, 5L))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.FORBIDDEN.getCode()));
+        assertThat(guard.called).isFalse();
+        assertThat(growth.called).isFalse();
     }
 }

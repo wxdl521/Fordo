@@ -4,6 +4,7 @@ import com.wenjin.common.BusinessException;
 import com.wenjin.common.Result;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.AccessGuard;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.PracticeHistoryVO;
 import com.wenjin.dto.PracticeStartRequest;
 import com.wenjin.dto.PracticeStartVO;
@@ -27,7 +28,8 @@ import java.util.Objects;
  *
  * <h3>鉴权约定</h3>
  * <ul>
- *   <li>每个方法体第一行调用 {@link AccessGuard#assertSelf} 绑定本人身份（未登录→401，他人→403）。</li>
+ *   <li>每个方法体先 {@link CurrentUser#requireStudent}（非学生→403），再
+ *       {@link AccessGuard#assertSelf} 绑定本人身份（未登录→401，他人→403）。</li>
  *   <li>涉及课程访问的端点还调用 {@link CourseService#assertAccessibleByStudent}（发布状态 + 选课校验）。</li>
  *   <li>submit 端点的 session 归属校验由 {@link PracticeService#submit} 内部完成（service 层防御）。</li>
  * </ul>
@@ -57,7 +59,8 @@ public class PracticeController {
      */
     @PostMapping("/start")
     public Result<PracticeStartVO> start(@RequestBody PracticeStartRequest req) {
-        // 1. 归属校验：studentId 必须等于当前登录用户
+        // 1. 角色 + 归属：仅学生，且 studentId 必须等于当前登录用户
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(req.getStudentId());
         // 2. 入参校验：size 下界（T3 遗留：size=0/负数会组出空会话）
         if (req.getSize() != null && req.getSize() <= 0) {
@@ -80,7 +83,8 @@ public class PracticeController {
     @PostMapping("/{sessionId}/submit")
     public Result<PracticeSubmitVO> submit(@PathVariable Long sessionId,
                                            @RequestBody PracticeSubmitRequest req) {
-        // 1. 归属校验：studentId 必须等于当前登录用户（第一行，先鉴权后校验）
+        // 1. 角色 + 归属：仅学生，且 studentId 必须等于当前登录用户（先鉴权后校验）
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(req.getStudentId());
         // 2. 入参校验：重复 questionId（T4 遗留：重复提交会写两条 answer_record 污染 EWMA）
         if (req.getAnswers() != null) {
@@ -111,7 +115,8 @@ public class PracticeController {
             @RequestParam Long studentId,
             @RequestParam Long courseId,
             @RequestParam Long nodeId) {
-        // 1. 归属校验
+        // 1. 角色 + 归属
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(studentId);
         // 2. 课程访问校验
         courseService.assertAccessibleByStudent(studentId, courseId);

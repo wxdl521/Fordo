@@ -2,6 +2,7 @@ package com.wenjin.controller;
 
 import com.wenjin.common.Result;
 import com.wenjin.config.AccessGuard;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.GrowthService;
 import com.wenjin.vo.GrowthVO;
@@ -26,6 +27,7 @@ public class GrowthController {
     public Result<GrowthVO> getGrowth(
             @RequestParam Long studentId,
             @RequestParam Long courseId) {
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(studentId);
         courseService.assertAccessibleByStudent(studentId, courseId);
         GrowthVO growth = growthService.getGrowth(studentId, courseId);

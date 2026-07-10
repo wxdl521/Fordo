@@ -2,6 +2,7 @@ package com.wenjin.controller;
 
 import com.wenjin.common.Result;
 import com.wenjin.config.AccessGuard;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.CourseWithMasteryVO;
 import com.wenjin.dto.EnrollRequest;
 import com.wenjin.entity.Course;
@@ -34,6 +35,9 @@ public class CourseController {
      */
     @PostMapping("/enroll")
     public Result<Void> enroll(@RequestBody EnrollRequest request) {
+        // Task 2：非学生不得选课；Task 4 将彻底去掉 body studentId 并统一身份来源
+        CurrentUser.requireStudent();
+        AccessGuard.assertSelf(request.getStudentId());
         courseService.enroll(request.getStudentId(), request.getCourseId());
         return Result.ok();
     }
@@ -45,6 +49,7 @@ public class CourseController {
     @GetMapping("/my")
     public Result<List<CourseWithMasteryVO>> getMyCourses(
             @RequestParam("studentId") Long studentId) {
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(studentId);
         return Result.ok(courseService.getMyCourses(studentId));
     }

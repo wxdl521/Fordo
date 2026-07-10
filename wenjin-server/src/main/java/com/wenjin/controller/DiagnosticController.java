@@ -2,6 +2,7 @@ package com.wenjin.controller;
 
 import com.wenjin.common.Result;
 import com.wenjin.config.AccessGuard;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.PaperVO;
 import com.wenjin.dto.SubmitRequest;
@@ -41,6 +42,7 @@ public class DiagnosticController {
      */
     @GetMapping("/paper")
     public Result<PaperVO> paper(@RequestParam("courseId") Long courseId) {
+        CurrentUser.requireStudent();
         courseService.assertAccessibleByStudent(null, courseId);
         return Result.ok(diagnosticService.composePaper(courseId));
     }
@@ -51,7 +53,8 @@ public class DiagnosticController {
      */
     @PostMapping("/submit")
     public Result<SubmitResult> submit(@RequestBody SubmitRequest req) {
-        // 交卷会写 answer_record / 掌握度——必须绑定本人，否则可替他人交卷污染其学情
+        // 交卷会写 answer_record / 掌握度——仅学生且必须绑定本人，否则可替他人交卷污染其学情
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(req.getStudentId());
         courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
         return Result.ok(diagnosticService.submit(req));
@@ -64,6 +67,7 @@ public class DiagnosticController {
     @GetMapping("/result")
     public Result<DiagnosticResultVO> result(@RequestParam("studentId") Long studentId,
                                              @RequestParam("courseId") Long courseId) {
+        CurrentUser.requireStudent();
         AccessGuard.assertSelf(studentId);
         courseService.assertAccessibleByStudent(studentId, courseId);
         return Result.ok(diagnosticResultService.getResult(studentId, courseId));
