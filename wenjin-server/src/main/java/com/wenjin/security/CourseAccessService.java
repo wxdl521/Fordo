@@ -125,13 +125,11 @@ public class CourseAccessService {
     }
 
     /**
-     * 批量审核：题目须全部存在且仅属于目标课程（调用方应先 {@link #assertManageCourse}）。
-     * 缺失 id 或跨课程 → 404。
+     * 批量审核：先断言可管理目标课程，再校验题目须全部存在且仅属于该课程。
+     * 缺失 id、跨课程、或无课程管理权 → 404。
      */
     public void assertQuestionsBelongToCourse(Long courseId, Collection<Long> questionIds) {
-        if (courseId == null || courseId <= 0) {
-            notFound();
-        }
+        assertManageCourse(courseId);
         if (questionIds == null || questionIds.isEmpty()) {
             return;
         }

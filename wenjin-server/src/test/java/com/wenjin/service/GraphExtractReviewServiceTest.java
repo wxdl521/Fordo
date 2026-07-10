@@ -103,4 +103,18 @@ class GraphExtractReviewServiceTest {
 
         verify(mapper, never()).selectList(any());
     }
+
+    @Test
+    @DisplayName("teacher A cannot getDraft of teacher B's draft → 404")
+    void getDraft_otherTeacherCourse_404() {
+        GraphImportRequest draft = new GraphImportRequest();
+        String draftId = store.save("B_COURSE", draft);
+        doThrow(new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage()))
+                .when(courseAccessService).assertManageCourseCode("B_COURSE");
+
+        assertThatThrownBy(() -> svc.getDraft(draftId))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(404);
+    }
 }

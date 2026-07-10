@@ -219,6 +219,8 @@ class CourseAccessServiceTest {
     @Test
     @DisplayName("批量题目全部属于目标课 → 通过")
     void questionsBelongToCourse_ok() {
+        CurrentUser.set(principal(11L, UserRole.TEACHER));
+        when(accessMapper.isOwnedCourse(22L, 11L)).thenReturn(true);
         when(accessMapper.countQuestionsInCourse(eq(22L), any())).thenReturn(2L);
 
         assertThatCode(() -> service.assertQuestionsBelongToCourse(22L, List.of(1L, 2L)))
@@ -228,9 +230,22 @@ class CourseAccessServiceTest {
     @Test
     @DisplayName("批量题目含跨课或缺失 → 404")
     void questionsBelongToCourse_crossTenant_404() {
+        CurrentUser.set(principal(11L, UserRole.TEACHER));
+        when(accessMapper.isOwnedCourse(22L, 11L)).thenReturn(true);
         when(accessMapper.countQuestionsInCourse(eq(22L), any())).thenReturn(1L);
 
         assertThatThrownBy(() -> service.assertQuestionsBelongToCourse(22L, List.of(1L, 2L)))
                 .extracting("code").isEqualTo(404);
+    }
+
+    @Test
+    @DisplayName("批量题目：无课程管理权 → 404（先 assertManageCourse）")
+    void questionsBelongToCourse_noManage_404() {
+        CurrentUser.set(principal(11L, UserRole.TEACHER));
+        when(accessMapper.isOwnedCourse(22L, 11L)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.assertQuestionsBelongToCourse(22L, List.of(1L, 2L)))
+                .extracting("code").isEqualTo(404);
+        verify(accessMapper, never()).countQuestionsInCourse(anyLong(), any());
     }
 }

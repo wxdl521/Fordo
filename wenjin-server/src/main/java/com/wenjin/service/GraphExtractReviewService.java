@@ -49,13 +49,17 @@ public class GraphExtractReviewService {
     }
 
     public GraphImportRequest getDraft(String draftId) {
-        return draftStore.get(draftId).draft;
+        GraphDraftStore.Entry entry = draftStore.get(draftId);
+        courseAccessService.assertManageCourseCode(entry.courseCode);
+        return entry.draft;
     }
 
     /** 全量替换导入与指标落库同事务：insert 失败则图谱替换一并回滚。 */
     @Transactional
     public ExtractCommitResult commit(String draftId, GraphImportRequest finalGraph) {
         GraphDraftStore.Entry entry = draftStore.get(draftId);
+        // 尽早校验课程归属，避免无权限主体触发指标计算/导入副作用
+        courseAccessService.assertManageCourseCode(entry.courseCode);
         ExtractionMetrics metrics = metricsCalculator.calculate(entry.draft, finalGraph);
         GraphImportResult importResult = graphService.importGraph(entry.courseCode, finalGraph);
         reviewMapper.insert(toReview(entry.courseCode, importResult, metrics));
