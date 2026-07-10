@@ -200,8 +200,11 @@ CREATE TABLE `learning_path` (
     `target_node_id` BIGINT   DEFAULT NULL            COMMENT '学习目标知识点（可空=全局规划，逻辑外键→kg_node.id）',
     `status`         TINYINT  DEFAULT 1               COMMENT '状态：1=当前有效, 0=已失效（重算后旧路径置0）',
     `generated_at`   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '生成时间',
+    `active_guard`   TINYINT  GENERATED ALWAYS AS (IF(`status` = 1, 1, NULL)) STORED
+        COMMENT '生成列：status=1 时为 1，否则 NULL；配合唯一约束保证至多一条有效路径【V5】',
     PRIMARY KEY (`id`),
-    KEY `idx_student_course` (`student_id`, `course_id`)
+    KEY `idx_student_course` (`student_id`, `course_id`),
+    UNIQUE KEY `uk_learning_path_active` (`student_id`, `course_id`, `active_guard`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学习路径表（主记录，动态路径留痕）';
 
 DROP TABLE IF EXISTS `learning_path_item`;
@@ -214,7 +217,9 @@ CREATE TABLE `learning_path_item` (
     `completed_at` DATETIME     DEFAULT NULL            COMMENT '完成时间',
     `reason`       VARCHAR(512) DEFAULT NULL            COMMENT '「为什么学这个」的说明（可由AI生成）',
     PRIMARY KEY (`id`),
-    KEY `idx_path` (`path_id`)
+    KEY `idx_path` (`path_id`),
+    UNIQUE KEY `uk_path_step_order` (`path_id`, `step_order`),
+    UNIQUE KEY `uk_path_node` (`path_id`, `node_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学习路径明细表（路径中的每一步）';
 
 DROP TABLE IF EXISTS `practice_session`;
@@ -271,13 +276,15 @@ CREATE TABLE `node_resource` (
 
 DROP TABLE IF EXISTS `student_course`;
 CREATE TABLE `student_course` (
-    `id`         BIGINT   NOT NULL AUTO_INCREMENT COMMENT '主键',
-    `student_id` BIGINT   NOT NULL                COMMENT '学生（逻辑外键→sys_user.id）',
-    `course_id`  BIGINT   NOT NULL                COMMENT '课程（逻辑外键→course.id）',
-    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '选课时间',
+    `id`              BIGINT   NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `student_id`      BIGINT   NOT NULL                COMMENT '学生（逻辑外键→sys_user.id）',
+    `course_id`       BIGINT   NOT NULL                COMMENT '课程（逻辑外键→course.id）',
+    `current_path_id` BIGINT   DEFAULT NULL            COMMENT '当前有效学习路径（逻辑外键→learning_path.id）【V5】',
+    `created_at`      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '选课时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_student_course` (`student_id`, `course_id`),
-    KEY `idx_course` (`course_id`)
+    KEY `idx_course` (`course_id`),
+    KEY `idx_current_path` (`current_path_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生选课表（学生×课程 多对多）';
 
 -- ───────────────────────────── 组X：AI 学习伴侣（阶段五新增） ─────────────────────────────

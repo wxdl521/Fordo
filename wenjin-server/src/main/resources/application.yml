@@ -11,7 +11,8 @@ spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     # 数据库名 wenjin，请先用 schema.sql 建库建表（见根目录 README）
-    url: jdbc:mysql://localhost:3306/wenjin?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    # useAffectedRows=true：INSERT … ON DUPLICATE KEY 时 1=新插入 / 0=无变化（掌握度 insertEnsure 冷启动判定依赖）
+    url: jdbc:mysql://localhost:3306/wenjin?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&useAffectedRows=true
     username: ${DB_USER:root}     # 可用环境变量 DB_USER 覆盖
     password: ${DB_PASSWORD:root} # 可用环境变量 DB_PASSWORD 覆盖
   # 不让应用自动执行 DDL（schema.sql 仅本地重建快照，生产禁用）
