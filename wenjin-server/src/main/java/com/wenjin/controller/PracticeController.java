@@ -11,6 +11,9 @@ import com.wenjin.dto.PracticeSubmitRequest;
 import com.wenjin.dto.PracticeSubmitVO;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.PracticeService;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -34,6 +37,7 @@ import java.util.Objects;
  */
 @RestController
 @RequestMapping("/api/practice")
+@Validated
 public class PracticeController {
 
     private final PracticeService practiceService;
@@ -49,7 +53,7 @@ public class PracticeController {
      * POST /api/practice/start
      */
     @PostMapping("/start")
-    public Result<PracticeStartVO> start(@RequestBody PracticeStartRequest req) {
+    public Result<PracticeStartVO> start(@Valid @RequestBody PracticeStartRequest req) {
         long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
         req.setStudentId(studentId);
         if (req.getSize() != null && req.getSize() <= 0) {
@@ -67,8 +71,8 @@ public class PracticeController {
      * POST /api/practice/{sessionId}/submit
      */
     @PostMapping("/{sessionId}/submit")
-    public Result<PracticeSubmitVO> submit(@PathVariable Long sessionId,
-                                           @RequestBody PracticeSubmitRequest req) {
+    public Result<PracticeSubmitVO> submit(@PathVariable @Positive Long sessionId,
+                                           @Valid @RequestBody PracticeSubmitRequest req) {
         long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
         req.setStudentId(studentId);
         if (req.getAnswers() != null) {
@@ -96,8 +100,8 @@ public class PracticeController {
     @GetMapping("/history")
     public Result<List<PracticeHistoryVO>> history(
             @RequestParam(value = "studentId", required = false) Long studentId,
-            @RequestParam Long courseId,
-            @RequestParam Long nodeId) {
+            @RequestParam @Positive Long courseId,
+            @RequestParam @Positive Long nodeId) {
         long id = AccessGuard.requireSelfStudent(studentId);
         courseService.assertAccessibleByStudent(id, courseId);
         return Result.ok(practiceService.getHistory(id, courseId, nodeId));

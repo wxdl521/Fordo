@@ -6,6 +6,8 @@ import com.wenjin.dto.GraphDataVO;
 import com.wenjin.security.CurrentPrincipal;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.GraphService;
+import jakarta.validation.constraints.Positive;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/graph")
+@Validated
 public class GraphController {
 
     private final GraphService graphService;
@@ -35,7 +38,7 @@ public class GraphController {
      * GET /api/graph/{courseId}
      */
     @GetMapping("/{courseId}")
-    public Result<GraphDataVO> getGraph(@PathVariable("courseId") Long courseId) {
+    public Result<GraphDataVO> getGraph(@PathVariable("courseId") @Positive Long courseId) {
         Long masteryStudentId = null;
         CurrentPrincipal principal = CurrentUser.getPrincipal();
         if (principal != null && principal.isStudent()) {

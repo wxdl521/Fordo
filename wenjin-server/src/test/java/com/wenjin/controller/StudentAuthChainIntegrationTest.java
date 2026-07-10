@@ -94,7 +94,7 @@ class StudentAuthChainIntegrationTest {
     @Test
     void getResult_noAuthHeader_returns401() throws Exception {
         diagnosticMvc.perform(get("/api/diagnostic/result").param("studentId", "2").param("courseId", "5"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -103,7 +103,7 @@ class StudentAuthChainIntegrationTest {
         diagnosticMvc.perform(get("/api/diagnostic/result")
                         .header("Authorization", "Bearer forged.token.value")
                         .param("studentId", "2").param("courseId", "5"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -113,7 +113,7 @@ class StudentAuthChainIntegrationTest {
         diagnosticMvc.perform(get("/api/diagnostic/result")
                         .header("Authorization", "Bearer " + tokenService.issue(9L, 2))
                         .param("studentId", "2").param("courseId", "5"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
     }
 
@@ -143,8 +143,8 @@ class StudentAuthChainIntegrationTest {
     void submit_noAuthHeader_returns401() throws Exception {
         diagnosticMvc.perform(post("/api/diagnostic/submit")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"studentId\":2,\"courseId\":5,\"answers\":[]}"))
-                .andExpect(status().isOk())
+                        .content("{\"studentId\":2,\"courseId\":5,\"answers\":[{\"questionId\":1,\"optionKey\":\"A\"}]}"))
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -153,7 +153,7 @@ class StudentAuthChainIntegrationTest {
         diagnosticMvc.perform(post("/api/diagnostic/submit")
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"studentId\":2,\"courseId\":5,\"answers\":[]}"))
+                        .content("{\"studentId\":2,\"courseId\":5,\"answers\":[{\"questionId\":1,\"optionKey\":\"A\"}]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
     }
@@ -163,7 +163,7 @@ class StudentAuthChainIntegrationTest {
         diagnosticMvc.perform(post("/api/diagnostic/submit")
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"courseId\":5,\"answers\":[]}"))
+                        .content("{\"courseId\":5,\"answers\":[{\"questionId\":1,\"optionKey\":\"A\"}]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
     }
@@ -175,7 +175,7 @@ class StudentAuthChainIntegrationTest {
         courseMvc.perform(post("/api/course/enroll")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"courseId\":5}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
         verify(courseService, never()).enroll(anyLong(), anyLong());
     }
@@ -211,7 +211,7 @@ class StudentAuthChainIntegrationTest {
                         .header("Authorization", "Bearer " + tokenService.issue(8L, 1))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"courseId\":5}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
         verify(courseService, never()).enroll(anyLong(), anyLong());
     }
@@ -221,7 +221,7 @@ class StudentAuthChainIntegrationTest {
         courseMvc.perform(get("/api/course/my")
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .param("studentId", "9"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
         verify(courseService, never()).getMyCourses(anyLong());
     }

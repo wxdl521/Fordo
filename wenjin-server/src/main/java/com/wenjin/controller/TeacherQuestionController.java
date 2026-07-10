@@ -5,7 +5,12 @@ import com.wenjin.dto.QuestionReviewRequest;
 import com.wenjin.dto.ReviewAllRequest;
 import com.wenjin.dto.TeacherQuestionPageVO;
 import com.wenjin.service.TeacherQuestionService;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -15,6 +20,7 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/teacher/questions")
 @RequiredArgsConstructor
+@Validated
 public class TeacherQuestionController {
 
     private final TeacherQuestionService teacherQuestionService;
@@ -27,17 +33,17 @@ public class TeacherQuestionController {
      * @param nodeCode 知识点过滤（仅显示该知识点为主考点的题目，null=不限）
      * @param conf     置信度区间（ge85 / mid / lt70，null=不限）
      * @param page     页码（从 1 开始）
-     * @param size     每页条数
+     * @param size     每页条数（1-100）
      * @return 分页结果（含题目列表 + 各状态统计）
      */
     @GetMapping
     public Result<TeacherQuestionPageVO> list(
-            @RequestParam Long courseId,
+            @RequestParam @Positive Long courseId,
             @RequestParam(required = false) Integer status,
             @RequestParam(required = false) String nodeCode,
             @RequestParam(required = false) String conf,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size
+            @RequestParam(defaultValue = "1") @Min(1) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size
     ) {
         TeacherQuestionPageVO result = teacherQuestionService.list(courseId, status, nodeCode, conf, page, size);
         return Result.ok(result);
@@ -52,8 +58,8 @@ public class TeacherQuestionController {
      */
     @PostMapping("/review")
     public Result<Integer> review(
-            @RequestParam Long courseId,
-            @RequestBody QuestionReviewRequest req
+            @RequestParam @Positive Long courseId,
+            @Valid @RequestBody QuestionReviewRequest req
     ) {
         int affected = teacherQuestionService.review(courseId, req);
         return Result.ok(affected);
@@ -69,8 +75,8 @@ public class TeacherQuestionController {
      */
     @PostMapping("/review-all")
     public Result<Integer> reviewAll(
-            @RequestParam Long courseId,
-            @RequestBody ReviewAllRequest req
+            @RequestParam @Positive Long courseId,
+            @Valid @RequestBody ReviewAllRequest req
     ) {
         int affected = teacherQuestionService.reviewAll(courseId, req);
         return Result.ok(affected);

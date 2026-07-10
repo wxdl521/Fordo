@@ -96,7 +96,7 @@ class AdaptiveDiagnosticControllerTest {
         mvc.perform(post("/api/diagnostic/adaptive/start")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"courseId\":5}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -107,7 +107,7 @@ class AdaptiveDiagnosticControllerTest {
                         .header("Authorization", "Bearer forged.token.here")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"courseId\":5}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -116,8 +116,8 @@ class AdaptiveDiagnosticControllerTest {
     void answer_noToken_returns401() throws Exception {
         mvc.perform(post("/api/diagnostic/adaptive/100/answer")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"studentId\":2,\"answers\":[]}"))
-                .andExpect(status().isOk())
+                        .content("{\"studentId\":2,\"answers\":[{\"questionId\":1,\"studentAnswer\":\"A\"}]}"))
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -127,8 +127,8 @@ class AdaptiveDiagnosticControllerTest {
         mvc.perform(post("/api/diagnostic/adaptive/100/answer")
                         .header("Authorization", "Bearer forged.token.here")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"studentId\":2,\"answers\":[]}"))
-                .andExpect(status().isOk())
+                        .content("{\"studentId\":2,\"answers\":[{\"questionId\":1,\"studentAnswer\":\"A\"}]}"))
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -138,7 +138,7 @@ class AdaptiveDiagnosticControllerTest {
         mvc.perform(post("/api/diagnostic/adaptive/100/abandon")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -149,7 +149,7 @@ class AdaptiveDiagnosticControllerTest {
                         .header("Authorization", "Bearer forged.token.here")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -164,7 +164,7 @@ class AdaptiveDiagnosticControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(9L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"courseId\":5}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
     }
 
@@ -174,8 +174,8 @@ class AdaptiveDiagnosticControllerTest {
         mvc.perform(post("/api/diagnostic/adaptive/100/answer")
                         .header("Authorization", "Bearer " + tokenService.issue(9L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"studentId\":2,\"answers\":[]}"))
-                .andExpect(status().isOk())
+                        .content("{\"studentId\":2,\"answers\":[{\"questionId\":1,\"studentAnswer\":\"A\"}]}"))
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
     }
 
@@ -186,7 +186,7 @@ class AdaptiveDiagnosticControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(9L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
     }
 
@@ -204,7 +204,7 @@ class AdaptiveDiagnosticControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"answers\":[{\"questionId\":1,\"studentAnswer\":\"A\"}]}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
     }
 
@@ -217,7 +217,7 @@ class AdaptiveDiagnosticControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
     }
 
@@ -235,7 +235,7 @@ class AdaptiveDiagnosticControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"courseId\":5}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
         // service 层不应被调用（assertAccessibleByStudent 短路）
         verify(adaptiveDiagnosticService, never()).start(anyLong(), anyLong());
@@ -254,7 +254,7 @@ class AdaptiveDiagnosticControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"answers\":[{\"questionId\":1,\"studentAnswer\":\"A\"}]}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(ResultCode.NOT_FOUND.getCode()));
     }
 
@@ -267,7 +267,7 @@ class AdaptiveDiagnosticControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(ResultCode.NOT_FOUND.getCode()));
     }
 
@@ -380,7 +380,7 @@ class AdaptiveDiagnosticControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"answers\":[{\"questionId\":101,\"studentAnswer\":\"A\"}]}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(ResultCode.BAD_REQUEST.getCode()));
     }
 
@@ -475,7 +475,7 @@ class AdaptiveDiagnosticControllerTest {
     void evidence_noToken_returns401() throws Exception {
         mvc.perform(get("/api/diagnostic/adaptive/evidence")
                         .param("studentId", "2").param("courseId", "5"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -485,7 +485,7 @@ class AdaptiveDiagnosticControllerTest {
         mvc.perform(get("/api/diagnostic/adaptive/evidence")
                         .header("Authorization", "Bearer forged.token.here")
                         .param("studentId", "2").param("courseId", "5"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -495,7 +495,7 @@ class AdaptiveDiagnosticControllerTest {
         mvc.perform(get("/api/diagnostic/adaptive/evidence")
                         .header("Authorization", "Bearer " + tokenService.issue(9L, 2))
                         .param("studentId", "2").param("courseId", "5"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
     }
 
@@ -507,7 +507,7 @@ class AdaptiveDiagnosticControllerTest {
         mvc.perform(get("/api/diagnostic/adaptive/evidence")
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .param("studentId", "2").param("courseId", "5"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
         verify(adaptiveDiagnosticService, never()).latestEvidence(anyLong(), anyLong());
     }

@@ -10,6 +10,9 @@ import com.wenjin.dto.SubmitResult;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.DiagnosticResultService;
 import com.wenjin.service.DiagnosticService;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -22,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/diagnostic")
+@Validated
 public class DiagnosticController {
 
     private final DiagnosticService diagnosticService;
@@ -41,7 +45,7 @@ public class DiagnosticController {
      * GET /api/diagnostic/paper?courseId={courseId}
      */
     @GetMapping("/paper")
-    public Result<PaperVO> paper(@RequestParam("courseId") Long courseId) {
+    public Result<PaperVO> paper(@RequestParam("courseId") @Positive Long courseId) {
         CurrentUser.requireStudent();
         courseService.assertAccessibleByStudent(null, courseId);
         return Result.ok(diagnosticService.composePaper(courseId));
@@ -52,12 +56,9 @@ public class DiagnosticController {
      * POST /api/diagnostic/submit
      */
     @PostMapping("/submit")
-    public Result<SubmitResult> submit(@RequestBody SubmitRequest req) {
+    public Result<SubmitResult> submit(@Valid @RequestBody SubmitRequest req) {
         // 身份一律从 principal 派生；可选 body.studentId 仅用于 AccessGuard 自检
-        long studentId = AccessGuard.requireSelfStudent(req == null ? null : req.getStudentId());
-        if (req == null) {
-            req = new SubmitRequest();
-        }
+        long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
         req.setStudentId(studentId);
         // 课程访问：优先用 body.courseId；缺省时由 service 按会话 course_id 约束
         if (req.getCourseId() != null) {
@@ -73,7 +74,7 @@ public class DiagnosticController {
     @GetMapping("/result")
     public Result<DiagnosticResultVO> result(
             @RequestParam(value = "studentId", required = false) Long studentId,
-            @RequestParam("courseId") Long courseId) {
+            @RequestParam("courseId") @Positive Long courseId) {
         long id = AccessGuard.requireSelfStudent(studentId);
         courseService.assertAccessibleByStudent(id, courseId);
         return Result.ok(diagnosticResultService.getResult(id, courseId));

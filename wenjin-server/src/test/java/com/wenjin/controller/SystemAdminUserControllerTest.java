@@ -191,7 +191,7 @@ class SystemAdminUserControllerTest {
         mvc.perform(patch("/api/system-admin/users/10/role")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"role\":2}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
         verify(userMapper, never()).selectByIdForUpdate(any());
     }
@@ -203,7 +203,7 @@ class SystemAdminUserControllerTest {
         mvc.perform(patch("/api/system-admin/users/10/role")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"role\":1}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
         verify(userMapper, never()).selectByIdForUpdate(any());
     }

@@ -11,6 +11,12 @@ import com.wenjin.dto.ImportBankResult;
 import com.wenjin.dto.QuestionBankFile;
 import com.wenjin.service.QuestionBankImportService;
 import com.wenjin.service.QuestionService;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Positive;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -25,6 +31,7 @@ import java.util.List;
  */
 @RestController
 @RequestMapping("/api/admin/question")
+@Validated
 public class QuestionAdminController {
 
     private final QuestionService questionService;
@@ -45,9 +52,10 @@ public class QuestionAdminController {
      * POST /api/admin/question/generate?courseId=1&nodeCode=KT07&count=5
      */
     @PostMapping("/generate")
-    public Result<GenerateResult> generate(@RequestParam("courseId") Long courseId,
-                                           @RequestParam("nodeCode") String nodeCode,
-                                           @RequestParam(value = "count", defaultValue = "5") int count) {
+    public Result<GenerateResult> generate(@RequestParam("courseId") @Positive Long courseId,
+                                           @RequestParam("nodeCode") @NotBlank String nodeCode,
+                                           @RequestParam(value = "count", defaultValue = "5")
+                                           @Min(1) @Max(20) int count) {
         return Result.ok(questionService.generate(courseId, nodeCode, count));
     }
 
@@ -58,8 +66,8 @@ public class QuestionAdminController {
      * body: AnnotateRequest（items: [{stem, options}]）
      */
     @PostMapping("/annotate")
-    public Result<List<AnnotateItemResult>> annotate(@RequestParam("courseId") Long courseId,
-                                                     @RequestBody AnnotateRequest req) {
+    public Result<List<AnnotateItemResult>> annotate(@RequestParam("courseId") @Positive Long courseId,
+                                                     @Valid @RequestBody AnnotateRequest req) {
         return Result.ok(questionService.annotate(courseId, req));
     }
 
@@ -70,7 +78,7 @@ public class QuestionAdminController {
      * form-data: file (JSON 文件)
      */
     @PostMapping("/import/json")
-    public Result<ImportBankResult> importJson(@RequestParam("courseId") Long courseId,
+    public Result<ImportBankResult> importJson(@RequestParam("courseId") @Positive Long courseId,
                                                @RequestParam("file") MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "上传文件不能为空");
@@ -91,7 +99,7 @@ public class QuestionAdminController {
      * form-data: file (Excel 文件)
      */
     @PostMapping("/import/excel")
-    public Result<ImportBankResult> importExcel(@RequestParam("courseId") Long courseId,
+    public Result<ImportBankResult> importExcel(@RequestParam("courseId") @Positive Long courseId,
                                                 @RequestParam("file") MultipartFile file) {
         return Result.ok(importService.importFromExcel(courseId, file));
     }

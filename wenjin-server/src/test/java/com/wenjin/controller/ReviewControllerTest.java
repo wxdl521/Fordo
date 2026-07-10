@@ -60,7 +60,7 @@ class ReviewControllerTest {
     @DisplayName("today: 无 Authorization 头 → 401")
     void today_noToken_returns401() throws Exception {
         mvc.perform(get("/api/review/today").param("studentId", "2").param("courseId", "1"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -72,7 +72,7 @@ class ReviewControllerTest {
                         .header("Authorization", "Bearer " + token)
                         .param("studentId", "9")
                         .param("courseId", "1"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
     }
 

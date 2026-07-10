@@ -129,7 +129,7 @@ class UserControllerSecurityTest {
     @DisplayName("匿名 GET /api/me → 401")
     void me_anonymous_returnsUnauthorized() throws Exception {
         mvc.perform(get("/api/me"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(401));
     }
 

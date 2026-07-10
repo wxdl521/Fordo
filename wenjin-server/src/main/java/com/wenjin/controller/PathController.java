@@ -7,6 +7,9 @@ import com.wenjin.dto.LearningPathVO;
 import com.wenjin.dto.PathGenerateRequest;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.PathService;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -19,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/path")
+@Validated
 public class PathController {
 
     private final PathService pathService;
@@ -31,7 +35,7 @@ public class PathController {
 
     /** 生成（重算）学习路径。POST /api/path/generate */
     @PostMapping("/generate")
-    public Result<LearningPathVO> generate(@RequestBody PathGenerateRequest req) {
+    public Result<LearningPathVO> generate(@Valid @RequestBody PathGenerateRequest req) {
         long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
         req.setStudentId(studentId);
         courseService.assertAccessibleByStudent(studentId, req.getCourseId());
@@ -42,7 +46,7 @@ public class PathController {
     @GetMapping("/current")
     public Result<LearningPathVO> current(
             @RequestParam(value = "studentId", required = false) Long studentId,
-            @RequestParam("courseId") Long courseId) {
+            @RequestParam("courseId") @Positive Long courseId) {
         long id = AccessGuard.requireSelfStudent(studentId);
         courseService.assertAccessibleByStudent(id, courseId);
         return Result.ok(pathService.getCurrent(id, courseId));
@@ -50,7 +54,7 @@ public class PathController {
 
     /** 标记某步完成。POST /api/path/item/complete?itemId= */
     @PostMapping("/item/complete")
-    public Result<Void> complete(@RequestParam("itemId") Long itemId) {
+    public Result<Void> complete(@RequestParam("itemId") @Positive Long itemId) {
         CurrentUser.requireStudent();
         pathService.completeItem(itemId);
         return Result.ok();

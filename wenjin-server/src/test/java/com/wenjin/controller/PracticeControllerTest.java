@@ -83,7 +83,7 @@ class PracticeControllerTest {
         mvc.perform(post("/api/practice/start")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"courseId\":5,\"nodeId\":10}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -94,7 +94,7 @@ class PracticeControllerTest {
                         .header("Authorization", "Bearer forged.token.here")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"courseId\":5,\"nodeId\":10}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -105,7 +105,7 @@ class PracticeControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(9L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"courseId\":5,\"nodeId\":10}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
     }
 
@@ -130,7 +130,7 @@ class PracticeControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"courseId\":5,\"nodeId\":10,\"size\":0}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(ResultCode.BAD_REQUEST.getCode()));
     }
 
@@ -141,7 +141,7 @@ class PracticeControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"courseId\":5,\"nodeId\":10,\"size\":-3}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(ResultCode.BAD_REQUEST.getCode()));
     }
 
@@ -166,8 +166,8 @@ class PracticeControllerTest {
     void submit_noToken_returns401() throws Exception {
         mvc.perform(post("/api/practice/100/submit")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"studentId\":2,\"answers\":[]}"))
-                .andExpect(status().isOk())
+                        .content("{\"studentId\":2,\"answers\":[{\"questionId\":1,\"studentAnswer\":\"A\"}]}"))
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -178,7 +178,7 @@ class PracticeControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(9L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"answers\":[{\"questionId\":1,\"studentAnswer\":\"A\"}]}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
     }
 
@@ -204,7 +204,7 @@ class PracticeControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"studentId\":2,\"answers\":[{\"questionId\":1,\"studentAnswer\":\"A\"}]}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
     }
 
@@ -220,7 +220,7 @@ class PracticeControllerTest {
                                 + "{\"questionId\":1,\"studentAnswer\":\"A\"},"
                                 + "{\"questionId\":1,\"studentAnswer\":\"B\"}"
                                 + "]}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(ResultCode.BAD_REQUEST.getCode()));
     }
 
@@ -250,7 +250,7 @@ class PracticeControllerTest {
                         .param("studentId", "2")
                         .param("courseId", "5")
                         .param("nodeId", "10"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -262,7 +262,7 @@ class PracticeControllerTest {
                         .param("studentId", "2")
                         .param("courseId", "5")
                         .param("nodeId", "10"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
     }
 

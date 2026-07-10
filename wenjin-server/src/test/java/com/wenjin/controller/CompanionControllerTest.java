@@ -149,7 +149,7 @@ class CompanionControllerTest {
                                 }
                                 """))
                 .andExpect(request().asyncNotStarted())
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
 
         verify(companionService, never()).startTurn(any());
@@ -173,7 +173,7 @@ class CompanionControllerTest {
                                 }
                                 """))
                 .andExpect(request().asyncNotStarted())
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
 
         verify(courseService).assertAccessibleByStudent(2L, 5L);
@@ -194,7 +194,7 @@ class CompanionControllerTest {
                                 }
                                 """))
                 .andExpect(request().asyncNotStarted())
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
 
         verify(companionService, never()).startTurn(any());
@@ -241,7 +241,7 @@ class CompanionControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .param("studentId", "2")
                         .param("courseId", "5"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
 
         verify(courseService).assertAccessibleByStudent(2L, 5L);

@@ -5,6 +5,8 @@ import com.wenjin.config.AccessGuard;
 import com.wenjin.dto.ReviewTodayVO;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.ReviewService;
+import jakarta.validation.constraints.Positive;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -15,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/review")
+@Validated
 public class ReviewController {
 
     private final ReviewService reviewService;
@@ -29,7 +32,7 @@ public class ReviewController {
     @GetMapping("/today")
     public Result<ReviewTodayVO> today(
             @RequestParam(value = "studentId", required = false) Long studentId,
-            @RequestParam("courseId") Long courseId) {
+            @RequestParam("courseId") @Positive Long courseId) {
         long id = AccessGuard.requireSelfStudent(studentId);
         courseService.assertAccessibleByStudent(id, courseId);
         return Result.ok(reviewService.getToday(id, courseId));

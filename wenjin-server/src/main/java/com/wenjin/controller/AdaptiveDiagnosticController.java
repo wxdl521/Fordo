@@ -7,6 +7,10 @@ import com.wenjin.dto.AdaptiveDiagnosticVO;
 import com.wenjin.dto.EvidenceVO;
 import com.wenjin.service.AdaptiveDiagnosticService;
 import com.wenjin.service.CourseService;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,6 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/diagnostic/adaptive")
+@Validated
 public class AdaptiveDiagnosticController {
 
     private final AdaptiveDiagnosticService adaptiveDiagnosticService;
@@ -44,7 +49,7 @@ public class AdaptiveDiagnosticController {
      * POST /api/diagnostic/adaptive/start
      */
     @PostMapping("/start")
-    public Result<AdaptiveDiagnosticVO> start(@RequestBody AdaptiveStartRequest req) {
+    public Result<AdaptiveDiagnosticVO> start(@Valid @RequestBody AdaptiveStartRequest req) {
         long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
         courseService.assertAccessibleByStudent(studentId, req.getCourseId());
         return Result.ok(adaptiveDiagnosticService.start(studentId, req.getCourseId()));
@@ -55,8 +60,8 @@ public class AdaptiveDiagnosticController {
      * POST /api/diagnostic/adaptive/{sessionId}/answer
      */
     @PostMapping("/{sessionId}/answer")
-    public Result<AdaptiveDiagnosticVO> answer(@PathVariable Long sessionId,
-                                               @RequestBody AdaptiveAnswerRequest req) {
+    public Result<AdaptiveDiagnosticVO> answer(@PathVariable @Positive Long sessionId,
+                                               @Valid @RequestBody AdaptiveAnswerRequest req) {
         long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
         req.setStudentId(studentId);
         return Result.ok(adaptiveDiagnosticService.answer(sessionId, req));
@@ -67,7 +72,7 @@ public class AdaptiveDiagnosticController {
      * POST /api/diagnostic/adaptive/{sessionId}/abandon
      */
     @PostMapping("/{sessionId}/abandon")
-    public Result<Void> abandon(@PathVariable Long sessionId,
+    public Result<Void> abandon(@PathVariable @Positive Long sessionId,
                                 @RequestBody(required = false) AdaptiveAbandonRequest req) {
         Long clientId = req == null ? null : req.getStudentId();
         long studentId = AccessGuard.requireSelfStudent(clientId);
@@ -82,7 +87,7 @@ public class AdaptiveDiagnosticController {
     @GetMapping("/evidence")
     public Result<EvidenceVO> evidence(
             @RequestParam(value = "studentId", required = false) Long studentId,
-            @RequestParam Long courseId) {
+            @RequestParam @Positive Long courseId) {
         long id = AccessGuard.requireSelfStudent(studentId);
         courseService.assertAccessibleByStudent(id, courseId);
         return Result.ok(adaptiveDiagnosticService.latestEvidence(id, courseId));
@@ -94,6 +99,9 @@ public class AdaptiveDiagnosticController {
     public static class AdaptiveStartRequest {
 
         private Long studentId;
+
+        @NotNull(message = "courseId 不能为空")
+        @Positive(message = "courseId 必须为正数")
         private Long courseId;
 
         public Long getStudentId() { return studentId; }

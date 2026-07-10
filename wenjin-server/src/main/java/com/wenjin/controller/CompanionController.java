@@ -10,9 +10,12 @@ import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.service.CompanionService;
 import com.wenjin.service.CourseService;
 import jakarta.annotation.PreDestroy;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -34,6 +37,7 @@ import java.util.concurrent.TimeUnit;
  */
 @RestController
 @RequestMapping("/api/companion")
+@Validated
 public class CompanionController {
 
     private static final Logger log = LoggerFactory.getLogger(CompanionController.class);
@@ -70,7 +74,7 @@ public class CompanionController {
      * 事件流：meta{conversationId} → token{t} ... → done{} | error{message}
      */
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter chat(@RequestBody CompanionChatRequest req) {
+    public SseEmitter chat(@Valid @RequestBody CompanionChatRequest req) {
         // 必须在请求线程（此处）校验——CurrentUser 是 ThreadLocal，进入 executor 后不可见
         long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
         req.setStudentId(studentId);
@@ -147,7 +151,7 @@ public class CompanionController {
     @GetMapping("/conversations")
     public Result<List<CompanionConversationVO>> listConversations(
             @RequestParam(value = "studentId", required = false) Long studentId,
-            @RequestParam("courseId") Long courseId) {
+            @RequestParam("courseId") @Positive Long courseId) {
         long id = AccessGuard.requireSelfStudent(studentId);
         courseService.assertAccessibleByStudent(id, courseId);
         return Result.ok(companionService.listConversations(id, courseId));
@@ -158,7 +162,7 @@ public class CompanionController {
      * GET /api/companion/conversations/{id}
      */
     @GetMapping("/conversations/{id}")
-    public Result<List<CompanionMessageVO>> getMessages(@PathVariable("id") Long id) {
+    public Result<List<CompanionMessageVO>> getMessages(@PathVariable("id") @Positive Long id) {
         CurrentUser.requireStudent();
         return Result.ok(companionService.getMessages(id));
     }
@@ -168,7 +172,7 @@ public class CompanionController {
      * DELETE /api/companion/conversations/{id}
      */
     @DeleteMapping("/conversations/{id}")
-    public Result<Void> deleteConversation(@PathVariable("id") Long id) {
+    public Result<Void> deleteConversation(@PathVariable("id") @Positive Long id) {
         CurrentUser.requireStudent();
         companionService.deleteConversation(id);
         return Result.ok(null);

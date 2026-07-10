@@ -1,5 +1,6 @@
 package com.wenjin.dto;
 
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 /**
@@ -10,5 +11,6 @@ import lombok.Data;
 public class ChangeUserRoleRequest {
 
     /** 目标角色：1=教师, 2=学生 */
+    @NotNull(message = "目标角色不能为空")
     private Integer role;
 }

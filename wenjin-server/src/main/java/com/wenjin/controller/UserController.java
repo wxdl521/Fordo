@@ -7,6 +7,7 @@ import com.wenjin.dto.LoginVO;
 import com.wenjin.dto.RegisterRequest;
 import com.wenjin.dto.UserVO;
 import com.wenjin.service.UserService;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -33,7 +34,7 @@ public class UserController {
      * 服务端无条件写入学生角色。教师/管理员开通见运维流程（DEPLOYMENT.md）或 ADMIN 入口。
      */
     @PostMapping("/register")
-    public Result<UserVO> register(@RequestBody RegisterRequest request) {
+    public Result<UserVO> register(@Valid @RequestBody RegisterRequest request) {
         return Result.ok(userService.register(request));
     }
 
@@ -42,7 +43,7 @@ public class UserController {
      * POST /api/login
      */
     @PostMapping("/login")
-    public Result<LoginVO> login(@RequestBody LoginRequest request) {
+    public Result<LoginVO> login(@Valid @RequestBody LoginRequest request) {
         return Result.ok(userService.login(request));
     }
 

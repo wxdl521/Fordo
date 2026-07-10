@@ -11,7 +11,7 @@ import lombok.Data;
 @Data
 public class EnrollRequest {
 
-    @NotNull
-    @Positive
+    @NotNull(message = "courseId 不能为空")
+    @Positive(message = "courseId 必须为正数")
     private Long courseId;
 }
