@@ -15,8 +15,10 @@ public enum ResultCode {
     FORBIDDEN(403, "无访问权限", 403),
     /** 资源不存在 */
     NOT_FOUND(404, "资源不存在", 404),
+    /** 数据冲突（唯一键 / 完整性约束等） */
+    CONFLICT(409, "数据冲突", 409),
     /** 图谱导入校验失败 */
-    GRAPH_VALIDATE_FAIL(1001, "图谱校验失败", 400),
+    GRAPH_VALIDATE_FAIL(1001, "图谱校验失败", 422),
     /** AI 服务调用失败 */
     AI_ERROR(1002, "AI服务调用失败", 502),
     /** 用户名已存在 */

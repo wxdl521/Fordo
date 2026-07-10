@@ -22,14 +22,15 @@ class GlobalExceptionHandlerTest {
     private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
 
     @Test
-    @DisplayName("业务异常透传 code 与明细 data，并映射真实 HTTP 状态")
+    @DisplayName("业务异常透传 code 与明细 data，GRAPH_VALIDATE_FAIL 映射 HTTP 422")
     void businessExceptionCarriesCodeAndDetail() {
         Object detail = "issues-detail";
         BusinessException ex = new BusinessException(ResultCode.GRAPH_VALIDATE_FAIL, "校验失败", detail);
 
         var resp = handler.handleBusiness(ex);
 
-        assertThat(resp.getStatusCode().value()).isEqualTo(ResultCode.GRAPH_VALIDATE_FAIL.getHttpStatus());
+        assertThat(ResultCode.GRAPH_VALIDATE_FAIL.getHttpStatus()).isEqualTo(422);
+        assertThat(resp.getStatusCode().value()).isEqualTo(422);
         Result<Object> r = resp.getBody();
         assertThat(r).isNotNull();
         assertThat(r.getCode()).isEqualTo(ResultCode.GRAPH_VALIDATE_FAIL.getCode());
@@ -112,7 +113,7 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    @DisplayName("唯一约束冲突 → 409 且稳定文案")
+    @DisplayName("唯一约束冲突 → HTTP 409、业务码 CONFLICT 且稳定文案")
     void uniqueViolationMapsTo409StableMessage() {
         DataIntegrityViolationException ex = new DataIntegrityViolationException(
                 "could not execute",
@@ -120,7 +121,23 @@ class GlobalExceptionHandlerTest {
                         "Duplicate entry 'alice' for key 'uk_username'"));
         var resp = handler.handleDataIntegrity(ex);
         assertThat(resp.getStatusCode().value()).isEqualTo(409);
+        assertThat(resp.getBody()).isNotNull();
+        assertThat(resp.getBody().getCode()).isEqualTo(ResultCode.CONFLICT.getCode());
         assertThat(resp.getBody().getMessage()).isEqualTo("数据已存在，请勿重复提交");
+    }
+
+    @Test
+    @DisplayName("非唯一完整性冲突 → HTTP 409、业务码 CONFLICT")
+    void constraintViolationMapsToConflictCode() {
+        DataIntegrityViolationException ex = new DataIntegrityViolationException(
+                "could not execute",
+                new java.sql.SQLIntegrityConstraintViolationException(
+                        "Cannot delete or update a parent row: a foreign key constraint fails"));
+        var resp = handler.handleDataIntegrity(ex);
+        assertThat(resp.getStatusCode().value()).isEqualTo(409);
+        assertThat(resp.getBody()).isNotNull();
+        assertThat(resp.getBody().getCode()).isEqualTo(ResultCode.CONFLICT.getCode());
+        assertThat(resp.getBody().getMessage()).isEqualTo("数据约束冲突，请检查提交内容");
     }
 
     @Test

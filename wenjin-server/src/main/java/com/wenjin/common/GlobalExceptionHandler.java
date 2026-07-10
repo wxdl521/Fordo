@@ -95,7 +95,8 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 数据完整性冲突（如唯一键）。唯一约束返回稳定冲突文案，HTTP 409。
+     * 数据完整性冲突（如唯一键）。业务码 {@link ResultCode#CONFLICT}，HTTP 409；
+     * 唯一约束返回稳定冲突文案。
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<Result<Object>> handleDataIntegrity(DataIntegrityViolationException ex) {
@@ -105,7 +106,7 @@ public class GlobalExceptionHandler {
                 : ex.getMessage());
         String msg = isUniqueViolation(ex) ? STABLE_CONFLICT_MESSAGE : "数据约束冲突，请检查提交内容";
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(Result.fail(ResultCode.BAD_REQUEST.getCode(), msg));
+                .body(Result.fail(ResultCode.CONFLICT.getCode(), msg));
     }
 
     /** 兜底异常：固定文案，不泄露内部明细；日志带 requestId */
