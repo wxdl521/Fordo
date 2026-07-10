@@ -11,6 +11,9 @@ mybatis-plus:
 wenjin:
   cors:
     allowed-origin-patterns: ${WENJIN_CORS_ORIGINS:https://你的前端域名}
+  auth:
+    # 生产必须显式注入；缺少 WENJIN_AUTH_SECRET 时 Spring 启动失败，禁止继承开发默认密钥
+    secret: ${WENJIN_AUTH_SECRET}
 
 # 仅在引入 actuator 后生效
 management:

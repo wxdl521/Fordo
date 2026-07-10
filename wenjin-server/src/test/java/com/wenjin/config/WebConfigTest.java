@@ -30,6 +30,9 @@ class WebConfigTest {
     private AuthContextInterceptor authContextInterceptor;
 
     @Mock
+    private AdminAuthInterceptor adminAuthInterceptor;
+
+    @Mock
     private CorsRegistry corsRegistry;
 
     @Mock
@@ -39,7 +42,7 @@ class WebConfigTest {
 
     @BeforeEach
     void setUp() {
-        webConfig = new WebConfig(teacherAuthInterceptor, authContextInterceptor);
+        webConfig = new WebConfig(teacherAuthInterceptor, authContextInterceptor, adminAuthInterceptor);
         lenient().when(corsRegistry.addMapping("/api/**")).thenReturn(corsRegistration);
         lenient().when(corsRegistration.allowedOriginPatterns(any(String[].class))).thenReturn(corsRegistration);
         lenient().when(corsRegistration.allowedMethods(any(String[].class))).thenReturn(corsRegistration);

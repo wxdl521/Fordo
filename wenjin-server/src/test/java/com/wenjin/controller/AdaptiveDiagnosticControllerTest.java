@@ -5,6 +5,7 @@ import com.wenjin.common.GlobalExceptionHandler;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.AuthContextInterceptor;
 import com.wenjin.config.CurrentUser;
+import com.wenjin.config.TestPrincipalSupport;
 import com.wenjin.dto.AdaptiveDiagnosticVO;
 import com.wenjin.dto.AdaptiveDiagnosticVO.ProgressVO;
 import com.wenjin.dto.AdaptiveDiagnosticVO.ProbeVO;
@@ -75,7 +76,7 @@ class AdaptiveDiagnosticControllerTest {
         AdaptiveDiagnosticController controller =
                 new AdaptiveDiagnosticController(adaptiveDiagnosticService, courseService);
         mvc = MockMvcBuilders.standaloneSetup(controller)
-                .addInterceptors(new AuthContextInterceptor(tokenService))
+                .addInterceptors(TestPrincipalSupport.authInterceptor(tokenService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

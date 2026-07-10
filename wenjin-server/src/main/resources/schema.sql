@@ -34,7 +34,7 @@ CREATE TABLE `sys_user` (
     `username`   VARCHAR(64)  NOT NULL                COMMENT '登录名',
     `password`   VARCHAR(128) NOT NULL                COMMENT '密码（加密存储）',
     `real_name`  VARCHAR(64)  DEFAULT NULL            COMMENT '真实姓名',
-    `role`       TINYINT      NOT NULL                COMMENT '角色：1=教师, 2=学生',
+    `role`       TINYINT      NOT NULL                COMMENT '角色：1=教师, 2=学生, 3=管理员',
     `status`     TINYINT      NOT NULL DEFAULT 1      COMMENT '状态：1=正常, 0=禁用',
     `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP                          COMMENT '创建时间',
     `updated_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',

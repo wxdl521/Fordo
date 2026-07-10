@@ -4,6 +4,7 @@ import com.wenjin.common.GlobalExceptionHandler;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.AuthContextInterceptor;
 import com.wenjin.config.CurrentUser;
+import com.wenjin.config.TestPrincipalSupport;
 import com.wenjin.dto.ReviewTodayVO;
 import com.wenjin.security.TokenService;
 import com.wenjin.service.CourseService;
@@ -45,7 +46,7 @@ class ReviewControllerTest {
     void setup() {
         ReviewController controller = new ReviewController(reviewService, courseService);
         mvc = MockMvcBuilders.standaloneSetup(controller)
-                .addInterceptors(new AuthContextInterceptor(tokenService))
+                .addInterceptors(TestPrincipalSupport.authInterceptor(tokenService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

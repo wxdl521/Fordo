@@ -5,6 +5,7 @@ import com.wenjin.common.GlobalExceptionHandler;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.AuthContextInterceptor;
 import com.wenjin.config.CurrentUser;
+import com.wenjin.config.TestPrincipalSupport;
 import com.wenjin.dto.PracticeHistoryVO;
 import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.dto.PracticeSubmitVO;
@@ -62,7 +63,7 @@ class PracticeControllerTest {
     void setup() {
         PracticeController controller = new PracticeController(practiceService, courseService);
         mvc = MockMvcBuilders.standaloneSetup(controller)
-                .addInterceptors(new AuthContextInterceptor(tokenService))
+                .addInterceptors(TestPrincipalSupport.authInterceptor(tokenService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

@@ -11,7 +11,7 @@ public class UserVO {
     private Long id;
     private String username;
     private String realName;
-    /** 1=teacher, 2=student */
+    /** 1=teacher, 2=student, 3=admin */
     private Integer role;
     /** 1=active, 0=disabled */
     private Integer status;

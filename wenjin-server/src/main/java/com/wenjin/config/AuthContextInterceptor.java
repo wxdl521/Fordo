@@ -1,5 +1,6 @@
 package com.wenjin.config;
 
+import com.wenjin.security.PrincipalLoader;
 import com.wenjin.security.TokenService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -11,8 +12,9 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * 轻量认证上下文拦截器，挂载 {@code /api/**}。
  *
  * <p>从 {@code Authorization: Bearer <token>} 校验令牌（{@link TokenService}），
- * 通过则把令牌 uid 写入 {@link CurrentUser}；无头/伪造/过期一律保持匿名、不抛异常——
- * 是否拒绝交由各端点的 {@code AccessGuard.assertSelf} 按需决定。</p>
+ * 再经 {@link PrincipalLoader} 回查数据库：仅启用且角色可识别的用户写入
+ * {@link CurrentUser}；无头/伪造/过期/禁用/不存在一律保持匿名、不抛异常——
+ * 是否拒绝交由各端点的 {@code AccessGuard.assertSelf} 或角色拦截器按需决定。</p>
  *
  * <p>{@code afterCompletion} 清除 {@link CurrentUser}，防 ThreadLocal 泄漏到线程池复用的下一个请求。</p>
  */
@@ -22,9 +24,11 @@ public class AuthContextInterceptor implements HandlerInterceptor {
     private static final String BEARER = "Bearer ";
 
     private final TokenService tokenService;
+    private final PrincipalLoader principalLoader;
 
-    public AuthContextInterceptor(TokenService tokenService) {
+    public AuthContextInterceptor(TokenService tokenService, PrincipalLoader principalLoader) {
         this.tokenService = tokenService;
+        this.principalLoader = principalLoader;
     }
 
     @Override
@@ -35,9 +39,10 @@ public class AuthContextInterceptor implements HandlerInterceptor {
         String header = request.getHeader("Authorization");
         if (header != null && header.startsWith(BEARER)) {
             tokenService.verify(header.substring(BEARER.length()).trim())
-                    .ifPresent(claims -> CurrentUser.set(claims.uid()));
+                    .flatMap(claims -> principalLoader.load(claims.uid()))
+                    .ifPresent(CurrentUser::set);
         }
-        // 始终放行；鉴权拒绝由 AccessGuard.assertSelf 在各端点按需触发
+        // 始终放行；鉴权拒绝由 AccessGuard / 角色拦截器在各端点按需触发
         return true;
     }
 

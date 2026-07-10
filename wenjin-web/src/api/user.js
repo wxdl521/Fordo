@@ -10,7 +10,10 @@ export function login({ username, password }) {
   return http.post('/login', { username, password })
 }
 
-/** 查询用户 */
-export function getUser(id) {
-  return http.get(`/user/${id}`)
+/**
+ * 刷新当前会话用户（服务端权威身份）。
+ * localStorage.wj_user 仅作展示缓存，不能决定服务端权限。
+ */
+export function me() {
+  return http.get('/me')
 }

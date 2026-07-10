@@ -1,0 +1,14 @@
+package com.wenjin.dto;
+
+import lombok.Data;
+
+/**
+ * 系统管理员变更用户角色请求。
+ * <p>目标角色仅允许教师（1）或学生（2）。</p>
+ */
+@Data
+public class ChangeUserRoleRequest {
+
+    /** 目标角色：1=教师, 2=学生 */
+    private Integer role;
+}

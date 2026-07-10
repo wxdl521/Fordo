@@ -8,7 +8,8 @@ import * as courseApi from '../../api/course.js'
 
 vi.mock('../../api/user.js', () => ({
   login: vi.fn(),
-  register: vi.fn()
+  register: vi.fn(),
+  me: vi.fn()
 }))
 
 vi.mock('../../api/course.js', () => ({

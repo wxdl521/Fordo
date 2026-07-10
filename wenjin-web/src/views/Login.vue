@@ -142,7 +142,7 @@
 import { ref, computed, onMounted } from 'vue'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import { useViewport } from '../composables/useViewport.js'
-import { login as apiLogin, register as apiRegister } from '../api/user.js'
+import { login as apiLogin, register as apiRegister, me as apiMe } from '../api/user.js'
 import { getMyCourses, getAvailableCourses, enroll } from '../api/course.js'
 
 const serif = "'Noto Serif SC', serif"
@@ -173,8 +173,11 @@ const displayName = computed(() => {
   return '同学'
 })
 
-// 是否教师（role === 1）——决定课程页是否显示「进入教师端」入口
-const isTeacher = computed(() => currentUser.value && currentUser.value.role === 1)
+// 是否教师/管理员（role 1 或 3）——决定课程页是否显示「进入教师端」入口
+const isTeacher = computed(() => {
+  const r = currentUser.value && currentUser.value.role
+  return r === 1 || r === 3
+})
 
 function masteryPercent(c) {
   const total = c.masteredCount + c.weakCount + c.unlearnedCount
@@ -305,14 +308,20 @@ async function handleEnroll(courseId) {
   }
 }
 
-onMounted(() => {
-  const saved = localStorage.getItem('wj_user')
-  if (saved) {
-    try {
-      currentUser.value = JSON.parse(saved)
-      step.value = 'course'
-      loadCourses()
-    } catch { /* ignore */ }
+onMounted(async () => {
+  // 有令牌时通过 /api/me 刷新会话；localStorage.wj_user 仅作展示缓存
+  const token = localStorage.getItem('wj_token')
+  if (!token) return
+  try {
+    const user = await apiMe()
+    currentUser.value = user
+    localStorage.setItem('wj_user', JSON.stringify(user))
+    step.value = 'course'
+    loadCourses()
+  } catch {
+    localStorage.removeItem('wj_token')
+    localStorage.removeItem('wj_user')
+    currentUser.value = null
   }
 })
 </script>

@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Login from '../views/Login.vue'
+import { me } from '../api/user.js'
 
 // 重页懒加载，移出落地首包
 const ColorMap = () => import('../views/ColorMap.vue')
@@ -43,7 +44,7 @@ export const router = createRouter({
   }
 })
 
-// 当前登录用户（localStorage 约定见 Login.vue / ColorMap.vue）
+// 当前登录用户缓存（仅展示；权限以服务端 /api/me 与拦截器为准）
 function currentUser() {
   try {
     return JSON.parse(localStorage.getItem('wj_user'))
@@ -52,12 +53,41 @@ function currentUser() {
   }
 }
 
-// 路由守卫：教师端（/teacher/*）仅允许教师（role === 1）进入，
-// 未登录或学生一律重定向回登录 / 课程选择页。
-router.beforeEach((to) => {
+function canAccessTeacher(user) {
+  // 1=教师, 3=管理员（与后端 TeacherAuthInterceptor 一致）
+  return user && (user.role === 1 || user.role === 3)
+}
+
+let sessionRefreshPromise = null
+
+/** 启动时用 /api/me 刷新会话；localStorage 只作展示缓存。 */
+function refreshSessionOnce() {
+  if (sessionRefreshPromise) return sessionRefreshPromise
+  sessionRefreshPromise = (async () => {
+    const token = localStorage.getItem('wj_token')
+    if (!token) {
+      localStorage.removeItem('wj_user')
+      return null
+    }
+    try {
+      const user = await me()
+      localStorage.setItem('wj_user', JSON.stringify(user))
+      return user
+    } catch {
+      localStorage.removeItem('wj_token')
+      localStorage.removeItem('wj_user')
+      return null
+    }
+  })()
+  return sessionRefreshPromise
+}
+
+// 路由守卫：启动刷新会话；教师端仅允许教师/管理员进入（服务端仍强制校验）。
+router.beforeEach(async (to) => {
+  await refreshSessionOnce()
   if (to.path.startsWith('/teacher')) {
     const user = currentUser()
-    if (!user || user.role !== 1) {
+    if (!canAccessTeacher(user)) {
       return { path: '/' }
     }
   }
