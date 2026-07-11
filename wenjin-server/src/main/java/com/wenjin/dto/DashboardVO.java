@@ -17,9 +17,15 @@ public class DashboardVO {
 
     @Data
     public static class Summary {
+        /** 选课 roster 人数（student_course） */
         private int totalStudents;
+        /** roster 内已完成固定卷或自适应诊断的去重人数 */
         private int diagnosedStudents;
-        private Double classAvgRate;   // 全班整体掌握率（已诊断节点均分/100），可空
+        /**
+         * 班级整体掌握率 = 已掌握格子数 / (roster × 生效节点数)；
+         * 分母为 0 时为 0.0（不再可空）。
+         */
+        private Double classAvgRate;
         private int nodeCount;
     }
 
@@ -38,6 +44,7 @@ public class DashboardVO {
         private int mastered;
         /** 有效等级=1 的学生人数（含时间衰减口径，含正在遗忘的原已掌握节点） */
         private int weak;
+        /** roster − 该节点有 mastery 的选课学生数 */
         private int undiagnosed;
         /** mastered/(mastered+weak)，基于有效等级（含时间衰减）；无数据 null */
         private Double rate;
@@ -50,7 +57,7 @@ public class DashboardVO {
         private String chapter;
         private int weak;
         private Double rate;
-        private int masteredPct;       // mastered/总学生 *100
-        private int weakPct;           // weak/总学生 *100
+        private int masteredPct;       // mastered/roster *100
+        private int weakPct;           // weak/roster *100
     }
 }

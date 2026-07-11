@@ -3,6 +3,7 @@ package com.wenjin.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wenjin.dto.QuestionReviewRequest;
+import com.wenjin.dto.QuestionStatusCount;
 import com.wenjin.dto.TeacherQuestionPageVO;
 import com.wenjin.entity.KgNode;
 import com.wenjin.entity.Question;
@@ -15,8 +16,10 @@ import com.wenjin.mapper.QuestionOptionMapper;
 import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.impl.TeacherQuestionServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -55,14 +58,13 @@ class TeacherQuestionServiceImplTest {
     private Question q1, q2, q3;
     private QuestionOption opt1a, opt1b, opt2a, opt2b;
     private QuestionNode qn1, qn2;
-    private KgNode node1;
 
     @BeforeEach
     void setUp() {
         lenient().doNothing().when(courseAccessService).assertManageCourse(anyLong());
         lenient().doNothing().when(courseAccessService)
                 .assertQuestionsBelongToCourse(anyLong(), any());
-        // Questions with different confidence levels
+
         q1 = new Question();
         q1.setId(101L);
         q1.setCourseId(1L);
@@ -70,7 +72,7 @@ class TeacherQuestionServiceImplTest {
         q1.setType(1);
         q1.setDifficulty(3);
         q1.setConfidence(90);
-        q1.setStatus(0); // PENDING
+        q1.setStatus(0);
         q1.setSource(1);
         q1.setCreatedAt(LocalDateTime.of(2026, 6, 1, 10, 0));
 
@@ -81,7 +83,7 @@ class TeacherQuestionServiceImplTest {
         q2.setType(2);
         q2.setDifficulty(5);
         q2.setConfidence(75);
-        q2.setStatus(1); // APPROVED
+        q2.setStatus(1);
         q2.setSource(2);
         q2.setCreatedAt(LocalDateTime.of(2026, 6, 2, 10, 0));
 
@@ -92,11 +94,10 @@ class TeacherQuestionServiceImplTest {
         q3.setType(1);
         q3.setDifficulty(2);
         q3.setConfidence(60);
-        q3.setStatus(2); // REJECTED
+        q3.setStatus(2);
         q3.setSource(1);
         q3.setCreatedAt(LocalDateTime.of(2026, 6, 3, 10, 0));
 
-        // Options for q1
         opt1a = new QuestionOption();
         opt1a.setId(1001L);
         opt1a.setQuestionId(101L);
@@ -113,7 +114,6 @@ class TeacherQuestionServiceImplTest {
         opt1b.setIsCorrect(0);
         opt1b.setPointNodeCode(null);
 
-        // Options for q2
         opt2a = new QuestionOption();
         opt2a.setId(1003L);
         opt2a.setQuestionId(102L);
@@ -130,40 +130,40 @@ class TeacherQuestionServiceImplTest {
         opt2b.setIsCorrect(1);
         opt2b.setPointNodeCode("N002");
 
-        // Main point for q1
         qn1 = new QuestionNode();
         qn1.setId(501L);
         qn1.setQuestionId(101L);
         qn1.setNodeId(201L);
         qn1.setWeight(1);
 
-        // Main point for q2
         qn2 = new QuestionNode();
         qn2.setId(502L);
         qn2.setQuestionId(102L);
         qn2.setNodeId(202L);
         qn2.setWeight(1);
-
-        // Node info
-        node1 = new KgNode();
-        node1.setId(201L);
-        node1.setNodeCode("N001");
-        node1.setName("Node 1");
     }
 
-    @Test
-    void listSortsByConfidenceDescAndLoadsOptionsAndMainNode() {
-        // Given: 3 questions with confidence 90, 75, 60
-        when(questionMapper.selectList(any(LambdaQueryWrapper.class)))
-                .thenReturn(Arrays.asList(q1, q2, q3));
+    private void stubStatusCounts() {
+        QuestionStatusCount c0 = new QuestionStatusCount();
+        c0.setStatus(0);
+        c0.setCount(1L);
+        QuestionStatusCount c1 = new QuestionStatusCount();
+        c1.setStatus(1);
+        c1.setCount(1L);
+        QuestionStatusCount c2 = new QuestionStatusCount();
+        c2.setStatus(2);
+        c2.setCount(1L);
+        when(questionMapper.countGroupedByStatus(1L)).thenReturn(Arrays.asList(c0, c1, c2));
+    }
 
-        // Mock batch loading for all questions
+    private void stubBatchLoadFor(List<Question> page) {
+        if (page.isEmpty()) {
+            return;
+        }
         when(questionOptionMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(Arrays.asList(opt1a, opt1b, opt2a, opt2b));
-
         when(questionNodeMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(Arrays.asList(qn1, qn2));
-
         when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenAnswer(inv -> {
                     KgNode n1 = new KgNode();
@@ -176,73 +176,90 @@ class TeacherQuestionServiceImplTest {
                     n2.setName("Node 2");
                     return Arrays.asList(n1, n2);
                 });
+    }
 
-        // When: list all questions, page 1, size 10
+    @Test
+    @DisplayName("ownership assert 先于分页查询")
+    void assertManageCourseRunsFirstOnList() {
+        when(questionMapper.selectTeacherPage(eq(1L), isNull(), isNull(), isNull(), eq(0), eq(10)))
+                .thenReturn(Collections.emptyList());
+        when(questionMapper.countTeacherFiltered(eq(1L), isNull(), isNull(), isNull())).thenReturn(0L);
+        when(questionMapper.countGroupedByStatus(1L)).thenReturn(Collections.emptyList());
+
+        service.list(1L, null, null, null, 1, 10);
+
+        InOrder order = inOrder(courseAccessService, questionMapper);
+        order.verify(courseAccessService).assertManageCourse(1L);
+        order.verify(questionMapper).selectTeacherPage(anyLong(), any(), any(), any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void listPassesLimitOffsetToMapperAndLoadsOptionsAndMainNode() {
+        when(questionMapper.selectTeacherPage(eq(1L), isNull(), isNull(), isNull(), eq(0), eq(10)))
+                .thenReturn(Arrays.asList(q1, q2, q3));
+        when(questionMapper.countTeacherFiltered(eq(1L), isNull(), isNull(), isNull())).thenReturn(3L);
+        stubStatusCounts();
+        stubBatchLoadFor(Arrays.asList(q1, q2, q3));
+
         TeacherQuestionPageVO result = service.list(1L, null, null, null, 1, 10);
 
-        // Then: sorted by confidence desc (90, 75, 60)
         assertThat(result.getTotal()).isEqualTo(3L);
         assertThat(result.getPage()).isEqualTo(1);
         assertThat(result.getSize()).isEqualTo(10);
         assertThat(result.getItems()).hasSize(3);
+        // DB 已排序；服务层不再内存 sort
         assertThat(result.getItems().get(0).getConfidence()).isEqualTo(90);
-        assertThat(result.getItems().get(1).getConfidence()).isEqualTo(75);
-        assertThat(result.getItems().get(2).getConfidence()).isEqualTo(60);
-
-        // Check options loaded
         assertThat(result.getItems().get(0).getOptions()).hasSize(2);
         assertThat(result.getItems().get(0).getOptions().get(0).getKey()).isEqualTo("A");
-        assertThat(result.getItems().get(0).getOptions().get(0).getCorrect()).isTrue();
-        assertThat(result.getItems().get(0).getOptions().get(0).getPointNodeCode()).isEqualTo("N001");
-
-        // Check main node loaded
         assertThat(result.getItems().get(0).getMainNodeCode()).isEqualTo("N001");
-        assertThat(result.getItems().get(0).getMainNodeName()).isEqualTo("Node 1");
-
-        // Check counts
         assertThat(result.getCounts().getPending()).isEqualTo(1L);
         assertThat(result.getCounts().getPassed()).isEqualTo(1L);
         assertThat(result.getCounts().getRejected()).isEqualTo(1L);
+
+        verify(questionMapper).selectTeacherPage(1L, null, null, null, 0, 10);
+        verify(questionMapper, never()).selectList(any());
+    }
+
+    @Test
+    @DisplayName("page/size 原样下推 OFFSET/LIMIT，服务层不静默修正")
+    void listPushesPageSizeAsOffsetLimitWithoutClamping() {
+        when(questionMapper.selectTeacherPage(eq(1L), isNull(), isNull(), isNull(), eq(40), eq(20)))
+                .thenReturn(Collections.emptyList());
+        when(questionMapper.countTeacherFiltered(eq(1L), isNull(), isNull(), isNull())).thenReturn(0L);
+        when(questionMapper.countGroupedByStatus(1L)).thenReturn(Collections.emptyList());
+
+        TeacherQuestionPageVO result = service.list(1L, null, null, null, 3, 20);
+
+        assertThat(result.getPage()).isEqualTo(3);
+        assertThat(result.getSize()).isEqualTo(20);
+        verify(questionMapper).selectTeacherPage(1L, null, null, null, 40, 20);
     }
 
     @Test
     void reviewPassUpdatesStatusToApproved() {
-        // Given: 2 questions to approve
         QuestionReviewRequest req = new QuestionReviewRequest();
         req.setIds(Arrays.asList(101L, 103L));
         req.setAction("pass");
 
-        when(questionMapper.update(isNull(), any(UpdateWrapper.class)))
-                .thenReturn(2);
+        when(questionMapper.update(isNull(), any(UpdateWrapper.class))).thenReturn(2);
 
-        // When: review with pass action
         int affected = service.review(1L, req);
 
-        // Then: status updated to 1 (APPROVED)
         assertThat(affected).isEqualTo(2);
-
-        verify(questionMapper).update(isNull(), argThat(uw -> {
-            // Verify the UpdateWrapper sets status=1 for the given IDs
-            return true; // UpdateWrapper doesn't expose internal state easily
-        }));
+        verify(questionMapper).update(isNull(), any(UpdateWrapper.class));
     }
 
     @Test
     void reviewRejectUpdatesStatusToRejected() {
-        // Given: 2 questions to reject
         QuestionReviewRequest req = new QuestionReviewRequest();
         req.setIds(Arrays.asList(101L, 102L));
         req.setAction("reject");
 
-        when(questionMapper.update(isNull(), any(UpdateWrapper.class)))
-                .thenReturn(2);
+        when(questionMapper.update(isNull(), any(UpdateWrapper.class))).thenReturn(2);
 
-        // When: review with reject action
         int affected = service.review(1L, req);
 
-        // Then: status updated to 2 (REJECTED)
         assertThat(affected).isEqualTo(2);
-
         verify(questionMapper).update(isNull(), any(UpdateWrapper.class));
     }
 
@@ -293,26 +310,16 @@ class TeacherQuestionServiceImplTest {
                 .hasMessageContaining("action");
     }
 
-    // I5: Additional test coverage for filtering and pagination
-
     @Test
-    void listFiltersNodeCode() {
-        // Given: q1 has main node N001, q2 has N002
-        when(questionMapper.selectList(any(LambdaQueryWrapper.class)))
+    void listFiltersNodeCodeViaMapperJoin() {
+        when(questionMapper.selectTeacherPage(eq(1L), isNull(), eq("N001"), isNull(), eq(0), eq(10)))
                 .thenReturn(Arrays.asList(q1));
-
-        KgNode targetNode = new KgNode();
-        targetNode.setId(201L);
-        targetNode.setNodeCode("N001");
-        when(nodeMapper.selectOne(any(LambdaQueryWrapper.class)))
-                .thenReturn(targetNode);
-
-        when(questionNodeMapper.selectList(any(LambdaQueryWrapper.class)))
-                .thenReturn(Arrays.asList(qn1));
-
+        when(questionMapper.countTeacherFiltered(eq(1L), isNull(), eq("N001"), isNull())).thenReturn(1L);
+        stubStatusCounts();
         when(questionOptionMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(Arrays.asList(opt1a, opt1b));
-
+        when(questionNodeMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Arrays.asList(qn1));
         when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenAnswer(inv -> {
                     KgNode n1 = new KgNode();
@@ -322,27 +329,24 @@ class TeacherQuestionServiceImplTest {
                     return Arrays.asList(n1);
                 });
 
-        // When: filter by nodeCode N001
         TeacherQuestionPageVO result = service.list(1L, null, "N001", null, 1, 10);
 
-        // Then: only q1 returned
         assertThat(result.getTotal()).isEqualTo(1L);
         assertThat(result.getItems()).hasSize(1);
         assertThat(result.getItems().get(0).getId()).isEqualTo(101L);
+        verify(questionMapper).selectTeacherPage(1L, null, "N001", null, 0, 10);
     }
 
     @Test
     void listFiltersConfidenceGe85() {
-        // Given: q1=90, q2=75, q3=60
-        when(questionMapper.selectList(any(LambdaQueryWrapper.class)))
+        when(questionMapper.selectTeacherPage(eq(1L), isNull(), isNull(), eq("ge85"), eq(0), eq(10)))
                 .thenReturn(Arrays.asList(q1));
-
+        when(questionMapper.countTeacherFiltered(eq(1L), isNull(), isNull(), eq("ge85"))).thenReturn(1L);
+        stubStatusCounts();
         when(questionOptionMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(Arrays.asList(opt1a, opt1b));
-
         when(questionNodeMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(Arrays.asList(qn1));
-
         when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenAnswer(inv -> {
                     KgNode n1 = new KgNode();
@@ -352,27 +356,23 @@ class TeacherQuestionServiceImplTest {
                     return Arrays.asList(n1);
                 });
 
-        // When: filter confidence >= 85
         TeacherQuestionPageVO result = service.list(1L, null, null, "ge85", 1, 10);
 
-        // Then: only q1 (90) returned
         assertThat(result.getTotal()).isEqualTo(1L);
-        assertThat(result.getItems()).hasSize(1);
         assertThat(result.getItems().get(0).getConfidence()).isEqualTo(90);
+        verify(questionMapper).selectTeacherPage(1L, null, null, "ge85", 0, 10);
     }
 
     @Test
     void listFiltersConfidenceMid() {
-        // Given: q1=90, q2=75, q3=60
-        when(questionMapper.selectList(any(LambdaQueryWrapper.class)))
+        when(questionMapper.selectTeacherPage(eq(1L), isNull(), isNull(), eq("mid"), eq(0), eq(10)))
                 .thenReturn(Arrays.asList(q2));
-
+        when(questionMapper.countTeacherFiltered(eq(1L), isNull(), isNull(), eq("mid"))).thenReturn(1L);
+        stubStatusCounts();
         when(questionOptionMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(Arrays.asList(opt2a, opt2b));
-
         when(questionNodeMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(Arrays.asList(qn2));
-
         when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenAnswer(inv -> {
                     KgNode n2 = new KgNode();
@@ -382,55 +382,46 @@ class TeacherQuestionServiceImplTest {
                     return Arrays.asList(n2);
                 });
 
-        // When: filter confidence 70-84
         TeacherQuestionPageVO result = service.list(1L, null, null, "mid", 1, 10);
 
-        // Then: only q2 (75) returned
-        assertThat(result.getTotal()).isEqualTo(1L);
-        assertThat(result.getItems()).hasSize(1);
         assertThat(result.getItems().get(0).getConfidence()).isEqualTo(75);
+        verify(questionMapper).selectTeacherPage(1L, null, null, "mid", 0, 10);
     }
 
     @Test
     void listFiltersConfidenceLt70() {
-        // Given: q1=90, q2=75, q3=60
-        when(questionMapper.selectList(any(LambdaQueryWrapper.class)))
+        when(questionMapper.selectTeacherPage(eq(1L), isNull(), isNull(), eq("lt70"), eq(0), eq(10)))
                 .thenReturn(Arrays.asList(q3));
-
+        when(questionMapper.countTeacherFiltered(eq(1L), isNull(), isNull(), eq("lt70"))).thenReturn(1L);
+        stubStatusCounts();
         when(questionOptionMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(Collections.emptyList());
-
         when(questionNodeMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(Collections.emptyList());
 
-        // When: filter confidence < 70
         TeacherQuestionPageVO result = service.list(1L, null, null, "lt70", 1, 10);
 
-        // Then: only q3 (60) returned
-        assertThat(result.getTotal()).isEqualTo(1L);
-        assertThat(result.getItems()).hasSize(1);
         assertThat(result.getItems().get(0).getConfidence()).isEqualTo(60);
+        verify(questionMapper).selectTeacherPage(1L, null, null, "lt70", 0, 10);
     }
 
     @Test
     void listPaginationBoundary() {
-        // Given: empty result set
-        when(questionMapper.selectList(any(LambdaQueryWrapper.class)))
-                .thenReturn(Collections.emptyList())
+        when(questionMapper.selectTeacherPage(eq(1L), isNull(), isNull(), isNull(), eq(40), eq(10)))
                 .thenReturn(Collections.emptyList());
+        when(questionMapper.countTeacherFiltered(eq(1L), isNull(), isNull(), isNull())).thenReturn(0L);
+        when(questionMapper.countGroupedByStatus(1L)).thenReturn(Collections.emptyList());
 
-        // When: request page beyond results
         TeacherQuestionPageVO result = service.list(1L, null, null, null, 5, 10);
 
-        // Then: empty page returned
         assertThat(result.getTotal()).isEqualTo(0L);
         assertThat(result.getItems()).isEmpty();
         assertThat(result.getPage()).isEqualTo(5);
+        verify(questionMapper).selectTeacherPage(1L, null, null, null, 40, 10);
     }
 
     @Test
     void listValidatesInvalidStatus() {
-        // I8: Validate status parameter
         assertThatThrownBy(() -> service.list(1L, 3, null, null, 1, 10))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("status 无效");
@@ -442,41 +433,23 @@ class TeacherQuestionServiceImplTest {
 
     @Test
     void listValidatesInvalidConf() {
-        // I6: Throw exception for invalid conf
         assertThatThrownBy(() -> service.list(1L, null, null, "invalid", 1, 10))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("conf 参数无效");
     }
 
     @Test
-    void listNormalizesPaginationParams() {
-        // C4: Validate and normalize pagination parameters
-        when(questionMapper.selectList(any(LambdaQueryWrapper.class)))
-                .thenReturn(Arrays.asList(q1));
+    @DisplayName("状态计数走 GROUP BY，不 selectList 全课")
+    void listUsesGroupedStatusCountsNotFullSelectList() {
+        when(questionMapper.selectTeacherPage(anyLong(), any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(Collections.emptyList());
+        when(questionMapper.countTeacherFiltered(anyLong(), any(), any(), any())).thenReturn(0L);
+        stubStatusCounts();
 
-        when(questionOptionMapper.selectList(any(LambdaQueryWrapper.class)))
-                .thenReturn(Arrays.asList(opt1a, opt1b));
+        TeacherQuestionPageVO result = service.list(1L, null, null, null, 1, 10);
 
-        when(questionNodeMapper.selectList(any(LambdaQueryWrapper.class)))
-                .thenReturn(Arrays.asList(qn1));
-
-        when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
-                .thenAnswer(inv -> {
-                    KgNode n1 = new KgNode();
-                    n1.setId(201L);
-                    n1.setNodeCode("N001");
-                    n1.setName("Node 1");
-                    return Arrays.asList(n1);
-                });
-
-        // When: invalid page/size params
-        TeacherQuestionPageVO result1 = service.list(1L, null, null, null, 0, 10);
-        assertThat(result1.getPage()).isEqualTo(1); // normalized to 1
-
-        TeacherQuestionPageVO result2 = service.list(1L, null, null, null, 1, 0);
-        assertThat(result2.getSize()).isEqualTo(20); // normalized to default 20
-
-        TeacherQuestionPageVO result3 = service.list(1L, null, null, null, 1, 200);
-        assertThat(result3.getSize()).isEqualTo(20); // capped to 20 (exceeds 100)
+        assertThat(result.getCounts().getPending()).isEqualTo(1L);
+        verify(questionMapper).countGroupedByStatus(1L);
+        verify(questionMapper, never()).selectList(any());
     }
 }

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.wenjin.mapper.TeacherDashboardMapper">
+
+    <select id="countEnrolled" resultType="int">
+        SELECT COUNT(*)
+        FROM student_course
+        WHERE course_id = #{courseId}
+    </select>
+
+    <select id="countDiagnosed" resultType="int">
+        SELECT COUNT(DISTINCT sc.student_id)
+        FROM student_course sc
+        WHERE sc.course_id = #{courseId}
+          AND (
+            EXISTS (
+                SELECT 1
+                FROM diagnostic_session ds
+                WHERE ds.student_id = sc.student_id
+                  AND ds.course_id = sc.course_id
+                  AND ds.status = 1
+            )
+            OR EXISTS (
+                SELECT 1
+                FROM adaptive_diag_session ads
+                WHERE ads.student_id = sc.student_id
+                  AND ads.course_id = sc.course_id
+                  AND ads.status = 1
+            )
+          )
+    </select>
+
+    <!--
+      单一聚合读模型：student_course 驱动，LEFT JOIN 生效节点与 mastery，
+      再过滤出有 mastery 的行（排除 ghost mastery / 归档节点）。
+    -->
+    <select id="selectEnrolledMastery" resultType="com.wenjin.entity.StudentMastery">
+        SELECT
+            sm.id,
+            sm.student_id,
+            sm.course_id,
+            sm.node_id,
+            sm.mastery_score,
+            sm.mastery_level,
+            sm.updated_at
+        FROM student_course sc
+        LEFT JOIN kg_node n
+            ON n.course_id = sc.course_id
+           AND n.archived_at IS NULL
+        LEFT JOIN student_mastery sm
+            ON sm.student_id = sc.student_id
+           AND sm.course_id = sc.course_id
+           AND sm.node_id = n.id
+        WHERE sc.course_id = #{courseId}
+          AND sm.id IS NOT NULL
+    </select>
+
+</mapper>

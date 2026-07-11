@@ -3,6 +3,7 @@ package com.wenjin.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wenjin.dto.QuestionReviewRequest;
+import com.wenjin.dto.QuestionStatusCount;
 import com.wenjin.dto.ReviewAllRequest;
 import com.wenjin.dto.TeacherQuestionPageVO;
 import com.wenjin.dto.TeacherQuestionVO;
@@ -12,7 +13,6 @@ import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
 import com.wenjin.support.QuestionStatus;
 
-import java.util.Comparator;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
@@ -31,6 +31,8 @@ import java.util.stream.Collectors;
 public class TeacherQuestionServiceImpl implements TeacherQuestionService {
 
     private static final int MAIN_POINT_WEIGHT = 1;
+    /** reviewAll 分批 UPDATE 每批最大 id 数 */
+    private static final int REVIEW_ALL_BATCH = 500;
 
     private final QuestionMapper questionMapper;
     private final QuestionOptionMapper questionOptionMapper;
@@ -45,40 +47,19 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
         }
         courseAccessService.assertManageCourse(courseId);
 
-        // C4: Validate pagination parameters
-        if (page < 1) page = 1;
-        if (size < 1 || size > 100) size = 20;  // Limit max 100
-
-        // I8: Validate status parameter
+        // page/size 边界由 Controller（@Min/@Max）拒绝；服务层不下沉静默修正
         if (status != null && (status < 0 || status > 2)) {
             throw new IllegalArgumentException("status 无效（0=待审/1=通过/2=驳回）: " + status);
         }
+        String confKey = normalizeConf(conf);
 
-        // T6: 使用抽取的私有方法解析 nodeCode 过滤 id 集合
-        Set<Long> nodeFilterQids = resolveNodeFilterQids(courseId, nodeCode);
+        String nodeKey = blankToNull(nodeCode);
+        int offset = (page - 1) * size;
 
-        // nodeCode 指定但无匹配主考点题目 → 早退空页（外部行为不变）
-        if (nodeCode != null && !nodeCode.trim().isEmpty() && nodeFilterQids != null && nodeFilterQids.isEmpty()) {
-            return emptyPage(page, size, courseId);
-        }
+        List<Question> pageList = questionMapper.selectTeacherPage(
+                courseId, status, nodeKey, confKey, offset, size);
+        long total = questionMapper.countTeacherFiltered(courseId, status, nodeKey, confKey);
 
-        // T6: 使用抽取的私有方法构建筛选 wrapper
-        LambdaQueryWrapper<Question> w = buildFilter(courseId, status, conf, nodeFilterQids);
-
-        List<Question> filtered = questionMapper.selectList(w);
-
-        // Sort by confidence desc (nulls last)
-        // C2: TODO: 生产环境改用数据库层面的 ORDER BY confidence DESC LIMIT offset, size
-        filtered.sort(Comparator.comparing(
-                Question::getConfidence,
-                Comparator.nullsLast(Comparator.reverseOrder())));
-
-        // Memory pagination
-        int from = Math.min((page - 1) * size, filtered.size());
-        int to = Math.min(from + size, filtered.size());
-        List<Question> pageList = filtered.subList(from, to);
-
-        // C1: Batch load to avoid N+1 queries
         List<TeacherQuestionVO> items;
         if (pageList.isEmpty()) {
             items = Collections.emptyList();
@@ -86,19 +67,12 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
             items = batchToVO(pageList);
         }
 
-        // Counts: query ALL questions for this course (not just filtered subset)
-        LambdaQueryWrapper<Question> countW = new LambdaQueryWrapper<>();
-        countW.eq(Question::getCourseId, courseId);
-        List<Question> allForCourse = questionMapper.selectList(countW);
-        TeacherQuestionPageVO.Counts counts = computeCounts(allForCourse);
-
         TeacherQuestionPageVO result = new TeacherQuestionPageVO();
-        result.setTotal((long) filtered.size());
+        result.setTotal(total);
         result.setPage(page);
         result.setSize(size);
         result.setItems(items);
-        result.setCounts(counts);
-
+        result.setCounts(loadStatusCounts(courseId));
         return result;
     }
 
@@ -120,17 +94,7 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
         // 批量：全部题目须存在且仅属于目标课程
         courseAccessService.assertQuestionsBelongToCourse(courseId, req.getIds());
 
-        int target;
-        switch (req.getAction().toLowerCase()) {
-            case "pass":
-                target = QuestionStatus.APPROVED;
-                break;
-            case "reject":
-                target = QuestionStatus.REJECTED;
-                break;
-            default:
-                throw new IllegalArgumentException("action 无效: " + req.getAction() + " (必须是 pass 或 reject)");
-        }
+        int target = resolveTargetStatus(req.getAction());
 
         // Use UpdateWrapper with string column name to avoid Lambda.set() reflection issue in unit tests
         UpdateWrapper<Question> uw = new UpdateWrapper<>();
@@ -142,8 +106,9 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
     }
 
     /**
-     * T6: 服务端全量审批，select+update 同一事务，避免前端分页漂移漏审/重审问题。
-     * 复用私有方法 resolveNodeFilterQids/buildFilter 与 list() 共享筛选逻辑（DRY）。
+     * 服务端全量审批：按筛选谓词分批 UPDATE（每批最多 500），避免一次加载全课 id。
+     * 当筛选含 status 且目标 status 不同时，每批更新后该批不再匹配，循环自然结束。
+     * 当筛选不含 status（或 status 等于目标）时改用单次谓词 UPDATE，避免死循环。
      */
     @Override
     @Transactional
@@ -159,132 +124,98 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
             throw new IllegalArgumentException("action 不能为空");
         }
 
-        int target;
-        switch (req.getAction().toLowerCase()) {
-            case "pass":
-                target = QuestionStatus.APPROVED;
+        int target = resolveTargetStatus(req.getAction());
+        String confKey = normalizeConf(req.getConf());
+        String nodeKey = blankToNull(req.getNodeCode());
+        Integer filterStatus = req.getStatus();
+
+        // 筛选 status 为空，或与目标相同 → 单次谓词 UPDATE（避免分批死循环）
+        if (filterStatus == null || filterStatus == target) {
+            return questionMapper.updateStatusByFilter(courseId, target, filterStatus, nodeKey, confKey);
+        }
+
+        // 分批：每批最多 500，更新后因 status 变化不再命中筛选
+        int total = 0;
+        while (true) {
+            List<Long> ids = questionMapper.selectIdsByFilter(
+                    courseId, filterStatus, nodeKey, confKey, REVIEW_ALL_BATCH);
+            if (ids == null || ids.isEmpty()) {
                 break;
-            case "reject":
-                target = QuestionStatus.REJECTED;
+            }
+            total += questionMapper.updateStatusByIds(courseId, ids, target);
+            if (ids.size() < REVIEW_ALL_BATCH) {
                 break;
-            default:
-                throw new IllegalArgumentException("action 无效: " + req.getAction() + " (必须是 pass 或 reject)");
-        }
-
-        // T6: 复用私有方法解析 nodeCode 过滤 id 集合
-        Set<Long> nodeFilterQids = resolveNodeFilterQids(courseId, req.getNodeCode());
-
-        // nodeCode 指定但无匹配主考点题目 → 直接返回 0，不发 update
-        if (req.getNodeCode() != null && !req.getNodeCode().trim().isEmpty()
-                && nodeFilterQids != null && nodeFilterQids.isEmpty()) {
-            return 0;
-        }
-
-        // T6: 复用私有方法构建筛选 wrapper，取出待更新 id 列表
-        LambdaQueryWrapper<Question> w = buildFilter(courseId, req.getStatus(), req.getConf(), nodeFilterQids);
-        List<Question> toUpdate = questionMapper.selectList(w);
-        if (toUpdate.isEmpty()) {
-            return 0;
-        }
-
-        List<Long> ids = toUpdate.stream().map(Question::getId).collect(Collectors.toList());
-
-        // 沿用 review() 的字符串列名 UpdateWrapper，规避 Lambda.set() 反射问题
-        UpdateWrapper<Question> uw = new UpdateWrapper<>();
-        uw.set("status", target)
-                .eq("course_id", courseId)
-                .in("id", ids);
-
-        return questionMapper.update(null, uw);
-    }
-
-    /**
-     * T6: 抽取私有方法 — 解析 nodeCode 过滤 id 集合。
-     * nodeCode 为空 → 返回 null（不过滤）；
-     * 非空 → 查 KgNode → 查主考点 QuestionNode → 返回 questionId 集合（可能为空集，表示无匹配）。
-     * list() 与 reviewAll() 共同调用，消除重复的 nodeCode 解析逻辑。
-     */
-    private Set<Long> resolveNodeFilterQids(Long courseId, String nodeCode) {
-        if (nodeCode == null || nodeCode.trim().isEmpty()) {
-            return null; // null 表示不按 nodeCode 过滤
-        }
-
-        KgNode kn = nodeMapper.selectOne(
-                new LambdaQueryWrapper<KgNode>()
-                        .eq(KgNode::getCourseId, courseId)
-                        .eq(KgNode::getNodeCode, nodeCode)
-                        .isNull(KgNode::getArchivedAt)
-        );
-
-        Set<Long> qids = new HashSet<>();
-        if (kn != null) {
-            List<QuestionNode> qns = questionNodeMapper.selectList(
-                    new LambdaQueryWrapper<QuestionNode>()
-                            .eq(QuestionNode::getNodeId, kn.getId())
-                            .eq(QuestionNode::getWeight, MAIN_POINT_WEIGHT)
-            );
-            for (QuestionNode qn : qns) {
-                qids.add(qn.getQuestionId());
             }
         }
-        // 返回集合（可能为空集，表示 nodeCode 有效但无对应主考点题目）
-        return qids;
+        return total;
+    }
+
+    private int resolveTargetStatus(String action) {
+        switch (action.toLowerCase()) {
+            case "pass":
+                return QuestionStatus.APPROVED;
+            case "reject":
+                return QuestionStatus.REJECTED;
+            default:
+                throw new IllegalArgumentException("action 无效: " + action + " (必须是 pass 或 reject)");
+        }
     }
 
     /**
-     * T6: 抽取私有方法 — 构建题目筛选 LambdaQueryWrapper。
-     * courseId 必须；status 非 null 时 eq；nodeFilterQids 非 null 时 in；conf 非空时 applyConf。
-     * list() 与 reviewAll() 共同调用，消除重复的 wrapper 构建逻辑。
+     * conf 校验并规范化；空串 → null；非法值抛错。
+     * 分页边界不做静默修正（由 Controller 拒绝）。
      */
-    private LambdaQueryWrapper<Question> buildFilter(Long courseId, Integer status, String conf,
-                                                      Set<Long> nodeFilterQids) {
-        LambdaQueryWrapper<Question> w = new LambdaQueryWrapper<>();
-        w.eq(Question::getCourseId, courseId);
-
-        if (status != null) {
-            w.eq(Question::getStatus, status);
+    private String normalizeConf(String conf) {
+        if (conf == null || conf.trim().isEmpty()) {
+            return null;
         }
-
-        if (nodeFilterQids != null) {
-            w.in(Question::getId, nodeFilterQids);
-        }
-
-        if (conf != null && !conf.trim().isEmpty()) {
-            applyConf(w, conf);
-        }
-
-        return w;
-    }
-
-    private void applyConf(LambdaQueryWrapper<Question> w, String conf) {
-        switch (conf.toLowerCase()) {
+        String key = conf.trim().toLowerCase();
+        switch (key) {
             case "ge85":
-                w.ge(Question::getConfidence, 85);
-                break;
             case "mid":
-                w.ge(Question::getConfidence, 70).lt(Question::getConfidence, 85);
-                break;
             case "lt70":
-                w.lt(Question::getConfidence, 70);
-                break;
+                return key;
             default:
-                // I6: Throw exception for invalid conf values
                 throw new IllegalArgumentException("conf 参数无效，仅支持: ge85/mid/lt70，当前值: " + conf);
         }
     }
 
+    private static String blankToNull(String s) {
+        if (s == null || s.trim().isEmpty()) {
+            return null;
+        }
+        return s.trim();
+    }
+
+    private TeacherQuestionPageVO.Counts loadStatusCounts(Long courseId) {
+        List<QuestionStatusCount> rows = questionMapper.countGroupedByStatus(courseId);
+        TeacherQuestionPageVO.Counts counts = new TeacherQuestionPageVO.Counts();
+        long pending = 0, passed = 0, rejected = 0;
+        if (rows != null) {
+            for (QuestionStatusCount row : rows) {
+                if (row.getStatus() == null || row.getCount() == null) {
+                    continue;
+                }
+                switch (row.getStatus()) {
+                    case QuestionStatus.PENDING -> pending = row.getCount();
+                    case QuestionStatus.APPROVED -> passed = row.getCount();
+                    case QuestionStatus.REJECTED -> rejected = row.getCount();
+                    default -> { /* ignore unknown */ }
+                }
+            }
+        }
+        counts.setPending(pending);
+        counts.setPassed(passed);
+        counts.setRejected(rejected);
+        return counts;
+    }
+
     /**
-     * C1: Batch load options, question_nodes, and kg_nodes to avoid N+1 queries.
-     * Instead of querying 2-3 times per question, we:
-     * 1. Query all options for all questions once
-     * 2. Query all question_nodes for all questions once
-     * 3. Query all kg_nodes for collected nodeIds once
-     * 4. Build maps and use them in toVO
+     * Batch load options, question_nodes, and kg_nodes to avoid N+1 queries.
      */
     private List<TeacherQuestionVO> batchToVO(List<Question> questions) {
         List<Long> qids = questions.stream().map(Question::getId).collect(Collectors.toList());
 
-        // Batch load options
         Map<Long, List<QuestionOption>> optionsMap = new HashMap<>();
         List<QuestionOption> allOptions = questionOptionMapper.selectList(
                 new LambdaQueryWrapper<QuestionOption>()
@@ -296,7 +227,6 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
             optionsMap.computeIfAbsent(opt.getQuestionId(), k -> new ArrayList<>()).add(opt);
         }
 
-        // Batch load question_nodes (main points only)
         Map<Long, List<QuestionNode>> qnMap = new HashMap<>();
         List<QuestionNode> allQns = questionNodeMapper.selectList(
                 new LambdaQueryWrapper<QuestionNode>()
@@ -307,7 +237,6 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
             qnMap.computeIfAbsent(qn.getQuestionId(), k -> new ArrayList<>()).add(qn);
         }
 
-        // Batch load kg_nodes
         Set<Long> nodeIds = allQns.stream().map(QuestionNode::getNodeId).collect(Collectors.toSet());
         Map<Long, KgNode> nodeMap = new HashMap<>();
         if (!nodeIds.isEmpty()) {
@@ -319,7 +248,6 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
             }
         }
 
-        // Convert to VOs using cached data
         return questions.stream()
                 .map(q -> toVO(q, optionsMap.getOrDefault(q.getId(), Collections.emptyList()),
                         qnMap.getOrDefault(q.getId(), Collections.emptyList()), nodeMap))
@@ -338,7 +266,6 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
         vo.setSource(q.getSource());
         vo.setCreatedAt(q.getCreatedAt());
 
-        // Use pre-loaded options
         vo.setOptions(options.stream()
                 .map(opt -> {
                     TeacherQuestionVO.OptionVO optVO = new TeacherQuestionVO.OptionVO();
@@ -350,7 +277,6 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
                 })
                 .collect(Collectors.toList()));
 
-        // Use pre-loaded main node
         if (!qns.isEmpty()) {
             Long nodeId = qns.get(0).getNodeId();
             KgNode node = nodeMap.get(nodeId);
@@ -361,33 +287,5 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
         }
 
         return vo;
-    }
-
-    /**
-     * C3: Compute counts from the already-loaded list instead of re-querying database.
-     */
-    private TeacherQuestionPageVO.Counts computeCounts(List<Question> all) {
-        TeacherQuestionPageVO.Counts counts = new TeacherQuestionPageVO.Counts();
-        counts.setPending(all.stream().filter(q -> q.getStatus() == QuestionStatus.PENDING).count());
-        counts.setPassed(all.stream().filter(q -> q.getStatus() == QuestionStatus.APPROVED).count());
-        counts.setRejected(all.stream().filter(q -> q.getStatus() == QuestionStatus.REJECTED).count());
-        return counts;
-    }
-
-    private TeacherQuestionPageVO emptyPage(int page, int size, Long courseId) {
-        TeacherQuestionPageVO result = new TeacherQuestionPageVO();
-        result.setTotal(0L);
-        result.setPage(page);
-        result.setSize(size);
-        result.setItems(Collections.emptyList());
-
-        // Still calculate counts for the whole course
-        LambdaQueryWrapper<Question> w = new LambdaQueryWrapper<>();
-        w.eq(Question::getCourseId, courseId);
-        List<Question> all = questionMapper.selectList(w);
-
-        result.setCounts(computeCounts(all));
-
-        return result;
     }
 }
