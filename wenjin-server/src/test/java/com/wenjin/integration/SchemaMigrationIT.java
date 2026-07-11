@@ -26,10 +26,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 受控迁移两条路径：
  * <ul>
- *   <li>空库：执行 V1…V8 建出全部业务表与后续增量，二次 migrate 无变更且 checksum 稳定</li>
- *   <li>遗留库：先加载 V1 级结构（m01/m02），baseline version 2 接管，执行 V3+（含 V4–V8）</li>
+ *   <li>空库：执行 V1…V9 建出全部业务表与后续增量，二次 migrate 无变更且 checksum 稳定</li>
+ *   <li>遗留库：先加载 V1 级结构（m01/m02），baseline version 2 接管，执行 V3+（含 V4–V9）</li>
  * </ul>
- * <p>说明：本地 {@code schema.sql} 是「当前最终 DDL」快照（已含 V4–V8 对象），不能直接当作
+ * <p>说明：本地 {@code schema.sql} 是「当前最终 DDL」快照（已含 V4–V9 对象与物理 FK），不能直接当作
  * 遗留库输入，否则 baseline@2 后重跑 V4+ 会因列已存在而失败。遗留路径因此以
  * {@code V1__baseline_schema.sql} 模拟接入 Flyway 前的生产库。
  */
@@ -66,8 +66,26 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
     private static final List<String> V7_TABLES = List.of("ai_job");
 
-    /** 空库跑完 V1…V8 后应有的业务表（V4–V6/V8 为 ALTER；V7 增 ai_job）。 */
+    /** 空库跑完 V1…V9 后应有的业务表（V4–V6/V8–V9 为 ALTER；V7 增 ai_job）。 */
     private static final List<String> EXPECTED_TABLES_AFTER_ALL;
+
+    /** V9 合同迁移新增的命名外键（抽样 + 关键约束）。 */
+    private static final List<String> V9_EXPECTED_FKS = List.of(
+            "fk_course_teacher",
+            "fk_node_course",
+            "fk_edge_from_node",
+            "fk_question_course",
+            "fk_qn_node",
+            "fk_mastery_node",
+            "fk_path_item_path",
+            "fk_practice_node",
+            "fk_answer_question",
+            "fk_sc_student",
+            "fk_companion_msg_conv",
+            "fk_ai_job_course",
+            "fk_diag_course",
+            "chk_sys_user_role"
+    );
 
     static {
         List<String> all = new ArrayList<>(BASELINE_TABLES);
@@ -97,17 +115,17 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     }
 
     @Test
-    @DisplayName("空库：V1…V8 建出全部表；二次 migrate 无变更且 checksum 稳定")
-    void emptyDatabase_appliesV1ThroughV8_idempotent() throws Exception {
+    @DisplayName("空库：V1…V9 建出全部表；二次 migrate 无变更且 checksum 稳定；V9 约束就绪")
+    void emptyDatabase_appliesV1ThroughV9_idempotent() throws Exception {
         Flyway flyway = createFlyway();
 
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        assertThat(first.migrationsExecuted).isEqualTo(8);
+        assertThat(first.migrationsExecuted).isEqualTo(9);
 
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
         Map<String, Integer> checksumsAfterFirst = successChecksums();
-        assertThat(checksumsAfterFirst.keySet()).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+        assertThat(checksumsAfterFirst.keySet()).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9");
         assertThat(checksumsAfterFirst.get("1")).isNotNull();
         assertThat(checksumsAfterFirst.get("2")).isNotNull();
         assertThat(checksumsAfterFirst.get("3")).isNotNull();
@@ -116,8 +134,19 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(checksumsAfterFirst.get("6")).isNotNull();
         assertThat(checksumsAfterFirst.get("7")).isNotNull();
         assertThat(checksumsAfterFirst.get("8")).isNotNull();
+        assertThat(checksumsAfterFirst.get("9")).isNotNull();
         assertThat(columnExists("companion_conversation", "summary_text")).isTrue();
         assertThat(columnExists("companion_conversation", "summary_through_message_id")).isTrue();
+        assertThat(columnNullable("course", "teacher_id")).isFalse();
+        assertThat(columnNullable("question", "stem_hash")).isFalse();
+        assertThat(constraintExists("sys_user", "chk_sys_user_role")).isTrue();
+        assertThat(constraintExists("course", "fk_course_teacher")).isTrue();
+        assertThat(constraintExists("kg_node", "fk_node_course")).isTrue();
+        for (String name : V9_EXPECTED_FKS) {
+            assertThat(constraintNameExists(name))
+                    .as("expected constraint %s after V9", name)
+                    .isTrue();
+        }
 
         MigrateResult second = flyway.migrate();
         assertThat(second.success).isTrue();
@@ -125,11 +154,11 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
         Map<String, Integer> checksumsAfterSecond = successChecksums();
         assertThat(checksumsAfterSecond).isEqualTo(checksumsAfterFirst);
-        assertThat(countSuccessHistoryRows()).isEqualTo(8);
+        assertThat(countSuccessHistoryRows()).isEqualTo(9);
     }
 
     @Test
-    @DisplayName("遗留库：V1 结构 + baseline@2 接管，执行 V3…V8；二次 migrate 无变更")
+    @DisplayName("遗留库：V1 结构 + baseline@2 接管，执行 V3…V9；二次 migrate 无变更")
     void legacySchema_baselinesAtVersion2_onlyFutureMigrations() throws Exception {
         applyLegacyBaselineSchema();
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(BASELINE_TABLES);
@@ -137,15 +166,17 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         Flyway flyway = createFlyway();
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        // baseline@2 后执行 V3、V4、V5、V6、V7、V8
-        assertThat(first.migrationsExecuted).isEqualTo(6);
+        // baseline@2 后执行 V3、V4、V5、V6、V7、V8、V9
+        assertThat(first.migrationsExecuted).isEqualTo(7);
 
         Map<String, Integer> history = successChecksums();
-        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3–V8
+        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3–V9
         assertThat(history.keySet()).doesNotContain("1");
-        assertThat(history.keySet()).contains("2", "3", "4", "5", "6", "7", "8");
+        assertThat(history.keySet()).contains("2", "3", "4", "5", "6", "7", "8", "9");
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
         assertThat(columnExists("companion_conversation", "summary_text")).isTrue();
+        assertThat(constraintExists("course", "fk_course_teacher")).isTrue();
+        assertThat(columnNullable("course", "teacher_id")).isFalse();
 
         MigrateResult second = flyway.migrate();
         assertThat(second.success).isTrue();
@@ -165,7 +196,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
     /**
      * 加载 V1 baseline DDL，模拟「已有 m01/m02 结构、尚未跑 V3+」的遗留库。
-     * <p>不用当前 {@code schema.sql}：该文件是本地最终快照，已含 V4–V7 对象与约束。
+     * <p>不用当前 {@code schema.sql}：该文件是本地最终快照，已含 V4–V9 对象与约束。
      */
     private static void applyLegacyBaselineSchema() throws Exception {
         final String raw;
@@ -250,6 +281,48 @@ class SchemaMigrationIT extends MySqlContainerSupport {
                              + "WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?")) {
             ps.setString(1, table);
             ps.setString(2, column);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static boolean columnNullable(String table, String column) throws Exception {
+        try (Connection conn = MYSQL.createConnection("");
+             var ps = conn.prepareStatement(
+                     "SELECT IS_NULLABLE FROM information_schema.columns "
+                             + "WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?")) {
+            ps.setString(1, table);
+            ps.setString(2, column);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    throw new IllegalStateException("missing column " + table + "." + column);
+                }
+                return "YES".equalsIgnoreCase(rs.getString(1));
+            }
+        }
+    }
+
+    private static boolean constraintExists(String table, String constraintName) throws Exception {
+        try (Connection conn = MYSQL.createConnection("");
+             var ps = conn.prepareStatement(
+                     "SELECT 1 FROM information_schema.table_constraints "
+                             + "WHERE constraint_schema = DATABASE() AND table_name = ? "
+                             + "AND constraint_name = ?")) {
+            ps.setString(1, table);
+            ps.setString(2, constraintName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static boolean constraintNameExists(String constraintName) throws Exception {
+        try (Connection conn = MYSQL.createConnection("");
+             var ps = conn.prepareStatement(
+                     "SELECT 1 FROM information_schema.table_constraints "
+                             + "WHERE constraint_schema = DATABASE() AND constraint_name = ?")) {
+            ps.setString(1, constraintName);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
             }
