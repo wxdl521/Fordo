@@ -17,6 +17,10 @@ public enum ResultCode {
     NOT_FOUND(404, "资源不存在", 404),
     /** 数据冲突（唯一键 / 完整性约束等） */
     CONFLICT(409, "数据冲突", 409),
+    /** 请求体/上传内容过大 */
+    PAYLOAD_TOO_LARGE(413, "请求体过大", 413),
+    /** 请求过于频繁或资源容量已满 */
+    TOO_MANY_REQUESTS(429, "请求过于频繁", 429),
     /** 图谱导入校验失败 */
     GRAPH_VALIDATE_FAIL(1001, "图谱校验失败", 422),
     /** AI 服务调用失败 */

@@ -2,12 +2,16 @@ package com.wenjin.support;
 
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.config.LimitsProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
 import javax.imageio.ImageWriteParam;
 import javax.imageio.ImageWriter;
+import javax.imageio.stream.ImageInputStream;
 import javax.imageio.stream.ImageOutputStream;
 import java.awt.Color;
 import java.awt.Graphics2D;
@@ -23,20 +27,34 @@ import java.util.List;
 /**
  * 图片预处理。
  * <p>{@link #compress} 把单张图降采样到最长边 ≤ MAX_EDGE。该规则对横向截图够用,但对
- * 「竖长多页文档」会把宽度压塌(如 1621×16075 → 202×2000),正文文字糊到无法识别,导致视觉
- * 模型只能照主题幻觉。因此识图链路改用 {@link #compressTiles}:保持宽度可读、纵向切成多片,
- * 逐片送视觉模型再拼接。
+ * 「竖长多页文档」会把宽度压塌,因此识图链路改用 {@link #compressTiles}:保持宽度可读、纵向切成多片。
+ * <p>解码前用 {@link ImageReader#getWidth}/{@link ImageReader#getHeight} 做像素与切片预算校验。
  */
 @Component
 public class ImagePreprocessor {
 
     static final int MAX_EDGE = 2000;
-    static final long MAX_BYTES = 3_500_000L; // 留余量,base64 膨胀后仍 < 5MB
+    static final long MAX_BYTES = 3_500_000L;
 
-    // 切片参数:宽度上限(超出则等比缩到此宽,不放大)、单片高度、相邻片重叠(防切断表格行)
     static final int TARGET_WIDTH = 1600;
     static final int TILE_HEIGHT = 2200;
     static final int TILE_OVERLAP = 120;
+
+    static final int DEFAULT_MAX_DIMENSION = 10_000;
+    static final long DEFAULT_MAX_PIXELS = 40_000_000L;
+    static final int DEFAULT_MAX_PREDICTED_TILES = 12;
+
+    private final LimitsProperties limits;
+
+    @Autowired
+    public ImagePreprocessor(LimitsProperties limits) {
+        this.limits = limits == null ? new LimitsProperties() : limits;
+    }
+
+    /** 测试/无 Spring 时使用默认限额。 */
+    public ImagePreprocessor() {
+        this(new LimitsProperties());
+    }
 
     /** 单图压缩(最长边 ≤ MAX_EDGE)。保留给非识图场景。 */
     public byte[] compress(byte[] raw) {
@@ -45,21 +63,42 @@ public class ImagePreprocessor {
 
     /** 识图用:保持宽度可读,纵向切成多片(短图返回单片)。 */
     public List<byte[]> compressTiles(byte[] raw) {
-        return tiles(raw, TARGET_WIDTH, TILE_HEIGHT, TILE_OVERLAP, MAX_BYTES);
+        LimitsProperties.Image img = limits.getImage();
+        return tiles(raw,
+                img.getTargetWidth() > 0 ? img.getTargetWidth() : TARGET_WIDTH,
+                img.getTileHeight() > 0 ? img.getTileHeight() : TILE_HEIGHT,
+                img.getTileOverlap() >= 0 ? img.getTileOverlap() : TILE_OVERLAP,
+                MAX_BYTES,
+                img.getMaxDimension() > 0 ? img.getMaxDimension() : DEFAULT_MAX_DIMENSION,
+                img.getMaxPixels() > 0 ? img.getMaxPixels() : DEFAULT_MAX_PIXELS,
+                img.getMaxPredictedTiles() > 0 ? img.getMaxPredictedTiles() : DEFAULT_MAX_PREDICTED_TILES);
     }
 
     static byte[] compress(byte[] raw, int maxEdge, long maxBytes) {
-        BufferedImage src = decode(raw);
+        BufferedImage src = decodeWithBounds(raw, DEFAULT_MAX_DIMENSION, DEFAULT_MAX_PIXELS,
+                DEFAULT_MAX_PREDICTED_TILES, TARGET_WIDTH, TILE_HEIGHT, TILE_OVERLAP, false);
         BufferedImage scaled = scaleDown(src, maxEdge);
         return encodeUnderLimit(scaled, maxBytes);
     }
 
     /**
      * 纵向切片:先按 targetWidth 等比缩放(不放大),再以 tileHeight 高、overlap 重叠切片。
-     * 切片在源图坐标系下取,避免持有一张整图大小的缩放副本。
      */
     static List<byte[]> tiles(byte[] raw, int targetWidth, int tileHeight, int overlap, long maxBytes) {
-        BufferedImage src = decode(raw);
+        return tiles(raw, targetWidth, tileHeight, overlap, maxBytes,
+                DEFAULT_MAX_DIMENSION, DEFAULT_MAX_PIXELS, DEFAULT_MAX_PREDICTED_TILES);
+    }
+
+    static List<byte[]> tiles(byte[] raw,
+                              int targetWidth,
+                              int tileHeight,
+                              int overlap,
+                              long maxBytes,
+                              int maxDimension,
+                              long maxPixels,
+                              int maxPredictedTiles) {
+        BufferedImage src = decodeWithBounds(raw, maxDimension, maxPixels, maxPredictedTiles,
+                targetWidth, tileHeight, overlap, true);
         int w = src.getWidth(), h = src.getHeight();
         double scale = w > targetWidth ? (double) targetWidth / w : 1.0;
         int outW = Math.max(1, (int) Math.round(w * scale));
@@ -82,17 +121,97 @@ public class ImagePreprocessor {
         return result;
     }
 
-    private static BufferedImage decode(byte[] raw) {
-        BufferedImage src;
-        try {
-            src = ImageIO.read(new ByteArrayInputStream(raw));
+    /**
+     * 预测纵向切片数（与 {@link #tiles} 步进一致）。
+     */
+    static int predictTileCount(int width, int height, int targetWidth, int tileHeight, int overlap) {
+        if (height <= 0 || width <= 0) {
+            return 0;
+        }
+        double scale = width > targetWidth ? (double) targetWidth / width : 1.0;
+        int srcTileH = Math.max(1, (int) Math.round(tileHeight / scale));
+        int srcOverlap = Math.max(0, (int) Math.round(overlap / scale));
+        int srcStep = Math.max(1, srcTileH - srcOverlap);
+        int count = 0;
+        int y = 0;
+        while (y < height) {
+            count++;
+            int sliceH = Math.min(srcTileH, height - y);
+            if (y + sliceH >= height) {
+                break;
+            }
+            y += srcStep;
+            if (count > 1_000_000) { // 防异常参数死循环
+                break;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * 先读宽高做预算校验，通过后再 full decode。
+     */
+    private static BufferedImage decodeWithBounds(byte[] raw,
+                                                  int maxDimension,
+                                                  long maxPixels,
+                                                  int maxPredictedTiles,
+                                                  int targetWidth,
+                                                  int tileHeight,
+                                                  int overlap,
+                                                  boolean checkTiles) {
+        if (raw == null || raw.length == 0) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "图片为空");
+        }
+        try (ImageInputStream iis = ImageIO.createImageInputStream(new ByteArrayInputStream(raw))) {
+            if (iis == null) {
+                throw new BusinessException(ResultCode.BAD_REQUEST, "图片格式不支持或文件损坏");
+            }
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
+            if (!readers.hasNext()) {
+                throw new BusinessException(ResultCode.BAD_REQUEST, "图片格式不支持或文件损坏");
+            }
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(iis, true, true);
+                int w = reader.getWidth(0);
+                int h = reader.getHeight(0);
+                assertImageBounds(w, h, maxDimension, maxPixels);
+                if (checkTiles) {
+                    int predicted = predictTileCount(w, h, targetWidth, tileHeight, overlap);
+                    if (predicted > maxPredictedTiles) {
+                        throw new BusinessException(ResultCode.PAYLOAD_TOO_LARGE,
+                                "图片过高，预计切片数 " + predicted + " 超过上限 " + maxPredictedTiles
+                                        + "，请裁剪后重试");
+                    }
+                }
+                BufferedImage src = reader.read(0);
+                if (src == null) {
+                    throw new BusinessException(ResultCode.BAD_REQUEST, "图片格式不支持或文件损坏");
+                }
+                return src;
+            } finally {
+                reader.dispose();
+            }
+        } catch (BusinessException e) {
+            throw e;
         } catch (IOException e) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "图片无法解码：" + e.getMessage());
         }
-        if (src == null) {
-            throw new BusinessException(ResultCode.BAD_REQUEST, "图片格式不支持或文件损坏");
+    }
+
+    static void assertImageBounds(int w, int h, int maxDimension, long maxPixels) {
+        if (w <= 0 || h <= 0) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "图片尺寸无效");
         }
-        return src;
+        if (w > maxDimension || h > maxDimension) {
+            throw new BusinessException(ResultCode.PAYLOAD_TOO_LARGE,
+                    "图片边长超限：" + w + "x" + h + "（单边上限 " + maxDimension + "）");
+        }
+        long pixels = (long) w * (long) h;
+        if (pixels > maxPixels) {
+            throw new BusinessException(ResultCode.PAYLOAD_TOO_LARGE,
+                    "图片像素超限：" + pixels + " > " + maxPixels);
+        }
     }
 
     private static byte[] encodeUnderLimit(BufferedImage img, long maxBytes) {
@@ -117,7 +236,6 @@ public class ImagePreprocessor {
         return renderScaled(src, nw, nh);
     }
 
-    /** 把(子)图绘制到指定尺寸的 RGB 画布,白底拍平透明通道。 */
     private static BufferedImage renderScaled(BufferedImage src, int nw, int nh) {
         BufferedImage dst = new BufferedImage(nw, nh, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = dst.createGraphics();

@@ -26,10 +26,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 受控迁移两条路径：
  * <ul>
- *   <li>空库：执行 V1…V7 建出全部业务表与后续增量，二次 migrate 无变更且 checksum 稳定</li>
- *   <li>遗留库：先加载 V1 级结构（m01/m02），baseline version 2 接管，执行 V3+（含 V4–V7）</li>
+ *   <li>空库：执行 V1…V8 建出全部业务表与后续增量，二次 migrate 无变更且 checksum 稳定</li>
+ *   <li>遗留库：先加载 V1 级结构（m01/m02），baseline version 2 接管，执行 V3+（含 V4–V8）</li>
  * </ul>
- * <p>说明：本地 {@code schema.sql} 是「当前最终 DDL」快照（已含 V4–V7 对象），不能直接当作
+ * <p>说明：本地 {@code schema.sql} 是「当前最终 DDL」快照（已含 V4–V8 对象），不能直接当作
  * 遗留库输入，否则 baseline@2 后重跑 V4+ 会因列已存在而失败。遗留路径因此以
  * {@code V1__baseline_schema.sql} 模拟接入 Flyway 前的生产库。
  */
@@ -66,7 +66,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
     private static final List<String> V7_TABLES = List.of("ai_job");
 
-    /** 空库跑完 V1…V7 后应有的业务表（V4–V6 为 ALTER；V7 增 ai_job）。 */
+    /** 空库跑完 V1…V8 后应有的业务表（V4–V6/V8 为 ALTER；V7 增 ai_job）。 */
     private static final List<String> EXPECTED_TABLES_AFTER_ALL;
 
     static {
@@ -97,17 +97,17 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     }
 
     @Test
-    @DisplayName("空库：V1…V7 建出全部表；二次 migrate 无变更且 checksum 稳定")
-    void emptyDatabase_appliesV1ThroughV7_idempotent() throws Exception {
+    @DisplayName("空库：V1…V8 建出全部表；二次 migrate 无变更且 checksum 稳定")
+    void emptyDatabase_appliesV1ThroughV8_idempotent() throws Exception {
         Flyway flyway = createFlyway();
 
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        assertThat(first.migrationsExecuted).isEqualTo(7);
+        assertThat(first.migrationsExecuted).isEqualTo(8);
 
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
         Map<String, Integer> checksumsAfterFirst = successChecksums();
-        assertThat(checksumsAfterFirst.keySet()).containsExactly("1", "2", "3", "4", "5", "6", "7");
+        assertThat(checksumsAfterFirst.keySet()).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
         assertThat(checksumsAfterFirst.get("1")).isNotNull();
         assertThat(checksumsAfterFirst.get("2")).isNotNull();
         assertThat(checksumsAfterFirst.get("3")).isNotNull();
@@ -115,6 +115,9 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(checksumsAfterFirst.get("5")).isNotNull();
         assertThat(checksumsAfterFirst.get("6")).isNotNull();
         assertThat(checksumsAfterFirst.get("7")).isNotNull();
+        assertThat(checksumsAfterFirst.get("8")).isNotNull();
+        assertThat(columnExists("companion_conversation", "summary_text")).isTrue();
+        assertThat(columnExists("companion_conversation", "summary_through_message_id")).isTrue();
 
         MigrateResult second = flyway.migrate();
         assertThat(second.success).isTrue();
@@ -122,11 +125,11 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
         Map<String, Integer> checksumsAfterSecond = successChecksums();
         assertThat(checksumsAfterSecond).isEqualTo(checksumsAfterFirst);
-        assertThat(countSuccessHistoryRows()).isEqualTo(7);
+        assertThat(countSuccessHistoryRows()).isEqualTo(8);
     }
 
     @Test
-    @DisplayName("遗留库：V1 结构 + baseline@2 接管，执行 V3…V7；二次 migrate 无变更")
+    @DisplayName("遗留库：V1 结构 + baseline@2 接管，执行 V3…V8；二次 migrate 无变更")
     void legacySchema_baselinesAtVersion2_onlyFutureMigrations() throws Exception {
         applyLegacyBaselineSchema();
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(BASELINE_TABLES);
@@ -134,14 +137,15 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         Flyway flyway = createFlyway();
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        // baseline@2 后执行 V3、V4、V5、V6、V7
-        assertThat(first.migrationsExecuted).isEqualTo(5);
+        // baseline@2 后执行 V3、V4、V5、V6、V7、V8
+        assertThat(first.migrationsExecuted).isEqualTo(6);
 
         Map<String, Integer> history = successChecksums();
-        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3–V7
+        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3–V8
         assertThat(history.keySet()).doesNotContain("1");
-        assertThat(history.keySet()).contains("2", "3", "4", "5", "6", "7");
+        assertThat(history.keySet()).contains("2", "3", "4", "5", "6", "7", "8");
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
+        assertThat(columnExists("companion_conversation", "summary_text")).isTrue();
 
         MigrateResult second = flyway.migrate();
         assertThat(second.success).isTrue();
@@ -236,6 +240,19 @@ class SchemaMigrationIT extends MySqlContainerSupport {
                      "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 1")) {
             rs.next();
             return rs.getInt(1);
+        }
+    }
+
+    private static boolean columnExists(String table, String column) throws Exception {
+        try (Connection conn = MYSQL.createConnection("");
+             var ps = conn.prepareStatement(
+                     "SELECT 1 FROM information_schema.columns "
+                             + "WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?")) {
+            ps.setString(1, table);
+            ps.setString(2, column);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
         }
     }
 }

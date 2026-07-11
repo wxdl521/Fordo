@@ -2,6 +2,7 @@ package com.wenjin.service;
 
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.ExtractCommitResult;
 import com.wenjin.dto.GraphExtractDraftResponse;
 import com.wenjin.dto.GraphImportRequest;
@@ -9,7 +10,11 @@ import com.wenjin.dto.GraphImportResult;
 import com.wenjin.entity.ExtractionReview;
 import com.wenjin.mapper.ExtractionReviewMapper;
 import com.wenjin.security.CourseAccessService;
+import com.wenjin.security.CurrentPrincipal;
+import com.wenjin.security.UserRole;
 import com.wenjin.support.GraphDraftStore;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -29,6 +34,8 @@ import static org.mockito.Mockito.when;
 
 class GraphExtractReviewServiceTest {
 
+    private static final long TEACHER_A = 11L;
+
     private final GraphExtractionService extraction = mock(GraphExtractionService.class);
     private final GraphDraftStore store = new GraphDraftStore(); // 真实内存store,验证存取
     private final ExtractionMetricsCalculator calc = new ExtractionMetricsCalculator();
@@ -42,6 +49,16 @@ class GraphExtractReviewServiceTest {
     {
         // 默认放行课程归属；跨租户用例会单独 stub
         lenient().when(courseAccessService.assertManageCourseCode(anyString())).thenReturn(1L);
+    }
+
+    @BeforeEach
+    void loginTeacherA() {
+        CurrentUser.set(new CurrentPrincipal(TEACHER_A, UserRole.TEACHER));
+    }
+
+    @AfterEach
+    void clearUser() {
+        CurrentUser.clear();
     }
 
     @Test
@@ -67,7 +84,7 @@ class GraphExtractReviewServiceTest {
         ai.getNodes().add(a);
         ai.getNodes().add(b);
         ai.setEdges(new java.util.ArrayList<>());
-        String id = store.save("C1", ai);
+        String id = store.save(TEACHER_A, "C1", ai);
 
         // 最终:保留 A,删 B
         GraphImportRequest fin = new GraphImportRequest();
@@ -108,9 +125,8 @@ class GraphExtractReviewServiceTest {
     @DisplayName("teacher A cannot getDraft of teacher B's draft → 404")
     void getDraft_otherTeacherCourse_404() {
         GraphImportRequest draft = new GraphImportRequest();
-        String draftId = store.save("B_COURSE", draft);
-        doThrow(new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage()))
-                .when(courseAccessService).assertManageCourseCode("B_COURSE");
+        // 属主是 teacher B
+        String draftId = store.save(99L, "B_COURSE", draft);
 
         assertThatThrownBy(() -> svc.getDraft(draftId))
                 .isInstanceOf(BusinessException.class)

@@ -3,6 +3,7 @@ package com.wenjin;
 import com.wenjin.config.AiProperties;
 import com.wenjin.config.CompanionToolProperties;
 import com.wenjin.config.FeatureFlagsProperties;
+import com.wenjin.config.LimitsProperties;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -14,7 +15,12 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  */
 @SpringBootApplication
 @MapperScan("com.wenjin.mapper")
-@EnableConfigurationProperties({AiProperties.class, CompanionToolProperties.class, FeatureFlagsProperties.class})
+@EnableConfigurationProperties({
+        AiProperties.class,
+        CompanionToolProperties.class,
+        FeatureFlagsProperties.class,
+        LimitsProperties.class
+})
 @EnableScheduling
 public class WenjinServerApplication {
 

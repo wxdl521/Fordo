@@ -3,6 +3,7 @@ package com.wenjin.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.ai.CompanionAiClient;
 import com.wenjin.config.CompanionToolProperties;
+import com.wenjin.config.LimitsProperties;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.LearningPathVO;
@@ -22,6 +23,7 @@ import com.wenjin.service.companion.ToolContext;
 import com.wenjin.service.companion.ToolExecutionResult;
 import com.wenjin.service.companion.ToolExecutionState;
 import com.wenjin.service.companion.ToolGovernor;
+import com.wenjin.support.ConversationContextBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -88,6 +90,7 @@ class CompanionServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        LimitsProperties limits = new LimitsProperties();
         service = new CompanionServiceImpl(
                 conversationMapper,
                 messageMapper,
@@ -98,7 +101,9 @@ class CompanionServiceImplTest {
                 diagnosticResultService,
                 aiClient,
                 makeCalculator(),
-                courseService);
+                courseService,
+                new ConversationContextBuilder(limits),
+                limits);
 
         req = new CompanionChatRequest();
         req.setStudentId(1L);
@@ -234,6 +239,16 @@ class CompanionServiceImplTest {
     }
 
     @Test
+    void startTurnRejectsMessageOverInputLimit() {
+        req.setMessage("x".repeat(4001));
+        assertThatThrownBy(() -> service.startTurn(req))
+                .isInstanceOf(com.wenjin.common.BusinessException.class)
+                .extracting(e -> ((com.wenjin.common.BusinessException) e).getCode())
+                .isEqualTo(com.wenjin.common.ResultCode.PAYLOAD_TOO_LARGE.getCode());
+        verify(messageMapper, never()).insert(any(CompanionMessage.class));
+    }
+
+    @Test
     void streamReplyWhenToolsDisabledUsesLegacyStreamAndPersistsReply() {
         Long conversationId = 300L;
         stubConversationAndPrompt(conversationId, List.of(userMessage("什么是二次函数？")));
@@ -260,6 +275,69 @@ class CompanionServiceImplTest {
         CompanionMessage savedMessage = messageCaptor.getValue();
         assertEquals(ROLE_AI, savedMessage.getRole());
         assertEquals("二次函数", savedMessage.getContent());
+    }
+
+    @Test
+    void streamReplyTruncatesAiOutputOverLimitWithReason() {
+        LimitsProperties tight = new LimitsProperties();
+        tight.getCompanion().setMaxAiOutputChars(10);
+        ReflectionTestUtils.setField(service, "limits", tight);
+        ReflectionTestUtils.setField(service, "contextBuilder", new ConversationContextBuilder(tight));
+
+        Long conversationId = 301L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("q")));
+        configureTools(false, 2, 3, List.of());
+
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            onToken.accept("0123456789ABCDEF"); // 16 chars → cap 10
+            return null;
+        }).when(aiClient).stream(any(), any(), any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        StringBuilder streamed = new StringBuilder();
+        service.streamReply(conversationId, streamed::append);
+
+        assertThat(streamed.toString()).startsWith("0123456789");
+        assertThat(streamed.toString()).contains("回复已截断");
+        ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
+        verify(messageMapper).insert(messageCaptor.capture());
+        assertThat(messageCaptor.getValue().getContent()).contains("回复已截断");
+    }
+
+    @Test
+    void streamReplyWithHundredMessages_usesSummaryAndRecentWindow() {
+        Long conversationId = 302L;
+        List<CompanionMessage> history = new ArrayList<>();
+        for (int i = 1; i <= 100; i++) {
+            CompanionMessage m = userMessage("msg-" + i);
+            m.setId((long) i);
+            m.setRole(i % 2 == 1 ? ROLE_USER : ROLE_AI);
+            history.add(m);
+        }
+        stubConversationAndPrompt(conversationId, history);
+        configureTools(false, 2, 3, List.of());
+
+        ArgumentCaptor<List> historyCaptor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<String> latestCaptor = ArgumentCaptor.forClass(String.class);
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            onToken.accept("ok");
+            return null;
+        }).when(aiClient).stream(any(), historyCaptor.capture(), latestCaptor.capture(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, t -> { });
+
+        assertThat(latestCaptor.getValue()).isEqualTo("msg-100");
+        // 近窗 20 条中除最新外 19 条 + 摘要伪对话 2 条
+        assertThat(historyCaptor.getValue().size()).isLessThan(100);
+        boolean hasSummary = historyCaptor.getValue().stream()
+                .anyMatch(o -> o instanceof CompanionAiClient.ChatMsg m
+                        && m.content() != null
+                        && m.content().contains("历史摘要"));
+        assertThat(hasSummary).isTrue();
+        verify(conversationMapper).updateById(any(CompanionConversation.class));
     }
 
     @Test

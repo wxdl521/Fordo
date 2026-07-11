@@ -151,20 +151,25 @@ public class CompanionController {
     @GetMapping("/conversations")
     public Result<List<CompanionConversationVO>> listConversations(
             @RequestParam(value = "studentId", required = false) Long studentId,
-            @RequestParam("courseId") @Positive Long courseId) {
+            @RequestParam("courseId") @Positive Long courseId,
+            @RequestParam(value = "beforeId", required = false) Long beforeId,
+            @RequestParam(value = "limit", required = false) Integer limit) {
         long id = AccessGuard.requireSelfStudent(studentId);
         courseService.assertAccessibleByStudent(id, courseId);
-        return Result.ok(companionService.listConversations(id, courseId));
+        return Result.ok(companionService.listConversations(id, courseId, beforeId, limit));
     }
 
     /**
-     * 查询会话内的所有消息（按创建时间正序）。
-     * GET /api/companion/conversations/{id}
+     * 查询会话消息（keyset 分页，按创建时间正序返回；默认最新 30 条，limit 最大 100）。
+     * GET /api/companion/conversations/{id}?beforeId=&limit=
      */
     @GetMapping("/conversations/{id}")
-    public Result<List<CompanionMessageVO>> getMessages(@PathVariable("id") @Positive Long id) {
+    public Result<List<CompanionMessageVO>> getMessages(
+            @PathVariable("id") @Positive Long id,
+            @RequestParam(value = "beforeId", required = false) Long beforeId,
+            @RequestParam(value = "limit", required = false) Integer limit) {
         CurrentUser.requireStudent();
-        return Result.ok(companionService.getMessages(id));
+        return Result.ok(companionService.getMessages(id, beforeId, limit));
     }
 
     /**

@@ -298,6 +298,8 @@ CREATE TABLE `companion_conversation` (
     `course_id`  BIGINT       NOT NULL                COMMENT '课程（逻辑外键→course.id）',
     `title`      VARCHAR(128) DEFAULT NULL            COMMENT '会话标题（首问截断/节点名前缀）',
     `node_code`  VARCHAR(64)  DEFAULT NULL            COMMENT '发起时的图谱节点上下文（可空）',
+    `summary_text` MEDIUMTEXT NULL                    COMMENT '历史消息滚动摘要（送入模型）',
+    `summary_through_message_id` BIGINT NULL          COMMENT '摘要覆盖到的最后一条消息 id（含）',
     `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP                          COMMENT '创建时间',
     `updated_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),

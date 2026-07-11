@@ -1,6 +1,7 @@
 package com.wenjin.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.ExtractCommitResult;
 import com.wenjin.dto.ExtractionMetrics;
 import com.wenjin.dto.GraphExtractDraftResponse;
@@ -44,12 +45,14 @@ public class GraphExtractReviewService {
 
     public GraphExtractDraftResponse extractAndStash(String courseCode, MultipartFile file) {
         GraphImportRequest draft = graphExtractionService.extract(courseCode, file);
-        String draftId = draftStore.save(courseCode, draft);
+        Long teacherId = CurrentUser.requireTeacher().userId();
+        String draftId = draftStore.save(teacherId, courseCode, draft);
         return new GraphExtractDraftResponse(draftId, draft);
     }
 
     public GraphImportRequest getDraft(String draftId) {
-        GraphDraftStore.Entry entry = draftStore.get(draftId);
+        Long teacherId = CurrentUser.requireTeacher().userId();
+        GraphDraftStore.Entry entry = draftStore.get(draftId, teacherId);
         courseAccessService.assertManageCourseCode(entry.courseCode);
         return entry.draft;
     }
@@ -57,13 +60,14 @@ public class GraphExtractReviewService {
     /** 全量替换导入与指标落库同事务：insert 失败则图谱替换一并回滚。 */
     @Transactional
     public ExtractCommitResult commit(String draftId, GraphImportRequest finalGraph) {
-        GraphDraftStore.Entry entry = draftStore.get(draftId);
+        Long teacherId = CurrentUser.requireTeacher().userId();
+        GraphDraftStore.Entry entry = draftStore.get(draftId, teacherId);
         // 尽早校验课程归属，避免无权限主体触发指标计算/导入副作用
         courseAccessService.assertManageCourseCode(entry.courseCode);
         ExtractionMetrics metrics = metricsCalculator.calculate(entry.draft, finalGraph);
         GraphImportResult importResult = graphService.importGraph(entry.courseCode, finalGraph);
         reviewMapper.insert(toReview(entry.courseCode, importResult, metrics));
-        draftStore.remove(draftId);
+        draftStore.remove(draftId, teacherId);
         return new ExtractCommitResult(importResult, metrics);
     }
 
