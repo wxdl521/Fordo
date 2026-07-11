@@ -20,6 +20,7 @@ import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.GraphService;
 import com.wenjin.service.MasteryDecayCalculator;
+import com.wenjin.support.PrerequisiteCycleDetector;
 import com.wenjin.support.RelationType;
 import com.wenjin.support.ReviewMarker;
 import org.slf4j.Logger;
@@ -340,7 +341,7 @@ public class GraphServiceImpl implements GraphService {
     }
 
     /**
-     * 对「前置」边构成的有向图做环检测（DFS 三色标记）。
+     * 对「前置」边构成的有向图做环检测（复用 {@link PrerequisiteCycleDetector}）。
      *
      * @return 第一条检出的环路径（节点编码序列，首尾相接），无环返回 null
      */
@@ -357,42 +358,7 @@ public class GraphServiceImpl implements GraphService {
             }
             adj.computeIfAbsent(src, k -> new ArrayList<>()).add(tgt);
         }
-
-        Map<String, Integer> state = new HashMap<>();
-        List<String> stack = new ArrayList<>();
-        for (String start : adj.keySet()) {
-            if (state.getOrDefault(start, 0) == 0) {
-                List<String> cycle = dfs(start, adj, state, stack);
-                if (cycle != null) {
-                    return cycle;
-                }
-            }
-        }
-        return null;
-    }
-
-    private List<String> dfs(String node, Map<String, List<String>> adj,
-                             Map<String, Integer> state, List<String> stack) {
-        state.put(node, 1);
-        stack.add(node);
-        for (String next : adj.getOrDefault(node, List.of())) {
-            Integer st = state.getOrDefault(next, 0);
-            if (st == 1) {
-                int idx = stack.indexOf(next);
-                List<String> cycle = new ArrayList<>(stack.subList(idx, stack.size()));
-                cycle.add(next);
-                return cycle;
-            }
-            if (st == 0) {
-                List<String> cycle = dfs(next, adj, state, stack);
-                if (cycle != null) {
-                    return cycle;
-                }
-            }
-        }
-        stack.remove(stack.size() - 1);
-        state.put(node, 2);
-        return null;
+        return PrerequisiteCycleDetector.detect(adj);
     }
 
     // ───────────────────────────── 查询 ─────────────────────────────

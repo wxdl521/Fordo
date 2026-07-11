@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.FeatureFlagsProperties;
+import com.wenjin.dto.EdgeCreateRequest;
 import com.wenjin.dto.NodeUpsertRequest;
 import com.wenjin.dto.PendingEdgeVO;
 import com.wenjin.dto.TeacherGraphVO;
@@ -19,8 +20,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -544,5 +547,187 @@ class TeacherGraphServiceImplTest {
         service.updateNode(1L, req);
 
         verify(nodeMapper).updateById(any(KgNode.class));
+    }
+
+    // ── createEdge ──
+
+    private static EdgeCreateRequest edgeReq(String src, String tgt, int type) {
+        EdgeCreateRequest req = new EdgeCreateRequest();
+        req.setSourceNodeCode(src);
+        req.setTargetNodeCode(tgt);
+        req.setRelationType(type);
+        return req;
+    }
+
+    private static KgNode node(long id, String code) {
+        KgNode n = new KgNode();
+        n.setId(id);
+        n.setNodeCode(code);
+        n.setCourseId(1L);
+        return n;
+    }
+
+    @Test
+    void createEdge_foreignCourse_404() {
+        doThrow(new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage()))
+                .when(courseAccessService).assertManageCourse(999L);
+
+        assertThatThrownBy(() -> service.createEdge(999L, edgeReq("N1", "N2", 1)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(404);
+
+        verify(edgeMapper, never()).insert(any(KgEdge.class));
+        verify(nodeMapper, never()).selectList(any());
+    }
+
+    @Test
+    void createEdge_sourceOrTargetMissingInCourse_404() {
+        // 起点在本课不存在（异课程节点码 / 已归档）
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Collections.emptyList())  // source miss
+                .thenReturn(Collections.singletonList(node(2L, "N2"))); // would be target
+
+        assertThatThrownBy(() -> service.createEdge(1L, edgeReq("N1", "N2", 3)))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> {
+                    BusinessException be = (BusinessException) ex;
+                    assertThat(be.getCode()).isEqualTo(404);
+                    assertThat(be.getMessage()).contains("起点节点不存在");
+                });
+        verify(edgeMapper, never()).insert(any(KgEdge.class));
+    }
+
+    @Test
+    void createEdge_targetMissingInCourse_404() {
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Collections.singletonList(node(1L, "N1")))
+                .thenReturn(Collections.emptyList());
+
+        assertThatThrownBy(() -> service.createEdge(1L, edgeReq("N1", "NX", 2)))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> {
+                    BusinessException be = (BusinessException) ex;
+                    assertThat(be.getCode()).isEqualTo(404);
+                    assertThat(be.getMessage()).contains("终点节点不存在");
+                });
+        verify(edgeMapper, never()).insert(any(KgEdge.class));
+    }
+
+    @Test
+    void createEdge_selfLoop_400() {
+        assertThatThrownBy(() -> service.createEdge(1L, edgeReq("N1", "N1", 1)))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> {
+                    BusinessException be = (BusinessException) ex;
+                    assertThat(be.getCode()).isEqualTo(400);
+                    assertThat(be.getMessage()).contains("自环");
+                });
+        verify(edgeMapper, never()).insert(any(KgEdge.class));
+        verify(courseAccessService).assertManageCourse(1L);
+    }
+
+    @Test
+    void createEdge_duplicateActiveEdge_409() {
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Collections.singletonList(node(1L, "N1")))
+                .thenReturn(Collections.singletonList(node(2L, "N2")));
+        when(edgeMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(1L);
+
+        assertThatThrownBy(() -> service.createEdge(1L, edgeReq("N1", "N2", 3)))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> {
+                    BusinessException be = (BusinessException) ex;
+                    assertThat(be.getCode()).isEqualTo(409);
+                    assertThat(be.getMessage()).contains("边已存在");
+                });
+        verify(edgeMapper, never()).insert(any(KgEdge.class));
+    }
+
+    @Test
+    void createEdge_prerequisiteCycle_409() {
+        // 既有 N1→N2 前置，再加 N2→N1 成环
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Collections.singletonList(node(1L, "N1")))  // source resolve
+                .thenReturn(Collections.singletonList(node(2L, "N2")))  // target resolve
+                .thenReturn(Arrays.asList(node(1L, "N1"), node(2L, "N2"))); // build adj nodes
+        when(edgeMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
+
+        KgEdge existing = new KgEdge();
+        existing.setFromNodeId(1L);
+        existing.setToNodeId(2L);
+        existing.setRelationType(1);
+        when(edgeMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Collections.singletonList(existing));
+
+        assertThatThrownBy(() -> service.createEdge(1L, edgeReq("N2", "N1", 1)))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> {
+                    BusinessException be = (BusinessException) ex;
+                    assertThat(be.getCode()).isEqualTo(409);
+                    assertThat(be.getMessage()).contains("环路");
+                });
+        verify(edgeMapper, never()).insert(any(KgEdge.class));
+    }
+
+    @Test
+    void createEdge_duplicateKeyException_409() {
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Collections.singletonList(node(1L, "N1")))
+                .thenReturn(Collections.singletonList(node(2L, "N2")));
+        when(edgeMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
+        when(edgeMapper.insert(any(KgEdge.class))).thenThrow(new DuplicateKeyException("uk_edge"));
+
+        assertThatThrownBy(() -> service.createEdge(1L, edgeReq("N1", "N2", 3)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(409);
+    }
+
+    @Test
+    void createEdge_legalEdgeInserts() {
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Collections.singletonList(node(1L, "N1")))
+                .thenReturn(Collections.singletonList(node(2L, "N2")))
+                .thenReturn(Arrays.asList(node(1L, "N1"), node(2L, "N2")));
+        when(edgeMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
+        when(edgeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Collections.emptyList());
+        when(edgeMapper.insert(any(KgEdge.class))).thenAnswer(inv -> {
+            KgEdge e = inv.getArgument(0);
+            e.setId(55L);
+            return 1;
+        });
+
+        EdgeCreateRequest req = edgeReq("N1", "N2", 1);
+        req.setRelationNote("教师手动画边");
+        Long id = service.createEdge(1L, req);
+
+        assertThat(id).isEqualTo(55L);
+        ArgumentCaptor<KgEdge> captor = ArgumentCaptor.forClass(KgEdge.class);
+        verify(edgeMapper).insert(captor.capture());
+        KgEdge saved = captor.getValue();
+        assertThat(saved.getCourseId()).isEqualTo(1L);
+        assertThat(saved.getFromNodeId()).isEqualTo(1L);
+        assertThat(saved.getToNodeId()).isEqualTo(2L);
+        assertThat(saved.getRelationType()).isEqualTo(1);
+        assertThat(saved.getRelationNote()).isEqualTo("教师手动画边");
+        verify(courseAccessService).assertManageCourse(1L);
+    }
+
+    @Test
+    void createEdge_nonPrerequisiteIgnoresCycleCheck() {
+        // 相关边反向不算环
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Collections.singletonList(node(1L, "N1")))
+                .thenReturn(Collections.singletonList(node(2L, "N2")));
+        when(edgeMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
+        when(edgeMapper.insert(any(KgEdge.class))).thenAnswer(inv -> {
+            inv.getArgument(0, KgEdge.class).setId(66L);
+            return 1;
+        });
+
+        Long id = service.createEdge(1L, edgeReq("N2", "N1", 3));
+        assertThat(id).isEqualTo(66L);
+        // 非前置：不应再查前置邻接
+        verify(edgeMapper, never()).selectList(any());
+        verify(edgeMapper).insert(any(KgEdge.class));
     }
 }

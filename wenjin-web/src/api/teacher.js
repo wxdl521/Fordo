@@ -13,6 +13,10 @@ export function acceptEdge(id) {
 export function rejectEdge(id) {
   return http.post(`/teacher/graph/edges/${id}/reject`)
 }
+/** 创建边：body { sourceNodeCode, targetNodeCode, relationType 1..4, relationNote? } */
+export function createEdge(courseId, req) {
+  return http.post('/teacher/graph/edges', req, { params: { courseId } })
+}
 export function createNode(courseId, req) {
   return http.post('/teacher/graph/nodes', req, { params: { courseId } })
 }

@@ -342,13 +342,23 @@
     <!-- 边类型选择弹窗 -->
     <div
       v-if="edgeTypePopup.visible"
+      data-testid="edge-type-popup"
       :style="contextMenuStyle(edgeTypePopup.x, edgeTypePopup.y)"
       @click.stop
     >
-      <div :style="{ ...ctxMenuItemStyle, fontSize: '11px', color: 'var(--text-mut)', cursor: 'default' }">选择边类型</div>
-      <div :style="ctxMenuItemStyle" @click="confirmEdgeType('前置')">前置</div>
-      <div :style="ctxMenuItemStyle" @click="confirmEdgeType('包含')">包含</div>
-      <div :style="ctxMenuItemStyle" @click="confirmEdgeType('相关')">相关</div>
+      <div :style="{ ...ctxMenuItemStyle, fontSize: '11px', color: 'var(--text-mut)', cursor: 'default' }">
+        选择边类型
+        <template v-if="edgeTypePopup.source && edgeTypePopup.target">
+          · {{ edgeTypePopup.source }} → {{ edgeTypePopup.target }}
+        </template>
+      </div>
+      <div v-if="edgeError" data-testid="edge-error" :style="{ ...ctxMenuItemStyle, color: 'var(--accent)', cursor: 'default', whiteSpace: 'normal', maxWidth: '240px' }">
+        {{ edgeError }}
+      </div>
+      <div :style="edgeTypeItemStyle" data-testid="edge-type-prereq" @click="confirmEdgeType('前置')">前置</div>
+      <div :style="edgeTypeItemStyle" data-testid="edge-type-contains" @click="confirmEdgeType('包含')">包含</div>
+      <div :style="edgeTypeItemStyle" data-testid="edge-type-related" @click="confirmEdgeType('相关')">相关</div>
+      <div v-if="edgeSaving" :style="{ ...ctxMenuItemStyle, color: 'var(--text-mut)', cursor: 'default' }">保存中…</div>
     </div>
 
     <!-- 抽取历史弹层 -->
@@ -387,6 +397,7 @@ import {
   fetchPendingEdges,
   acceptEdge,
   rejectEdge,
+  createEdge,
   createNode,
   updateNode,
   deleteNode,
@@ -497,7 +508,18 @@ const processed = ref(0)
 // ── 连线模式 ──
 const linkMode = ref(false)
 const linkSource = ref(null) // { nodeCode, name }
-const edgeTypePopup = ref({ visible: false, x: 0, y: 0 })
+const edgeTypePopup = ref({ visible: false, x: 0, y: 0, source: null, target: null })
+const edgeSaving = ref(false)
+const edgeError = ref(null)
+
+/** 中文关系标签 → 数据库编码 1..4 */
+const RELATION_TYPE_CODE = { '前置': 1, '包含': 2, '相关': 3, '应用': 4 }
+
+const edgeTypeItemStyle = computed(() => ({
+  ...ctxMenuItemStyle,
+  opacity: edgeSaving.value ? 0.5 : 1,
+  pointerEvents: edgeSaving.value ? 'none' : 'auto'
+}))
 
 // ── 右键菜单 ──
 const contextMenu = ref({ visible: false, x: 0, y: 0, node: null })
@@ -899,7 +921,9 @@ function toggleLinkMode() {
 function exitLinkMode() {
   linkMode.value = false
   linkSource.value = null
-  edgeTypePopup.value = { visible: false, x: 0, y: 0 }
+  edgeTypePopup.value = { visible: false, x: 0, y: 0, source: null, target: null }
+  edgeError.value = null
+  edgeSaving.value = false
   highlightLinkSource() // 清除高亮
 }
 
@@ -937,13 +961,42 @@ function selectLinkNode(rawNode) {
   }
 }
 
-function confirmEdgeType(type) {
+async function confirmEdgeType(type) {
+  if (edgeSaving.value) return
   const src = edgeTypePopup.value.source
   const tgt = edgeTypePopup.value.target
-  edgeTypePopup.value = { visible: false, x: 0, y: 0 }
-  // TODO: POST /api/teacher/graph/edges
-  alert(`连线功能待后端接口支持\n${src} → [${type}] → ${tgt}`)
-  exitLinkMode()
+  if (!src || !tgt || !currentCourse.value) return
+
+  const relationType = RELATION_TYPE_CODE[type]
+  if (!relationType) {
+    edgeError.value = '未知关系类型: ' + type
+    return
+  }
+
+  edgeError.value = null
+  edgeSaving.value = true
+  try {
+    await createEdge(currentCourse.value.id, {
+      sourceNodeCode: src,
+      targetNodeCode: tgt,
+      relationType
+    })
+    edgeTypePopup.value = { visible: false, x: 0, y: 0, source: null, target: null }
+    exitLinkMode()
+    await reload()
+  } catch (e) {
+    // 409 等失败：保留端点与弹窗，内联展示错误
+    edgeError.value = e?.message || '创建边失败'
+    edgeTypePopup.value = {
+      visible: true,
+      x: edgeTypePopup.value.x || 200,
+      y: edgeTypePopup.value.y || 200,
+      source: src,
+      target: tgt
+    }
+  } finally {
+    edgeSaving.value = false
+  }
 }
 
 // ── 右键菜单 ──
@@ -972,13 +1025,20 @@ function ctxDelete() {
 // ── 键盘事件 ──
 function closeMenus() {
   if (contextMenu.value.visible) contextMenu.value = { visible: false, x: 0, y: 0, node: null }
-  if (edgeTypePopup.value.visible) edgeTypePopup.value = { visible: false, x: 0, y: 0 }
+  if (edgeTypePopup.value.visible && !edgeSaving.value) {
+    edgeTypePopup.value = { visible: false, x: 0, y: 0, source: null, target: null }
+    edgeError.value = null
+  }
 }
 
 function handleKeydown(e) {
   if (e.key === 'Escape') {
     if (openMenu.value) { openMenu.value = null; return }
-    if (edgeTypePopup.value.visible) { edgeTypePopup.value = { visible: false, x: 0, y: 0 }; return }
+    if (edgeTypePopup.value.visible && !edgeSaving.value) {
+      edgeTypePopup.value = { visible: false, x: 0, y: 0, source: null, target: null }
+      edgeError.value = null
+      return
+    }
     if (contextMenu.value.visible) { contextMenu.value = { visible: false, x: 0, y: 0, node: null }; return }
     if (linkMode.value) { exitLinkMode(); return }
   }
@@ -1146,13 +1206,36 @@ onMounted(async () => {
   document.addEventListener('click', closeMenus, true)
   document.addEventListener('click', closeDropdowns)
 
-  if (import.meta.env.DEV) {
+  if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
     window.__wjTeacherGraph = {
       reload,
       accept: acceptEdge,
       reject: rejectEdge,
+      createEdge: confirmEdgeType,
+      confirmEdgeType,
+      exitLinkMode,
       openImport: () => { showImportModal.value = true },
-      state: () => ({ pending: pending.value, edges: graph.value?.edges }),
+      state: () => ({
+        pending: pending.value,
+        edges: graph.value?.edges,
+        linkMode: linkMode.value,
+        linkSource: linkSource.value,
+        edgeTypePopup: edgeTypePopup.value,
+        edgeSaving: edgeSaving.value,
+        edgeError: edgeError.value
+      }),
+      setLinkEndpoints: (source, target) => {
+        linkMode.value = true
+        linkSource.value = source ? { nodeCode: source, name: source } : null
+        edgeTypePopup.value = {
+          visible: true,
+          x: 200,
+          y: 200,
+          source: source || null,
+          target: target || null
+        }
+        edgeError.value = null
+      },
       openPreview: () => { openPreview() },
       switchCourse,
       addCourse: () => { showCourseForm.value = true },

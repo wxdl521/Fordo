@@ -1,6 +1,7 @@
 package com.wenjin.controller;
 
 import com.wenjin.common.Result;
+import com.wenjin.dto.EdgeCreateRequest;
 import com.wenjin.dto.NodeUpsertRequest;
 import com.wenjin.dto.PendingEdgeVO;
 import com.wenjin.dto.TeacherGraphVO;
@@ -40,6 +41,16 @@ public class TeacherGraphController {
     @GetMapping("/pending-edges")
     public Result<List<PendingEdgeVO>> pendingEdges(@RequestParam @Positive Long courseId) {
         return Result.ok(teacherGraphService.pendingEdges(courseId));
+    }
+
+    /**
+     * 创建边（归属 + 自环/重复/前置环路校验）
+     */
+    @PostMapping("/edges")
+    public Result<Long> createEdge(@RequestParam @Positive Long courseId,
+                                   @Valid @RequestBody EdgeCreateRequest req) {
+        Long edgeId = teacherGraphService.createEdge(courseId, req);
+        return Result.ok(edgeId);
     }
 
     /**

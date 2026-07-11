@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.FeatureFlagsProperties;
+import com.wenjin.dto.EdgeCreateRequest;
 import com.wenjin.dto.NodeUpsertRequest;
 import com.wenjin.dto.PendingEdgeVO;
 import com.wenjin.dto.TeacherGraphVO;
@@ -14,12 +15,17 @@ import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.TeacherGraphService;
+import com.wenjin.support.PrerequisiteCycleDetector;
 import com.wenjin.support.RelationType;
 import com.wenjin.support.ReviewMarker;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.SQLException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -160,6 +166,148 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         // 软归档，不硬删
         edge.setArchivedAt(LocalDateTime.now());
         edgeMapper.updateById(edge);
+    }
+
+    @Override
+    @Transactional
+    public Long createEdge(Long courseId, EdgeCreateRequest req) {
+        if (courseId == null || courseId <= 0) {
+            throw new IllegalArgumentException("courseId 无效: " + courseId);
+        }
+        // 归属校验优先：异课程管理权 → 404
+        courseAccessService.assertManageCourse(courseId);
+        if (req == null) {
+            throw new IllegalArgumentException("请求参数不能为空");
+        }
+
+        String sourceCode = req.getSourceNodeCode() == null ? null : req.getSourceNodeCode().trim();
+        String targetCode = req.getTargetNodeCode() == null ? null : req.getTargetNodeCode().trim();
+        if (sourceCode == null || sourceCode.isEmpty()) {
+            throw new IllegalArgumentException("起点节点编码不能为空");
+        }
+        if (targetCode == null || targetCode.isEmpty()) {
+            throw new IllegalArgumentException("终点节点编码不能为空");
+        }
+
+        Integer relationType = req.getRelationType();
+        if (relationType == null || relationType < 1 || relationType > 4) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "relationType 须在 1-4 之间");
+        }
+
+        // 自环
+        if (sourceCode.equals(targetCode)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "不允许自环边: " + sourceCode);
+        }
+
+        KgNode source = resolveActiveNode(courseId, sourceCode);
+        KgNode target = resolveActiveNode(courseId, targetCode);
+        if (source == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "起点节点不存在: nodeCode=" + sourceCode);
+        }
+        if (target == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "终点节点不存在: nodeCode=" + targetCode);
+        }
+
+        // 生效边重复（与 uk_edge 业务键一致）
+        Long existing = edgeMapper.selectCount(
+                new LambdaQueryWrapper<KgEdge>()
+                        .eq(KgEdge::getCourseId, courseId)
+                        .eq(KgEdge::getFromNodeId, source.getId())
+                        .eq(KgEdge::getToNodeId, target.getId())
+                        .eq(KgEdge::getRelationType, relationType)
+                        .isNull(KgEdge::getArchivedAt));
+        if (existing != null && existing > 0) {
+            throw new BusinessException(ResultCode.CONFLICT,
+                    "边已存在: " + sourceCode + " → " + targetCode + "（type=" + relationType + "）");
+        }
+
+        // 前置环路：既有前置边 + 拟新增
+        if (relationType == RelationType.PREREQUISITE.getCode()) {
+            Map<String, List<String>> adj = buildPrerequisiteAdj(courseId);
+            List<String> cycle = PrerequisiteCycleDetector.detectIfAdd(adj, sourceCode, targetCode);
+            if (cycle != null) {
+                throw new BusinessException(ResultCode.CONFLICT,
+                        "「前置」关系存在环路：" + String.join(" → ", cycle));
+            }
+        }
+
+        KgEdge edge = new KgEdge();
+        edge.setCourseId(courseId);
+        edge.setFromNodeId(source.getId());
+        edge.setToNodeId(target.getId());
+        edge.setRelationType(relationType);
+        edge.setRelationNote(req.getRelationNote());
+        try {
+            edgeMapper.insert(edge);
+        } catch (DuplicateKeyException ex) {
+            throw new BusinessException(ResultCode.CONFLICT, "边已存在（唯一约束冲突）");
+        } catch (DataIntegrityViolationException ex) {
+            if (isDuplicateKey(ex)) {
+                throw new BusinessException(ResultCode.CONFLICT, "边已存在（唯一约束冲突）");
+            }
+            throw ex;
+        }
+        return edge.getId();
+    }
+
+    /** 按 (courseId, nodeCode, archived_at IS NULL) 解析生效节点。 */
+    private KgNode resolveActiveNode(Long courseId, String nodeCode) {
+        List<KgNode> hits = nodeMapper.selectList(
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .eq(KgNode::getNodeCode, nodeCode)
+                        .isNull(KgNode::getArchivedAt));
+        return hits.isEmpty() ? null : hits.get(0);
+    }
+
+    /** 构建本课程生效「前置」边邻接表（nodeCode → targets）。 */
+    private Map<String, List<String>> buildPrerequisiteAdj(Long courseId) {
+        List<KgNode> nodes = nodeMapper.selectList(
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt));
+        Map<Long, String> idToCode = new HashMap<>();
+        for (KgNode n : nodes) {
+            idToCode.put(n.getId(), n.getNodeCode());
+        }
+
+        List<KgEdge> prereqs = edgeMapper.selectList(
+                new LambdaQueryWrapper<KgEdge>()
+                        .eq(KgEdge::getCourseId, courseId)
+                        .eq(KgEdge::getRelationType, RelationType.PREREQUISITE.getCode())
+                        .isNull(KgEdge::getArchivedAt));
+
+        Map<String, List<String>> adj = new HashMap<>();
+        for (KgEdge e : prereqs) {
+            String src = idToCode.get(e.getFromNodeId());
+            String tgt = idToCode.get(e.getToNodeId());
+            if (src == null || tgt == null) {
+                continue;
+            }
+            adj.computeIfAbsent(src, k -> new ArrayList<>()).add(tgt);
+        }
+        return adj;
+    }
+
+    private static boolean isDuplicateKey(Throwable ex) {
+        Throwable t = ex;
+        while (t != null) {
+            if (t instanceof DuplicateKeyException) {
+                return true;
+            }
+            if (t instanceof SQLException sql && sql.getErrorCode() == 1062) {
+                return true;
+            }
+            String msg = t.getMessage();
+            if (msg != null) {
+                String lower = msg.toLowerCase();
+                if (lower.contains("duplicate") || lower.contains("uk_edge") || lower.contains("unique")) {
+                    return true;
+                }
+            }
+            t = t.getCause();
+        }
+        return false;
     }
 
     @Override

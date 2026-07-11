@@ -1,5 +1,6 @@
 package com.wenjin.service;
 
+import com.wenjin.dto.EdgeCreateRequest;
 import com.wenjin.dto.NodeUpsertRequest;
 import com.wenjin.dto.PendingEdgeVO;
 import com.wenjin.dto.TeacherGraphVO;
@@ -30,6 +31,12 @@ public interface TeacherGraphService {
      * 驳回边（删除）
      */
     void rejectEdge(Long edgeId);
+
+    /**
+     * 创建边（归属校验 + 自环/重复/前置环路校验）
+     * @return 新边 ID
+     */
+    Long createEdge(Long courseId, EdgeCreateRequest req);
 
     /**
      * 创建节点
