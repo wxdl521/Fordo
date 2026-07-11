@@ -340,3 +340,24 @@ CREATE TABLE `extraction_review` (
     PRIMARY KEY (`id`),
     KEY `idx_course_time` (`course_code`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='课程标准抽取审核指标记录';
+
+DROP TABLE IF EXISTS `ai_job`;
+CREATE TABLE `ai_job` (
+    `id`           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '作业ID',
+    `kind`         VARCHAR(32)  NOT NULL                COMMENT '作业类型',
+    `owner_id`     BIGINT       NOT NULL                COMMENT '发起教师（逻辑外键→sys_user.id）',
+    `course_id`    BIGINT       NOT NULL                COMMENT '所属课程（逻辑外键→course.id）',
+    `request_key`  VARCHAR(64)  NOT NULL                COMMENT '幂等键（Idempotency-Key）',
+    `status`       TINYINT      NOT NULL DEFAULT 0      COMMENT '0=PENDING,1=RUNNING,2=SUCCEEDED,3=FAILED,4=CANCELLED',
+    `progress`     INT          NOT NULL DEFAULT 0      COMMENT '进度 0–100',
+    `attempts`     INT          NOT NULL DEFAULT 0      COMMENT '领取次数',
+    `request_json` MEDIUMTEXT   NOT NULL                COMMENT '请求载荷 JSON',
+    `result_json`  MEDIUMTEXT   NULL                    COMMENT '成功结果 JSON',
+    `error_code`   VARCHAR(64)  NULL                    COMMENT '稳定错误码（不落敏感明细）',
+    `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `started_at`   DATETIME     NULL                    COMMENT '最近一次开始执行时间',
+    `finished_at`  DATETIME     NULL                    COMMENT '结束时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_ai_job_request` (`owner_id`, `kind`, `request_key`),
+    KEY `idx_ai_job_claim` (`status`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 异步写作业（可恢复）';

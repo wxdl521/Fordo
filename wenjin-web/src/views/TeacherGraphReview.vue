@@ -60,7 +60,9 @@
         <!-- 隐藏文件输入：常驻于工具栏，菜单关闭后仍可被 menuAction('syllabus') 触发 -->
         <input ref="syllabusInput" type="file" accept="image/png,image/jpeg,image/webp,image/bmp,.pdf,.docx"
                style="display:none" @change="handleSyllabusImage" />
-        <span v-if="syllabusBusy" :style="{ fontSize: '13px', color: 'var(--text-mut)' }">识别中…</span>
+        <span v-if="syllabusBusy || extractJobLoading" :style="{ fontSize: '13px', color: 'var(--text-mut)' }">
+          识别中… {{ extractJobProgress || 0 }}%
+        </span>
         <span v-if="syllabusError" :style="{ fontSize: '13px', color: 'var(--accent)' }">{{ syllabusError }}</span>
       </div>
     </div>
@@ -395,9 +397,49 @@ import {
 } from '../api/teacher.js'
 import { renderGraphSvg } from '../utils/graphSvgRenderer.js'
 import { importGraphJson, importGraphExcel, extractGraphFromFile, fetchExtractionReviews } from '../api/admin.js'
+import { useJob } from '../composables/useJob.js'
+import { isJobSucceeded } from '../api/jobs.js'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
+
+const {
+  loading: extractJobLoading,
+  progress: extractJobProgress,
+  start: startExtractJob
+} = useJob({
+  onSuccess: (j) => {
+    const draftId = j?.result?.draftId
+    const courseCode = currentCourse.value?.code
+    if (draftId) {
+      router.push({ path: '/teacher/graph-extract-review', query: { draftId, courseCode } })
+    } else {
+      syllabusError.value = '抽取完成但未返回草稿 ID'
+    }
+    syllabusBusy.value = false
+  },
+  onError: (e) => {
+    syllabusError.value = e?.message || '识别失败'
+    syllabusBusy.value = false
+  }
+})
+
+const {
+  loading: importExcelJobLoading,
+  progress: importExcelJobProgress,
+  start: startImportExcelJob
+} = useJob({
+  onSuccess: (j) => {
+    importResult.value = j?.result || {}
+    importProgress.value = 100
+    importUploading.value = false
+    reload()
+  },
+  onError: (e) => {
+    importError.value = e?.message || '导入失败，请检查文件格式和内容'
+    importUploading.value = false
+  }
+})
 
 // ── 多课程切换 ──
 const LS_KEY = 'wj.teacher.currentCourseId'
@@ -469,6 +511,15 @@ const fileInput = ref(null)
 // ── 课程标准图片抽取状态 ──
 const syllabusBusy = ref(false)
 const syllabusError = ref('')
+
+/** Idempotency-Key 后端上限 64 */
+function clipIdemKey(k) {
+  const s = String(k)
+  if (s.length <= 64) return s
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
+  return s.slice(0, 40) + Math.abs(h).toString(16)
+}
 
 // ── 抽取历史 ──
 const showHistory = ref(false)
@@ -976,22 +1027,24 @@ function downloadPreview() {
   URL.revokeObjectURL(url)
 }
 
-// ── 课程标准图片抽取 ──
+// ── 课程标准图片抽取（异步 job）──
 async function handleSyllabusImage(event) {
   const file = event.target.files && event.target.files[0]
   event.target.value = ''
   if (!file) return
   const courseCode = currentCourse.value?.code
   if (!courseCode) { alert('请先选择或新增课程'); return }
-  if (syllabusBusy.value) return
+  if (syllabusBusy.value || extractJobLoading.value) return
   syllabusError.value = ''
   syllabusBusy.value = true
+  const key = clipIdemKey(`gex:${courseCode}:${file.name}:${file.size}:${file.lastModified}`)
   try {
-    const { draftId } = await extractGraphFromFile(courseCode, file)
-    router.push({ path: '/teacher/graph-extract-review', query: { draftId, courseCode } })
+    await startExtractJob(
+      (headers) => extractGraphFromFile(courseCode, file, { headers }),
+      { requestKey: key, courseId: currentCourse.value?.id }
+    )
   } catch (e) {
     syllabusError.value = e.message || '识别失败'
-  } finally {
     syllabusBusy.value = false
   }
 }
@@ -1041,24 +1094,35 @@ async function doImport(file) {
   importError.value = null
 
   try {
-    let res
     if (isJson) {
       const text = await file.text()
       const data = JSON.parse(text)
       importProgress.value = 50
-      res = await importGraphJson(courseCode, data)
+      const res = await importGraphJson(courseCode, data)
+      importProgress.value = 100
+      importResult.value = res || {}
+      await reload()
+      importUploading.value = false
     } else {
-      res = await importGraphExcel(courseCode, file, (e) => {
-        if (e.total) importProgress.value = Math.round((e.loaded / e.total) * 100)
-      })
+      const key = clipIdemKey(`gie:${courseCode}:${file.name}:${file.size}:${file.lastModified}`)
+      await startImportExcelJob(
+        (headers) =>
+          importGraphExcel(courseCode, file, {
+            headers,
+            onUploadProgress: (e) => {
+              if (e.total) importProgress.value = Math.min(40, Math.round((e.loaded / e.total) * 40))
+            }
+          }),
+        { requestKey: key, courseId: currentCourse.value?.id }
+      )
+      // 轮询中进度由 job 驱动；上传完成先显示 40+
+      if (importExcelJobProgress.value > 0) {
+        importProgress.value = Math.max(importProgress.value, importExcelJobProgress.value)
+      }
     }
-    importProgress.value = 100
-    importResult.value = res || {}
-    await reload()
   } catch (e) {
     console.error('导入失败', e)
     importError.value = e.message || '导入失败，请检查文件格式和内容'
-  } finally {
     importUploading.value = false
   }
 }

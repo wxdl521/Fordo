@@ -7,6 +7,7 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * 问津后端服务启动类（第一阶段：图谱导入 / 查询）。
@@ -14,6 +15,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 @SpringBootApplication
 @MapperScan("com.wenjin.mapper")
 @EnableConfigurationProperties({AiProperties.class, CompanionToolProperties.class, FeatureFlagsProperties.class})
+@EnableScheduling
 public class WenjinServerApplication {
 
     public static void main(String[] args) {

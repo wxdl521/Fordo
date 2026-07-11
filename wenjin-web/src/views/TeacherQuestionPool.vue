@@ -56,7 +56,7 @@
           </select>
           <input v-model.number="genCount" type="number" min="1" max="20" :disabled="batchLoading" :style="numInputStyle" />
           <button @click="handleGenerate" :disabled="genLoading || batchLoading || !genNodeCode || !courseId" :style="toolBtnStyle">
-            {{ genLoading ? '生成中…' : '生成' }}
+            {{ genLoading ? `生成中… ${genProgress || 0}%` : '生成' }}
           </button>
         </div>
         <div v-if="genResult" :style="toolResultStyle">
@@ -117,8 +117,8 @@
             <span v-else>{{ importFile.name }}</span>
           </div>
           <input ref="importInput" type="file" accept=".json,.xlsx,.xls" @change="handleImportSelect" :style="{ display: 'none' }" />
-          <button @click="handleImportFile" :disabled="importLoading || !importFile" :style="toolBtnStyle">
-            {{ importLoading ? '导入中…' : '导入' }}
+          <button @click="handleImportFile" :disabled="importJobLoading || importLoading || !importFile" :style="toolBtnStyle">
+            {{ (importJobLoading || importLoading) ? `导入中… ${importJobProgress || 0}%` : '导入' }}
           </button>
         </div>
         <div v-if="importResult" :style="toolResultStyle">
@@ -134,7 +134,7 @@
         <textarea v-model="annotateJson" :style="textareaStyle" rows="6" spellcheck="false" placeholder="粘贴 AnnotateRequest JSON: { items: [{ stem, options }] }"></textarea>
         <div :style="toolRowStyle">
           <button @click="handleAnnotate" :disabled="annotateLoading" :style="toolBtnStyle">
-            {{ annotateLoading ? '标注中…' : '标注' }}
+            {{ annotateLoading ? `标注中… ${annotateProgress || 0}%` : '标注' }}
           </button>
           <span v-if="annotateResult" :style="toolResultStyle">
             标注 <strong>{{ annotateResult.length }}</strong> 题，落库 <strong>{{ annotateResult.filter(r => r.persisted).length }}</strong> 题
@@ -225,9 +225,64 @@ import { ref, computed, watch } from 'vue'
 import { fetchQuestions, reviewQuestions, fetchTeacherGraph, reviewAllQuestions } from '../api/teacher.js'
 import { generateQuestions, annotateQuestions, importQuestionJson, importQuestionExcel } from '../api/admin.js'
 import { useTeacherCourse } from '../composables/useTeacherCourse.js'
+import { useJob } from '../composables/useJob.js'
+import { isJobSucceeded } from '../api/jobs.js'
 
 const { currentCourse, courseId } = useTeacherCourse()
 const optionKeys = ['A', 'B', 'C', 'D']
+
+/** 单节点 AI 出题作业 */
+const {
+  loading: genLoading,
+  progress: genProgress,
+  start: startGenJob
+} = useJob({
+  courseId,
+  onSuccess: (j) => {
+    genResult.value = j?.result || null
+    genError.value = ''
+    load()
+  },
+  onError: (e) => {
+    genError.value = e?.message || '出题失败'
+  }
+})
+
+/** 标注作业 */
+const {
+  loading: annotateLoading,
+  progress: annotateProgress,
+  start: startAnnotateJob
+} = useJob({
+  courseId,
+  onSuccess: (j) => {
+    annotateResult.value = j?.result || []
+    annotateError.value = ''
+    load()
+  },
+  onError: (e) => {
+    annotateError.value = e?.message || '标注失败'
+  }
+})
+
+/** Excel 导入作业 */
+const {
+  loading: importJobLoading,
+  progress: importJobProgress,
+  start: startImportJob
+} = useJob({
+  courseId,
+  onSuccess: (j) => {
+    importResult.value = j?.result || null
+    importError.value = ''
+    load()
+  },
+  onError: (e) => {
+    importError.value = e?.message || '导入失败'
+  }
+})
+
+
 
 // ── 状态 ──
 const tab = ref(0) // 0=待审 1=已通过 2=已驳回
@@ -251,7 +306,6 @@ const showTools = ref(false)
 const graphNodes = ref([]) // [{nodeCode, name, chapter}]
 const genNodeCode = ref('')
 const genCount = ref(5)
-const genLoading = ref(false)
 const genError = ref('')
 const genResult = ref(null)
 const batchCountPerNode = ref(3)
@@ -266,7 +320,6 @@ const importResult = ref(null)
 const importFile = ref(null)
 const importDrag = ref(false)
 const annotateJson = ref('{\n  "items": [\n    {\n      "stem": "题目内容",\n      "options": [\n        { "key": "A", "text": "选项A", "correct": true },\n        { "key": "B", "text": "选项B", "correct": false }\n      ]\n    }\n  ]\n}')
-const annotateLoading = ref(false)
 const annotateError = ref('')
 const annotateResult = ref(null)
 const approveAllLoading = ref(false)
@@ -367,7 +420,12 @@ function clampCount(n, fallback = 5) {
   return Math.min(20, Math.max(1, Math.round(v)))
 }
 
-// ── AI 出题（单节点）──
+/** 稳定 requestKey：同课程+节点+数量，便于双击复用 */
+function genRequestKey(node, count) {
+  return clipKey(`qg:${courseId.value}:${node}:${count}`)
+}
+
+// ── AI 出题（单节点，可恢复 job）──
 async function handleGenerate() {
   if (!courseId.value) {
     genError.value = '请先在「图谱审核」页选择或新增课程'
@@ -377,17 +435,46 @@ async function handleGenerate() {
     genError.value = '请先选择知识点'
     return
   }
-  genLoading.value = true
   genError.value = ''
   genResult.value = null
+  const count = clampCount(genCount.value)
+  const node = genNodeCode.value
+  const cid = courseId.value
   try {
-    genResult.value = await generateQuestions(courseId.value, genNodeCode.value, clampCount(genCount.value))
-    await load()
+    await startGenJob(
+      (headers) => generateQuestions(cid, node, count, { headers }),
+      { requestKey: genRequestKey(node, count), courseId: cid }
+    )
   } catch (e) {
     genError.value = e.message || '出题失败'
-  } finally {
-    genLoading.value = false
   }
+}
+
+/**
+ * 等待单个 generate job 终态（批量串行用，不走共享 genJob 避免互相抢 epoch）
+ */
+async function waitGenerateJob(cid, node, count) {
+  const requestKey = genRequestKey(node, count)
+  const created = await generateQuestions(cid, node, count, {
+    headers: { 'Idempotency-Key': requestKey }
+  })
+  if (isJobSucceeded(created)) return created.result || {}
+  if (created.status === 3 || created.status === 4) {
+    throw new Error(created.errorCode || '出题失败')
+  }
+  const { getJob } = await import('../api/jobs.js')
+  const deadline = Date.now() + 30 * 60 * 1000
+  let latest = created
+  while (Date.now() < deadline) {
+    if (batchAbort) throw new Error('已取消')
+    await new Promise((r) => setTimeout(r, 1000))
+    latest = await getJob(created.id)
+    if (isJobSucceeded(latest)) return latest.result || {}
+    if (latest.status === 3 || latest.status === 4) {
+      throw new Error(latest.errorCode || '出题失败')
+    }
+  }
+  throw new Error('出题超时')
 }
 
 // ── AI 出题（全节点批量）──
@@ -411,6 +498,7 @@ async function handleBatchGenerate() {
   batchResult.value = { generated: 0, dropped: 0, duplicated: 0, failed: [], cancelled: false }
   genResult.value = null
   genError.value = ''
+  const cid = courseId.value
 
   for (let i = 0; i < graphNodes.value.length; i++) {
     if (batchAbort) {
@@ -425,11 +513,15 @@ async function handleBatchGenerate() {
       nodeName: node.name
     }
     try {
-      const res = await generateQuestions(courseId.value, node.nodeCode, count)
+      const res = await waitGenerateJob(cid, node.nodeCode, count)
       batchResult.value.generated += res.generated || 0
       batchResult.value.dropped += res.dropped || 0
       batchResult.value.duplicated += res.duplicated || 0
     } catch (e) {
+      if (batchAbort) {
+        batchResult.value.cancelled = true
+        break
+      }
       batchResult.value.failed.push({
         nodeCode: node.nodeCode,
         name: node.name,
@@ -461,27 +553,32 @@ function handleImportDrop(e) {
 
 async function handleImportFile() {
   if (!importFile.value) return
-  importLoading.value = true
   importError.value = ''
   importResult.value = null
+  const isExcel = /\.(xlsx?|xls)$/i.test(importFile.value.name)
   try {
-    const isExcel = /\.(xlsx?|xls)$/i.test(importFile.value.name)
     if (isExcel) {
-      importResult.value = await importQuestionExcel(courseId.value, importFile.value)
+      const file = importFile.value
+      const cid = courseId.value
+      const key = clipKey(`qie:${cid}:${file.name}:${file.size}:${file.lastModified}`)
+      await startImportJob(
+        (headers) => importQuestionExcel(cid, file, { headers }),
+        { requestKey: key, courseId: cid }
+      )
     } else {
+      importLoading.value = true
       importResult.value = await importQuestionJson(courseId.value, importFile.value)
+      await load()
+      importLoading.value = false
     }
-    await load()
   } catch (e) {
     importError.value = e.message || '导入失败'
-  } finally {
     importLoading.value = false
   }
 }
 
 // ── 标注 ──
 async function handleAnnotate() {
-  annotateLoading.value = true
   annotateError.value = ''
   annotateResult.value = null
   let parsed
@@ -489,17 +586,35 @@ async function handleAnnotate() {
     parsed = JSON.parse(annotateJson.value)
   } catch {
     annotateError.value = 'JSON 格式有误'
-    annotateLoading.value = false
     return
   }
+  const cid = courseId.value
+  // 以内容哈希片段作 key 防双击
+  let keyBody = annotateJson.value
   try {
-    annotateResult.value = await annotateQuestions(courseId.value, parsed)
-    await load()
+    keyBody = JSON.stringify(parsed)
+  } catch { /* keep raw */ }
+  const key = clipKey(`qa:${cid}:${simpleHash(keyBody)}`)
+  try {
+    await startAnnotateJob(
+      (headers) => annotateQuestions(cid, parsed, { headers }),
+      { requestKey: key, courseId: cid }
+    )
   } catch (e) {
     annotateError.value = e.message || '标注失败'
-  } finally {
-    annotateLoading.value = false
   }
+}
+
+function simpleHash(s) {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
+  return Math.abs(h).toString(16)
+}
+
+/** Idempotency-Key 后端上限 64 */
+function clipKey(k) {
+  const s = String(k)
+  return s.length <= 64 ? s : s.slice(0, 40) + simpleHash(s)
 }
 
 // ── 操作 ──

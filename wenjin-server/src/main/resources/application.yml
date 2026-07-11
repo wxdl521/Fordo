@@ -72,6 +72,9 @@ wenjin:
     fixed-diagnostic-enabled: true
     graph-reconcile-enabled: true
     ai-job-dispatch-enabled: true
+  jobs:                                          # AI 异步作业 worker
+    poll-interval-ms: 2000                       # 领取轮询间隔
+    payload-dir: ${WENJIN_JOB_PAYLOAD_DIR:./data/ai-job-payloads}
   diagnostic:                                    # 入口诊断组卷（T6）
     paper-size: 25                               # 诊断试卷目标题数（分层抽样上限）
     adaptive:                                     # 图引导自适应诊断（M2）
