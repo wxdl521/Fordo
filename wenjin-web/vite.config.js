@@ -2,20 +2,9 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 // 前端开发服务器：端口 5173，/api 请求代理到后端 8080
+// 单元测试配置见 vitest.config.js
 export default defineConfig({
   plugins: [vue()],
-  test: {
-    environment: 'happy-dom',
-    globals: false,
-    // e2e scripts are Playwright/browser runners, not Vitest suites
-    exclude: [
-      '**/node_modules/**',
-      '**/dist/**',
-      '**/e2e/**',
-      // plain node assert scripts (run via `node --test`)
-      '**/test/*.test.mjs'
-    ]
-  },
   server: {
     port: 5173,
     proxy: {

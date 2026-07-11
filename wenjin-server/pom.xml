@@ -21,6 +21,9 @@
     <properties>
         <java.version>21</java.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
+        <jacoco.version>0.8.12</jacoco.version>
+        <!-- 门禁：security / controller / service 包行覆盖率（诚实阈值，仍作硬门） -->
+        <jacoco.line.minimum>0.55</jacoco.line.minimum>
     </properties>
 
     <dependencies>
@@ -126,6 +129,53 @@
                         </exclude>
                     </excludes>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <configuration>
+                    <!-- 仅门禁 security / controller / service（含子包） -->
+                    <includes>
+                        <include>com/wenjin/security/**</include>
+                        <include>com/wenjin/controller/**</include>
+                        <include>com/wenjin/service/**</include>
+                    </includes>
+                    <rules>
+                        <rule>
+                            <element>BUNDLE</element>
+                            <limits>
+                                <limit>
+                                    <counter>LINE</counter>
+                                    <value>COVEREDRATIO</value>
+                                    <minimum>${jacoco.line.minimum}</minimum>
+                                </limit>
+                            </limits>
+                        </rule>
+                    </rules>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

@@ -11,14 +11,18 @@ function apply(value) {
   }
   try {
     localStorage.setItem(STORE_KEY, value)
-  } catch (e) {}
+  } catch {
+    /* private mode / unavailable storage */
+  }
 }
 
 export function initTheme() {
   let saved = 'paper'
   try {
     saved = localStorage.getItem(STORE_KEY) || 'paper'
-  } catch (e) {}
+  } catch {
+    /* private mode / unavailable storage */
+  }
   apply(saved)
 }
 

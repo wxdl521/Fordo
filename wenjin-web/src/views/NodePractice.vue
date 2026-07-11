@@ -146,7 +146,7 @@
         <div v-if="submitResult && submitResult.graded && submitResult.graded.length" class="np-grades">
           <div class="np-grades-title">逐题详情</div>
           <div
-            v-for="(g, i) in submitResult.graded"
+            v-for="g in submitResult.graded"
             :key="g.questionId"
             class="np-grade-row"
             :class="g.correct === null ? 'short' : (g.correct ? 'correct' : 'wrong')"

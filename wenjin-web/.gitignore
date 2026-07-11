@@ -1,5 +1,8 @@
 node_modules/
 dist/
+coverage/
+playwright-report/
+test-results/
 .ssr-check.cjs
 .e2e-check.cjs
 .e2e-zoom.cjs

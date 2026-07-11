@@ -1,29 +1,22 @@
+import { test, expect } from '@playwright/test'
+import AxeBuilder from '@axe-core/playwright'
+
 /**
- * Accessibility smoke (Playwright script).
- * Not collected by Vitest (e2e/ excluded). Run with:
- *   WJ_E2E=1 node e2e/accessibility.spec.js
- * Requires a running frontend (default http://127.0.0.1:5173).
+ * Accessibility smoke against the preview server (see playwright.config.js webServer).
  */
-import { chromium } from 'playwright'
-
-const BASE = process.env.WJ_BASE_URL || 'http://127.0.0.1:5173'
-
-async function main() {
-  if (!process.env.WJ_E2E) {
-    console.log('[accessibility] skipped (set WJ_E2E=1 to run against a live app)')
-    return
-  }
-
-  const browser = await chromium.launch()
-  const page = await browser.newPage()
-  try {
-    await page.goto(BASE + '/', { waitUntil: 'domcontentloaded', timeout: 15000 })
+test.describe('accessibility smoke', () => {
+  test('login shell has focus-visible and reduced-motion styles', async ({ page }) => {
+    await page.goto('/', { waitUntil: 'domcontentloaded' })
     const cssOk = await page.evaluate(() => {
       let focusVisible = false
       let reduced = false
       for (const sheet of document.styleSheets) {
         let rules
-        try { rules = [...sheet.cssRules] } catch { continue }
+        try {
+          rules = [...sheet.cssRules]
+        } catch {
+          continue
+        }
         for (const r of rules) {
           const t = r.cssText || ''
           if (t.includes(':focus-visible')) focusVisible = true
@@ -32,19 +25,25 @@ async function main() {
       }
       return focusVisible && reduced
     })
-    if (!cssOk) throw new Error('tokens.css focus-visible / prefers-reduced-motion not found')
+    expect(cssOk).toBe(true)
+  })
 
-    await page.goto(BASE + '/mobile', { waitUntil: 'domcontentloaded', timeout: 15000 })
+  test('login page has no critical axe violations (excl. known contrast tokens)', async ({ page }) => {
+    await page.goto('/', { waitUntil: 'networkidle' })
+    // Let page-fade enter animation settle so axe does not sample mid-transition
+    await page.waitForTimeout(400)
+    const results = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa'])
+      // Paper theme --mut tokens are intentionally soft; tracked separately from CI gate
+      .disableRules(['color-contrast'])
+      .analyze()
+    const critical = results.violations.filter((v) => v.impact === 'critical')
+    expect(critical, JSON.stringify(critical, null, 2)).toEqual([])
+  })
+
+  test('/mobile does not show the legacy placeholder', async ({ page }) => {
+    await page.goto('/mobile', { waitUntil: 'domcontentloaded' })
     const text = await page.locator('body').innerText()
-    if (text.includes('功能开发中')) throw new Error('/mobile still shows placeholder copy')
-
-    console.log('[accessibility] OK')
-  } finally {
-    await browser.close()
-  }
-}
-
-main().catch((err) => {
-  console.error('[accessibility] FAIL', err)
-  process.exit(1)
+    expect(text.includes('功能开发中')).toBe(false)
+  })
 })
