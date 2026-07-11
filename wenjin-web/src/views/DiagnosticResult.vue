@@ -102,12 +102,6 @@ import { useStudentCourse } from '../composables/useStudentCourse.js'
 
 const { courseId } = useStudentCourse()
 
-// 从 localStorage 读取当前登录用户
-function readUser() {
-  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
-}
-const currentUser = readUser()
-const DEMO_STUDENT_ID = currentUser?.id || 2
 const router = useRouter()
 const data = ref(null)
 const evidence = ref(null)

@@ -89,10 +89,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { fetchGraph } from '../api/graph.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
 
-function readUser() {
-  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
-}
-const DEMO_STUDENT_ID = readUser()?.id || 2
 const { courseId } = useStudentCourse()
 
 const route = useRoute()

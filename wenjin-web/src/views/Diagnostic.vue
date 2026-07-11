@@ -149,13 +149,6 @@ function chooseQuick() {
   router.push({ path: '/diagnostic/adaptive', query: courseQuery.value })
 }
 
-// 从 localStorage 读取当前登录用户
-function readUser() {
-  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
-}
-const currentUser = readUser()
-const DEMO_STUDENT_ID = currentUser?.id || 2
-
 const courseQuery = computed(() => (courseId.value ? { courseId: courseId.value } : {}))
 const mapLink = computed(() => ({ path: '/map', query: courseQuery.value }))
 const resultLink = computed(() => ({ path: '/result', query: courseQuery.value }))

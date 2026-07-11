@@ -400,8 +400,12 @@ import { importGraphJson, importGraphExcel, extractGraphFromFile, fetchExtractio
 import { useJob } from '../composables/useJob.js'
 import { isJobSucceeded } from '../api/jobs.js'
 import { useRouter } from 'vue-router'
+import { useCourseStore } from '../store/course.js'
 
 const router = useRouter()
+const courseStore = useCourseStore()
+if (!courseStore.hydrated) courseStore.hydrate()
+
 
 const {
   loading: extractJobLoading,
@@ -441,12 +445,12 @@ const {
   }
 })
 
-// ── 多课程切换 ──
-const LS_KEY = 'wj.teacher.currentCourseId'
+// ── 多课程切换（teacherCourseId 与各教师页共享 course store）──
 const courses = ref([])
 const currentCourse = ref(null) // { id, code, name }
 const showCourseForm = ref(false)
 const newCourseName = ref('')
+
 
 // ── 工具栏下拉菜单（课程管理 / 图谱操作）──
 const openMenu = ref(null)          // 'course' | 'graph' | null
@@ -590,23 +594,25 @@ function readColors() {
 async function loadCourses(preferId) {
   const list = await fetchTeacherCourses()
   courses.value = Array.isArray(list) ? list : []
+  courseStore.setTeacherCourses(courses.value)
   if (courses.value.length === 0) {
     currentCourse.value = null
+    courseStore.setTeacherCourseId(null)
     graph.value = { nodes: [], edges: [] }
     pending.value = []
     if (chart) chart.clear()
     return
   }
-  const saved = preferId ?? Number(localStorage.getItem(LS_KEY))
+  const saved = preferId ?? courseStore.teacherCourseId
   currentCourse.value = courses.value.find(c => c.id === saved) || courses.value[0]
-  localStorage.setItem(LS_KEY, String(currentCourse.value.id))
+  courseStore.setTeacherCourseId(currentCourse.value.id)
 }
 
 async function switchCourse(id) {
   const c = courses.value.find(x => x.id === Number(id))
   if (!c || (currentCourse.value && c.id === currentCourse.value.id)) return
   currentCourse.value = c
-  localStorage.setItem(LS_KEY, String(c.id))
+  courseStore.setTeacherCourseId(c.id)
   await reload()
 }
 

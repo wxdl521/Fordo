@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
+import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import Login from '../Login.vue'
 import * as userApi from '../../api/user.js'
@@ -27,6 +28,8 @@ vi.mock('../../composables/useTheme.js', () => ({
 }))
 
 async function mountLogin() {
+  const pinia = createPinia()
+  setActivePinia(pinia)
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -41,7 +44,7 @@ async function mountLogin() {
   await router.isReady()
   return mount(Login, {
     global: {
-      plugins: [router]
+      plugins: [pinia, router]
     }
   })
 }
@@ -49,6 +52,7 @@ async function mountLogin() {
 describe('Login registration security', () => {
   beforeEach(() => {
     localStorage.clear()
+    setActivePinia(createPinia())
     vi.clearAllMocks()
     userApi.register.mockResolvedValue({
       id: 10,

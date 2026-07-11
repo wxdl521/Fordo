@@ -188,11 +188,6 @@ const route = useRoute()
 const router = useRouter()
 const { courseId } = useStudentCourse()
 
-function readUser() {
-  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
-}
-const STUDENT_ID = readUser()?.id || 2
-
 // ─── 路由参数 ─────────────────────────────────────────────────────────────────
 const nodeId = computed(() => {
   const v = Number(route.query.nodeId)

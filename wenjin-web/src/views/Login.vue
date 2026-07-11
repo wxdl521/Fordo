@@ -93,9 +93,9 @@
                 <div :style="{ height: '100%', width: masteryPercent(c) + '%', background: 'var(--ok)', borderRadius: '99px' }"></div>
               </div>
               <div :style="{ display: 'flex', alignItems: 'center', gap: '12px' }">
-                <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" :to="{ path: '/map', query: { courseId: c.courseId } }" class="wj-btn-acc" :style="{ height: '40px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', padding: '0 24px', background: 'var(--acc)', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, textDecoration: 'none' }">进入课程</router-link>
-                <router-link v-else :to="{ path: '/diagnostic', query: { courseId: c.courseId } }" class="wj-hover-card2" :style="{ height: '40px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', padding: '0 20px', border: '1px solid var(--line)', borderRadius: '9px', color: 'var(--ink)', fontSize: '13px', textDecoration: 'none' }">开始入口诊断</router-link>
-                <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" :to="{ path: '/growth', query: { courseId: c.courseId } }" class="wj-underline" :style="{ fontSize: '12.5px', color: 'var(--mut)', textDecoration: 'underline', textUnderlineOffset: '3px' }">成长档案</router-link>
+                <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" :to="{ path: '/map', query: { courseId: c.courseId } }" @click="rememberStudentCourse(c.courseId)" class="wj-btn-acc" :style="{ height: '40px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', padding: '0 24px', background: 'var(--acc)', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, textDecoration: 'none' }">进入课程</router-link>
+                <router-link v-else :to="{ path: '/diagnostic', query: { courseId: c.courseId } }" @click="rememberStudentCourse(c.courseId)" class="wj-hover-card2" :style="{ height: '40px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', padding: '0 20px', border: '1px solid var(--line)', borderRadius: '9px', color: 'var(--ink)', fontSize: '13px', textDecoration: 'none' }">开始入口诊断</router-link>
+                <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" :to="{ path: '/growth', query: { courseId: c.courseId } }" @click="rememberStudentCourse(c.courseId)" class="wj-underline" :style="{ fontSize: '12.5px', color: 'var(--mut)', textDecoration: 'underline', textUnderlineOffset: '3px' }">成长档案</router-link>
               </div>
             </div>
           </template>
@@ -140,13 +140,19 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { storeToRefs } from 'pinia'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import { useViewport } from '../composables/useViewport.js'
-import { login as apiLogin, register as apiRegister, me as apiMe } from '../api/user.js'
+import { login as apiLogin, register as apiRegister } from '../api/user.js'
 import { getMyCourses, getAvailableCourses, enroll } from '../api/course.js'
+import { useSessionStore } from '../store/session.js'
+import { useCourseStore } from '../store/course.js'
 
 const serif = "'Noto Serif SC', serif"
 const { width } = useViewport()
+const session = useSessionStore()
+const courseStore = useCourseStore()
+const { user: currentUser } = storeToRefs(session)
 
 const step = ref('login')
 const sid = ref('')
@@ -160,8 +166,6 @@ const regConfirm = ref('')
 const regRealName = ref('')
 const regError = ref('')
 
-// 登录后存储的用户信息
-const currentUser = ref(null)
 const courses = ref([])
 const availableCourses = ref([])
 const courseLoading = ref(false)
@@ -174,10 +178,8 @@ const displayName = computed(() => {
 })
 
 // 是否教师/管理员（role 1 或 3）——决定课程页是否显示「进入教师端」入口
-const isTeacher = computed(() => {
-  const r = currentUser.value && currentUser.value.role
-  return r === 1 || r === 3
-})
+const isTeacher = computed(() => session.isTeacher)
+
 
 function masteryPercent(c) {
   const total = c.masteredCount + c.weakCount + c.unlearnedCount
@@ -217,9 +219,8 @@ async function handleLogin() {
   }
   try {
     const data = await apiLogin({ username: sid.value, password: pwd.value })
-    currentUser.value = data.user
-    localStorage.setItem('wj_token', data.token)
-    localStorage.setItem('wj_user', JSON.stringify(data.user))
+    session.setSession({ token: data.token, user: data.user })
+    session.resetRefreshGate()
     step.value = 'course'
     loadCourses()
   } catch (e) {
@@ -230,9 +231,8 @@ async function handleLogin() {
 function handleDemoLogin() {
   apiLogin({ username: 'demo_student', password: 'demo' })
     .then(data => {
-      currentUser.value = data.user
-      localStorage.setItem('wj_token', data.token)
-      localStorage.setItem('wj_user', JSON.stringify(data.user))
+      session.setSession({ token: data.token, user: data.user })
+      session.resetRefreshGate()
       step.value = 'course'
       loadCourses()
     })
@@ -259,9 +259,8 @@ async function handleRegister() {
     })
     // 注册不发令牌，紧接着用同一凭据登录拿令牌（保持"注册即进入"的体验）
     const data = await apiLogin({ username: regUsername.value, password: regPassword.value })
-    currentUser.value = data.user
-    localStorage.setItem('wj_token', data.token)
-    localStorage.setItem('wj_user', JSON.stringify(data.user))
+    session.setSession({ token: data.token, user: data.user })
+    session.resetRefreshGate()
     step.value = 'course'
     loadCourses()
   } catch (e) {
@@ -270,10 +269,10 @@ async function handleRegister() {
 }
 
 function handleLogout() {
-  currentUser.value = null
+  session.clearSession()
+  session.resetRefreshGate()
   courses.value = []
-  localStorage.removeItem('wj_token')
-  localStorage.removeItem('wj_user')
+  availableCourses.value = []
   sid.value = ''
   pwd.value = ''
   step.value = 'login'
@@ -308,20 +307,18 @@ async function handleEnroll(courseId) {
   }
 }
 
+/** 进入某课前记住 studentCourseId（供地图/诊断等页共享） */
+function rememberStudentCourse(courseId) {
+  courseStore.setStudentCourseId(courseId)
+}
+
 onMounted(async () => {
-  // 有令牌时通过 /api/me 刷新会话；localStorage.wj_user 仅作展示缓存
-  const token = localStorage.getItem('wj_token')
-  if (!token) return
-  try {
-    const user = await apiMe()
-    currentUser.value = user
-    localStorage.setItem('wj_user', JSON.stringify(user))
+  if (!session.hydrated) session.hydrate()
+  if (!session.token) return
+  const user = await session.refreshMe()
+  if (user) {
     step.value = 'course'
     loadCourses()
-  } catch {
-    localStorage.removeItem('wj_token')
-    localStorage.removeItem('wj_user')
-    currentUser.value = null
   }
 })
 </script>

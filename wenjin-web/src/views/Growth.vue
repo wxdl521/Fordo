@@ -14,7 +14,7 @@
     <div v-else class="gr-wrap">
       <!-- 头部 -->
       <div class="gr-header">
-        <div class="gr-meta">学生 #{{ DEMO_STUDENT_ID }} · 自 {{ fmtDate(data.startAt) }} 起</div>
+        <div class="gr-meta">学生 #{{ studentId ?? '—' }} · 自 {{ fmtDate(data.startAt) }} 起</div>
         <h1 class="gr-title">你的地图，正在变绿</h1>
         <div class="gr-stats">
           <div class="gr-stat-card">
@@ -177,15 +177,12 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { fetchGrowth } from '../api/growth.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
+import { useSessionStore } from '../store/session.js'
 
 const { courseId } = useStudentCourse()
-
-// 从 localStorage 读取当前登录用户
-function readUser() {
-  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
-}
-const currentUser = readUser()
-const DEMO_STUDENT_ID = currentUser?.id || 2
+const session = useSessionStore()
+/** 展示用学号；无身份时 null（禁止 || 2） */
+const studentId = computed(() => session.userId)
 // 状态
 const data = ref(null)
 const loading = ref(false)

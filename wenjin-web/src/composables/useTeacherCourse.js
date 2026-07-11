@@ -1,32 +1,58 @@
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
+import { storeToRefs } from 'pinia'
 import { fetchTeacherCourses } from '../api/teacher.js'
+import { useCourseStore } from '../store/course.js'
 
-export const LS_KEY = 'wj.teacher.currentCourseId'
+export { TEACHER_COURSE_KEY as LS_KEY } from '../store/course.js'
 
-/** 教师端多课程：与图谱审核页共用 localStorage 中的当前课程 */
-export function useTeacherCourse() {
-  const courses = ref([])
-  const currentCourse = ref(null)
+/**
+ * 教师端多课程：各教师页共享 course store 中的 teacherCourseId / teacherCourses。
+ * @param {{ autoLoad?: boolean }} [options]
+ */
+export function useTeacherCourse(options = {}) {
+  const { autoLoad = true } = options
+  const courseStore = useCourseStore()
+  if (!courseStore.hydrated) courseStore.hydrate()
 
-  const courseId = computed(() => currentCourse.value?.id ?? null)
+  const { teacherCourses: courses, teacherCourseId } = storeToRefs(courseStore)
+  const currentCourse = computed(() => courseStore.teacherCourse)
+  const courseId = computed(() => courseStore.teacherCourseId)
 
+  /**
+   * @param {unknown} [preferId]
+   */
   async function loadCourses(preferId) {
     try {
       const list = await fetchTeacherCourses()
-      courses.value = Array.isArray(list) ? list : []
+      courseStore.setTeacherCourses(Array.isArray(list) ? list : [])
     } catch {
-      courses.value = []
+      courseStore.setTeacherCourses([])
     }
-    if (courses.value.length === 0) {
-      currentCourse.value = null
-      return
-    }
-    const saved = preferId ?? Number(localStorage.getItem(LS_KEY))
-    currentCourse.value = courses.value.find(c => c.id === saved) || courses.value[0]
-    localStorage.setItem(LS_KEY, String(currentCourse.value.id))
+    return courseStore.selectTeacherCourse(preferId)
   }
 
-  onMounted(() => loadCourses())
+  /**
+   * @param {unknown} id
+   */
+  function selectCourse(id) {
+    const n = Number(id)
+    if (!(n > 0)) return
+    const found = courseStore.teacherCourses.find((c) => c.id === n)
+    if (found) courseStore.setTeacherCourseId(found.id)
+  }
 
-  return { courses, currentCourse, courseId, loadCourses }
+  if (autoLoad) {
+    onMounted(() => {
+      loadCourses()
+    })
+  }
+
+  return {
+    courses,
+    currentCourse,
+    courseId,
+    teacherCourseId,
+    loadCourses,
+    selectCourse
+  }
 }

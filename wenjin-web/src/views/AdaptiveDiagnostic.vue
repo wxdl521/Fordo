@@ -114,13 +114,6 @@ import AdaptiveProbeCard from '../components/AdaptiveProbeCard.vue'
 const { courseId } = useStudentCourse()
 const router = useRouter()
 
-// 当前登录用户（约定同 Diagnostic.vue：localStorage wj_user，缺省 demo=2）
-function readUser() {
-  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
-}
-const currentUser = readUser()
-const DEMO_STUDENT_ID = currentUser?.id || 2
-
 const courseQuery = computed(() => (courseId.value ? { courseId: courseId.value } : {}))
 const mapLink = computed(() => ({ path: '/map', query: courseQuery.value }))
 

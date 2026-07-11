@@ -218,20 +218,14 @@ import {
   normalizeConversationMessage,
   restoreTypedMessagesFromSnapshot
 } from '../utils/companionMessages.js'
+import { useSessionStore } from '../store/session.js'
 
 const route = useRoute()
 const router = useRouter()
 const { courseId } = useStudentCourse()
-
-function readUser() {
-  try {
-    return JSON.parse(localStorage.getItem('wj_user'))
-  } catch {
-    return null
-  }
-}
-
-const STUDENT_ID = readUser()?.id || 2
+const session = useSessionStore()
+/** 本地草稿键用；无身份时用 0（禁止 || 2 演示回落） */
+const studentId = computed(() => session.userId)
 
 const msgs = ref([])
 const input = ref('')
@@ -347,7 +341,7 @@ function lockPractice(message) {
 
 function currentSnapshotKey(targetConversationId = conversationId.value) {
   if (!courseId.value || !targetConversationId) return null
-  return conversationSnapshotKey(STUDENT_ID, courseId.value, targetConversationId)
+  return conversationSnapshotKey(studentId.value ?? 0, courseId.value, targetConversationId)
 }
 
 function readConversationSnapshot(targetConversationId) {

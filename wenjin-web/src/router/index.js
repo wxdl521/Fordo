@@ -1,6 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Login from '../views/Login.vue'
-import { me } from '../api/user.js'
+import { pinia } from '../store/index.js'
+import { useSessionStore } from '../store/session.js'
+import { useCourseStore } from '../store/course.js'
 
 // 重页懒加载，移出落地首包
 const ColorMap = () => import('../views/ColorMap.vue')
@@ -19,7 +21,7 @@ const GraphExtractReview = () => import('../views/GraphExtractReview.vue')
 const NodePractice = () => import('../views/NodePractice.vue')
 
 const routes = [
-  { path: '/', name: 'login', component: Login, meta: { title: '登录 / 课程选择' } },
+  { path: '/', name: 'login', component: Login, meta: { title: '登录 / 课程选择', public: true } },
   { path: '/map', name: 'map', component: ColorMap, meta: { title: '染色地图' } },
   { path: '/diagnostic', name: 'diagnostic', component: Diagnostic, meta: { title: '入口诊断' } },
   { path: '/diagnostic/adaptive', name: 'diagnostic-adaptive', component: AdaptiveDiagnostic, meta: { title: '快速诊断' } },
@@ -44,50 +46,27 @@ export const router = createRouter({
   }
 })
 
-// 当前登录用户缓存（仅展示；权限以服务端 /api/me 与拦截器为准）
-function currentUser() {
-  try {
-    return JSON.parse(localStorage.getItem('wj_user'))
-  } catch {
-    return null
-  }
-}
-
 function canAccessTeacher(user) {
   // 1=教师, 3=管理员（与后端 TeacherAuthInterceptor 一致）
   return user && (user.role === 1 || user.role === 3)
 }
 
-let sessionRefreshPromise = null
-
-/** 启动时用 /api/me 刷新会话；localStorage 只作展示缓存。 */
-function refreshSessionOnce() {
-  if (sessionRefreshPromise) return sessionRefreshPromise
-  sessionRefreshPromise = (async () => {
-    const token = localStorage.getItem('wj_token')
-    if (!token) {
-      localStorage.removeItem('wj_user')
-      return null
-    }
-    try {
-      const user = await me()
-      localStorage.setItem('wj_user', JSON.stringify(user))
-      return user
-    } catch {
-      localStorage.removeItem('wj_token')
-      localStorage.removeItem('wj_user')
-      return null
-    }
-  })()
-  return sessionRefreshPromise
-}
-
-// 路由守卫：启动刷新会话；教师端仅允许教师/管理员进入（服务端仍强制校验）。
+// 路由守卫：启动刷新会话；无身份跳登录；教师端仅允许教师/管理员。
 router.beforeEach(async (to) => {
-  await refreshSessionOnce()
+  const session = useSessionStore(pinia)
+  const course = useCourseStore(pinia)
+  if (!session.hydrated) session.hydrate()
+  if (!course.hydrated) course.hydrate()
+
+  await session.refreshMeOnce()
+
+  const isPublic = to.meta?.public === true || to.path === '/'
+  if (!isPublic && !session.isAuthenticated) {
+    return { path: '/' }
+  }
+
   if (to.path.startsWith('/teacher')) {
-    const user = currentUser()
-    if (!canAccessTeacher(user)) {
+    if (!canAccessTeacher(session.user)) {
       return { path: '/' }
     }
   }

@@ -52,6 +52,13 @@
         <button @click="router.push('/')" class="wj-btn-acc" :style="{ height: '40px', padding: '0 28px', background: 'var(--acc)', border: 'none', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, cursor: 'pointer' }">去登录</button>
       </div>
 
+      <!-- 无课程：空态（禁止回落默认课程 1） -->
+      <div v-else-if="!courseId" :style="{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', color: 'var(--mut)', zIndex: 5 }">
+        <div :style="{ fontFamily: serif, fontSize: '20px', fontWeight: 600, letterSpacing: '2px', color: 'var(--ink)' }">尚未选择课程</div>
+        <div :style="{ fontSize: '13px' }">请先在首页选择一门课程，再查看染色地图</div>
+        <button @click="router.push('/')" class="wj-btn-acc" :style="{ height: '40px', padding: '0 28px', background: 'var(--acc)', border: 'none', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, cursor: 'pointer' }">去选课</button>
+      </div>
+
       <svg v-else-if="layout" width="100%" height="100%" :style="{ position: 'absolute', inset: 0, display: 'block', cursor: isPanning ? 'grabbing' : 'grab', transform: mapIn ? 'scale(1)' : 'scale(0.96)', transformOrigin: '50% 50%', transition: 'transform 1.2s cubic-bezier(0.22,1,0.36,1)', userSelect: 'none' }" @wheel.prevent="onWheel" @pointerdown="onSvgPointerDown" @pointermove="onSvgPointerMove" @pointerup="onSvgPointerUp" @pointercancel="onSvgPointerUp">
 
         <!-- 可变换的内容层 -->
@@ -112,7 +119,7 @@
       </div>
 
       <!-- 加载态 -->
-      <div v-if="currentUser && !layout" :style="{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mut)', fontSize: '13px' }">正在绘制知识图谱……</div>
+      <div v-if="currentUser && courseId && !layout" :style="{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mut)', fontSize: '13px' }">正在绘制知识图谱……</div>
 
       <!-- 今日复习侧边栏 -->
       <div v-if="currentUser && reviewOpen" class="wj-review-drawer">
@@ -241,11 +248,13 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from '../composables/useTheme.js'
 import { useViewport } from '../composables/useViewport.js'
-import { useGraphData, resetGraphData } from '../composables/useGraphData.js'
+import { useGraphData } from '../composables/useGraphData.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
+import { useSessionStore } from '../store/session.js'
 import { computeLayout, shortName, radiusOf } from '../utils/graphLayout.js'
 import { fetchTodayReview } from '../api/review.js'
 import ReviewPanel from '../components/ReviewPanel.vue'
@@ -256,31 +265,14 @@ const { width } = useViewport()
 const route = useRoute()
 const router = useRouter()
 
-// ── 从 localStorage 读取当前登录用户 ──
-function readUser() {
-  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
-}
-const currentUser = ref(readUser())
-const { courseId: studentCourseId } = useStudentCourse()
-const courseId = computed(() => studentCourseId.value || 1)
+const session = useSessionStore()
+const { user: currentUser } = storeToRefs(session)
+// 无课程 → null（禁止 || 1）
+const { courseId } = useStudentCourse()
 
-// 每次进入页面都重新加载（诊断后 mastery 会更新）
-const { data } = useGraphData(courseId.value, true)
+// 实例级图谱加载：courseId 变化时 latestRequest 丢弃迟到响应
+const { data, reload: reloadGraph } = useGraphData(courseId)
 
-// 监听 storage 事件（其他标签页登录/退出时同步）
-if (typeof window !== 'undefined') {
-  window.addEventListener('storage', (e) => {
-    if (e.key === 'wj_user') {
-      const newUser = readUser()
-      if (newUser?.id !== currentUser.value?.id) {
-        currentUser.value = newUser
-        resetGraphData()
-        // 重新加载页面数据
-        window.location.reload()
-      }
-    }
-  })
-}
 
 const CHAPTERS = ['全部章节', '软件工程概述', '需求确定', '软件项目管理', '系统分析', '系统设计', '对象设计', '软件测试', '部署与维护']
 
@@ -791,8 +783,12 @@ const hoverTip = computed(() => {
   }
 })
 
-// ── 今日复习：进入页面 / 换课时刷新 ──
+// ── 课程切换：清空布局，避免旧图残留；再刷复习队列 ──
 watch(courseId, () => {
+  layout.value = null
+  mapIn.value = false
+  selectedId.value = null
+  hoverId.value = null
   if (currentUser.value) loadReview()
 })
 
@@ -801,7 +797,10 @@ onMounted(() => {
   if (route.query.root === '1') rootCause.value = true
   if (currentUser.value) loadReview()
   if (data.value) buildLayout()
-  watch(data, (d) => { if (d) buildLayout() })
+  watch(data, (d) => {
+    if (d) buildLayout()
+    else layout.value = null
+  })
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('keyup', onKeyUp)
 })
@@ -811,12 +810,19 @@ onUnmounted(() => {
 })
 
 function buildLayout() {
+  if (!data.value) {
+    layout.value = null
+    return
+  }
   layout.value = computeLayout(data.value)
   setTimeout(() => {
     mapIn.value = true
     requestAnimationFrame(() => fitAll())
   }, 60)
 }
+
+// 暴露 reload 供诊断返回后强制刷新（可选）
+void reloadGraph
 
 // ── 章节标签 ──
 const chapterLabels = computed(() => {

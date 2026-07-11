@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { getActivePinia } from 'pinia'
 
 // 统一 axios 实例：开发期经 Vite proxy 转发到后端 8080
 const http = axios.create({
@@ -6,8 +7,30 @@ const http = axios.create({
   timeout: 15000
 })
 
-/** 清除登录态并在非登录页时跳转登录。 */
+/**
+ * 清除登录态并在非登录页时跳转登录。
+ * 优先走 session/course store（若 Pinia 已激活），否则仅清 localStorage。
+ */
 export function clearSessionAndRedirect() {
+  const pinia = getActivePinia()
+  if (pinia) {
+    // 动态 import 切断 http ↔ session ↔ user 的静态环
+    import('../store/session.js').then(({ useSessionStore }) => {
+      try {
+        useSessionStore(pinia).clearSession()
+      } catch {
+        localStorage.removeItem('wj_token')
+        localStorage.removeItem('wj_user')
+      }
+    }).catch(() => {
+      localStorage.removeItem('wj_token')
+      localStorage.removeItem('wj_user')
+    })
+  } else {
+    localStorage.removeItem('wj_token')
+    localStorage.removeItem('wj_user')
+  }
+  // 同步清 LS，避免拦截器读到旧 token（store clear 可能异步）
   localStorage.removeItem('wj_token')
   localStorage.removeItem('wj_user')
   if (typeof window !== 'undefined' && window.location.pathname !== '/') {
@@ -51,6 +74,10 @@ export function unwrapSuccess(resp) {
  */
 export function unwrapError(error) {
   if (!error || !error.response) {
+    // axios 取消
+    if (error && (error.code === 'ERR_CANCELED' || error.name === 'CanceledError' || error.name === 'AbortError')) {
+      return Promise.reject(error)
+    }
     const err = new Error((error && error.message) || '网络错误')
     err.network = true
     err.isNetworkError = true
@@ -65,6 +92,9 @@ export function unwrapError(error) {
   )
   err.httpStatus = error.response.status
   err.network = false
+  if (error.response.status === 401) {
+    clearSessionAndRedirect()
+  }
   return Promise.reject(err)
 }
 
