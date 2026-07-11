@@ -9,18 +9,22 @@ const fetchTeacherGraphMock = vi.fn()
 const fetchPendingEdgesMock = vi.fn()
 const fetchTeacherCoursesMock = vi.fn()
 
-vi.mock('echarts', () => {
+vi.mock('../../utils/echartsGraph.js', () => {
   const chart = {
     setOption: vi.fn(),
     on: vi.fn(),
     off: vi.fn(),
     dispose: vi.fn(),
     resize: vi.fn(),
-    convertFromPixel: vi.fn()
+    convertFromPixel: vi.fn(),
+    getOption: vi.fn(() => ({ series: [{ data: [], links: [] }] }))
   }
   return {
-    init: () => chart,
-    dispose: vi.fn()
+    initChart: () => chart,
+    disposeChart: vi.fn(),
+    graphAriaOption: { aria: { show: true } },
+    echarts: { init: () => chart, dispose: vi.fn() },
+    default: { init: () => chart, dispose: vi.fn() }
   }
 })
 

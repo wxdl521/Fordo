@@ -11,21 +11,30 @@
   </div>
 
   <!-- 多选提示 -->
-  <div v-if="isMulti" class="qa-multi-hint">（多选题，请选择所有正确选项）</div>
+  <div v-if="isMulti" class="qa-multi-hint" id="qa-multi-hint">（多选题，请选择所有正确选项）</div>
 
   <!-- 题干 -->
-  <div class="qa-stem">{{ question.q }}</div>
+  <div class="qa-stem" id="qa-stem">{{ question.q }}</div>
 
   <!-- 选项（单选 / 多选 / 判断） -->
-  <div v-if="!isShortAnswer" class="qa-options">
+  <div
+    v-if="!isShortAnswer"
+    class="qa-options"
+    :role="isMulti ? 'group' : 'radiogroup'"
+    :aria-labelledby="isMulti ? 'qa-stem qa-multi-hint' : 'qa-stem'"
+  >
     <div
       v-for="(opt, i) in (question.o || [])"
       :key="i"
       class="qa-opt"
       :class="{ selected: isOptSelected(i) }"
+      :role="isMulti ? 'checkbox' : 'radio'"
+      :aria-checked="isOptSelected(i) ? 'true' : 'false'"
+      :tabindex="optionTabIndex(i)"
       @click="$emit('pick', i)"
+      @keydown="onOptKeydown($event, i)"
     >
-      <span class="qa-opt-letter" :class="{ selected: isOptSelected(i) }">{{ letters[i] }}</span>
+      <span class="qa-opt-letter" :class="{ selected: isOptSelected(i) }" aria-hidden="true">{{ letters[i] }}</span>
       <span class="qa-opt-text">{{ opt }}</span>
     </div>
   </div>
@@ -37,6 +46,7 @@
       :value="textValue"
       placeholder="请写下你的答案…"
       rows="5"
+      :aria-labelledby="'qa-stem'"
       @input="$emit('textInput', $event.target.value)"
     ></textarea>
   </div>
@@ -44,14 +54,17 @@
   <!-- 导航按钮 -->
   <div class="qa-nav">
     <button
+      type="button"
       class="qa-btn-ghost"
       :style="{ visibility: index === 1 ? 'hidden' : 'visible' }"
       @click="$emit('prev')"
     >上一题</button>
-    <button class="qa-btn-skip" @click="$emit('skip')">不确定，跳过</button>
+    <button type="button" class="qa-btn-skip" @click="$emit('skip')">不确定，跳过</button>
     <button
+      type="button"
       class="qa-btn-next"
       :class="{ active: hasSelection }"
+      :aria-disabled="!hasSelection ? 'true' : 'false'"
       @click="$emit('next')"
     >{{ isLast ? lastLabel : '下一题' }}</button>
   </div>
@@ -86,7 +99,7 @@ const props = defineProps({
   showHint: { type: Boolean, default: true }
 })
 
-defineEmits(['pick', 'textInput', 'prev', 'next', 'skip'])
+const emit = defineEmits(['pick', 'textInput', 'prev', 'next', 'skip'])
 
 const letters = ['A', 'B', 'C', 'D', 'E', 'F']
 
@@ -103,6 +116,37 @@ const progressPct = computed(() => {
 function isOptSelected(i) {
   if (isMulti.value) return Array.isArray(props.selectedSet) && props.selectedSet.includes(i)
   return props.selected === i
+}
+
+/** Roving tabindex: selected option (or first) is in tab order for radios; all for checkboxes */
+function optionTabIndex(i) {
+  if (isMulti.value) return 0
+  if (props.selected === undefined || props.selected === null) return i === 0 ? 0 : -1
+  return props.selected === i ? 0 : -1
+}
+
+function onOptKeydown(e, i) {
+  const key = e.key
+  if (key === ' ' || key === 'Spacebar' || key === 'Enter') {
+    e.preventDefault()
+    emit('pick', i)
+    return
+  }
+  // Arrow key navigation within radiogroup
+  if (!isMulti.value && (key === 'ArrowDown' || key === 'ArrowRight' || key === 'ArrowUp' || key === 'ArrowLeft')) {
+    e.preventDefault()
+    const opts = props.question?.o || []
+    if (!opts.length) return
+    const delta = (key === 'ArrowDown' || key === 'ArrowRight') ? 1 : -1
+    const next = (i + delta + opts.length) % opts.length
+    emit('pick', next)
+    // move focus to next radio after re-render
+    requestAnimationFrame(() => {
+      const root = e.currentTarget?.parentElement
+      const items = root?.querySelectorAll('[role="radio"]')
+      items?.[next]?.focus?.()
+    })
+  }
 }
 </script>
 
@@ -185,10 +229,16 @@ function isOptSelected(i) {
   border-radius: 11px;
   cursor: pointer;
   transition: background-color 0.18s, border-color 0.18s;
+  outline: none;
 }
 
 .qa-opt:hover {
   border-color: var(--mut);
+}
+
+.qa-opt:focus-visible {
+  border-color: var(--acc);
+  box-shadow: 0 0 0 3px var(--accSoft);
 }
 
 .qa-opt.selected {
@@ -246,6 +296,10 @@ function isOptSelected(i) {
 
 .qa-textarea:focus {
   border-color: var(--acc);
+}
+
+.qa-textarea:focus-visible {
+  box-shadow: 0 0 0 3px var(--accSoft);
 }
 
 /* 导航按钮行 */

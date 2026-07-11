@@ -6,7 +6,15 @@ export default defineConfig({
   plugins: [vue()],
   test: {
     environment: 'happy-dom',
-    globals: false
+    globals: false,
+    // e2e scripts are Playwright/browser runners, not Vitest suites
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/e2e/**',
+      // plain node assert scripts (run via `node --test`)
+      '**/test/*.test.mjs'
+    ]
   },
   server: {
     port: 5173,

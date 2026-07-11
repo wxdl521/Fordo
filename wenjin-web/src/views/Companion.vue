@@ -16,11 +16,16 @@
           :key="conv.id"
           class="cp-conv-item"
           :class="{ active: conv.id === conversationId }"
+          role="button"
+          tabindex="0"
+          :aria-current="conv.id === conversationId ? 'true' : undefined"
           @click="openConversation(conv.id)"
+          @keydown.enter.prevent="openConversation(conv.id)"
+          @keydown.space.prevent="openConversation(conv.id)"
         >
           <div class="cp-conv-title">{{ conv.title || '新对话' }}</div>
           <div class="cp-conv-meta">{{ formatTime(conv.createdAt) }}</div>
-          <button class="cp-conv-del" title="删除对话" @click.stop="handleDelete(conv.id)">×</button>
+          <button type="button" class="cp-conv-del" title="删除对话" aria-label="删除对话" @click.stop="handleDelete(conv.id)">×</button>
         </div>
 
         <div v-if="!conversations.length" class="cp-conv-empty">暂无对话</div>
@@ -43,7 +48,7 @@
         </div>
       </div>
 
-      <div v-else ref="scrollEl" class="cp-messages">
+      <div v-else ref="scrollEl" class="cp-messages" aria-live="polite" aria-relevant="additions text">
         <template v-for="(msg, index) in msgs" :key="index">
         <div
           v-if="shouldRenderMessage(msg)"
@@ -91,7 +96,7 @@
                 <div v-if="msg.phase === 'submitting'" class="cp-practice-note">
                   正在提交本次作答…
                 </div>
-                <div v-else-if="msg.submitError" class="cp-practice-note is-error">
+                <div v-else-if="msg.submitError" class="cp-practice-note is-error" role="alert">
                   {{ msg.submitError }}
                 </div>
               </div>

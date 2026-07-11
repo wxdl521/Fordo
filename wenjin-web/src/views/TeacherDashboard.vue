@@ -21,7 +21,7 @@
         <div ref="chartEl" class="chart"></div>
 
         <div v-if="loading" class="overlay">加载中…</div>
-        <div v-else-if="error" class="overlay err">{{ error }}</div>
+        <div v-else-if="error" class="overlay err" role="alert">{{ error }}</div>
 
         <!-- 图例 -->
         <div class="legend">
@@ -80,7 +80,12 @@
             :key="item.nodeCode"
             class="ranking-item"
             :class="{ selected: selectedCode === item.nodeCode }"
+            role="button"
+            tabindex="0"
+            :aria-pressed="selectedCode === item.nodeCode ? 'true' : 'false'"
             @click="selectNode(item.nodeCode)"
+            @keydown.enter.prevent="selectNode(item.nodeCode)"
+            @keydown.space.prevent="selectNode(item.nodeCode)"
           >
             <div class="item-header">
               <span class="rank" :class="{ top: index < 3 }">{{ String(index + 1).padStart(2, '0') }}</span>
@@ -104,7 +109,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
-import * as echarts from 'echarts'
+import { initChart, disposeChart, graphAriaOption } from '../utils/echartsGraph.js'
 import { fetchDashboard } from '../api/teacher.js'
 import { useGraphStore } from '../store/graph.js'
 import { useTeacherCourse } from '../composables/useTeacherCourse.js'
@@ -220,7 +225,7 @@ function renderChart() {
   const colors = readColors()
 
   if (!chart) {
-    chart = echarts.init(chartEl.value)
+    chart = initChart(chartEl.value)
   }
 
   // 构建节点数据
@@ -264,6 +269,7 @@ function renderChart() {
 
   const option = {
     backgroundColor: 'transparent',
+    ...graphAriaOption,
     tooltip: {
       formatter: (p) => (p.dataType === 'node' ? p.data.name : '')
     },
@@ -442,7 +448,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   if (chart) {
-    chart.dispose()
+    disposeChart(chart)
     chart = null
   }
 })

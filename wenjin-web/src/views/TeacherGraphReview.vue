@@ -12,7 +12,8 @@
         <!-- 课程切换下拉（自定义，样式与下方两个菜单一致） -->
         <div :style="dropdownWrapStyle">
           <button data-testid="course-switch" @click.stop="currentCourse && toggleMenu('switch')"
-                  :disabled="!currentCourse" :style="courseSwitchBtnStyle">
+                  :disabled="!currentCourse" :style="courseSwitchBtnStyle"
+                  :aria-haspopup="true" :aria-expanded="openMenu === 'switch'" aria-controls="menu-switch">
             <span :style="courseSwitchNameStyle">{{ currentCourse?.name || '（暂无课程）' }}</span>
             <span v-if="currentCourse" :style="{ marginLeft: '8px', fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
                      color: currentCourse.published ? 'var(--ok, #2e7d32)' : 'var(--mut)',
@@ -22,38 +23,44 @@
             </span>
             <span :style="{ opacity: 0.7 }">▾</span>
           </button>
-          <div v-if="openMenu === 'switch'" data-testid="course-menu"
+          <div v-if="openMenu === 'switch'" id="menu-switch" data-testid="course-menu" role="menu"
                :style="{ ...dropdownMenuStyle, left: 0, right: 'auto', maxHeight: '320px', overflowY: 'auto' }" @click.stop>
-            <div v-for="c in courses" :key="c.id"
+            <button type="button" v-for="c in courses" :key="c.id" role="menuitem"
                  :style="c.id === currentCourse?.id ? dropdownItemActiveStyle : dropdownItemStyle"
-                 @click="pickCourse(c.id)">{{ c.name }}</div>
-            <div v-if="courses.length === 0" :style="dropdownItemDisabledStyle">（暂无课程）</div>
+                 @click="pickCourse(c.id)" @keydown.enter.prevent="pickCourse(c.id)">{{ c.name }}</button>
+            <div v-if="courses.length === 0" role="menuitem" :style="dropdownItemDisabledStyle">（暂无课程）</div>
           </div>
         </div>
 
         <!-- 课程管理下拉：新增 / 删除 -->
         <div :style="dropdownWrapStyle">
-          <button @click.stop="toggleMenu('course')" :style="importBtnHeaderStyle">课程管理 ▾</button>
-          <div v-if="openMenu === 'course'" :style="dropdownMenuStyle" @click.stop>
-            <div :style="dropdownItemStyle" @click="menuAction('addCourse')">+ 新增课程</div>
-            <div :style="currentCourse ? dropdownItemStyle : dropdownItemDisabledStyle"
+          <button type="button" @click.stop="toggleMenu('course')" :style="importBtnHeaderStyle"
+                  :aria-haspopup="true" :aria-expanded="openMenu === 'course'" aria-controls="menu-course">课程管理 ▾</button>
+          <div v-if="openMenu === 'course'" id="menu-course" role="menu" :style="dropdownMenuStyle" @click.stop>
+            <button type="button" role="menuitem" :style="dropdownItemStyle" @click="menuAction('addCourse')">+ 新增课程</button>
+            <button type="button" role="menuitem"
+                 :style="currentCourse ? dropdownItemStyle : dropdownItemDisabledStyle"
                  data-testid="course-publish-toggle"
+                 :disabled="!currentCourse"
                  @click="currentCourse && menuAction('togglePublish')">
               {{ currentCourse?.published ? '下架（对学生隐藏）' : '发布（学生可见）' }}
-            </div>
-            <div :style="currentCourse ? dropdownItemStyle : dropdownItemDisabledStyle"
-                 @click="currentCourse && menuAction('removeCourse')">删除当前课程</div>
+            </button>
+            <button type="button" role="menuitem"
+                 :style="currentCourse ? dropdownItemStyle : dropdownItemDisabledStyle"
+                 :disabled="!currentCourse"
+                 @click="currentCourse && menuAction('removeCourse')">删除当前课程</button>
           </div>
         </div>
 
         <!-- 图谱操作下拉：导入 / 抽取 / 预览 / 历史 -->
         <div :style="dropdownWrapStyle">
-          <button @click.stop="toggleMenu('graph')" :style="importBtnHeaderStyle">图谱操作 ▾</button>
-          <div v-if="openMenu === 'graph'" :style="dropdownMenuStyle" @click.stop>
-            <div :style="dropdownItemStyle" @click="menuAction('import')">导入图谱</div>
-            <div :style="dropdownItemStyle" @click="menuAction('syllabus')">从课程标准生成</div>
-            <div :style="dropdownItemStyle" @click="menuAction('preview')">生成预览图</div>
-            <div :style="dropdownItemStyle" @click="menuAction('history')">抽取历史</div>
+          <button type="button" @click.stop="toggleMenu('graph')" :style="importBtnHeaderStyle"
+                  :aria-haspopup="true" :aria-expanded="openMenu === 'graph'" aria-controls="menu-graph">图谱操作 ▾</button>
+          <div v-if="openMenu === 'graph'" id="menu-graph" role="menu" :style="dropdownMenuStyle" @click.stop>
+            <button type="button" role="menuitem" :style="dropdownItemStyle" @click="menuAction('import')">导入图谱</button>
+            <button type="button" role="menuitem" :style="dropdownItemStyle" @click="menuAction('syllabus')">从课程标准生成</button>
+            <button type="button" role="menuitem" :style="dropdownItemStyle" @click="menuAction('preview')">生成预览图</button>
+            <button type="button" role="menuitem" :style="dropdownItemStyle" @click="menuAction('history')">抽取历史</button>
           </div>
         </div>
 
@@ -63,7 +70,7 @@
         <span v-if="syllabusBusy || extractJobLoading" :style="{ fontSize: '13px', color: 'var(--text-mut)' }">
           识别中… {{ extractJobProgress || 0 }}%
         </span>
-        <span v-if="syllabusError" :style="{ fontSize: '13px', color: 'var(--accent)' }">{{ syllabusError }}</span>
+        <span v-if="syllabusError" role="alert" :style="{ fontSize: '13px', color: 'var(--accent)' }">{{ syllabusError }}</span>
       </div>
     </div>
 
@@ -73,7 +80,7 @@
       <div :style="{ ...canvasWrapStyle, cursor: linkMode ? 'crosshair' : 'default' }">
         <div ref="chartEl" :style="chartStyle"></div>
         <div v-if="loading" :style="overlayStyle">加载中…</div>
-        <div v-else-if="error" :style="{ ...overlayStyle, color: 'var(--accent)' }">
+        <div v-else-if="error" role="alert" :style="{ ...overlayStyle, color: 'var(--accent)' }">
           加载失败：{{ error }}
           <button @click="reload" :style="retryBtnStyle">重试</button>
         </div>
@@ -131,11 +138,11 @@
     </div>
 
     <!-- 新增节点表单 -->
-    <div v-if="showNodeForm" :style="modalOverlayStyle" @click.self="showNodeForm = false">
-      <div :style="modalStyle">
+    <div v-if="showNodeForm" :style="modalOverlayStyle" @click.self="closeNodeForm" @keydown="onDialogKeydown($event, closeNodeForm)">
+      <div ref="nodeFormDialogRef" role="dialog" aria-modal="true" aria-label="新增节点" :style="modalStyle">
         <div :style="modalHeadStyle">
           <h3 :style="{ margin: 0, fontSize: '15px' }">新增节点</h3>
-          <button @click="showNodeForm = false" :style="closeBtnStyle">×</button>
+          <button type="button" @click="closeNodeForm" :style="closeBtnStyle" aria-label="关闭">×</button>
         </div>
         <div :style="modalBodyStyle">
           <div :style="formRowStyle">
@@ -168,18 +175,18 @@
           </div>
         </div>
         <div :style="modalFooterStyle">
-          <button @click="submitCreate" :style="submitBtnStyle">创建</button>
-          <button @click="showNodeForm = false" :style="cancelBtnStyle">取消</button>
+          <button type="button" @click="submitCreate" :style="submitBtnStyle">创建</button>
+          <button type="button" @click="closeNodeForm" :style="cancelBtnStyle">取消</button>
         </div>
       </div>
     </div>
 
     <!-- 编辑/删除节点表单 -->
-    <div v-if="showEditForm" :style="modalOverlayStyle" @click.self="showEditForm = false">
-      <div :style="modalStyle">
+    <div v-if="showEditForm" :style="modalOverlayStyle" @click.self="closeEditForm" @keydown="onDialogKeydown($event, closeEditForm)">
+      <div ref="editFormDialogRef" role="dialog" aria-modal="true" aria-label="编辑节点" :style="modalStyle">
         <div :style="modalHeadStyle">
           <h3 :style="{ margin: 0, fontSize: '15px' }">编辑节点</h3>
-          <button @click="showEditForm = false" :style="closeBtnStyle">×</button>
+          <button type="button" @click="closeEditForm" :style="closeBtnStyle" aria-label="关闭">×</button>
         </div>
         <div :style="modalBodyStyle">
           <div :style="formRowStyle">
@@ -212,19 +219,19 @@
           </div>
         </div>
         <div :style="modalFooterStyle">
-          <button @click="submitUpdate" :style="submitBtnStyle">保存</button>
-          <button @click="confirmDelete" :style="deleteBtnStyle">删除</button>
-          <button @click="showEditForm = false" :style="cancelBtnStyle">取消</button>
+          <button type="button" @click="submitUpdate" :style="submitBtnStyle">保存</button>
+          <button type="button" @click="confirmDelete" :style="deleteBtnStyle">删除</button>
+          <button type="button" @click="closeEditForm" :style="cancelBtnStyle">取消</button>
         </div>
       </div>
     </div>
 
     <!-- 新增课程弹窗 -->
-    <div v-if="showCourseForm" :style="modalOverlayStyle" @click.self="showCourseForm = false">
-      <div :style="modalStyle">
+    <div v-if="showCourseForm" :style="modalOverlayStyle" @click.self="closeCourseForm" @keydown="onDialogKeydown($event, closeCourseForm)">
+      <div ref="courseFormDialogRef" role="dialog" aria-modal="true" aria-label="新增课程" :style="modalStyle">
         <div :style="modalHeadStyle">
           <h3 :style="{ margin: 0, fontSize: '15px' }">新增课程</h3>
-          <button @click="showCourseForm = false" :style="closeBtnStyle">×</button>
+          <button type="button" @click="closeCourseForm" :style="closeBtnStyle" aria-label="关闭">×</button>
         </div>
         <div :style="modalBodyStyle">
           <div :style="formRowStyle">
@@ -235,18 +242,18 @@
           <div :style="{ fontSize: '12px', color: 'var(--text-mut)' }">课程编码将自动生成，可直接导入/抽取课程标准。</div>
         </div>
         <div :style="modalFooterStyle">
-          <button @click="addCourse" :style="submitBtnStyle">创建</button>
-          <button @click="showCourseForm = false" :style="cancelBtnStyle">取消</button>
+          <button type="button" @click="addCourse" :style="submitBtnStyle">创建</button>
+          <button type="button" @click="closeCourseForm" :style="cancelBtnStyle">取消</button>
         </div>
       </div>
     </div>
 
     <!-- 导入图谱弹窗 -->
-    <div v-if="showImportModal" :style="modalOverlayStyle" @click.self="closeImportModal">
-      <div :style="importModalStyle">
+    <div v-if="showImportModal" :style="modalOverlayStyle" @click.self="closeImportModal" @keydown="onDialogKeydown($event, closeImportModal)">
+      <div ref="importDialogRef" role="dialog" aria-modal="true" aria-label="导入知识图谱" :style="importModalStyle">
         <div :style="modalHeadStyle">
           <h3 :style="{ margin: 0, fontSize: '15px' }">导入知识图谱</h3>
-          <button @click="closeImportModal" :style="closeBtnStyle">×</button>
+          <button type="button" @click="closeImportModal" :style="closeBtnStyle" aria-label="关闭">×</button>
         </div>
         <div :style="modalBodyStyle">
           <!-- 上传区域 -->
@@ -294,13 +301,13 @@
           </div>
 
           <!-- 错误信息 -->
-          <div v-if="importError" :style="importErrorBoxStyle">
+          <div v-if="importError" role="alert" :style="importErrorBoxStyle">
             <div :style="{ fontSize: '14px', fontWeight: 500, color: 'var(--accent)', marginBottom: '8px' }">导入失败</div>
             <div :style="{ fontSize: '13px', color: 'var(--text-mut)', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }">{{ importError }}</div>
           </div>
         </div>
         <div :style="modalFooterStyle">
-          <button v-if="!importUploading" @click="closeImportModal" :style="cancelBtnStyle">
+          <button type="button" v-if="!importUploading" @click="closeImportModal" :style="cancelBtnStyle">
             {{ importResult || importError ? '关闭' : '取消' }}
           </button>
         </div>
@@ -308,11 +315,11 @@
     </div>
 
     <!-- 预览图弹窗 -->
-    <div v-if="showPreview" :style="modalOverlayStyle" @click.self="closePreview">
-      <div :style="previewModalStyle">
+    <div v-if="showPreview" :style="modalOverlayStyle" @click.self="closePreview" @keydown="onDialogKeydown($event, closePreview)">
+      <div ref="previewDialogRef" role="dialog" aria-modal="true" aria-label="知识图谱预览图" :style="previewModalStyle">
         <div :style="modalHeadStyle">
           <h3 :style="{ margin: 0, fontSize: '15px' }">知识图谱预览图</h3>
-          <button @click="closePreview" :style="closeBtnStyle">×</button>
+          <button type="button" @click="closePreview" :style="closeBtnStyle" aria-label="关闭">×</button>
         </div>
         <div :style="previewBodyStyle">
           <div v-if="previewSvg" :style="previewCanvasStyle" v-html="previewSvg"></div>
@@ -352,7 +359,7 @@
           · {{ edgeTypePopup.source }} → {{ edgeTypePopup.target }}
         </template>
       </div>
-      <div v-if="edgeError" data-testid="edge-error" :style="{ ...ctxMenuItemStyle, color: 'var(--accent)', cursor: 'default', whiteSpace: 'normal', maxWidth: '240px' }">
+      <div v-if="edgeError" role="alert" data-testid="edge-error" :style="{ ...ctxMenuItemStyle, color: 'var(--accent)', cursor: 'default', whiteSpace: 'normal', maxWidth: '240px' }">
         {{ edgeError }}
       </div>
       <div :style="edgeTypeItemStyle" data-testid="edge-type-prereq" @click="confirmEdgeType('前置')">前置</div>
@@ -390,8 +397,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import * as echarts from 'echarts'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { initChart, disposeChart, graphAriaOption } from '../utils/echartsGraph.js'
 import {
   fetchTeacherGraph,
   fetchPendingEdges,
@@ -706,7 +713,7 @@ function renderChart() {
   if (!graph.value || !chartEl.value) return
 
   readColors()
-  if (!chart) chart = echarts.init(chartEl.value)
+  if (!chart) chart = initChart(chartEl.value)
 
   const nodes = (graph.value.nodes || []).map(n => ({
     id: n.nodeCode,
@@ -759,6 +766,7 @@ function renderChart() {
 
   const option = {
     backgroundColor: 'transparent',
+    ...graphAriaOption,
     tooltip: {
       formatter: (p) => {
         if (p.dataType === 'node') {
@@ -871,7 +879,7 @@ async function submitCreate() {
   }
   try {
     await createNode(currentCourse.value.id, nodeForm.value)
-    showNodeForm.value = false
+    closeNodeForm()
     nodeForm.value = { nodeCode: '', name: '', chapter: '', difficulty: 3, isKey: false, description: '', note: '', x: null, y: null }
     await reload()
   } catch (e) {
@@ -888,7 +896,7 @@ async function submitUpdate() {
   try {
     const { id, nodeCode, ...req } = editForm.value
     await updateNode(id, req)
-    showEditForm.value = false
+    closeEditForm()
     await reload()
   } catch (e) {
     console.error('更新失败', e)
@@ -900,7 +908,7 @@ async function confirmDelete() {
   if (!confirm(`确定删除节点「${editForm.value.name}」吗？此操作不可撤销。`)) return
   try {
     await deleteNode(editForm.value.id)
-    showEditForm.value = false
+    closeEditForm()
     await reload()
   } catch (e) {
     console.error('删除失败', e)
@@ -1040,6 +1048,12 @@ function handleKeydown(e) {
       return
     }
     if (contextMenu.value.visible) { contextMenu.value = { visible: false, x: 0, y: 0, node: null }; return }
+    if (showNodeForm.value) { closeNodeForm(); return }
+    if (showEditForm.value) { closeEditForm(); return }
+    if (showCourseForm.value) { closeCourseForm(); return }
+    if (showImportModal.value) { closeImportModal(); return }
+    if (showPreview.value) { closePreview(); return }
+    if (showHistory.value) { showHistory.value = false; return }
     if (linkMode.value) { exitLinkMode(); return }
   }
   if ((e.key === 'Delete' || e.key === 'Backspace') && showEditForm.value) {
@@ -1049,6 +1063,84 @@ function handleKeydown(e) {
     confirmDelete()
   }
 }
+
+// ── Dialog a11y: focus trap + restore previous focus on Esc/close ──
+const nodeFormDialogRef = ref(null)
+const editFormDialogRef = ref(null)
+const courseFormDialogRef = ref(null)
+const importDialogRef = ref(null)
+const previewDialogRef = ref(null)
+let dialogPrevFocus = null
+
+const FOCUSABLE_SEL = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+function getFocusable(container) {
+  if (!container) return []
+  return Array.from(container.querySelectorAll(FOCUSABLE_SEL))
+    .filter((el) => el.offsetParent !== null || el === document.activeElement)
+}
+
+function onDialogKeydown(e, closeFn) {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    closeFn()
+    return
+  }
+  if (e.key !== 'Tab') return
+  const root = e.currentTarget?.querySelector?.('[role="dialog"]') || e.currentTarget
+  const list = getFocusable(root)
+  if (!list.length) return
+  const first = list[0]
+  const last = list[list.length - 1]
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
+function rememberFocus() {
+  dialogPrevFocus = document.activeElement
+}
+
+function restoreFocus() {
+  const el = dialogPrevFocus
+  dialogPrevFocus = null
+  if (el && typeof el.focus === 'function') {
+    try { el.focus() } catch (_) { /* element may be gone */ }
+  }
+}
+
+function focusDialog(refObj) {
+  nextTick(() => {
+    const root = refObj?.value
+    if (!root) return
+    const list = getFocusable(root)
+    ;(list[0] || root).focus?.()
+  })
+}
+
+function closeNodeForm() {
+  showNodeForm.value = false
+  restoreFocus()
+}
+function closeEditForm() {
+  showEditForm.value = false
+  restoreFocus()
+}
+function closeCourseForm() {
+  showCourseForm.value = false
+  restoreFocus()
+}
+
+watch(showNodeForm, (v) => { if (v) { rememberFocus(); focusDialog(nodeFormDialogRef) } })
+watch(showEditForm, (v) => { if (v) { rememberFocus(); focusDialog(editFormDialogRef) } })
+watch(showCourseForm, (v) => { if (v) { rememberFocus(); focusDialog(courseFormDialogRef) } })
+watch(showImportModal, (v) => { if (v) { rememberFocus(); focusDialog(importDialogRef) } })
+watch(showPreview, (v) => { if (v) { rememberFocus(); focusDialog(previewDialogRef) } })
 
 
 // ── 预览图：AI 生成，失败兜底 ──
@@ -1078,6 +1170,7 @@ function openPreview() {
 function closePreview() {
   showPreview.value = false
   previewSvg.value = ''
+  restoreFocus()
 }
 
 function downloadPreview() {
@@ -1124,6 +1217,7 @@ function closeImportModal() {
   importError.value = null
   importProgress.value = 0
   isDragging.value = false
+  restoreFocus()
 }
 
 function onFileDrop(e) {
@@ -1248,7 +1342,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeydown)
   document.removeEventListener('click', closeMenus, true)
   document.removeEventListener('click', closeDropdowns)
-  if (chart) chart.dispose()
+  if (chart) disposeChart(chart)
 })
 
 // ── 样式 ──
@@ -1655,6 +1749,12 @@ const dropdownMenuStyle = {
 }
 
 const dropdownItemStyle = {
+  display: 'block',
+  width: '100%',
+  textAlign: 'left',
+  background: 'transparent',
+  border: 'none',
+  fontFamily: 'inherit',
   padding: '8px 16px',
   fontSize: '13px',
   color: 'var(--text)',

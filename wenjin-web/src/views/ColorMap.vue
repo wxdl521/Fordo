@@ -83,7 +83,21 @@
           </template>
 
           <!-- 节点 -->
-          <g v-for="n in nodeList" :key="n.id" :opacity="n.op" :style="{ cursor: draggingNode === n.id ? 'grabbing' : 'pointer', transition: 'opacity 0.25s' }" @mouseenter="hoverId = n.id" @mouseleave="hoverId = null" @click="!wasDragged && (selectedId = n.id)" @pointerdown.stop="onNodePointerDown($event, n.id)">
+          <g
+            v-for="n in nodeList"
+            :key="n.id"
+            :opacity="n.op"
+            role="button"
+            :tabindex="0"
+            :aria-label="n.short || n.id"
+            :aria-pressed="selectedId === n.id ? 'true' : 'false'"
+            :style="{ cursor: draggingNode === n.id ? 'grabbing' : 'pointer', transition: 'opacity 0.25s', outline: 'none' }"
+            @mouseenter="hoverId = n.id"
+            @mouseleave="hoverId = null"
+            @click="!wasDragged && (selectedId = n.id)"
+            @keydown="onNodeKeydown($event, n.id)"
+            @pointerdown.stop="onNodePointerDown($event, n.id)"
+          >
             <circle :cx="n.x" :cy="n.y" :r="Math.max(n.r * 2, 18)" fill="transparent" />
             <template v-if="n.status !== 'dim'">
               <circle :cx="n.x" :cy="n.y" :r="n.r * 1.95" :fill="n.c" :opacity="n.glowOuter" />
@@ -194,11 +208,17 @@
       <div v-show="width >= 640" :style="{ position: 'absolute', right: '20px', bottom: width >= 900 && layout && currentUser ? '128px' : '20px', fontSize: '12px', color: 'var(--mut)', opacity: 0.75, zIndex: 10 }">悬停节点查看前置链 · 点击查看详情</div>
 
       <!-- 抽屉 -->
-      <div v-if="sel" :style="{ position: 'absolute', right: '16px', top: '16px', bottom: '16px', width: drawerW, boxSizing: 'border-box', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '14px', display: 'flex', flexDirection: 'column', zIndex: 30, boxShadow: '0 12px 36px rgba(0,0,0,0.16)', animation: 'wjDrawerIn 0.34s cubic-bezier(0.22,1,0.36,1) both', transition: 'background-color 0.35s, border-color 0.35s' }">
+      <div
+        v-if="sel"
+        role="dialog"
+        aria-modal="false"
+        :aria-label="sel.name"
+        :style="{ position: 'absolute', right: '16px', top: '16px', bottom: '16px', width: drawerW, boxSizing: 'border-box', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '14px', display: 'flex', flexDirection: 'column', zIndex: 30, boxShadow: '0 12px 36px rgba(0,0,0,0.16)', animation: 'wjDrawerIn 0.34s cubic-bezier(0.22,1,0.36,1) both', transition: 'background-color 0.35s, border-color 0.35s' }"
+      >
         <div :style="{ flex: 1, overflowY: 'auto', padding: '20px 22px 10px' }">
           <div :style="{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '12px' }">
             <span :style="{ fontSize: '11.5px', color: 'var(--mut)', border: '1px solid var(--line)', borderRadius: '999px', padding: '3px 10px', flex: 'none' }">{{ sel.chapter }}</span>
-            <button @click="selectedId = null" class="wj-hover-card2" :style="{ marginLeft: 'auto', width: '28px', height: '28px', border: 'none', background: 'transparent', color: 'var(--mut)', fontSize: '17px', cursor: 'pointer', borderRadius: '6px', lineHeight: 1 }">×</button>
+            <button type="button" aria-label="关闭详情" @click="selectedId = null" class="wj-hover-card2" :style="{ marginLeft: 'auto', width: '28px', height: '28px', border: 'none', background: 'transparent', color: 'var(--mut)', fontSize: '17px', cursor: 'pointer', borderRadius: '6px', lineHeight: 1 }">×</button>
           </div>
           <div :style="{ fontSize: '17px', fontWeight: 600, lineHeight: 1.45, marginBottom: '14px' }">{{ sel.name }}</div>
 
@@ -543,17 +563,31 @@ const miniView = computed(() => {
 
 // 键盘快捷键
 function onKeyDown(e) {
-  if (e.code === 'Space' && !e.repeat) {
+  // Space on focused map node selects it (handled by onNodeKeydown); only hold-to-pan when not on a node
+  const onNode = e.target?.getAttribute?.('role') === 'button' && e.target?.closest?.('svg')
+  if (e.code === 'Space' && !e.repeat && !onNode) {
     spaceHeld.value = true
     e.preventDefault()
   }
   if (e.key === '0') { fitAll() }
   if (e.key === '+' || e.key === '=') { zoomIn() }
   if (e.key === '-') { zoomOut() }
+  if (e.key === 'Escape' && selectedId.value) {
+    selectedId.value = null
+  }
 }
 function onKeyUp(e) {
   if (e.code === 'Space') {
     spaceHeld.value = false
+  }
+}
+
+/** Keyboard activate map node (Enter / Space) */
+function onNodeKeydown(e, id) {
+  if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+    e.preventDefault()
+    e.stopPropagation()
+    selectedId.value = id
   }
 }
 

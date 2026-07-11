@@ -63,7 +63,7 @@
           生成 <strong>{{ genResult.generated }}</strong> 题 · 去重 <strong>{{ genResult.duplicated }}</strong> · 丢弃 <strong>{{ genResult.dropped }}</strong>
           <span v-if="genResult.message" :style="{ marginLeft: '8px', color: 'var(--text-mut)' }">{{ genResult.message }}</span>
         </div>
-        <div v-if="genError" :style="toolErrorStyle">{{ genError }}</div>
+        <div v-if="genError" role="alert" :style="toolErrorStyle">{{ genError }}</div>
 
         <div :style="toolDividerStyle"></div>
 
@@ -92,7 +92,7 @@
         <div v-if="batchResult && batchResult.failed.length > 0" :style="batchFailListStyle">
           <div v-for="f in batchResult.failed" :key="f.nodeCode">{{ f.nodeCode }} · {{ f.name }}：{{ f.error }}</div>
         </div>
-        <div v-if="batchError" :style="toolErrorStyle">{{ batchError }}</div>
+        <div v-if="batchError" role="alert" :style="toolErrorStyle">{{ batchError }}</div>
 
         <div v-if="graphNodes.length === 0 && courseId" :style="toolErrorStyle">
           当前课程暂无图谱节点，请先在「图谱审核」页导入或生成图谱。
@@ -125,7 +125,7 @@
           导入 <strong>{{ importResult.imported }}</strong> 题 · 跳过 <strong>{{ importResult.skipped }}</strong> 题
           <span v-if="importResult.aiCleaned" :style="{ marginLeft: '8px', color: 'var(--accent)' }">（AI 清洗）</span>
         </div>
-        <div v-if="importError" :style="toolErrorStyle">{{ importError }}</div>
+        <div v-if="importError" role="alert" :style="toolErrorStyle">{{ importError }}</div>
       </div>
 
       <!-- 标注 -->
@@ -139,7 +139,7 @@
           <span v-if="annotateResult" :style="toolResultStyle">
             标注 <strong>{{ annotateResult.length }}</strong> 题，落库 <strong>{{ annotateResult.filter(r => r.persisted).length }}</strong> 题
           </span>
-          <span v-if="annotateError" :style="toolErrorStyle">{{ annotateError }}</span>
+          <span v-if="annotateError" role="alert" :style="toolErrorStyle">{{ annotateError }}</span>
         </div>
       </div>
     </div>
@@ -154,7 +154,16 @@
 
     <!-- 全选行 -->
     <div v-if="tab === 0 && list.length > 0" :style="selectAllRowStyle">
-      <div @click="toggleAll" :style="checkboxStyle(allChecked)">
+      <div
+        role="checkbox"
+        tabindex="0"
+        :aria-checked="allChecked ? 'true' : 'false'"
+        aria-label="全选当前页"
+        @click="toggleAll"
+        @keydown.enter.prevent="toggleAll"
+        @keydown.space.prevent="toggleAll"
+        :style="checkboxStyle(allChecked)"
+      >
         {{ allChecked ? '✓' : '' }}
       </div>
       <span @click="toggleAll" :style="selectAllTextStyle">全选当前页</span>
@@ -163,7 +172,17 @@
     <!-- 题目列表 -->
     <div :style="listStyle">
       <div v-for="(q, idx) in list" :key="q.id" :style="cardStyle(idx, q)">
-        <div @click="toggleOne(q)" :style="checkboxStyle(checked[q.id], q.status !== 0)">
+        <div
+          role="checkbox"
+          :tabindex="q.status !== 0 ? -1 : 0"
+          :aria-checked="checked[q.id] ? 'true' : 'false'"
+          :aria-disabled="q.status !== 0 ? 'true' : 'false'"
+          :aria-label="`选择题目 ${q.id}`"
+          @click="toggleOne(q)"
+          @keydown.enter.prevent="q.status === 0 && toggleOne(q)"
+          @keydown.space.prevent="q.status === 0 && toggleOne(q)"
+          :style="checkboxStyle(checked[q.id], q.status !== 0)"
+        >
           {{ checked[q.id] ? '✓' : '' }}
         </div>
         <div :style="contentStyle">
