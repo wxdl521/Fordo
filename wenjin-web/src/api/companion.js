@@ -1,30 +1,49 @@
 import { http } from './http.js'
 
+/** @param {unknown} err */
+export function isAbortError(err) {
+  if (!err) return false
+  return (
+    err.name === 'CanceledError' ||
+    err.name === 'AbortError' ||
+    err.code === 'ERR_CANCELED' ||
+    err.message === 'canceled' ||
+    err.message === 'The operation was aborted.'
+  )
+}
+
 /**
  * 获取当前登录学生在某课程下的对话会话列表
  * @param {number} courseId
+ * @param {{ signal?: AbortSignal, params?: Record<string, unknown> }} [config] axios 配置（支持 AbortSignal）
  * @returns {Promise<Array>}
  */
-export function listConversations(courseId) {
-  return http.get('/companion/conversations', { params: { courseId } })
+export function listConversations(courseId, config = {}) {
+  const { params, ...rest } = config
+  return http.get('/companion/conversations', {
+    ...rest,
+    params: { courseId, ...(params || {}) }
+  })
 }
 
 /**
  * 获取单个会话详情（包含所有消息）
- * @param {number} id
+ * @param {number|string} id
+ * @param {{ signal?: AbortSignal }} [config] axios 配置（支持 AbortSignal）
  * @returns {Promise<Object>}
  */
-export function fetchConversation(id) {
-  return http.get(`/companion/conversations/${id}`)
+export function fetchConversation(id, config = {}) {
+  return http.get(`/companion/conversations/${id}`, config)
 }
 
 /**
  * 删除会话（含所有消息）
- * @param {number} id
+ * @param {number|string} id
+ * @param {{ signal?: AbortSignal }} [config] axios 配置（支持 AbortSignal）
  * @returns {Promise<void>}
  */
-export function deleteConversation(id) {
-  return http.delete(`/companion/conversations/${id}`)
+export function deleteConversation(id, config = {}) {
+  return http.delete(`/companion/conversations/${id}`, config)
 }
 
 /**
@@ -84,9 +103,11 @@ export function dispatchChatStreamEvent(eventType, payload, callbacks = {}) {
  *   onToolResult?: (event: any) => void,
  *   onPracticeCard?: (event: any) => void
  * }} callbacks
+ * @param {{ signal?: AbortSignal }} [options]
  * @returns {Promise<void>}
  */
-export async function chatStream(payload, callbacks = {}) {
+export async function chatStream(payload, callbacks = {}, options = {}) {
+  const { signal } = options
   try {
     // SSE 使用原生 fetch，绕过 http.js 的 axios 拦截器，需要手动补 Authorization。
     const headers = {
@@ -102,7 +123,8 @@ export async function chatStream(payload, callbacks = {}) {
     const response = await fetch('/api/companion/chat', {
       method: 'POST',
       headers,
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal
     })
 
     if (!response.ok) {
@@ -115,6 +137,12 @@ export async function chatStream(payload, callbacks = {}) {
     let eventType = ''
 
     while (true) {
+      if (signal?.aborted) {
+        const abortErr = new Error('The operation was aborted.')
+        abortErr.name = 'AbortError'
+        throw abortErr
+      }
+
       const { done, value } = await reader.read()
       if (done) break
 
@@ -153,6 +181,11 @@ export async function chatStream(payload, callbacks = {}) {
 
     dispatchChatStreamEvent('done', {}, callbacks)
   } catch (error) {
+    // Abort is not a network error — callers gate on isCurrent/isAbortError.
+    if (isAbortError(error) || signal?.aborted) {
+      throw error
+    }
+    // Report once via callback; rethrow so awaiters can observe failure without a second UI write.
     callbacks.onError?.(error.message || '网络错误')
     throw error
   }

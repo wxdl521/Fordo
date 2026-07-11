@@ -199,14 +199,21 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import QuestionAnswerCard from '../components/QuestionAnswerCard.vue'
-import { listConversations, fetchConversation, deleteConversation, chatStream } from '../api/companion.js'
+import {
+  listConversations,
+  fetchConversation,
+  deleteConversation,
+  chatStream,
+  isAbortError
+} from '../api/companion.js'
 import { submitPractice } from '../api/practice.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
 import { buildCompanionChatPayload, readCompanionNodeCode } from '../utils/companionContext.js'
 import { createDebouncedPersist } from '../utils/companionPersistence.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 import {
   appendAssistantToken,
   applyToolResult,
@@ -235,6 +242,30 @@ const conversations = ref([])
 const ctxNodeCode = ref(null)
 const scrollEl = ref(null)
 let snapshotPersist
+
+/** 三闸：列表 / 详情 / SSE，各自 abort + isCurrent 防迟到写 */
+const conversationListGate = createLatestRequest()
+const conversationDetailGate = createLatestRequest()
+const streamGate = createLatestRequest()
+
+function cancelAllCompanionRequests() {
+  conversationListGate.cancel()
+  conversationDetailGate.cancel()
+  streamGate.cancel()
+}
+
+/**
+ * 课程切换 / 新对话 / 卸载统一清理顺序：
+ * flush snapshot → cancel all → clear state（再由调用方 load list）
+ */
+function resetCompanionSessionState() {
+  snapshotPersist?.flush()
+  cancelAllCompanionRequests()
+  conversationId.value = null
+  msgs.value = []
+  input.value = ''
+  typing.value = false
+}
 
 const starters = computed(() => [
   '我在“数组”这里卡住了，应该先补哪一部分？',
@@ -530,20 +561,28 @@ function formatDelta(delta) {
 }
 
 async function loadConversations() {
+  if (!courseId.value) return
+  const { signal, isCurrent } = conversationListGate.next()
   try {
-    if (!courseId.value) return
-    const data = await listConversations(courseId.value)
+    const data = await listConversations(courseId.value, { signal })
+    if (!isCurrent()) return
     conversations.value = data || []
   } catch (error) {
+    if (!isCurrent() || isAbortError(error)) return
     console.error('Failed to load conversations:', error)
   }
 }
 
 async function openConversation(id) {
   snapshotPersist.flush()
+  // 打开另一会话时取消进行中的 SSE，避免 token 写到错误会话
+  streamGate.cancel()
+  typing.value = false
+  const { signal, isCurrent } = conversationDetailGate.next()
   conversationId.value = id
   try {
-    const conversation = await fetchConversation(id)
+    const conversation = await fetchConversation(id, { signal })
+    if (!isCurrent()) return
     const serverMessages = (Array.isArray(conversation) ? conversation : (conversation?.messages || []))
       .map(normalizeConversationMessage)
     const snapshot = readConversationSnapshot(id)
@@ -555,18 +594,24 @@ async function openConversation(id) {
     }
 
     await nextTick()
+    if (!isCurrent()) return
     scrollToEnd()
   } catch (error) {
+    if (!isCurrent() || isAbortError(error)) return
     console.error('Failed to fetch conversation:', error)
     msgs.value = []
   }
 }
 
 function newChat() {
+  // flush → cancel stream/detail → clear state（列表保留，属同课程）
   snapshotPersist.flush()
+  streamGate.cancel()
+  conversationDetailGate.cancel()
   conversationId.value = null
   msgs.value = []
   input.value = ''
+  typing.value = false
 }
 
 function clearContextNodeCode() {
@@ -580,11 +625,15 @@ async function handleDelete(id) {
     await deleteConversation(id)
     clearConversationSnapshot(id)
     if (conversationId.value === id) {
+      streamGate.cancel()
+      conversationDetailGate.cancel()
       conversationId.value = null
       msgs.value = []
+      typing.value = false
     }
     await loadConversations()
   } catch (error) {
+    if (isAbortError(error)) return
     console.error('删除会话失败:', error)
   }
 }
@@ -617,9 +666,14 @@ async function sendText() {
     message: text
   })
 
+  const { signal, isCurrent } = streamGate.next()
+  /** 避免 onError + catch 双写错误气泡 */
+  let errorReported = false
+
   try {
     await chatStream(payload, {
       onMeta: async (meta) => {
+        if (!isCurrent()) return
         if (meta?.conversationId && !conversationId.value) {
           conversationId.value = meta.conversationId
           snapshotPersist.flush()
@@ -627,28 +681,36 @@ async function sendText() {
         }
       },
       onToolStart: (event) => {
+        if (!isCurrent()) return
         msgs.value.push(createToolMessage(event))
         scrollToEnd()
       },
       onToolResult: (event) => {
+        if (!isCurrent()) return
         msgs.value = applyToolResult(msgs.value, event)
         scrollToEnd()
       },
       onPracticeCard: (event) => {
+        if (!isCurrent()) return
         msgs.value.push(createPracticeMessage(event))
         scrollToEnd()
       },
       onToken: (token) => {
+        if (!isCurrent()) return
         appendToAssistant(token)
         scrollToEnd()
       },
       onDone: async () => {
+        if (!isCurrent()) return
         typing.value = false
         snapshotPersist.flush()
         await loadConversations()
         scrollToEnd()
       },
       onError: (message) => {
+        if (!isCurrent()) return
+        if (errorReported) return
+        errorReported = true
         typing.value = false
         snapshotPersist.flush()
         const idx = currentTurnAssistantIdx()
@@ -656,8 +718,18 @@ async function sendText() {
         appendToAssistant(`${prefix}[错误] ${message}`)
         scrollToEnd()
       }
-    })
+    }, { signal })
   } catch (error) {
+    // Abort（新对话/切课/卸载）不是网络错误，不写消息
+    if (!isCurrent() || isAbortError(error)) {
+      if (isCurrent()) typing.value = false
+      return
+    }
+    if (errorReported) {
+      if (isCurrent()) typing.value = false
+      return
+    }
+    errorReported = true
     typing.value = false
     snapshotPersist.flush()
     const idx = currentTurnAssistantIdx()
@@ -695,6 +767,9 @@ function formatTime(value) {
 }
 
 watch(courseId, (value) => {
+  // flush → cancel all → clear state → load list for new course
+  resetCompanionSessionState()
+  conversations.value = []
   if (value) loadConversations()
 }, { immediate: true })
 
@@ -722,8 +797,22 @@ onMounted(() => {
       sendText,
       submitPracticeMessage,
       persistTypedSnapshot,
-      clearConversationSnapshot
+      clearConversationSnapshot,
+      conversationListGate,
+      conversationDetailGate,
+      streamGate,
+      cancelAllCompanionRequests,
+      resetCompanionSessionState
     }
+  }
+})
+
+onUnmounted(() => {
+  // flush → cancel all in-flight list/detail/SSE
+  snapshotPersist?.flush()
+  cancelAllCompanionRequests()
+  if (import.meta.env.DEV && window.__wjCompanion) {
+    delete window.__wjCompanion
   }
 })
 </script>
