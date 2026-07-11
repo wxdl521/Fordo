@@ -171,6 +171,15 @@ export DB_PASSWORD='足够强的随机密码_app'
 - 回滚优先：恢复迁移前逻辑备份（mysqldump），再排查失败的 `Vn`；Flyway 默认不对已成功版本自动 undo。
 - 修复脚本以**新的 Vn+1** 正向修补，避免改写已发布迁移的 checksum（`validate-on-migrate=true` 会拒绝篡改历史）。
 
+#### V9 关系完整性（独立发布窗口）
+
+- **V3–V8** 为 expand（可与 wave-1 后端分波次上线）；**`V9__relational_integrity.sql` 必须单独发布**，不得与首次 expand 混在同一变更单强行合并，除非预发库审计已全零并书面确认。
+- V9 前必跑只读审计：`ops/sql/security-role-audit.sql`、`ops/sql/preflight-integrity.sql`（任一 `bad_count > 0` → 人工修复，禁止硬上）。
+- V9 内含 `SIGNAL 45000` 预检 + 命名物理外键 + `course.teacher_id NOT NULL` + `sys_user.role CHECK`；失败即整次 migrate 失败。
+- V9 后验收：`ops/sql/post-migration-verification.sql`。
+- **备份与还原**：每次 migrate（含 V9）前 `mysqldump`；V9 失败或验收不通过时，优先 **restore 迁移前备份**，禁止用 `DROP TABLE` / 重跑 `schema.sql` 回滚。功能回滚优先关 feature flags（见 runbook）。
+- 分阶段上线、观测与安全回滚细则见 **[docs/runbooks/project-hardening-rollout.md](docs/runbooks/project-hardening-rollout.md)**。
+
 **演示弱口令**：生产**不要**加载 `data.sql`。本地演示账号 `demo_teacher` / `demo_student`（密码 `demo`）仅存在于 `data.sql`。
 
 - **推荐：生产干净库** + 真实教师/管理员（见 2.3.1）。
@@ -391,7 +400,7 @@ npm run build        # 产出 dist/
 - **HTTPS（强烈建议）**：令牌存于浏览器 `localStorage`，无 HTTPS 易被窃听 / 中间人。用 Let's Encrypt（certbot）签证书，nginx 终止 TLS。
 - **健康检查（actuator）**：当前未引入。加 `spring-boot-starter-actuator`，仅暴露 `/actuator/health` 供负载均衡 / 探活（配置见第 4 节）。该端点不在 `/api/**` 下，不受现有鉴权拦截器影响。
 - **令牌撤销 / 轮换**：当前令牌签发后 7 天内无法主动失效（无黑名单 / 版本号）。若有「强制下线 / 改密即失效」需求，需加一层（如随用户 `tokenVersion` 校验）——属增量功能，可推迟。
-- **数据库迁移与备份**：生产 schema **只走 Flyway**（`db/migration`，migrator 账号 + `WENJIN_FLYWAY_ENABLED=true` 作业）。`schema.sql` 仅本地空库重建，**禁止**对生产执行。配置定期 `mysqldump`；迁移前必备份（见 2.3）。
+- **数据库迁移与备份**：生产 schema **只走 Flyway**（`db/migration`，migrator 账号 + `WENJIN_FLYWAY_ENABLED=true` 作业）。`schema.sql` 仅本地空库重建，**禁止**对生产执行。配置定期 `mysqldump`；迁移前必备份（见 2.3）。**V9 关系完整性为独立发布**；审计与回滚见 [project-hardening-rollout.md](docs/runbooks/project-hardening-rollout.md)。
 - **限流 / 防滥用**：登录端点与 AI 调用端点可在 nginx 或应用层加限流。
 
 ---
@@ -445,14 +454,18 @@ management:
 ### 5.2 建库与迁移（生产：不导演示数据，禁止 schema.sql）
 ```bash
 # 1) 创建空库 + migrator/app 账号（见 2.3）——不要 mysql < schema.sql
-# 2) 备份（若库中已有数据）
+# 2) 备份（若库中已有数据）— 每次 migrate 前必做，失败可 restore
 # 3) 迁移作业（migrator + WENJIN_FLYWAY_ENABLED=true）
 export DB_USER=wenjin_migrator
 export DB_PASSWORD='替换为 migrator 强密码'
 export WENJIN_FLYWAY_ENABLED=true
 # flyway info && flyway migrate   或等价一次性 Spring 迁移作业
 # 失败则停止发布（见 2.3 回滚规则）
-# 4) 开通真实教师/管理员：见 2.3.1
+# 建议：先落到 V8（expand），审计清零后再单独发布 V9（contract）
+# 4) V9 前：mysql ... < ops/sql/security-role-audit.sql （bad_count 全 0）
+# 5) V9 后：mysql ... < ops/sql/post-migration-verification.sql
+# 6) 开通真实教师/管理员：见 2.3.1
+# 分阶段顺序与 flag 开关：docs/runbooks/project-hardening-rollout.md
 ```
 
 ### 5.3 配置环境变量（systemd 示例，见 5.5）
@@ -587,4 +600,5 @@ curl -s -H "Authorization: Bearer $TOK" "$BASE/api/teacher/courses"
 - **代码/配置加固（A 层）**：约半天，按第 2、4 节做完即可让仓库「生产安全」，唯一代码改动是 CORS 外部化。
 - **运维上线（B 层）**：照第 5 节走，快慢取决于你的服务器/域名/证书是否就绪。
 - **角色开通**：公开注册仅学生（`role=2`）；首个 ADMIN 用 one-shot bootstrap（见 2.3.1），教师用 `PATCH /api/system-admin/users/{id}/role`；SQL 审计插入仍是有效备份。
+- **加固分阶段上线**：前端 non-2xx → wave-1 后端 → V3–V8 expand → flags-off smoke → sessionToken FE → graph reconcile / fixed diagnostic flags → **V9 独立 contract** → AI jobs；详见 [docs/runbooks/project-hardening-rollout.md](docs/runbooks/project-hardening-rollout.md)。
 - 最容易翻车也最致命的一项：**`SPRING_PROFILES_ACTIVE=prod` 与 `WENJIN_AUTH_SECRET` 必须同时设**——这是认证安全的总开关。
