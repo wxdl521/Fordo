@@ -147,9 +147,15 @@ $env:WENJIN_AI_API_KEY = "your-text-model-key"
 # 视觉模型：图片课程标准抽取需要
 $env:WENJIN_AI_VISION_API_KEY = "your-vision-model-key"
 
-# 生产必须换成强随机密钥；本地开发也建议显式设置
+# 本地快速开始必须显式启用 dev；无 profile 也会按安全模式 fail-fast
+$env:SPRING_PROFILES_ACTIVE = "dev"
+# 仅显式 dev/test 允许开发密钥；生产环境严禁使用此值
 $env:WENJIN_AUTH_SECRET = "local-dev-secret-change-me"
 ```
+
+`AuthSecretGuard` 仅在激活的 profile 非空且全部为 `dev`/`test` 时放宽密钥检查。
+无 profile、`prod` 或混合 profile 都会拒绝默认值、空值及 UTF-8 长度不足 32 字节的密钥；
+生产环境必须显式启用 `prod` 并配置强随机、至少 32 UTF-8 字节的独立密钥。
 
 常用可选项：
 

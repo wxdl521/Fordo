@@ -46,14 +46,14 @@
 
 **为什么**：令牌用 HMAC 密钥签名。默认值 `dev-secret-change-me-in-prod` 公开在仓库，**不覆盖则任何人可伪造任意用户（含教师/管理员）的令牌**，本项目的认证形同虚设。
 
-**关键陷阱**：兜底守卫 `AuthSecretGuard` 只在 **`prod` profile 激活** 时对默认密钥 fail-fast；本项目默认无 profile，所以——**必须同时**设这两个环境变量，缺一不可：
+**守卫行为**：`AuthSecretGuard` 仅在激活的 profile 非空且全部为 `dev`/`test` 时放宽检查。除显式 `dev`/`test` 外（包括无 profile、`prod` 或混合 profile），默认值、空值及 UTF-8 长度不足 32 字节的密钥都会 fail-fast。生产仍必须同时显式启用 `prod` 并配置强随机、至少 32 UTF-8 字节的密钥：
 
 ```bash
 export SPRING_PROFILES_ACTIVE=prod
 export WENJIN_AUTH_SECRET="$(openssl rand -base64 48)"   # 强随机，妥善保存，勿入库
 ```
 
-**验证**：在 `prod` profile 下若忘记设密钥（仍为默认值），后端应启动失败并报错中止——这正是预期的部署门禁。
+**验证**：在无 profile 或 `prod` profile 下，若密钥缺失、仍为默认值或不足 32 UTF-8 字节，后端都应启动失败并报错中止——这正是预期的部署门禁。
 
 > 令牌有效期 `wenjin.auth.ttl-seconds` 默认 604800（7 天），按需调整。
 

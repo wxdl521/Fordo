@@ -31,6 +31,22 @@ class AuthSecretGuardTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
+    /** null profile 数组 + 默认密钥 → 拒绝启动。 */
+    @Test
+    void nullProfiles_defaultSecret_throws() {
+        assertThatThrownBy(() -> AuthSecretGuard.enforce(
+                TokenService.DEFAULT_DEV_SECRET, null))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    /** 混合 dev/prod profile + 默认密钥 → 拒绝启动。 */
+    @Test
+    void mixedProfiles_defaultSecret_throws() {
+        assertThatThrownBy(() -> AuthSecretGuard.enforce(
+                TokenService.DEFAULT_DEV_SECRET, new String[]{"dev", "prod"}))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
     /** test profile + 默认密钥 → 不抛异常。 */
     @Test
     void testProfile_defaultSecret_doesNotThrow() {

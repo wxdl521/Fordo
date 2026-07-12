@@ -138,11 +138,13 @@ class AuthContextInterceptorTest {
     }
 
     @Test
-    void optionsPreflight_skips() {
+    void optionsPreflight_clearsBeforeSkipping() {
+        CurrentUser.set(new CurrentPrincipal(7L, UserRole.STUDENT));
         MockHttpServletRequest req = new MockHttpServletRequest("OPTIONS", "/api/companion/chat");
         boolean result = interceptor.preHandle(req, response, new Object());
         assertThat(result).isTrue();
         assertThat(CurrentUser.get()).isNull();
+        assertThat(CurrentUser.getPrincipal()).isNull();
     }
 
     @Test
