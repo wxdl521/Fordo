@@ -23,12 +23,12 @@ class AuthSecretGuardTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
-    /** 无激活 profile（开发/单测环境）+ 默认密钥 → 仅告警，不抛异常。 */
+    /** 无激活 profile + 默认密钥 → 拒绝启动。 */
     @Test
-    void noProfile_defaultSecret_doesNotThrow() {
-        assertThatCode(() ->
-                AuthSecretGuard.enforce(TokenService.DEFAULT_DEV_SECRET, new String[]{}))
-                .doesNotThrowAnyException();
+    void noProfile_defaultSecret_throws() {
+        assertThatThrownBy(() -> AuthSecretGuard.enforce(
+                TokenService.DEFAULT_DEV_SECRET, new String[]{}))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     /** test profile + 默认密钥 → 不抛异常。 */

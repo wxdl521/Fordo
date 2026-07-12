@@ -123,6 +123,21 @@ class AuthContextInterceptorTest {
     }
 
     @Test
+    void preHandle_clearsPrincipalLeftByPreviousRequest() {
+        CurrentUser.set(new CurrentPrincipal(99L, UserRole.STUDENT));
+        interceptor.preHandle(new MockHttpServletRequest("GET", "/api/course/my"), response, new Object());
+        assertThat(CurrentUser.getPrincipal()).isNull();
+    }
+
+    @Test
+    void afterConcurrentHandlingStarted_clearsOriginalServletThread() {
+        CurrentUser.set(new CurrentPrincipal(7L, UserRole.STUDENT));
+        interceptor.afterConcurrentHandlingStarted(
+                new MockHttpServletRequest("POST", "/api/companion/chat"), response, new Object());
+        assertThat(CurrentUser.getPrincipal()).isNull();
+    }
+
+    @Test
     void optionsPreflight_skips() {
         MockHttpServletRequest req = new MockHttpServletRequest("OPTIONS", "/api/companion/chat");
         boolean result = interceptor.preHandle(req, response, new Object());

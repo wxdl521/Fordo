@@ -6,7 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.AsyncHandlerInterceptor;
 
 /**
  * 轻量认证上下文拦截器，挂载 {@code /api/**}。
@@ -16,10 +16,11 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * {@link CurrentUser}；无头/伪造/过期/禁用/不存在一律保持匿名、不抛异常——
  * 是否拒绝交由各端点的 {@code AccessGuard.assertSelf} 或角色拦截器按需决定。</p>
  *
- * <p>{@code afterCompletion} 清除 {@link CurrentUser}，防 ThreadLocal 泄漏到线程池复用的下一个请求。</p>
+ * <p>每次调度开始、异步处理交接和请求完成时清除 {@link CurrentUser}，
+ * 防止 ThreadLocal 泄漏到线程池复用的下一个请求。</p>
  */
 @Component
-public class AuthContextInterceptor implements HandlerInterceptor {
+public class AuthContextInterceptor implements AsyncHandlerInterceptor {
 
     private static final String BEARER = "Bearer ";
 
@@ -33,6 +34,7 @@ public class AuthContextInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+        CurrentUser.clear();
         if (HttpMethod.OPTIONS.matches(request.getMethod())) {
             return true;
         }
@@ -44,6 +46,12 @@ public class AuthContextInterceptor implements HandlerInterceptor {
         }
         // 始终放行；鉴权拒绝由 AccessGuard / 角色拦截器在各端点按需触发
         return true;
+    }
+
+    @Override
+    public void afterConcurrentHandlingStarted(HttpServletRequest request, HttpServletResponse response,
+                                               Object handler) {
+        CurrentUser.clear();
     }
 
     @Override

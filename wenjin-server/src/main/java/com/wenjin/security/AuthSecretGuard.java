@@ -16,7 +16,7 @@ import java.util.Arrays;
  * <p>规则：
  * <ul>
  *   <li>非 dev/test profile：拒绝默认值、空值、UTF-8 长度小于 32 字节的密钥。</li>
- *   <li>dev/test（或无 profile）：默认开发密钥仅 WARN，不阻断启动。</li>
+ *   <li>仅当存在 profile 且全部为 dev/test 时：默认开发密钥仅 WARN，不阻断启动。</li>
  * </ul>
  * </p>
  *
@@ -84,12 +84,11 @@ public class AuthSecretGuard {
         }
     }
 
-    /** 无 profile，或全部为 dev/test 时视为开发/测试，放宽密钥约束。 */
+    /** 存在 profile 且全部为 dev/test 时视为开发/测试，放宽密钥约束。 */
     private static boolean isDevOrTest(String[] activeProfiles) {
-        if (activeProfiles == null || activeProfiles.length == 0) {
-            return true;
-        }
-        return Arrays.stream(activeProfiles)
+        return activeProfiles != null
+                && activeProfiles.length > 0
+                && Arrays.stream(activeProfiles)
                 .allMatch(p -> "dev".equals(p) || "test".equals(p));
     }
 }
