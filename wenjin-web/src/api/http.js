@@ -7,25 +7,44 @@ const http = axios.create({
   timeout: 15000
 })
 
+const UNSCOPED_AUTH_FAILURE = Symbol('unscoped-auth-failure')
+
+function requestAuthToken(...configs) {
+  for (const config of configs) {
+    if (config && Object.prototype.hasOwnProperty.call(config, '__wjAuthToken')) {
+      return config.__wjAuthToken
+    }
+  }
+  return undefined
+}
+
 /**
  * 清除登录态并在非登录页时跳转登录。
  * 优先走 session/course store（若 Pinia 已激活），否则仅清 localStorage。
+ * 传入请求发出时捕获的 token 后，仅当它仍是当前会话时才执行清理。
+ * 不传参数保留退出登录等调用点的无条件清理语义。
+ *
+ * @param {string|null|symbol} [expectedToken]
+ * @returns {boolean} 是否接受并执行了本次清理
  */
-export function clearSessionAndRedirect() {
+export function clearSessionAndRedirect(expectedToken = UNSCOPED_AUTH_FAILURE) {
+  const currentToken = localStorage.getItem('wj_token')
+  if (expectedToken !== UNSCOPED_AUTH_FAILURE && currentToken !== expectedToken) {
+    return false
+  }
+
   const pinia = getActivePinia()
   if (pinia) {
     // 动态 import 切断 http ↔ session ↔ user 的静态环
     import('../store/session.js').then(({ useSessionStore }) => {
+      // import 解析期间可能已经完成新登录；任何新 token 都属于更新一代会话。
+      if (localStorage.getItem('wj_token') !== null) return
       try {
         useSessionStore(pinia).clearSession()
       } catch {
-        localStorage.removeItem('wj_token')
-        localStorage.removeItem('wj_user')
+        // localStorage 已同步清理；store 不可用时无需再次写入。
       }
-    }).catch(() => {
-      localStorage.removeItem('wj_token')
-      localStorage.removeItem('wj_user')
-    })
+    }).catch(() => {})
   } else {
     localStorage.removeItem('wj_token')
     localStorage.removeItem('wj_user')
@@ -36,19 +55,21 @@ export function clearSessionAndRedirect() {
   if (typeof window !== 'undefined' && window.location.pathname !== '/') {
     window.location.assign('/')
   }
+  return true
 }
 
 /**
  * 将非成功 Result 体（含 HTTP 非 2xx 下发的 {code,message,data}）统一拆解为带明细的 Error。
- * @param {{ status?: number, headers?: Record<string, string> }} responseLike
+ * @param {{ status?: number, headers?: Record<string, string>, config?: Record<string, unknown> }} responseLike
  * @param {{ code?: number, message?: string, data?: unknown, requestId?: string }} body
+ * @param {string|null|undefined} [expectedToken]
  */
-export function unwrapFailure(responseLike, body) {
+export function unwrapFailure(responseLike, body, expectedToken = requestAuthToken(responseLike?.config)) {
   const status = responseLike?.status
   const headers = responseLike?.headers || {}
   const code = body?.code
   if (code === 401 || status === 401) {
-    clearSessionAndRedirect()
+    clearSessionAndRedirect(expectedToken)
   }
   const err = new Error(body?.message || '请求失败')
   err.code = code
@@ -84,8 +105,9 @@ export function unwrapError(error) {
     return Promise.reject(err)
   }
   const body = error.response.data
+  const expectedToken = requestAuthToken(error.config, error.response.config)
   if (body && typeof body === 'object' && 'code' in body) {
-    return unwrapFailure(error.response, body)
+    return unwrapFailure(error.response, body, expectedToken)
   }
   const err = new Error(
     (body && typeof body === 'object' && body.message) || error.message || '请求失败'
@@ -93,7 +115,7 @@ export function unwrapError(error) {
   err.httpStatus = error.response.status
   err.network = false
   if (error.response.status === 401) {
-    clearSessionAndRedirect()
+    clearSessionAndRedirect(expectedToken)
   }
   return Promise.reject(err)
 }
@@ -101,6 +123,7 @@ export function unwrapError(error) {
 // 请求拦截器：带上登录令牌（Bearer）。SSE 走原生 fetch 不经此处，见 companion.js。
 http.interceptors.request.use((config) => {
   const token = localStorage.getItem('wj_token')
+  config.__wjAuthToken = token
   if (token) {
     config.headers['Authorization'] = `Bearer ${token}`
   }

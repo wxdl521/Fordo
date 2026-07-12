@@ -1,4 +1,4 @@
-import { http } from './http.js'
+import { clearSessionAndRedirect, http } from './http.js'
 
 /** @param {unknown} err */
 export function isAbortError(err) {
@@ -127,6 +127,9 @@ export async function chatStream(payload, callbacks = {}, options = {}) {
       signal
     })
 
+    if (response.status === 401) {
+      clearSessionAndRedirect(token)
+    }
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`)
     }
