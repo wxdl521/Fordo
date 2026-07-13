@@ -218,8 +218,10 @@ class TeacherGraphServiceImplTest {
 
         service.acceptEdge(10L);
 
-        InOrder order = inOrder(courseMutationLock, edgeMapper);
+        InOrder order = inOrder(courseAccessService, courseMutationLock, edgeMapper);
+        order.verify(courseAccessService).assertManageEdge(10L);
         order.verify(courseMutationLock).lockActive(1L);
+        order.verify(courseAccessService).assertManageEdge(10L);
         order.verify(edgeMapper).selectById(10L);
         order.verify(edgeMapper).updateById(any(KgEdge.class));
 
@@ -237,8 +239,10 @@ class TeacherGraphServiceImplTest {
 
         service.rejectEdge(10L);
 
-        InOrder order = inOrder(courseMutationLock, edgeMapper);
+        InOrder order = inOrder(courseAccessService, courseMutationLock, edgeMapper);
+        order.verify(courseAccessService).assertManageEdge(10L);
         order.verify(courseMutationLock).lockActive(1L);
+        order.verify(courseAccessService).assertManageEdge(10L);
         order.verify(edgeMapper).selectById(10L);
         order.verify(edgeMapper).updateById(any(KgEdge.class));
 
@@ -259,8 +263,10 @@ class TeacherGraphServiceImplTest {
 
         service.deleteNode(1L);
 
-        InOrder order = inOrder(courseMutationLock, nodeMapper, edgeMapper);
+        InOrder order = inOrder(courseAccessService, courseMutationLock, nodeMapper, edgeMapper);
+        order.verify(courseAccessService).assertManageNode(1L);
         order.verify(courseMutationLock).lockActive(1L);
+        order.verify(courseAccessService).assertManageNode(1L);
         order.verify(nodeMapper).selectById(1L);
         order.verify(edgeMapper).update(any(), any());
         order.verify(nodeMapper).updateById(any(KgNode.class));
@@ -706,6 +712,7 @@ class TeacherGraphServiceImplTest {
         existing.setFromNodeId(1L);
         existing.setToNodeId(2L);
         existing.setRelationType(1);
+        existing.setRelationNote("accepted");
         when(edgeMapper.selectList(any(LambdaQueryWrapper.class)))
                 .thenReturn(Collections.singletonList(existing));
 
@@ -717,6 +724,24 @@ class TeacherGraphServiceImplTest {
                     assertThat(be.getMessage()).contains("环路");
                 });
         verify(edgeMapper, never()).insert(any(KgEdge.class));
+    }
+
+    @Test
+    void createEdge_pendingReversePrerequisiteDoesNotBlockManualEdge() {
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Collections.singletonList(node(1L, "A")))
+                .thenReturn(Collections.singletonList(node(2L, "B")))
+                .thenReturn(Arrays.asList(node(1L, "A"), node(2L, "B")));
+        when(edgeMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
+        when(edgeMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(List.of(pendingPrerequisite(99L, 2L, 1L)));
+        when(edgeMapper.insert(any(KgEdge.class))).thenAnswer(invocation -> {
+            invocation.getArgument(0, KgEdge.class).setId(77L);
+            return 1;
+        });
+
+        assertThat(service.createEdge(1L, edgeReq("A", "B", 1))).isEqualTo(77L);
+        verify(edgeMapper).insert(any(KgEdge.class));
     }
 
     @Test
@@ -812,8 +837,10 @@ class TeacherGraphServiceImplTest {
 
         service.updateNode(1L, req);
 
-        InOrder order = inOrder(courseMutationLock, nodeMapper);
+        InOrder order = inOrder(courseAccessService, courseMutationLock, nodeMapper);
+        order.verify(courseAccessService).assertManageNode(1L);
         order.verify(courseMutationLock).lockActive(1L);
+        order.verify(courseAccessService).assertManageNode(1L);
         order.verify(nodeMapper).selectById(1L);
         order.verify(nodeMapper).updateById(any(KgNode.class));
     }
@@ -850,8 +877,10 @@ class TeacherGraphServiceImplTest {
 
         service.acceptEdge(10L);
 
-        InOrder order = inOrder(courseMutationLock, edgeMapper, nodeMapper);
+        InOrder order = inOrder(courseAccessService, courseMutationLock, edgeMapper, nodeMapper);
+        order.verify(courseAccessService).assertManageEdge(10L);
         order.verify(courseMutationLock).lockActive(1L);
+        order.verify(courseAccessService).assertManageEdge(10L);
         order.verify(edgeMapper).selectById(10L);
         order.verify(nodeMapper).selectList(any(LambdaQueryWrapper.class));
         order.verify(edgeMapper).selectList(any(LambdaQueryWrapper.class));

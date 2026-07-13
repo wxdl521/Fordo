@@ -281,7 +281,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         return hits.isEmpty() ? null : hits.get(0);
     }
 
-    /** 构建本课程生效「前置」边邻接表（nodeCode → targets）。 */
+    /** 构建本课程已接受的生效「前置」边邻接表（nodeCode → targets）。 */
     private Map<String, List<String>> buildPrerequisiteAdj(Long courseId) {
         List<KgNode> nodes = nodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>()
@@ -300,6 +300,9 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
 
         Map<String, List<String>> adj = new HashMap<>();
         for (KgEdge e : prereqs) {
+            if (ReviewMarker.isPending(e.getRelationNote())) {
+                continue;
+            }
             String src = idToCode.get(e.getFromNodeId());
             String tgt = idToCode.get(e.getToNodeId());
             if (src == null || tgt == null) {

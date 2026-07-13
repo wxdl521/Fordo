@@ -42,6 +42,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -275,15 +276,29 @@ class GraphIdentityPreservationIT extends MySqlContainerSupport {
         List<KgNode> activeNodes = kgNodeMapper.selectList(new LambdaQueryWrapper<KgNode>()
                 .eq(KgNode::getCourseId, courseId)
                 .isNull(KgNode::getArchivedAt));
-        List<String> activeCodes = activeNodes.stream().map(KgNode::getNodeCode).sorted().toList();
-        assertThat(activeCodes).isIn(List.of("A1", "A2"), List.of("B1", "B2"));
-
         List<KgEdge> activeEdges = kgEdgeMapper.selectList(new LambdaQueryWrapper<KgEdge>()
                 .eq(KgEdge::getCourseId, courseId)
                 .isNull(KgEdge::getArchivedAt));
-        assertThat(activeEdges).hasSize(1);
-        List<Long> activeIds = activeNodes.stream().map(KgNode::getId).toList();
-        assertThat(activeIds).contains(activeEdges.get(0).getFromNodeId(), activeEdges.get(0).getToNodeId());
+
+        Map<Long, String> codesById = new HashMap<>();
+        Map<String, String> namesByCode = new TreeMap<>();
+        for (KgNode node : activeNodes) {
+            codesById.put(node.getId(), node.getNodeCode());
+            namesByCode.put(node.getNodeCode(), node.getName());
+        }
+        List<String> edgeFingerprint = activeEdges.stream()
+                .map(edge -> codesById.get(edge.getFromNodeId()) + "->"
+                        + codesById.get(edge.getToNodeId()) + "|"
+                        + edge.getRelationType() + "|" + edge.getRelationNote())
+                .sorted()
+                .toList();
+        GraphFingerprint actual = new GraphFingerprint(namesByCode, edgeFingerprint);
+        GraphFingerprint expectedLeft = new GraphFingerprint(
+                Map.of("A1", "A-one", "A2", "A-two"), List.of("A1->A2|1|null"));
+        GraphFingerprint expectedRight = new GraphFingerprint(
+                Map.of("B1", "B-one", "B2", "B-two"), List.of("B1->B2|1|null"));
+
+        assertThat(actual).isIn(expectedLeft, expectedRight);
     }
 
     @Test
@@ -327,6 +342,9 @@ class GraphIdentityPreservationIT extends MySqlContainerSupport {
             assertThat(ex.getCode()).isEqualTo(ResultCode.CONFLICT.getCode());
             return false;
         }
+    }
+
+    private record GraphFingerprint(Map<String, String> namesByCode, List<String> edges) {
     }
 
     private <T> List<T> race(Callable<T> left, Callable<T> right) throws Exception {

@@ -120,8 +120,11 @@ class GraphServiceImplTest {
 
         service().importGraph("C1", req(List.of(node("KT01", "A")), List.of()));
 
-        InOrder order = org.mockito.Mockito.inOrder(courseMutationLock, courseMapper, nodeMapper, edgeMapper);
+        InOrder order = org.mockito.Mockito.inOrder(
+                courseAccessService, courseMutationLock, courseMapper, nodeMapper, edgeMapper);
+        order.verify(courseAccessService).assertManageCourseCode("C1");
         order.verify(courseMutationLock).lockActive(1L);
+        order.verify(courseAccessService).assertManageCourse(1L);
         order.verify(courseMapper).selectById(1L);
         order.verify(nodeMapper).selectList(any());
         order.verify(nodeMapper).insert(any(KgNode.class));
