@@ -48,6 +48,21 @@ public class AiJob {
     /** 稳定错误码（不落堆栈/敏感明细） */
     private String errorCode;
 
+    /** Durable cooperative cancellation request. */
+    private LocalDateTime cancelRequestedAt;
+
+    /** UUID identifying the worker attempt that currently owns this row. */
+    private String leaseToken;
+
+    /** Time at which the current worker attempt becomes recoverable. */
+    private LocalDateTime leaseUntil;
+
+    /** Most recent successful lease heartbeat. */
+    private LocalDateTime heartbeatAt;
+
+    /** Set before entering code that can produce domain side effects. */
+    private LocalDateTime effectStartedAt;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime startedAt;

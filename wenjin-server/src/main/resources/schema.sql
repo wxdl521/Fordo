@@ -426,12 +426,18 @@ CREATE TABLE `ai_job` (
     `request_json` MEDIUMTEXT   NOT NULL                COMMENT '请求载荷 JSON',
     `result_json`  MEDIUMTEXT   NULL                    COMMENT '成功结果 JSON',
     `error_code`   VARCHAR(64)  NULL                    COMMENT '稳定错误码（不落敏感明细）',
+    `cancel_requested_at` DATETIME NULL                 COMMENT '持久化取消请求时间',
+    `lease_token`  CHAR(36)     NULL                    COMMENT 'worker 租约 UUID',
+    `lease_until`  DATETIME     NULL                    COMMENT 'worker 租约到期时间',
+    `heartbeat_at` DATETIME     NULL                    COMMENT 'worker 最近心跳时间',
+    `effect_started_at` DATETIME NULL                   COMMENT '业务副作用边界开始时间',
     `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `started_at`   DATETIME     NULL                    COMMENT '最近一次开始执行时间',
     `finished_at`  DATETIME     NULL                    COMMENT '结束时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_ai_job_request` (`owner_id`, `kind`, `request_key`),
     KEY `idx_ai_job_claim` (`status`, `created_at`),
+    KEY `idx_ai_job_lease` (`status`, `lease_until`),
     CONSTRAINT `fk_ai_job_owner` FOREIGN KEY (`owner_id`) REFERENCES `sys_user` (`id`),
     CONSTRAINT `fk_ai_job_course` FOREIGN KEY (`course_id`) REFERENCES `course` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 异步写作业（可恢复）【V7】';

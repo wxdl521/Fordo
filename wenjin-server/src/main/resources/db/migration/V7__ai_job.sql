@@ -12,10 +12,16 @@ CREATE TABLE `ai_job` (
     `request_json` MEDIUMTEXT   NOT NULL,
     `result_json`  MEDIUMTEXT   NULL,
     `error_code`   VARCHAR(64)  NULL,
+    `cancel_requested_at` DATETIME NULL,
+    `lease_token`  CHAR(36)     NULL,
+    `lease_until`  DATETIME     NULL,
+    `heartbeat_at` DATETIME     NULL,
+    `effect_started_at` DATETIME NULL,
     `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `started_at`   DATETIME     NULL,
     `finished_at`  DATETIME     NULL,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_ai_job_request` (`owner_id`, `kind`, `request_key`),
-    KEY `idx_ai_job_claim` (`status`, `created_at`)
+    KEY `idx_ai_job_claim` (`status`, `created_at`),
+    KEY `idx_ai_job_lease` (`status`, `lease_until`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 异步写作业（可恢复）';

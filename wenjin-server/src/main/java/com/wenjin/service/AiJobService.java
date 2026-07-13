@@ -25,9 +25,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * AI 作业：派发（幂等）、查询、取消、领取与结果写回。
@@ -38,8 +36,8 @@ public class AiJobService {
 
     private static final Logger log = LoggerFactory.getLogger(AiJobService.class);
 
-    /** RUNNING 超过该时长视为卡住，可退回 PENDING */
-    public static final int STALE_MINUTES = 15;
+    /** Initial duration granted to each claimed worker lease. */
+    public static final int LEASE_MINUTES = 15;
     /** 最大领取次数（含首次与恢复后重领） */
     public static final int MAX_ATTEMPTS = 3;
 
@@ -47,9 +45,6 @@ public class AiJobService {
     private final CourseAccessService courseAccessService;
     private final FeatureFlagsProperties featureFlags;
     private final ObjectMapper objectMapper;
-
-    /** 协作式取消：RUNNING 作业 id 集合（进程内；PENDING 直接改库） */
-    private final Set<Long> cancelRequested = ConcurrentHashMap.newKeySet();
 
     public AiJobService(AiJobMapper aiJobMapper,
                         CourseAccessService courseAccessService,
@@ -164,21 +159,32 @@ public class AiJobService {
         if (AiJobStatus.isTerminal(status)) {
             return toVo(job);
         }
-        if (status == AiJobStatus.PENDING) {
-            job.setStatus(AiJobStatus.CANCELLED);
-            job.setErrorCode(AiJobErrorCodes.CANCELLED);
-            job.setFinishedAt(LocalDateTime.now());
-            aiJobMapper.updateById(job);
-            cancelRequested.remove(jobId);
-            return toVo(job);
+        LocalDateTime now = LocalDateTime.now();
+        if (aiJobMapper.cancelPending(jobId, now) == 0) {
+            // A claim can win between the ownership read and the pending CAS.
+            aiJobMapper.requestRunningCancel(jobId, now);
         }
-        // RUNNING：协作取消
-        cancelRequested.add(jobId);
-        return toVo(job);
+        AiJob latest = aiJobMapper.selectById(jobId);
+        return toVo(latest == null ? job : latest);
     }
 
-    public boolean isCancelRequested(Long jobId) {
-        return jobId != null && cancelRequested.contains(jobId);
+    public boolean isCancelRequested(Long jobId, String leaseToken) {
+        return validLease(jobId, leaseToken)
+                && aiJobMapper.countCancelRequestedForLease(jobId, leaseToken) == 1;
+    }
+
+    public boolean isCurrentLease(Long jobId, String leaseToken) {
+        return validLease(jobId, leaseToken)
+                && aiJobMapper.countCurrentLease(jobId, leaseToken) == 1;
+    }
+
+    @Transactional
+    public boolean heartbeat(Long jobId, String leaseToken) {
+        if (!validLease(jobId, leaseToken)) {
+            return false;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        return aiJobMapper.heartbeat(jobId, leaseToken, now, now.plusMinutes(LEASE_MINUTES)) == 1;
     }
 
     /**
@@ -193,20 +199,27 @@ public class AiJobService {
             return null;
         }
         int attempts = job.getAttempts() == null ? 0 : job.getAttempts();
+        LocalDateTime now = LocalDateTime.now();
         if (attempts >= MAX_ATTEMPTS) {
-            job.setStatus(AiJobStatus.FAILED);
-            job.setErrorCode(AiJobErrorCodes.MAX_ATTEMPTS);
-            job.setFinishedAt(LocalDateTime.now());
-            aiJobMapper.updateById(job);
+            aiJobMapper.failPendingMaxAttempts(job.getId(), MAX_ATTEMPTS, now);
+            return null;
+        }
+        String leaseToken = UUID.randomUUID().toString();
+        LocalDateTime leaseUntil = now.plusMinutes(LEASE_MINUTES);
+        if (aiJobMapper.claimPending(job.getId(), leaseToken, now, leaseUntil, MAX_ATTEMPTS) != 1) {
             return null;
         }
         job.setStatus(AiJobStatus.RUNNING);
         job.setAttempts(attempts + 1);
-        job.setStartedAt(LocalDateTime.now());
+        job.setStartedAt(now);
         job.setProgress(0);
+        job.setResultJson(null);
         job.setErrorCode(null);
         job.setFinishedAt(null);
-        aiJobMapper.updateById(job);
+        job.setLeaseToken(leaseToken);
+        job.setLeaseUntil(leaseUntil);
+        job.setHeartbeatAt(now);
+        job.setEffectStartedAt(null);
         return job;
     }
 
@@ -215,75 +228,59 @@ public class AiJobService {
      */
     @Transactional
     public int recoverStale() {
-        LocalDateTime threshold = LocalDateTime.now().minusMinutes(STALE_MINUTES);
-        int failed = aiJobMapper.failExhaustedStale(threshold, MAX_ATTEMPTS, LocalDateTime.now());
-        int requeued = aiJobMapper.requeueStaleRunning(threshold, MAX_ATTEMPTS);
-        if (failed + requeued > 0) {
-            log.info("AI job stale recovery: requeued={}, failed={}", requeued, failed);
+        LocalDateTime now = LocalDateTime.now();
+        int unknown = aiJobMapper.failExpiredEffectStarted(now);
+        int exhausted = aiJobMapper.failExpiredPreEffectExhausted(MAX_ATTEMPTS, now);
+        int requeued = aiJobMapper.requeueExpiredPreEffect(MAX_ATTEMPTS, now);
+        int touched = unknown + exhausted + requeued;
+        if (touched > 0) {
+            log.info("AI job lease recovery: unknown={}, exhausted={}, requeued={}",
+                    unknown, exhausted, requeued);
         }
-        return requeued + failed;
+        return touched;
     }
 
     @Transactional
-    public void markProgress(Long jobId, int progress) {
-        AiJob job = aiJobMapper.selectById(jobId);
-        if (job == null || job.getStatus() == null || job.getStatus() != AiJobStatus.RUNNING) {
-            return;
+    public boolean markProgress(Long jobId, String leaseToken, int progress) {
+        if (!validLease(jobId, leaseToken)) {
+            return false;
         }
-        job.setProgress(Math.max(0, Math.min(100, progress)));
-        aiJobMapper.updateById(job);
+        int bounded = Math.max(0, Math.min(100, progress));
+        return aiJobMapper.updateProgress(jobId, leaseToken, bounded) == 1;
     }
 
     @Transactional
-    public void markSucceeded(Long jobId, Object result) {
-        AiJob job = aiJobMapper.selectById(jobId);
-        if (job == null) {
-            return;
+    public boolean markEffectStarted(Long jobId, String leaseToken) {
+        if (!validLease(jobId, leaseToken)) {
+            return false;
         }
-        if (job.getStatus() != null && AiJobStatus.isTerminal(job.getStatus())) {
-            return;
-        }
-        job.setStatus(AiJobStatus.SUCCEEDED);
-        job.setProgress(100);
-        job.setResultJson(toJson(result));
-        job.setErrorCode(null);
-        job.setFinishedAt(LocalDateTime.now());
-        aiJobMapper.updateById(job);
-        cancelRequested.remove(jobId);
+        return aiJobMapper.markEffectStarted(jobId, leaseToken, LocalDateTime.now()) == 1;
     }
 
     @Transactional
-    public void markFailed(Long jobId, String errorCode) {
-        AiJob job = aiJobMapper.selectById(jobId);
-        if (job == null) {
-            return;
+    public boolean markSucceeded(Long jobId, String leaseToken, Object result) {
+        if (!validLease(jobId, leaseToken)) {
+            return false;
         }
-        if (job.getStatus() != null && AiJobStatus.isTerminal(job.getStatus())) {
-            return;
+        return aiJobMapper.markSucceeded(
+                jobId, leaseToken, toJson(result), LocalDateTime.now()) == 1;
+    }
+
+    @Transactional
+    public boolean markFailed(Long jobId, String leaseToken, String errorCode) {
+        if (!validLease(jobId, leaseToken)) {
+            return false;
         }
         String code = StringUtils.hasText(errorCode) ? errorCode : AiJobErrorCodes.INTERNAL_ERROR;
-        job.setStatus(AiJobStatus.FAILED);
-        job.setErrorCode(code);
-        job.setFinishedAt(LocalDateTime.now());
-        aiJobMapper.updateById(job);
-        cancelRequested.remove(jobId);
+        return aiJobMapper.markFailed(jobId, leaseToken, code, LocalDateTime.now()) == 1;
     }
 
     @Transactional
-    public void markCancelled(Long jobId) {
-        AiJob job = aiJobMapper.selectById(jobId);
-        if (job == null) {
-            return;
+    public boolean markCancelled(Long jobId, String leaseToken) {
+        if (!validLease(jobId, leaseToken)) {
+            return false;
         }
-        if (job.getStatus() != null && AiJobStatus.isTerminal(job.getStatus())) {
-            cancelRequested.remove(jobId);
-            return;
-        }
-        job.setStatus(AiJobStatus.CANCELLED);
-        job.setErrorCode(AiJobErrorCodes.CANCELLED);
-        job.setFinishedAt(LocalDateTime.now());
-        aiJobMapper.updateById(job);
-        cancelRequested.remove(jobId);
+        return aiJobMapper.markCancelled(jobId, leaseToken, LocalDateTime.now()) == 1;
     }
 
     /** 供 worker 使用：不经所有权检查，仅按 id 加载。 */
@@ -370,6 +367,10 @@ public class AiJobService {
                 .eq(AiJob::getKind, kind)
                 .eq(AiJob::getRequestKey, key)
                 .last("LIMIT 1"));
+    }
+
+    private static boolean validLease(Long jobId, String leaseToken) {
+        return jobId != null && jobId > 0 && StringUtils.hasText(leaseToken);
     }
 
     private static String normalizeRequestKey(String requestKey) {

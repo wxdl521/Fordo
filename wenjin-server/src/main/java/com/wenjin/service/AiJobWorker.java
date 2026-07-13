@@ -7,7 +7,6 @@ import com.wenjin.entity.AiJob;
 import com.wenjin.support.AiJobErrorCodes;
 import com.wenjin.support.AiJobKind;
 import com.wenjin.support.AiJobPayloadStore;
-import com.wenjin.support.AiJobStatus;
 import com.wenjin.support.InMemoryMultipartFile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,10 +15,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Map;
 
-/**
- * AI 作业 worker：短事务领取 → 事务外执行（AI + Task 10 短写）→ 短事务写结果。
- * <p>特性开关关闭时仍会排空已有 PENDING（只拦截新派发）。
- */
+/** Polls, executes, and lease-qualifies every write made by an AI job worker. */
 @Component
 public class AiJobWorker {
 
@@ -46,7 +42,6 @@ public class AiJobWorker {
         this.graphImportService = graphImportService;
     }
 
-    /** 恢复卡住 RUNNING，再领取执行一条。 */
     @Scheduled(fixedDelayString = "${wenjin.jobs.poll-interval-ms:2000}")
     public void tick() {
         try {
@@ -61,114 +56,120 @@ public class AiJobWorker {
             log.warn("AI job claimNext failed: {}", e.getMessage());
             return;
         }
-        if (job == null) {
-            return;
+        if (job != null) {
+            execute(job);
         }
-        execute(job);
     }
 
     void execute(AiJob job) {
         Long jobId = job.getId();
-        if (aiJobService.isCancelRequested(jobId)) {
-            aiJobService.markCancelled(jobId);
+        // Capture once: a stale worker must never adopt a replacement attempt's token.
+        String leaseToken = job.getLeaseToken();
+        if (checkCancelOrLeaseLoss(jobId, leaseToken)) {
             return;
         }
-        // 身份来自 job.ownerId，不读取请求线程 CurrentUser
         try (AiJobService.WorkerPrincipalScope ignored =
                      new AiJobService.WorkerPrincipalScope(job.getOwnerId())) {
-            aiJobService.markProgress(jobId, 5);
-            if (checkCancel(jobId)) {
+            markProgressOrLose(jobId, leaseToken, 5);
+            if (checkCancelOrLeaseLoss(jobId, leaseToken)) {
                 return;
             }
-            Object result = runKind(job);
-            if (checkCancel(jobId)) {
+            if (!aiJobService.markEffectStarted(jobId, leaseToken)) {
                 return;
             }
-            aiJobService.markSucceeded(jobId, result);
+            Object result = runKind(job, leaseToken);
+            if (checkCancelOrLeaseLoss(jobId, leaseToken)) {
+                return;
+            }
+            aiJobService.markSucceeded(jobId, leaseToken, result);
+        } catch (LeaseLostException e) {
+            log.info("AI job {} stopped after lease loss", jobId);
         } catch (BusinessException e) {
             String code = mapBusinessError(e);
             log.warn("AI job {} failed: code={} msg={}", jobId, code, e.getMessage());
-            aiJobService.markFailed(jobId, code);
+            aiJobService.markFailed(jobId, leaseToken, code);
         } catch (Exception e) {
             log.error("AI job {} internal error: {}", jobId, e.getMessage());
-            aiJobService.markFailed(jobId, AiJobErrorCodes.INTERNAL_ERROR);
+            aiJobService.markFailed(jobId, leaseToken, AiJobErrorCodes.INTERNAL_ERROR);
         }
     }
 
-    private Object runKind(AiJob job) {
+    private Object runKind(AiJob job, String leaseToken) {
         String kind = job.getKind();
-        Map<String, Object> req = aiJobService.parseRequestMap(job.getRequestJson());
+        Map<String, Object> request = aiJobService.parseRequestMap(job.getRequestJson());
         return switch (kind) {
-            case AiJobKind.QUESTION_GENERATE -> runGenerate(job, req);
-            case AiJobKind.QUESTION_ANNOTATE -> runAnnotate(job);
-            case AiJobKind.QUESTION_IMPORT_EXCEL -> runQuestionImportExcel(job, req);
-            case AiJobKind.GRAPH_EXTRACT -> runGraphExtract(job, req);
-            case AiJobKind.GRAPH_IMPORT_EXCEL -> runGraphImportExcel(job, req);
+            case AiJobKind.QUESTION_GENERATE -> runGenerate(job, leaseToken, request);
+            case AiJobKind.QUESTION_ANNOTATE -> runAnnotate(job, leaseToken);
+            case AiJobKind.QUESTION_IMPORT_EXCEL -> runQuestionImportExcel(job, leaseToken, request);
+            case AiJobKind.GRAPH_EXTRACT -> runGraphExtract(job, leaseToken, request);
+            case AiJobKind.GRAPH_IMPORT_EXCEL -> runGraphImportExcel(job, leaseToken, request);
             default -> throw new BusinessException(ResultCode.BAD_REQUEST, "未知作业类型: " + kind);
         };
     }
 
-    private Object runGenerate(AiJob job, Map<String, Object> req) {
-        String nodeCode = stringVal(req.get("nodeCode"));
-        int count = intVal(req.get("count"), 5);
-        aiJobService.markProgress(job.getId(), 20);
+    private Object runGenerate(AiJob job, String leaseToken, Map<String, Object> request) {
+        String nodeCode = stringVal(request.get("nodeCode"));
+        int count = intVal(request.get("count"), 5);
+        markProgressOrLose(job.getId(), leaseToken, 20);
         Object result = questionService.generate(job.getCourseId(), nodeCode, count);
-        aiJobService.markProgress(job.getId(), 90);
+        markProgressOrLose(job.getId(), leaseToken, 90);
         return result;
     }
 
-    private Object runAnnotate(AiJob job) {
+    private Object runAnnotate(AiJob job, String leaseToken) {
         AnnotateRequest body = aiJobService.parseRequest(job.getRequestJson(), AnnotateRequest.class);
-        aiJobService.markProgress(job.getId(), 20);
+        markProgressOrLose(job.getId(), leaseToken, 20);
         Object result = questionService.annotate(job.getCourseId(), body);
-        aiJobService.markProgress(job.getId(), 90);
+        markProgressOrLose(job.getId(), leaseToken, 90);
         return result;
     }
 
-    private Object runQuestionImportExcel(AiJob job, Map<String, Object> req) {
-        InMemoryMultipartFile file = loadFile(req);
-        aiJobService.markProgress(job.getId(), 15);
+    private Object runQuestionImportExcel(AiJob job, String leaseToken, Map<String, Object> request) {
+        InMemoryMultipartFile file = loadFile(request);
+        markProgressOrLose(job.getId(), leaseToken, 15);
         Object result = questionBankImportService.importFromExcel(job.getCourseId(), file);
-        aiJobService.markProgress(job.getId(), 90);
+        markProgressOrLose(job.getId(), leaseToken, 90);
         return result;
     }
 
-    private Object runGraphExtract(AiJob job, Map<String, Object> req) {
-        String courseCode = stringVal(req.get("courseCode"));
-        InMemoryMultipartFile file = loadFile(req);
-        aiJobService.markProgress(job.getId(), 10);
+    private Object runGraphExtract(AiJob job, String leaseToken, Map<String, Object> request) {
+        String courseCode = stringVal(request.get("courseCode"));
+        InMemoryMultipartFile file = loadFile(request);
+        markProgressOrLose(job.getId(), leaseToken, 10);
         Object result = graphExtractReviewService.extractAndStash(courseCode, file);
-        aiJobService.markProgress(job.getId(), 90);
+        markProgressOrLose(job.getId(), leaseToken, 90);
         return result;
     }
 
-    private Object runGraphImportExcel(AiJob job, Map<String, Object> req) {
-        String courseCode = stringVal(req.get("courseCode"));
-        InMemoryMultipartFile file = loadFile(req);
-        aiJobService.markProgress(job.getId(), 15);
+    private Object runGraphImportExcel(AiJob job, String leaseToken, Map<String, Object> request) {
+        String courseCode = stringVal(request.get("courseCode"));
+        InMemoryMultipartFile file = loadFile(request);
+        markProgressOrLose(job.getId(), leaseToken, 15);
         Object result = graphImportService.importFromExcel(courseCode, file);
-        aiJobService.markProgress(job.getId(), 90);
+        markProgressOrLose(job.getId(), leaseToken, 90);
         return result;
     }
 
-    private InMemoryMultipartFile loadFile(Map<String, Object> req) {
-        String hash = stringVal(req.get("fileHash"));
-        String fileName = stringVal(req.get("fileName"));
-        String contentType = stringVal(req.get("contentType"));
+    private InMemoryMultipartFile loadFile(Map<String, Object> request) {
+        String hash = stringVal(request.get("fileHash"));
+        String fileName = stringVal(request.get("fileName"));
+        String contentType = stringVal(request.get("contentType"));
         byte[] bytes = payloadStore.load(hash);
         return new InMemoryMultipartFile("file", fileName, contentType, bytes);
     }
 
-    private boolean checkCancel(Long jobId) {
-        if (aiJobService.isCancelRequested(jobId)) {
-            aiJobService.markCancelled(jobId);
+    private boolean checkCancelOrLeaseLoss(Long jobId, String leaseToken) {
+        if (aiJobService.isCancelRequested(jobId, leaseToken)) {
+            aiJobService.markCancelled(jobId, leaseToken);
             return true;
         }
-        // 若库中已被标记终态则停
-        AiJob latest = aiJobService.getById(jobId);
-        return latest != null
-                && latest.getStatus() != null
-                && AiJobStatus.isTerminal(latest.getStatus());
+        return !aiJobService.isCurrentLease(jobId, leaseToken);
+    }
+
+    private void markProgressOrLose(Long jobId, String leaseToken, int progress) {
+        if (!aiJobService.markProgress(jobId, leaseToken, progress)) {
+            throw new LeaseLostException();
+        }
     }
 
     private static String mapBusinessError(BusinessException e) {
@@ -189,21 +190,27 @@ public class AiJobWorker {
         return AiJobErrorCodes.INTERNAL_ERROR;
     }
 
-    private static String stringVal(Object v) {
-        return v == null ? null : String.valueOf(v);
+    private static String stringVal(Object value) {
+        return value == null ? null : String.valueOf(value);
     }
 
-    private static int intVal(Object v, int defaultVal) {
-        if (v == null) {
-            return defaultVal;
+    private static int intVal(Object value, int defaultValue) {
+        if (value == null) {
+            return defaultValue;
         }
-        if (v instanceof Number n) {
-            return n.intValue();
+        if (value instanceof Number number) {
+            return number.intValue();
         }
         try {
-            return Integer.parseInt(String.valueOf(v));
+            return Integer.parseInt(String.valueOf(value));
         } catch (NumberFormatException e) {
-            return defaultVal;
+            return defaultValue;
+        }
+    }
+
+    private static final class LeaseLostException extends RuntimeException {
+        private LeaseLostException() {
+            super(null, null, false, false);
         }
     }
 }
