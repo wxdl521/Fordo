@@ -109,8 +109,19 @@ class SchemaMigrationIT extends MySqlContainerSupport {
                     tables.add(rs.getString(1));
                 }
             }
+            List<String[]> routines = new ArrayList<>();
+            try (ResultSet rs = st.executeQuery(
+                    "SELECT routine_type, routine_name FROM information_schema.routines "
+                            + "WHERE routine_schema = DATABASE()")) {
+                while (rs.next()) {
+                    routines.add(new String[]{rs.getString(1), rs.getString(2)});
+                }
+            }
             for (String table : tables) {
                 st.execute("DROP TABLE IF EXISTS `" + table + "`");
+            }
+            for (String[] routine : routines) {
+                st.execute("DROP " + routine[0] + " IF EXISTS `" + routine[1] + "`");
             }
             st.execute("SET FOREIGN_KEY_CHECKS = 1");
         }
@@ -248,6 +259,14 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(sqlStateFromCauseChain(failure)).isEqualTo("45000");
         assertThat(columnExists("question", "stem_hash")).isFalse();
         assertThat(successChecksums().keySet()).containsExactly("1", "2", "3", "4", "5");
+        assertThat(routineExists("PROCEDURE", "_v6_precheck"))
+                .as("failed V6 leaves a routine that schema cleanup must isolate")
+                .isTrue();
+
+        wipeSchema();
+
+        assertThat(listBusinessTables()).isEmpty();
+        assertThat(routineExists("PROCEDURE", "_v6_precheck")).isFalse();
     }
 
     @Test
@@ -362,7 +381,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
             // 按语句切分；注释中的分号极少，V1 脚本可安全按 ; 拆分
             for (String statement : raw.split(";")) {
                 String sql = statement.trim();
-                if (sql.isEmpty() || sql.startsWith("--")) {
+                if (sql.isEmpty()) {
                     continue;
                 }
                 // 去掉纯注释块后的空语句
