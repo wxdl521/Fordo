@@ -336,7 +336,31 @@ class MasteryServiceImplTest {
     }
 
     @Test
-    @DisplayName("J3 ambient transaction：直接执行一次 locked write，不开内层事务且异常原样外抛")
+    @DisplayName("J3 standalone：连续死锁达到 3 次上限后原样外抛，且每次使用 REQUIRED 事务")
+    void standaloneRetryStopsAtBoundAndPropagatesOriginalFailure() {
+        when(questionMapper.selectList(any())).thenReturn(List.of(question(1L, 3)));
+        when(questionNodeMapper.selectList(any())).thenReturn(List.of(qnode(1L, 100L, 1)));
+        DeadlockLoserDataAccessException failure =
+                new DeadlockLoserDataAccessException("deadlock retry exhausted", null);
+        when(studentMasteryMapper.insertEnsure(eq(STUDENT), eq(COURSE), eq(100L)))
+                .thenThrow(failure);
+
+        assertThatThrownBy(() -> impl().applyAnswers(
+                STUDENT, COURSE, List.of(new GradedAnswer(1L, true))))
+                .isSameAs(failure);
+
+        verify(studentMasteryMapper, times(3)).insertEnsure(STUDENT, COURSE, 100L);
+        ArgumentCaptor<TransactionDefinition> definitions =
+                ArgumentCaptor.forClass(TransactionDefinition.class);
+        verify(transactionManager, times(3)).getTransaction(definitions.capture());
+        assertThat(definitions.getAllValues())
+                .hasSize(3)
+                .allSatisfy(definition -> assertThat(definition.getPropagationBehavior())
+                        .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRED));
+    }
+
+    @Test
+    @DisplayName("J4 ambient transaction：直接执行一次 locked write，不开内层事务且异常原样外抛")
     void ambientTransactionDoesNotStartOrRetryInnerTransaction() {
         when(questionMapper.selectList(any())).thenReturn(List.of(question(1L, 3)));
         when(questionNodeMapper.selectList(any())).thenReturn(List.of(qnode(1L, 100L, 1)));
