@@ -187,8 +187,8 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     }
 
     @Test
-    @DisplayName("V5 遇到重复路径步骤时以 45000 中止，且不删除任何原始路径项")
-    void v5DuplicatePathSteps_failBeforeDeletingRows() throws Exception {
+    @DisplayName("V5 重复路径步骤失败不删数据，repair 后可按同一 target 安全重跑")
+    void v5DuplicatePathSteps_failBeforeDeletingRows_thenRepairAndRetry() throws Exception {
         createFlyway("4").migrate();
 
         executeSql(
@@ -211,6 +211,20 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(countRows("learning_path_item", "id IN (501, 502)")).isEqualTo(2);
         assertThat(columnExists("student_course", "current_path_id")).isFalse();
         assertThat(successChecksums().keySet()).containsExactly("1", "2", "3", "4");
+        assertThat(migrationHistoryRowExists("5", false)).isTrue();
+
+        executeSql("DELETE FROM learning_path_item WHERE id = 502");
+        createFlyway("5").repair();
+        MigrateResult retry = createFlyway("5").migrate();
+
+        assertThat(retry.success).isTrue();
+        assertThat(retry.migrationsExecuted).isEqualTo(1);
+        assertThat(migrationHistoryRowExists("5", false)).isFalse();
+        assertThat(migrationHistoryRowExists("5", true)).isTrue();
+        assertThat(columnExists("student_course", "current_path_id")).isTrue();
+        assertThat(constraintExists("learning_path_item", "uk_path_step_order")).isTrue();
+        assertThat(constraintExists("learning_path_item", "uk_path_node")).isTrue();
+        assertThat(routineExists("PROCEDURE", "_v5_precheck")).isFalse();
     }
 
     @Test
@@ -408,6 +422,31 @@ class SchemaMigrationIT extends MySqlContainerSupport {
                      "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 1")) {
             rs.next();
             return rs.getInt(1);
+        }
+    }
+
+    private static boolean migrationHistoryRowExists(String version, boolean success) throws Exception {
+        try (Connection conn = MYSQL.createConnection("");
+             var ps = conn.prepareStatement(
+                     "SELECT 1 FROM flyway_schema_history WHERE version = ? AND success = ?")) {
+            ps.setString(1, version);
+            ps.setBoolean(2, success);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static boolean routineExists(String routineType, String routineName) throws Exception {
+        try (Connection conn = MYSQL.createConnection("");
+             var ps = conn.prepareStatement(
+                     "SELECT 1 FROM information_schema.routines "
+                             + "WHERE routine_schema = DATABASE() AND routine_type = ? AND routine_name = ?")) {
+            ps.setString(1, routineType);
+            ps.setString(2, routineName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
         }
     }
 

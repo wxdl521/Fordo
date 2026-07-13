@@ -271,7 +271,7 @@ ALTER TABLE `course`
     MODIFY COLUMN `teacher_id` BIGINT NOT NULL
         COMMENT '创建教师（物理外键→sys_user.id）【V9】';
 
--- stem_hash already NOT NULL after V6; re-assert contract for snapshot parity
+-- V6 is the nullable expand; after the NULL audit above passes, V9 contracts NOT NULL.
 ALTER TABLE `question`
     MODIFY COLUMN `stem_hash` CHAR(64) NOT NULL
         COMMENT '题干 SHA-256 十六进制指纹（trim 后，与应用 StemHash 一致）【V9】';

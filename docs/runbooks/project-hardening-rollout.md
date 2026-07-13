@@ -79,10 +79,22 @@ Steps:
 2. `flyway info` → expected pending V3…V8 (or subset if partial).
 3. Run the one-shot migrator with an explicit V8 ceiling (never allow this phase to pick up V9):
    ```bash
-   SPRING_FLYWAY_TARGET=8 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar
+   SPRING_FLYWAY_TARGET=8 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar --spring.main.web-application-type=none
    ```
 4. On non-zero exit: **stop release**, keep old app instances, restore dump if schema half-applied and unclean.
 5. Spot-check columns/tables; app still runs with flags off.
+
+The non-web flag only prevents an HTTP server; it does **not** guarantee that the JVM exits. The one-shot job runner must detect successful migration completion and terminate/reclaim the process or pod. Never leave a migrator process running as an application with DDL credentials.
+
+**V5/V6 `SQLSTATE 45000` recovery (order is mandatory):**
+
+1. Stop the release. Inspect `flyway_schema_history` and `information_schema` first, and confirm there is no partial business-table DDL (`current_path_id` / path unique keys for V5; `stem_hash` / its unique key for V6).
+2. Fix or quarantine the duplicate source data and retain an audit record. V5 must satisfy both `(path_id, step_order)` and `(path_id, node_id)`; V6 must satisfy normalized `course_id + SHA2(TRIM(stem), 256)` uniqueness.
+3. Only after steps 1–2, run `flyway repair` to remove the failed history row.
+4. Re-run with the **same target** (target 8 in this phase), including `--spring.main.web-application-type=none`.
+5. Re-run `flyway info` and the duplicate/integrity audits before continuing.
+
+MySQL stored procedures and DDL are non-transactional. A failed migration can leave procedure or DDL state outside rollback, so **never run `flyway repair` before inspecting the schema**.
 
 **Rollback**: restore pre-migrate dump if migrate fails mid-way. **Never** `DROP` business tables to “undo”. Prefer forward-fix `Vn+1` after restore investigation.
 
@@ -150,10 +162,11 @@ export WENJIN_FEATURE_FIXED_DIAGNOSTIC=true
 3. Backup again.
 4. Migrator: apply **only** `V9__relational_integrity.sql` (Flyway pending version 9):
    ```bash
-   SPRING_FLYWAY_TARGET=9 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar
+   SPRING_FLYWAY_TARGET=9 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar --spring.main.web-application-type=none
    ```
-5. Run `ops/sql/post-migration-verification.sql` — all checks green.
-6. Restart app (still DML account). Smoke ownership + practice + diagnostic.
+5. Have the one-shot job runner terminate/reclaim the non-web migrator process after successful completion; do not retain it as a DDL-credentialed service.
+6. Run `ops/sql/post-migration-verification.sql` — all checks green.
+7. Restart app (still DML account). Smoke ownership + practice + diagnostic.
 
 V9 enforces:
 

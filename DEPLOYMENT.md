@@ -158,14 +158,16 @@ export DB_PASSWORD='足够强的随机密码_app'
    ```
 3. **migrate V3–V8 expand only**
    ```bash
-   SPRING_FLYWAY_TARGET=8 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar
+   SPRING_FLYWAY_TARGET=8 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar --spring.main.web-application-type=none
    ```
 4. **校验并清零 V9 前审计**：`flyway info` 精确到 V8 Success；运行 `ops/sql/security-role-audit.sql` 与 `ops/sql/preflight-integrity.sql`。
 5. **在独立发布窗口 migrate V9 contract only**
    ```bash
-   SPRING_FLYWAY_TARGET=9 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar
+   SPRING_FLYWAY_TARGET=9 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar --spring.main.web-application-type=none
    ```
 6. **再启动** 普通应用实例（`DB_USER=wenjin`，`WENJIN_FLYWAY_ENABLED=false` 或不设）。
+
+`--spring.main.web-application-type=none` 只是不启动 Web Server，不能保证 JVM 自行退出。一次性作业编排器必须在迁移成功后终止并回收进程/Pod；禁止把持有 DDL 凭据的 migrator 当作常驻应用。
 
 **失败停止与回滚规则**：
 
@@ -173,6 +175,14 @@ export DB_PASSWORD='足够强的随机密码_app'
 - 不得在生产「重跑 schema.sql」或手工 `DROP` 救火。
 - 回滚优先：恢复迁移前逻辑备份（mysqldump），再排查失败的 `Vn`；Flyway 默认不对已成功版本自动 undo。
 - 修复脚本以**新的 Vn+1** 正向修补，避免改写已发布迁移的 checksum（`validate-on-migrate=true` 会拒绝篡改历史）。
+
+V5/V6 预检返回 `SQLSTATE 45000` 时，恢复顺序不可改变：
+
+1. 先查 `flyway_schema_history` 与 `information_schema`，确认没有半成品业务表 DDL；MySQL procedure/DDL 非事务，禁止未检查就直接 `flyway repair`。
+2. 修复或隔离重复数据：V5 同时清零两组路径项重复，V6 清零 `course_id + SHA2(TRIM(stem), 256)` 重复。
+3. 执行 `flyway repair` 移除 `success=0` 的 failed history。
+4. 使用失败时**同一 target** 和 non-web 参数重跑迁移。
+5. 重新执行 `flyway info`、重复数据检查和完整性 audit，确认全绿后再继续发布。
 
 #### V9 关系完整性（独立发布窗口）
 
@@ -463,14 +473,16 @@ management:
 export DB_USER=wenjin_migrator
 export DB_PASSWORD='替换为 migrator 强密码'
 # 先只落到 V8（expand），绝不能在该阶段捎带 V9
-SPRING_FLYWAY_TARGET=8 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar
+SPRING_FLYWAY_TARGET=8 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar --spring.main.web-application-type=none
 # 4) V9 前：mysql ... < ops/sql/security-role-audit.sql （bad_count 全 0）
 # 5) 独立窗口只落 V9（contract）
-SPRING_FLYWAY_TARGET=9 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar
+SPRING_FLYWAY_TARGET=9 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar --spring.main.web-application-type=none
 # 6) V9 后：mysql ... < ops/sql/post-migration-verification.sql
 # 7) 开通真实教师/管理员：见 2.3.1
 # 分阶段顺序与 flag 开关：docs/runbooks/project-hardening-rollout.md
 ```
+
+上述 non-web 迁移命令仍由一次性作业编排器负责在成功后终止/回收；不得作为持有 DDL 凭据的常驻应用运行。
 
 ### 5.3 配置环境变量（systemd 示例，见 5.5）
 至少：`SPRING_PROFILES_ACTIVE=prod`、`WENJIN_AUTH_SECRET`、`DB_USER`（app 账号）、`DB_PASSWORD`、`WENJIN_AI_API_KEY`、`WENJIN_AI_VISION_API_KEY`、`WENJIN_CORS_ORIGINS`。  
