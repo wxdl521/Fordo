@@ -286,6 +286,12 @@ class FixedDiagnosticSessionIT extends MySqlContainerSupport {
         assertThat(masteryCount).isEqualTo(1);
 
         Map<String, Long> countsBeforeReplay = diagnosticWriteCounts();
+        Map<String, Object> sessionBeforeReplay = jdbcTemplate.queryForMap(
+                "SELECT status, result_json, finished_at FROM diagnostic_session WHERE token = ?",
+                paper.getSessionToken());
+        assertThat(((Number) sessionBeforeReplay.get("status")).intValue()).isEqualTo(1);
+        assertThat(sessionBeforeReplay.get("result_json")).isNotNull();
+        assertThat(sessionBeforeReplay.get("finished_at")).isNotNull();
         featureFlags.setFixedDiagnosticEnabled(false);
 
         // 开关关闭后，相同 token 仍从持久化结果重放
@@ -293,6 +299,9 @@ class FixedDiagnosticSessionIT extends MySqlContainerSupport {
         assertThat(second.getCorrectCount()).isEqualTo(first.getCorrectCount());
         assertThat(second.getTotal()).isEqualTo(first.getTotal());
         assertThat(diagnosticWriteCounts()).isEqualTo(countsBeforeReplay);
+        assertThat(jdbcTemplate.queryForMap(
+                "SELECT status, result_json, finished_at FROM diagnostic_session WHERE token = ?",
+                paper.getSessionToken())).isEqualTo(sessionBeforeReplay);
     }
 
     @Test

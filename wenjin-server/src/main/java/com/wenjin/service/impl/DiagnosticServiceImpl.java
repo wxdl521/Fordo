@@ -166,11 +166,11 @@ public class DiagnosticServiceImpl implements DiagnosticService {
         }
 
         // 只有至少一个主知识点仍在本课程 active 节点集中，题目才可参与组卷。
-        // 多主节点时忽略已归档链接，保留遇到的第一个 active 主节点用于分章。
+        // 多主节点时忽略已归档链接，稳定选择最小 active nodeId 用于分章。
         Map<Long, Long> questionToNodeId = new HashMap<>();
         for (QuestionNode qn : mainNodes) {
             if (nodeMap.containsKey(qn.getNodeId())) {
-                questionToNodeId.putIfAbsent(qn.getQuestionId(), qn.getNodeId());
+                questionToNodeId.merge(qn.getQuestionId(), qn.getNodeId(), Math::min);
             }
         }
         approved = approved.stream()

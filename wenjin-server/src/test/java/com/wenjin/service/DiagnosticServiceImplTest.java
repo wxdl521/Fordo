@@ -324,6 +324,64 @@ class DiagnosticServiceImplTest {
     }
 
     @Test
+    @DisplayName("多 active 主节点：反转关联查询顺序仍按最小 nodeId 稳定组卷")
+    void compose_multipleActiveMainNodes_usesSmallestNodeIdRegardlessOfMapperOrder() {
+        Question multiNode = approved(701L);
+        Question chapterAQuestion = approved(702L);
+        Question chapterBQuestion = approved(703L);
+        List<Question> questions = List.of(multiNode, chapterAQuestion, chapterBQuestion);
+
+        KgNode chapterA = new KgNode();
+        chapterA.setId(100L);
+        chapterA.setCourseId(COURSE_ID);
+        chapterA.setChapter("A章");
+        chapterA.setIsKey(0);
+        KgNode chapterB = new KgNode();
+        chapterB.setId(200L);
+        chapterB.setCourseId(COURSE_ID);
+        chapterB.setChapter("B章");
+        chapterB.setIsKey(0);
+
+        QuestionNode multiA = new QuestionNode();
+        multiA.setQuestionId(multiNode.getId());
+        multiA.setNodeId(chapterA.getId());
+        multiA.setWeight(1);
+        QuestionNode multiB = new QuestionNode();
+        multiB.setQuestionId(multiNode.getId());
+        multiB.setNodeId(chapterB.getId());
+        multiB.setWeight(1);
+        QuestionNode onlyA = new QuestionNode();
+        onlyA.setQuestionId(chapterAQuestion.getId());
+        onlyA.setNodeId(chapterA.getId());
+        onlyA.setWeight(1);
+        QuestionNode onlyB = new QuestionNode();
+        onlyB.setQuestionId(chapterBQuestion.getId());
+        onlyB.setNodeId(chapterB.getId());
+        onlyB.setWeight(1);
+
+        List<QuestionNode> forward = List.of(multiA, multiB, onlyA, onlyB);
+        List<QuestionNode> reversed = List.of(onlyB, onlyA, multiB, multiA);
+        stubComposeHappyPath(questions, forward, List.of(chapterA, chapterB));
+        when(questionNodeMapper.selectList(any())).thenReturn(forward, reversed);
+
+        DiagnosticServiceImpl service = impl();
+        ReflectionTestUtils.setField(service, "paperSize", 2);
+        PaperVO first = service.composePaper(COURSE_ID);
+        PaperVO second = service.composePaper(COURSE_ID);
+
+        List<Long> firstIds = first.getQuestions().stream()
+                .map(PaperQuestionVO::getQuestionId)
+                .toList();
+        List<Long> secondIds = second.getQuestions().stream()
+                .map(PaperQuestionVO::getQuestionId)
+                .toList();
+        assertThat(firstIds).containsExactly(multiNode.getId(), chapterBQuestion.getId());
+        assertThat(secondIds).isEqualTo(firstIds);
+        assertThat(first.getQuestions().get(0).getChapter()).isEqualTo("A章");
+        assertThat(second.getQuestions().get(0).getChapter()).isEqualTo("A章");
+    }
+
+    @Test
     @DisplayName("特性关闭 → compose 503")
     void compose_featureDisabled_503() {
         featureFlags.setFixedDiagnosticEnabled(false);
