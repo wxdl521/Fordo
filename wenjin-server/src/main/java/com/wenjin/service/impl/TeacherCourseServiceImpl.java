@@ -10,6 +10,7 @@ import com.wenjin.dto.TeacherCourseVO;
 import com.wenjin.entity.Course;
 import com.wenjin.entity.KgEdge;
 import com.wenjin.entity.KgNode;
+import com.wenjin.mapper.CourseAccessMapper;
 import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
@@ -34,16 +35,19 @@ public class TeacherCourseServiceImpl implements TeacherCourseService {
     private final KgNodeMapper nodeMapper;
     private final KgEdgeMapper edgeMapper;
     private final CourseAccessService courseAccessService;
+    private final CourseAccessMapper courseAccessMapper;
     private final FeatureFlagsProperties featureFlags;
 
     public TeacherCourseServiceImpl(CourseMapper courseMapper, KgNodeMapper nodeMapper,
                                     KgEdgeMapper edgeMapper,
                                     CourseAccessService courseAccessService,
+                                    CourseAccessMapper courseAccessMapper,
                                     FeatureFlagsProperties featureFlags) {
         this.courseMapper = courseMapper;
         this.nodeMapper = nodeMapper;
         this.edgeMapper = edgeMapper;
         this.courseAccessService = courseAccessService;
+        this.courseAccessMapper = courseAccessMapper;
         this.featureFlags = featureFlags;
     }
 
@@ -85,6 +89,10 @@ public class TeacherCourseServiceImpl implements TeacherCourseService {
     public void delete(Long courseId) {
         ensureGraphReconcileEnabled();
         courseAccessService.assertManageCourse(courseId);
+        if (courseAccessMapper.lockActiveCourse(courseId) == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage());
+        }
+        courseAccessService.assertManageCourse(courseId);
         Course c = courseMapper.selectById(courseId);
         if (c == null || c.getArchivedAt() != null) {
             throw new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage());
@@ -92,6 +100,7 @@ public class TeacherCourseServiceImpl implements TeacherCourseService {
 
         LocalDateTime now = LocalDateTime.now();
         // 软归档课程；不硬删题目 / 掌握度 / 路径等下游数据
+        c.setStatus(0);
         c.setArchivedAt(now);
         courseMapper.updateById(c);
 
@@ -104,6 +113,37 @@ public class TeacherCourseServiceImpl implements TeacherCourseService {
                 .eq("course_id", courseId)
                 .isNull("archived_at")
                 .set("archived_at", now));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public TeacherCourseVO restore(Long courseId) {
+        ensureGraphReconcileEnabled();
+        courseAccessService.assertManageCourseIncludingArchived(courseId);
+        if (courseAccessMapper.lockCourseIncludingArchived(courseId) == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage());
+        }
+        courseAccessService.assertManageCourseIncludingArchived(courseId);
+
+        Course c = courseMapper.selectById(courseId);
+        if (c == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage());
+        }
+
+        courseMapper.update(null, new UpdateWrapper<Course>()
+                .eq("id", courseId)
+                .set("status", 0)
+                .set("archived_at", null));
+        if (c.getArchivedAt() != null) {
+            nodeMapper.update(null, new UpdateWrapper<KgNode>()
+                    .eq("course_id", courseId)
+                    .set("archived_at", null));
+            edgeMapper.update(null, new UpdateWrapper<KgEdge>()
+                    .eq("course_id", courseId)
+                    .set("archived_at", null));
+        }
+
+        return new TeacherCourseVO(c.getId(), c.getCode(), c.getName(), false);
     }
 
     @Override

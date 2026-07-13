@@ -13,6 +13,9 @@ public interface TeacherCourseService {
 
     void delete(Long courseId);
 
+    /** Restore an archived course and graph as explicitly unpublished. */
+    TeacherCourseVO restore(Long courseId);
+
     /** 发布(true)/下架(false)课程，落到 course.status 1/0。 */
     void setPublished(Long courseId, boolean published);
 }

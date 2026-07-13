@@ -4,6 +4,8 @@ import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.CurrentUser;
 import com.wenjin.mapper.CourseAccessMapper;
+import org.apache.ibatis.annotations.Options;
+import org.apache.ibatis.annotations.Select;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -107,6 +109,72 @@ class CourseAccessServiceTest {
 
         assertThatThrownBy(() -> service.assertManageCourse(404L))
                 .extracting("code").isEqualTo(404);
+    }
+
+    @Test
+    void restoreAuthorization_teacherUsesIncludingArchivedOwnershipOnly() {
+        CurrentUser.set(principal(11L, UserRole.TEACHER));
+        when(accessMapper.isOwnedCourseIncludingArchived(22L, 11L)).thenReturn(true);
+
+        assertThatCode(() -> service.assertManageCourseIncludingArchived(22L))
+                .doesNotThrowAnyException();
+
+        verify(accessMapper).isOwnedCourseIncludingArchived(22L, 11L);
+        verify(accessMapper, never()).isOwnedCourse(any(), any());
+    }
+
+    @Test
+    void restoreAuthorization_adminUsesIncludingArchivedExistenceOnly() {
+        CurrentUser.set(principal(1L, UserRole.ADMIN));
+        when(accessMapper.courseExistsIncludingArchived(22L)).thenReturn(true);
+
+        assertThatCode(() -> service.assertManageCourseIncludingArchived(22L))
+                .doesNotThrowAnyException();
+
+        verify(accessMapper).courseExistsIncludingArchived(22L);
+        verify(accessMapper, never()).courseExists(22L);
+        verify(accessMapper, never()).isOwnedCourseIncludingArchived(any(), any());
+    }
+
+    @Test
+    void restoreAuthorization_nonOwnerStill404() {
+        CurrentUser.set(principal(11L, UserRole.TEACHER));
+        when(accessMapper.isOwnedCourseIncludingArchived(22L, 11L)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.assertManageCourseIncludingArchived(22L))
+                .extracting("code").isEqualTo(ResultCode.NOT_FOUND.getCode());
+    }
+
+    @Test
+    void normalManagementSqlIsActiveOnly() throws NoSuchMethodException {
+        assertSelectContainsArchivedFilter("courseExists", Long.class);
+        assertSelectContainsArchivedFilter("courseIdByCode", String.class);
+        assertSelectContainsArchivedFilter("isOwnedCourse", Long.class, Long.class);
+        assertSelectContainsArchivedFilter("courseIdForNode", Long.class);
+        assertSelectContainsArchivedFilter("courseIdForEdge", Long.class);
+        assertSelectContainsArchivedFilter("courseIdForQuestion", Long.class);
+    }
+
+    @Test
+    void restoreLockIncludesArchivedRowsAndFlushesAuthorizationCache() throws NoSuchMethodException {
+        java.lang.reflect.Method method = CourseAccessMapper.class
+                .getMethod("lockCourseIncludingArchived", Long.class);
+        Select select = method.getAnnotation(Select.class);
+        Options options = method.getAnnotation(Options.class);
+
+        assertThat(String.join(" ", select.value()).toLowerCase())
+                .contains("for update")
+                .doesNotContain("archived_at is null");
+        assertThat(options).isNotNull();
+        assertThat(options.useCache()).isFalse();
+        assertThat(options.flushCache()).isEqualTo(Options.FlushCachePolicy.TRUE);
+    }
+
+    private static void assertSelectContainsArchivedFilter(String methodName, Class<?>... parameterTypes)
+            throws NoSuchMethodException {
+        Select select = CourseAccessMapper.class.getMethod(methodName, parameterTypes).getAnnotation(Select.class);
+        assertThat(select).isNotNull();
+        assertThat(String.join(" ", select.value()).toLowerCase()).contains("archived_at is null");
     }
 
     @Test

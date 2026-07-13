@@ -48,6 +48,26 @@ public class CourseAccessService {
     }
 
     /**
+     * Restore-only authorization that deliberately includes archived courses.
+     * All ordinary management paths must continue to use {@link #assertManageCourse(Long)}.
+     */
+    public void assertManageCourseIncludingArchived(Long courseId) {
+        CurrentPrincipal principal = CurrentUser.requireTeacher();
+        if (courseId == null || courseId <= 0) {
+            notFound();
+        }
+        if (principal.isAdmin()) {
+            if (!accessMapper.courseExistsIncludingArchived(courseId)) {
+                notFound();
+            }
+            return;
+        }
+        if (!accessMapper.isOwnedCourseIncludingArchived(courseId, principal.userId())) {
+            notFound();
+        }
+    }
+
+    /**
      * 按业务编码断言可管理，返回课程主键。
      *
      * @return courseId

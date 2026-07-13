@@ -107,7 +107,7 @@ public class GraphServiceImpl implements GraphService {
 
         // 2) 定位课程（assert 已保证存在与归属）
         Course course = courseMapper.selectById(courseId);
-        if (course == null) {
+        if (course == null || course.getArchivedAt() != null) {
             throw new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage());
         }
         boolean courseDirty = false;
@@ -115,21 +115,8 @@ public class GraphServiceImpl implements GraphService {
             course.setName(request.getCourse().getName());
             courseDirty = true;
         }
-        // 重导入解除课程归档
-        if (course.getArchivedAt() != null) {
-            course.setArchivedAt(null);
-            courseDirty = true;
-        }
         if (courseDirty) {
-            if (course.getArchivedAt() == null) {
-                // updateById 忽略 null：用 UpdateWrapper 清 archived_at
-                courseMapper.update(null, new UpdateWrapper<Course>()
-                        .eq("id", courseId)
-                        .set("name", course.getName())
-                        .set("archived_at", null));
-            } else {
-                courseMapper.updateById(course);
-            }
+            courseMapper.updateById(course);
         }
 
         // 3) 差量对账节点：按 (course_id, node_code) 保主键

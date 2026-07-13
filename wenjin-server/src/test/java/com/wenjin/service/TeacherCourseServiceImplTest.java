@@ -6,6 +6,7 @@ import com.wenjin.config.CurrentUser;
 import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.dto.TeacherCourseVO;
 import com.wenjin.entity.Course;
+import com.wenjin.mapper.CourseAccessMapper;
 import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -27,9 +29,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -40,6 +45,7 @@ class TeacherCourseServiceImplTest {
     @Mock KgNodeMapper nodeMapper;
     @Mock KgEdgeMapper edgeMapper;
     @Mock CourseAccessService courseAccessService;
+    @Mock CourseAccessMapper courseAccessMapper;
 
     private FeatureFlagsProperties featureFlags;
     private TeacherCourseServiceImpl service;
@@ -48,8 +54,9 @@ class TeacherCourseServiceImplTest {
     void setUp() {
         featureFlags = new FeatureFlagsProperties();
         featureFlags.setGraphReconcileEnabled(true);
+        lenient().when(courseAccessMapper.lockActiveCourse(any())).thenAnswer(inv -> inv.getArgument(0));
         service = new TeacherCourseServiceImpl(courseMapper, nodeMapper, edgeMapper,
-                courseAccessService, featureFlags);
+                courseAccessService, courseAccessMapper, featureFlags);
     }
 
     @AfterEach
@@ -141,6 +148,13 @@ class TeacherCourseServiceImplTest {
         ArgumentCaptor<Course> cap = ArgumentCaptor.forClass(Course.class);
         verify(courseMapper).updateById(cap.capture());
         assertThat(cap.getValue().getArchivedAt()).isNotNull();
+        assertThat(cap.getValue().getStatus()).isZero();
+        verify(courseAccessService, times(2)).assertManageCourse(5L);
+        InOrder order = org.mockito.Mockito.inOrder(courseAccessService, courseAccessMapper, courseMapper);
+        order.verify(courseAccessService).assertManageCourse(5L);
+        order.verify(courseAccessMapper).lockActiveCourse(5L);
+        order.verify(courseAccessService).assertManageCourse(5L);
+        order.verify(courseMapper).selectById(5L);
         verify(nodeMapper).update(any(), any());
         verify(edgeMapper).update(any(), any());
         verify(courseMapper, never()).deleteById(any(Long.class));
@@ -189,6 +203,94 @@ class TeacherCourseServiceImplTest {
                 .isEqualTo(404);
         verify(courseMapper, never()).deleteById(any(Long.class));
         verify(courseMapper, never()).updateById(any(Course.class));
+        verify(courseAccessMapper, never()).lockActiveCourse(any());
+    }
+
+    @Test
+    void restore_archivedCourseAndGraph_isExplicitAndUnpublished() {
+        asTeacher(9L);
+        when(courseAccessMapper.lockCourseIncludingArchived(5L)).thenReturn(5L);
+        Course c = new Course();
+        c.setId(5L);
+        c.setCode("C1");
+        c.setName("course-one");
+        c.setStatus(1);
+        c.setArchivedAt(java.time.LocalDateTime.now().minusDays(1));
+        when(courseMapper.selectById(5L)).thenReturn(c);
+
+        TeacherCourseVO vo = service.restore(5L);
+
+        verify(courseAccessService, times(2)).assertManageCourseIncludingArchived(5L);
+        InOrder order = org.mockito.Mockito.inOrder(
+                courseAccessService, courseAccessMapper, courseMapper, nodeMapper, edgeMapper);
+        order.verify(courseAccessService).assertManageCourseIncludingArchived(5L);
+        order.verify(courseAccessMapper).lockCourseIncludingArchived(5L);
+        order.verify(courseAccessService).assertManageCourseIncludingArchived(5L);
+        order.verify(courseMapper).selectById(5L);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<Course>> courseUpdate =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper.class);
+        verify(courseMapper).update(isNull(), courseUpdate.capture());
+        assertThat(courseUpdate.getValue().getSqlSet()).contains("status", "archived_at");
+        assertThat(courseUpdate.getValue().getParamNameValuePairs().values()).contains(0).containsNull();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<com.wenjin.entity.KgNode>> nodeUpdate =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper.class);
+        verify(nodeMapper).update(isNull(), nodeUpdate.capture());
+        assertThat(nodeUpdate.getValue().getSqlSet()).contains("archived_at");
+        assertThat(nodeUpdate.getValue().getParamNameValuePairs().values()).containsNull();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<com.wenjin.entity.KgEdge>> edgeUpdate =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper.class);
+        verify(edgeMapper).update(isNull(), edgeUpdate.capture());
+        assertThat(edgeUpdate.getValue().getSqlSet()).contains("archived_at");
+        assertThat(edgeUpdate.getValue().getParamNameValuePairs().values()).containsNull();
+
+        assertThat(vo.getId()).isEqualTo(5L);
+        assertThat(vo.getCode()).isEqualTo("C1");
+        assertThat(vo.isPublished()).isFalse();
+    }
+
+    @Test
+    void restore_activeCourse_isIdempotentButAlwaysUnpublished() {
+        asTeacher(9L);
+        when(courseAccessMapper.lockCourseIncludingArchived(5L)).thenReturn(5L);
+        Course c = new Course();
+        c.setId(5L);
+        c.setCode("C1");
+        c.setName("course-one");
+        c.setStatus(1);
+        when(courseMapper.selectById(5L)).thenReturn(c);
+
+        TeacherCourseVO vo = service.restore(5L);
+
+        assertThat(vo.isPublished()).isFalse();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<Course>> update =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper.class);
+        verify(courseMapper).update(isNull(), update.capture());
+        assertThat(update.getValue().getSqlSet()).contains("status", "archived_at");
+        assertThat(update.getValue().getParamNameValuePairs().values()).contains(0).containsNull();
+        verify(nodeMapper, never()).update(any(), any());
+        verify(edgeMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void restore_missingLockedRow_404BeforeMutation() {
+        asTeacher(9L);
+        when(courseAccessMapper.lockCourseIncludingArchived(404L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.restore(404L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(ResultCode.NOT_FOUND.getCode());
+
+        verify(courseAccessService).assertManageCourseIncludingArchived(404L);
+        verify(courseMapper, never()).selectById(any());
+        verify(courseMapper, never()).update(any(), any());
     }
 
     @Test

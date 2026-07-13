@@ -23,6 +23,7 @@ class TeacherCourseControllerTest {
                 return new TeacherCourseVO(1L, "ABCDEF0123", name);
             }
             public void delete(Long courseId) {}
+            public TeacherCourseVO restore(Long courseId) { return null; }
             public void setPublished(Long courseId, boolean published) {}
         };
         TeacherCourseController controller = new TeacherCourseController(fake);
@@ -42,6 +43,7 @@ class TeacherCourseControllerTest {
             public List<TeacherCourseVO> list() { return List.of(); }
             public TeacherCourseVO create(String name) { return null; }
             public void delete(Long courseId) { deleted.set(courseId); }
+            public TeacherCourseVO restore(Long courseId) { return null; }
             public void setPublished(Long courseId, boolean published) {}
         };
         TeacherCourseController controller = new TeacherCourseController(fake);
@@ -59,6 +61,7 @@ class TeacherCourseControllerTest {
             public List<TeacherCourseVO> list() { return List.of(); }
             public TeacherCourseVO create(String name) { return null; }
             public void delete(Long courseId) {}
+            public TeacherCourseVO restore(Long courseId) { return null; }
             public void setPublished(Long courseId, boolean published) {
                 seenId.set(courseId); seenPub.set(published);
             }
@@ -71,5 +74,28 @@ class TeacherCourseControllerTest {
 
         assertThat(seenId.get()).isEqualTo(7L);
         assertThat(seenPub.get()).isTrue();
+    }
+
+    @Test
+    void restore_delegatesIdAndReturnsUnpublishedCourse() {
+        AtomicReference<Long> restored = new AtomicReference<>();
+        TeacherCourseVO expected = new TeacherCourseVO(3L, "C1", "course-one", false);
+        TeacherCourseService fake = new TeacherCourseService() {
+            public List<TeacherCourseVO> list() { return List.of(); }
+            public TeacherCourseVO create(String name) { return null; }
+            public void delete(Long courseId) {}
+            public TeacherCourseVO restore(Long courseId) {
+                restored.set(courseId);
+                return expected;
+            }
+            public void setPublished(Long courseId, boolean published) {}
+        };
+        TeacherCourseController controller = new TeacherCourseController(fake);
+
+        Result<TeacherCourseVO> result = controller.restore(3L);
+
+        assertThat(restored.get()).isEqualTo(3L);
+        assertThat(result.getData()).isSameAs(expected);
+        assertThat(result.getData().isPublished()).isFalse();
     }
 }

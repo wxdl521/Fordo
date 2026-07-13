@@ -40,6 +40,11 @@ public class TeacherCourseController {
         return Result.ok();
     }
 
+    @PatchMapping("/{id}/restore")
+    public Result<TeacherCourseVO> restore(@PathVariable @Positive Long id) {
+        return Result.ok(teacherCourseService.restore(id));
+    }
+
     @PatchMapping("/{id}/status")
     public Result<Void> setStatus(@PathVariable @Positive Long id,
                                   @Valid @RequestBody UpdateCourseStatusRequest req) {

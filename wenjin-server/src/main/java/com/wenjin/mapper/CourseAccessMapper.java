@@ -23,11 +23,24 @@ public interface CourseAccessMapper {
     @Options(useCache = false, flushCache = Options.FlushCachePolicy.TRUE)
     Long lockActiveCourse(@Param("courseId") Long courseId);
 
-    @Select("SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM course WHERE id = #{courseId}")
+    /** Restore-only lock that deliberately includes archived rows. */
+    @Select("SELECT id FROM course WHERE id = #{courseId} FOR UPDATE")
+    @Options(useCache = false, flushCache = Options.FlushCachePolicy.TRUE)
+    Long lockCourseIncludingArchived(@Param("courseId") Long courseId);
+
+    @Select("""
+            SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END
+            FROM course
+            WHERE id = #{courseId} AND archived_at IS NULL
+            """)
     boolean courseExists(@Param("courseId") Long courseId);
 
-    @Select("SELECT id FROM course WHERE code = #{courseCode} LIMIT 1")
+    @Select("SELECT id FROM course WHERE code = #{courseCode} AND archived_at IS NULL LIMIT 1")
     Long courseIdByCode(@Param("courseCode") String courseCode);
+
+    /** Restore-only existence lookup that deliberately includes archived rows. */
+    @Select("SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM course WHERE id = #{courseId}")
+    boolean courseExistsIncludingArchived(@Param("courseId") Long courseId);
 
     /**
      * 课程是否归属于指定教师（teacher_id 匹配）。
@@ -36,17 +49,46 @@ public interface CourseAccessMapper {
     @Select("""
             SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END
             FROM course
-            WHERE id = #{courseId} AND teacher_id = #{teacherId}
+            WHERE id = #{courseId}
+              AND teacher_id = #{teacherId}
+              AND archived_at IS NULL
             """)
     boolean isOwnedCourse(@Param("courseId") Long courseId, @Param("teacherId") Long teacherId);
 
-    @Select("SELECT course_id FROM kg_node WHERE id = #{nodeId} LIMIT 1")
+    /** Restore-only ownership lookup that deliberately includes archived rows. */
+    @Select("""
+            SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END
+            FROM course
+            WHERE id = #{courseId} AND teacher_id = #{teacherId}
+            """)
+    boolean isOwnedCourseIncludingArchived(@Param("courseId") Long courseId,
+                                           @Param("teacherId") Long teacherId);
+
+    @Select("""
+            SELECT n.course_id
+            FROM kg_node n
+            JOIN course c ON c.id = n.course_id
+            WHERE n.id = #{nodeId} AND c.archived_at IS NULL
+            LIMIT 1
+            """)
     Long courseIdForNode(@Param("nodeId") Long nodeId);
 
-    @Select("SELECT course_id FROM kg_edge WHERE id = #{edgeId} LIMIT 1")
+    @Select("""
+            SELECT e.course_id
+            FROM kg_edge e
+            JOIN course c ON c.id = e.course_id
+            WHERE e.id = #{edgeId} AND c.archived_at IS NULL
+            LIMIT 1
+            """)
     Long courseIdForEdge(@Param("edgeId") Long edgeId);
 
-    @Select("SELECT course_id FROM question WHERE id = #{questionId} LIMIT 1")
+    @Select("""
+            SELECT q.course_id
+            FROM question q
+            JOIN course c ON c.id = q.course_id
+            WHERE q.id = #{questionId} AND c.archived_at IS NULL
+            LIMIT 1
+            """)
     Long courseIdForQuestion(@Param("questionId") Long questionId);
 
     /**
