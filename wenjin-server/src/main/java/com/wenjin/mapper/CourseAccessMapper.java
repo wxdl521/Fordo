@@ -1,6 +1,7 @@
 package com.wenjin.mapper;
 
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
@@ -14,7 +15,12 @@ import java.util.List;
 @Mapper
 public interface CourseAccessMapper {
 
+    /**
+     * 获取课程写锁前清空当前 SqlSession 缓存：等待锁后执行的复授权必须重新查询数据库，
+     * 不能复用锁前 course/node/edge 归属解析结果。
+     */
     @Select("SELECT id FROM course WHERE id = #{courseId} AND archived_at IS NULL FOR UPDATE")
+    @Options(useCache = false, flushCache = Options.FlushCachePolicy.TRUE)
     Long lockActiveCourse(@Param("courseId") Long courseId);
 
     @Select("SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM course WHERE id = #{courseId}")

@@ -20,6 +20,7 @@ import com.wenjin.security.CourseAccessService;
 import com.wenjin.security.CourseMutationLock;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.impl.GraphServiceImpl;
+import org.apache.ibatis.annotations.Options;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -141,6 +142,18 @@ class GraphServiceImplTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo(ResultCode.NOT_FOUND.getCode());
+    }
+
+    @Test
+    @DisplayName("课程行锁查询强制清空 SqlSession 缓存，确保锁后复授权重新查库")
+    void courseMutationLock_queryFlushesAuthCache() throws NoSuchMethodException {
+        Options options = CourseAccessMapper.class
+                .getMethod("lockActiveCourse", Long.class)
+                .getAnnotation(Options.class);
+
+        assertThat(options).isNotNull();
+        assertThat(options.useCache()).isFalse();
+        assertThat(options.flushCache()).isEqualTo(Options.FlushCachePolicy.TRUE);
     }
 
     @Test
