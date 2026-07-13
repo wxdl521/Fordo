@@ -14,6 +14,9 @@ import java.util.List;
 @Mapper
 public interface CourseAccessMapper {
 
+    @Select("SELECT id FROM course WHERE id = #{courseId} AND archived_at IS NULL FOR UPDATE")
+    Long lockActiveCourse(@Param("courseId") Long courseId);
+
     @Select("SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM course WHERE id = #{courseId}")
     boolean courseExists(@Param("courseId") Long courseId);
 

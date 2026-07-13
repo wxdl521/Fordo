@@ -13,11 +13,13 @@ import com.wenjin.entity.KgNode;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.security.CourseAccessService;
+import com.wenjin.security.CourseMutationLock;
 import com.wenjin.service.impl.TeacherGraphServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DuplicateKeyException;
@@ -44,6 +46,9 @@ class TeacherGraphServiceImplTest {
     @Mock
     private CourseAccessService courseAccessService;
 
+    @Mock
+    private CourseMutationLock courseMutationLock;
+
     private FeatureFlagsProperties featureFlags;
     private TeacherGraphServiceImpl service;
 
@@ -51,10 +56,37 @@ class TeacherGraphServiceImplTest {
     void setUp() {
         featureFlags = new FeatureFlagsProperties();
         featureFlags.setGraphReconcileEnabled(true);
-        service = new TeacherGraphServiceImpl(nodeMapper, edgeMapper, courseAccessService, featureFlags);
+        service = new TeacherGraphServiceImpl(nodeMapper, edgeMapper, courseAccessService,
+                courseMutationLock, featureFlags);
         lenient().doNothing().when(courseAccessService).assertManageCourse(anyLong());
         lenient().when(courseAccessService.assertManageNode(anyLong())).thenReturn(1L);
         lenient().when(courseAccessService.assertManageEdge(anyLong())).thenReturn(1L);
+    }
+
+    @Test
+    void everyMutation_featureDisabled_rejectsBeforeOwnershipLockReadsOrWrites() {
+        featureFlags.setGraphReconcileEnabled(false);
+        NodeUpsertRequest nodeRequest = new NodeUpsertRequest();
+        nodeRequest.setNodeCode("N1");
+        nodeRequest.setName("N1");
+
+        assertThatThrownBy(() -> service.acceptEdge(10L)).isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
+        assertThatThrownBy(() -> service.rejectEdge(10L)).isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
+        assertThatThrownBy(() -> service.createEdge(1L, edgeReq("N1", "N2", 1)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
+        assertThatThrownBy(() -> service.createNode(1L, nodeRequest))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
+        assertThatThrownBy(() -> service.updateNode(1L, nodeRequest))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
+        assertThatThrownBy(() -> service.deleteNode(1L)).isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
+
+        verifyNoInteractions(courseAccessService, courseMutationLock, nodeMapper, edgeMapper);
     }
 
     @Test
@@ -186,6 +218,11 @@ class TeacherGraphServiceImplTest {
 
         service.acceptEdge(10L);
 
+        InOrder order = inOrder(courseMutationLock, edgeMapper);
+        order.verify(courseMutationLock).lockActive(1L);
+        order.verify(edgeMapper).selectById(10L);
+        order.verify(edgeMapper).updateById(any(KgEdge.class));
+
         ArgumentCaptor<KgEdge> captor = ArgumentCaptor.forClass(KgEdge.class);
         verify(edgeMapper).updateById(captor.capture());
         assertThat(captor.getValue().getRelationNote()).isEqualTo("AI推荐原因");
@@ -199,6 +236,11 @@ class TeacherGraphServiceImplTest {
         when(edgeMapper.updateById(any(KgEdge.class))).thenReturn(1);
 
         service.rejectEdge(10L);
+
+        InOrder order = inOrder(courseMutationLock, edgeMapper);
+        order.verify(courseMutationLock).lockActive(1L);
+        order.verify(edgeMapper).selectById(10L);
+        order.verify(edgeMapper).updateById(any(KgEdge.class));
 
         ArgumentCaptor<KgEdge> captor = ArgumentCaptor.forClass(KgEdge.class);
         verify(edgeMapper).updateById(captor.capture());
@@ -216,6 +258,12 @@ class TeacherGraphServiceImplTest {
         when(nodeMapper.updateById(any(KgNode.class))).thenReturn(1);
 
         service.deleteNode(1L);
+
+        InOrder order = inOrder(courseMutationLock, nodeMapper, edgeMapper);
+        order.verify(courseMutationLock).lockActive(1L);
+        order.verify(nodeMapper).selectById(1L);
+        order.verify(edgeMapper).update(any(), any());
+        order.verify(nodeMapper).updateById(any(KgNode.class));
 
         verify(edgeMapper).update(any(), any());
         ArgumentCaptor<KgNode> captor = ArgumentCaptor.forClass(KgNode.class);
@@ -494,6 +542,7 @@ class TeacherGraphServiceImplTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("code").isEqualTo(404);
         verify(nodeMapper, never()).insert(any(KgNode.class));
+        verifyNoInteractions(courseMutationLock);
     }
 
     @Test
@@ -512,7 +561,7 @@ class TeacherGraphServiceImplTest {
         Long nodeId = service.createNode(1L, req);
 
         assertThat(nodeId).isEqualTo(100L);
-        verify(courseAccessService).assertManageCourse(1L);
+        verify(courseAccessService, times(2)).assertManageCourse(1L);
     }
 
     @Test
@@ -578,6 +627,7 @@ class TeacherGraphServiceImplTest {
 
         verify(edgeMapper, never()).insert(any(KgEdge.class));
         verify(nodeMapper, never()).selectList(any());
+        verifyNoInteractions(courseMutationLock);
     }
 
     @Test
@@ -623,7 +673,7 @@ class TeacherGraphServiceImplTest {
                     assertThat(be.getMessage()).contains("自环");
                 });
         verify(edgeMapper, never()).insert(any(KgEdge.class));
-        verify(courseAccessService).assertManageCourse(1L);
+        verify(courseAccessService, times(2)).assertManageCourse(1L);
     }
 
     @Test
@@ -709,7 +759,7 @@ class TeacherGraphServiceImplTest {
         assertThat(saved.getToNodeId()).isEqualTo(2L);
         assertThat(saved.getRelationType()).isEqualTo(1);
         assertThat(saved.getRelationNote()).isEqualTo("教师手动画边");
-        verify(courseAccessService).assertManageCourse(1L);
+        verify(courseAccessService, times(2)).assertManageCourse(1L);
     }
 
     @Test
@@ -729,5 +779,115 @@ class TeacherGraphServiceImplTest {
         // 非前置：不应再查前置邻接
         verify(edgeMapper, never()).selectList(any());
         verify(edgeMapper).insert(any(KgEdge.class));
+    }
+
+    @Test
+    void createNode_locksBeforeDuplicateReadAndInsert() {
+        NodeUpsertRequest req = new NodeUpsertRequest();
+        req.setNodeCode("LOCK-NODE");
+        req.setName("lock node");
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Collections.emptyList());
+        when(nodeMapper.insert(any(KgNode.class))).thenAnswer(invocation -> {
+            invocation.getArgument(0, KgNode.class).setId(101L);
+            return 1;
+        });
+
+        service.createNode(1L, req);
+
+        InOrder order = inOrder(courseAccessService, courseMutationLock, nodeMapper);
+        order.verify(courseAccessService).assertManageCourse(1L);
+        order.verify(courseMutationLock).lockActive(1L);
+        order.verify(courseAccessService).assertManageCourse(1L);
+        order.verify(nodeMapper).selectList(any(LambdaQueryWrapper.class));
+        order.verify(nodeMapper).insert(any(KgNode.class));
+    }
+
+    @Test
+    void updateNode_locksBeforeEntityReadAndWrite() {
+        KgNode existing = node(1L, "N1");
+        when(nodeMapper.selectById(1L)).thenReturn(existing);
+        NodeUpsertRequest req = new NodeUpsertRequest();
+        req.setNodeCode("N1");
+        req.setName("updated");
+
+        service.updateNode(1L, req);
+
+        InOrder order = inOrder(courseMutationLock, nodeMapper);
+        order.verify(courseMutationLock).lockActive(1L);
+        order.verify(nodeMapper).selectById(1L);
+        order.verify(nodeMapper).updateById(any(KgNode.class));
+    }
+
+    @Test
+    void createEdge_locksBeforeEndpointDuplicateAdjacencyReadsAndInsert() {
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Collections.singletonList(node(1L, "N1")))
+                .thenReturn(Collections.singletonList(node(2L, "N2")))
+                .thenReturn(Arrays.asList(node(1L, "N1"), node(2L, "N2")));
+        when(edgeMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
+        when(edgeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Collections.emptyList());
+
+        service.createEdge(1L, edgeReq("N1", "N2", 1));
+
+        InOrder order = inOrder(courseAccessService, courseMutationLock, nodeMapper, edgeMapper);
+        order.verify(courseAccessService).assertManageCourse(1L);
+        order.verify(courseMutationLock).lockActive(1L);
+        order.verify(courseAccessService).assertManageCourse(1L);
+        order.verify(nodeMapper, times(2)).selectList(any(LambdaQueryWrapper.class));
+        order.verify(edgeMapper).selectCount(any(LambdaQueryWrapper.class));
+        order.verify(nodeMapper).selectList(any(LambdaQueryWrapper.class));
+        order.verify(edgeMapper).selectList(any(LambdaQueryWrapper.class));
+        order.verify(edgeMapper).insert(any(KgEdge.class));
+    }
+
+    @Test
+    void acceptPrerequisite_locksThenRereadsCandidateAndAdjacencyBeforeWrite() {
+        KgEdge candidate = pendingPrerequisite(10L, 1L, 2L);
+        when(edgeMapper.selectById(10L)).thenReturn(candidate);
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Arrays.asList(node(1L, "N1"), node(2L, "N2")));
+        when(edgeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Collections.emptyList());
+
+        service.acceptEdge(10L);
+
+        InOrder order = inOrder(courseMutationLock, edgeMapper, nodeMapper);
+        order.verify(courseMutationLock).lockActive(1L);
+        order.verify(edgeMapper).selectById(10L);
+        order.verify(nodeMapper).selectList(any(LambdaQueryWrapper.class));
+        order.verify(edgeMapper).selectList(any(LambdaQueryWrapper.class));
+        order.verify(edgeMapper).updateById(any(KgEdge.class));
+    }
+
+    @Test
+    void acceptPrerequisite_rejectsCycleUsingLockedAdjacency() {
+        KgEdge candidate = pendingPrerequisite(10L, 2L, 1L);
+        KgEdge existing = new KgEdge();
+        existing.setId(11L);
+        existing.setCourseId(1L);
+        existing.setFromNodeId(1L);
+        existing.setToNodeId(2L);
+        existing.setRelationType(1);
+        existing.setRelationNote("accepted");
+        when(edgeMapper.selectById(10L)).thenReturn(candidate);
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(Arrays.asList(node(1L, "N1"), node(2L, "N2")));
+        when(edgeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(existing));
+
+        assertThatThrownBy(() -> service.acceptEdge(10L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo(ResultCode.CONFLICT.getCode());
+
+        verify(edgeMapper, never()).updateById(any(KgEdge.class));
+    }
+
+    private static KgEdge pendingPrerequisite(long id, long fromNodeId, long toNodeId) {
+        KgEdge edge = new KgEdge();
+        edge.setId(id);
+        edge.setCourseId(1L);
+        edge.setFromNodeId(fromNodeId);
+        edge.setToNodeId(toNodeId);
+        edge.setRelationType(1);
+        edge.setRelationNote(com.wenjin.support.ReviewMarker.PREFIX + "AI");
+        return edge;
     }
 }

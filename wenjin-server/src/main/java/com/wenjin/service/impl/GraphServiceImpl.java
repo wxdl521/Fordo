@@ -18,6 +18,7 @@ import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.security.CourseAccessService;
+import com.wenjin.security.CourseMutationLock;
 import com.wenjin.service.GraphService;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.support.PrerequisiteCycleDetector;
@@ -58,12 +59,14 @@ public class GraphServiceImpl implements GraphService {
     private final StudentMasteryMapper studentMasteryMapper;
     private final MasteryDecayCalculator decayCalculator;
     private final CourseAccessService courseAccessService;
+    private final CourseMutationLock courseMutationLock;
     private final FeatureFlagsProperties featureFlags;
 
     public GraphServiceImpl(CourseMapper courseMapper, KgNodeMapper nodeMapper,
                             KgEdgeMapper edgeMapper, StudentMasteryMapper studentMasteryMapper,
                             MasteryDecayCalculator decayCalculator,
                             CourseAccessService courseAccessService,
+                            CourseMutationLock courseMutationLock,
                             FeatureFlagsProperties featureFlags) {
         this.courseMapper = courseMapper;
         this.nodeMapper = nodeMapper;
@@ -71,6 +74,7 @@ public class GraphServiceImpl implements GraphService {
         this.studentMasteryMapper = studentMasteryMapper;
         this.decayCalculator = decayCalculator;
         this.courseAccessService = courseAccessService;
+        this.courseMutationLock = courseMutationLock;
         this.featureFlags = featureFlags;
     }
 
@@ -90,6 +94,8 @@ public class GraphServiceImpl implements GraphService {
 
         // 0) 归属：课程须已存在且当前教师可管理（跨教师 / 不存在统一 404）
         Long courseId = courseAccessService.assertManageCourseCode(courseCode);
+        courseMutationLock.lockActive(courseId);
+        courseAccessService.assertManageCourse(courseId);
 
         // 1) 校验：任一不通过则整体拒绝，返回逐条明细
         GraphValidateResult vr = validate(request);

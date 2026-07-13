@@ -2,6 +2,9 @@ package com.wenjin.integration;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.config.CurrentUser;
+import com.wenjin.common.BusinessException;
+import com.wenjin.common.ResultCode;
+import com.wenjin.dto.EdgeCreateRequest;
 import com.wenjin.dto.GraphImportRequest;
 import com.wenjin.entity.Course;
 import com.wenjin.entity.KgEdge;
@@ -20,6 +23,8 @@ import com.wenjin.mapper.SysUserMapper;
 import com.wenjin.security.CurrentPrincipal;
 import com.wenjin.security.UserRole;
 import com.wenjin.service.GraphService;
+import com.wenjin.service.TeacherGraphService;
+import com.wenjin.support.PrerequisiteCycleDetector;
 import com.wenjin.support.QuestionStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,7 +39,15 @@ import org.springframework.test.context.DynamicPropertySource;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -57,6 +70,7 @@ class GraphIdentityPreservationIT extends MySqlContainerSupport {
     }
 
     @Autowired private GraphService graphService;
+    @Autowired private TeacherGraphService teacherGraphService;
     @Autowired private SysUserMapper sysUserMapper;
     @Autowired private CourseMapper courseMapper;
     @Autowired private KgNodeMapper kgNodeMapper;
@@ -243,6 +257,100 @@ class GraphIdentityPreservationIT extends MySqlContainerSupport {
         assertThat(restored.getArchivedAt()).isNull();
         assertThat(restored.getName()).isEqualTo("B-restored");
         assertThat(findActiveNode("KT02").getId()).isEqualTo(id02);
+    }
+
+    @Test
+    @DisplayName("并发全量导入最终等于其中一个完整 payload，不能混合")
+    void concurrentFullImportsDoNotMixSnapshots() throws Exception {
+        GraphImportRequest left = request(
+                List.of(n("A1", "A-one"), n("A2", "A-two")),
+                List.of(e("A1", "A2", "前置")));
+        GraphImportRequest right = request(
+                List.of(n("B1", "B-one"), n("B2", "B-two")),
+                List.of(e("B1", "B2", "前置")));
+
+        race(() -> graphService.importGraph(courseCode, left),
+                () -> graphService.importGraph(courseCode, right));
+
+        List<KgNode> activeNodes = kgNodeMapper.selectList(new LambdaQueryWrapper<KgNode>()
+                .eq(KgNode::getCourseId, courseId)
+                .isNull(KgNode::getArchivedAt));
+        List<String> activeCodes = activeNodes.stream().map(KgNode::getNodeCode).sorted().toList();
+        assertThat(activeCodes).isIn(List.of("A1", "A2"), List.of("B1", "B2"));
+
+        List<KgEdge> activeEdges = kgEdgeMapper.selectList(new LambdaQueryWrapper<KgEdge>()
+                .eq(KgEdge::getCourseId, courseId)
+                .isNull(KgEdge::getArchivedAt));
+        assertThat(activeEdges).hasSize(1);
+        List<Long> activeIds = activeNodes.stream().map(KgNode::getId).toList();
+        assertThat(activeIds).contains(activeEdges.get(0).getFromNodeId(), activeEdges.get(0).getToNodeId());
+    }
+
+    @Test
+    @DisplayName("并发创建反向前置边最多一条成功且最终无环")
+    void concurrentReversePrerequisitesAllowAtMostOneAndRemainAcyclic() throws Exception {
+        graphService.importGraph(courseCode,
+                request(List.of(n("A", "A"), n("B", "B")), List.of()));
+
+        List<Boolean> outcomes = race(
+                () -> tryCreatePrerequisite("A", "B"),
+                () -> tryCreatePrerequisite("B", "A"));
+
+        assertThat(outcomes.stream().filter(Boolean::booleanValue).count()).isEqualTo(1);
+        List<KgNode> nodes = kgNodeMapper.selectList(new LambdaQueryWrapper<KgNode>()
+                .eq(KgNode::getCourseId, courseId)
+                .isNull(KgNode::getArchivedAt));
+        Map<Long, String> codesById = new HashMap<>();
+        nodes.forEach(node -> codesById.put(node.getId(), node.getNodeCode()));
+        List<KgEdge> edges = kgEdgeMapper.selectList(new LambdaQueryWrapper<KgEdge>()
+                .eq(KgEdge::getCourseId, courseId)
+                .eq(KgEdge::getRelationType, 1)
+                .isNull(KgEdge::getArchivedAt));
+        Map<String, List<String>> adjacency = new HashMap<>();
+        for (KgEdge edge : edges) {
+            adjacency.computeIfAbsent(codesById.get(edge.getFromNodeId()), ignored -> new ArrayList<>())
+                    .add(codesById.get(edge.getToNodeId()));
+        }
+        assertThat(edges).hasSize(1);
+        assertThat(PrerequisiteCycleDetector.detect(adjacency)).isNull();
+    }
+
+    private boolean tryCreatePrerequisite(String source, String target) {
+        EdgeCreateRequest request = new EdgeCreateRequest();
+        request.setSourceNodeCode(source);
+        request.setTargetNodeCode(target);
+        request.setRelationType(1);
+        try {
+            teacherGraphService.createEdge(courseId, request);
+            return true;
+        } catch (BusinessException ex) {
+            assertThat(ex.getCode()).isEqualTo(ResultCode.CONFLICT.getCode());
+            return false;
+        }
+    }
+
+    private <T> List<T> race(Callable<T> left, Callable<T> right) throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CyclicBarrier start = new CyclicBarrier(2);
+        try {
+            Future<T> leftFuture = executor.submit(raceTask(start, left));
+            Future<T> rightFuture = executor.submit(raceTask(start, right));
+            return List.of(leftFuture.get(30, TimeUnit.SECONDS), rightFuture.get(30, TimeUnit.SECONDS));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private <T> Callable<T> raceTask(CyclicBarrier start, Callable<T> task) {
+        return () -> {
+            CurrentUser.set(new CurrentPrincipal(teacherId, UserRole.TEACHER));
+            try {
+                start.await(10, TimeUnit.SECONDS);
+                return task.call();
+            } finally {
+                CurrentUser.clear();
+            }
+        };
     }
 
     private KgNode findActiveNode(String code) {

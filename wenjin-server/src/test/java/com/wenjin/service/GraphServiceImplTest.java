@@ -11,17 +11,20 @@ import com.wenjin.entity.Course;
 import com.wenjin.entity.KgEdge;
 import com.wenjin.entity.KgNode;
 import com.wenjin.entity.StudentMastery;
+import com.wenjin.mapper.CourseAccessMapper;
 import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.security.CourseAccessService;
+import com.wenjin.security.CourseMutationLock;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.impl.GraphServiceImpl;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -54,6 +57,7 @@ class GraphServiceImplTest {
     @Mock KgEdgeMapper edgeMapper;
     @Mock StudentMasteryMapper studentMasteryMapper;
     @Mock CourseAccessService courseAccessService;
+    @Mock CourseMutationLock courseMutationLock;
 
     private GraphServiceImpl service() {
         return serviceWithDecay(true, true);
@@ -74,7 +78,7 @@ class GraphServiceImplTest {
         FeatureFlagsProperties flags = new FeatureFlagsProperties();
         flags.setGraphReconcileEnabled(reconcileEnabled);
         return new GraphServiceImpl(courseMapper, nodeMapper, edgeMapper, studentMasteryMapper,
-                calculator(decayEnabled), courseAccessService, flags);
+                calculator(decayEnabled), courseAccessService, courseMutationLock, flags);
     }
 
     // ───────── 校验类 ─────────
@@ -98,8 +102,42 @@ class GraphServiceImplTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
-        verify(nodeMapper, never()).insert(any(KgNode.class));
-        verify(nodeMapper, never()).delete(any());
+        verifyNoInteractions(courseMutationLock, courseMapper, nodeMapper, edgeMapper,
+                studentMasteryMapper, courseAccessService);
+    }
+
+    @Test
+    @DisplayName("import 先锁定课程，再读取课程、节点、边快照并写入")
+    void import_locksCourseBeforeGraphReadsAndWrites() {
+        Course course = course(1L, "C1", "course-one");
+        when(courseMapper.selectById(1L)).thenReturn(course);
+        when(nodeMapper.selectList(any())).thenReturn(List.of());
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
+        when(nodeMapper.insert(any(KgNode.class))).thenAnswer(invocation -> {
+            invocation.getArgument(0, KgNode.class).setId(10L);
+            return 1;
+        });
+
+        service().importGraph("C1", req(List.of(node("KT01", "A")), List.of()));
+
+        InOrder order = org.mockito.Mockito.inOrder(courseMutationLock, courseMapper, nodeMapper, edgeMapper);
+        order.verify(courseMutationLock).lockActive(1L);
+        order.verify(courseMapper).selectById(1L);
+        order.verify(nodeMapper).selectList(any());
+        order.verify(nodeMapper).insert(any(KgNode.class));
+        order.verify(edgeMapper).selectList(any());
+    }
+
+    @Test
+    @DisplayName("课程行锁找不到生效课程时抛 NOT_FOUND")
+    void courseMutationLock_missingActiveCourse_404() {
+        CourseAccessMapper accessMapper = org.mockito.Mockito.mock(CourseAccessMapper.class);
+        when(accessMapper.lockActiveCourse(99L)).thenReturn(null);
+
+        assertThatThrownBy(() -> new CourseMutationLock(accessMapper).lockActive(99L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(ResultCode.NOT_FOUND.getCode());
     }
 
     @Test

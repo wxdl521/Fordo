@@ -14,6 +14,7 @@ import com.wenjin.entity.KgNode;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.security.CourseAccessService;
+import com.wenjin.security.CourseMutationLock;
 import com.wenjin.service.TeacherGraphService;
 import com.wenjin.support.PrerequisiteCycleDetector;
 import com.wenjin.support.RelationType;
@@ -30,6 +31,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Service
@@ -38,15 +40,18 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     private final KgNodeMapper nodeMapper;
     private final KgEdgeMapper edgeMapper;
     private final CourseAccessService courseAccessService;
+    private final CourseMutationLock courseMutationLock;
     private final FeatureFlagsProperties featureFlags;
 
     public TeacherGraphServiceImpl(KgNodeMapper nodeMapper,
                                     KgEdgeMapper edgeMapper,
                                     CourseAccessService courseAccessService,
+                                    CourseMutationLock courseMutationLock,
                                     FeatureFlagsProperties featureFlags) {
         this.nodeMapper = nodeMapper;
         this.edgeMapper = edgeMapper;
         this.courseAccessService = courseAccessService;
+        this.courseMutationLock = courseMutationLock;
         this.featureFlags = featureFlags;
     }
 
@@ -135,14 +140,25 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     @Override
     @Transactional
     public void acceptEdge(Long edgeId) {
+        ensureGraphReconcileEnabled();
         if (edgeId == null || edgeId <= 0) {
             throw new IllegalArgumentException("edgeId 无效: " + edgeId);
         }
+        Long courseId = courseAccessService.assertManageEdge(edgeId);
+        courseMutationLock.lockActive(courseId);
         courseAccessService.assertManageEdge(edgeId);
 
         KgEdge edge = edgeMapper.selectById(edgeId);
         if (edge == null || edge.getArchivedAt() != null) {
             throw new IllegalArgumentException("边不存在: edgeId=" + edgeId);
+        }
+
+        if (Objects.equals(edge.getRelationType(), RelationType.PREREQUISITE.getCode())) {
+            List<String> cycle = detectCycleIfAccept(courseId, edge);
+            if (cycle != null) {
+                throw new BusinessException(ResultCode.CONFLICT,
+                        "「前置」关系存在环路：" + String.join(" → ", cycle));
+            }
         }
 
         edge.setRelationNote(ReviewMarker.strip(edge.getRelationNote()));
@@ -152,10 +168,12 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     @Override
     @Transactional
     public void rejectEdge(Long edgeId) {
+        ensureGraphReconcileEnabled();
         if (edgeId == null || edgeId <= 0) {
             throw new IllegalArgumentException("edgeId 无效: " + edgeId);
         }
-        ensureGraphReconcileEnabled();
+        Long courseId = courseAccessService.assertManageEdge(edgeId);
+        courseMutationLock.lockActive(courseId);
         courseAccessService.assertManageEdge(edgeId);
 
         KgEdge edge = edgeMapper.selectById(edgeId);
@@ -171,10 +189,13 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     @Override
     @Transactional
     public Long createEdge(Long courseId, EdgeCreateRequest req) {
+        ensureGraphReconcileEnabled();
         if (courseId == null || courseId <= 0) {
             throw new IllegalArgumentException("courseId 无效: " + courseId);
         }
         // 归属校验优先：异课程管理权 → 404
+        courseAccessService.assertManageCourse(courseId);
+        courseMutationLock.lockActive(courseId);
         courseAccessService.assertManageCourse(courseId);
         if (req == null) {
             throw new IllegalArgumentException("请求参数不能为空");
@@ -289,6 +310,43 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         return adj;
     }
 
+    /** 候选待复核边不计入已接受图；持课程锁后用当前节点、边快照做最终环检测。 */
+    private List<String> detectCycleIfAccept(Long courseId, KgEdge candidate) {
+        List<KgNode> nodes = nodeMapper.selectList(
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt));
+        Map<Long, String> idToCode = new HashMap<>();
+        for (KgNode node : nodes) {
+            idToCode.put(node.getId(), node.getNodeCode());
+        }
+
+        String sourceCode = idToCode.get(candidate.getFromNodeId());
+        String targetCode = idToCode.get(candidate.getToNodeId());
+        if (sourceCode == null || targetCode == null) {
+            throw new IllegalArgumentException("边端点不存在: edgeId=" + candidate.getId());
+        }
+
+        List<KgEdge> prerequisites = edgeMapper.selectList(
+                new LambdaQueryWrapper<KgEdge>()
+                        .eq(KgEdge::getCourseId, courseId)
+                        .eq(KgEdge::getRelationType, RelationType.PREREQUISITE.getCode())
+                        .isNull(KgEdge::getArchivedAt));
+        Map<String, List<String>> adjacency = new HashMap<>();
+        for (KgEdge edge : prerequisites) {
+            if (Objects.equals(edge.getId(), candidate.getId())
+                    || ReviewMarker.isPending(edge.getRelationNote())) {
+                continue;
+            }
+            String source = idToCode.get(edge.getFromNodeId());
+            String target = idToCode.get(edge.getToNodeId());
+            if (source != null && target != null) {
+                adjacency.computeIfAbsent(source, ignored -> new ArrayList<>()).add(target);
+            }
+        }
+        return PrerequisiteCycleDetector.detectIfAdd(adjacency, sourceCode, targetCode);
+    }
+
     private static boolean isDuplicateKey(Throwable ex) {
         Throwable t = ex;
         while (t != null) {
@@ -313,10 +371,12 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     @Override
     @Transactional
     public Long createNode(Long courseId, NodeUpsertRequest req) {
+        ensureGraphReconcileEnabled();
         if (courseId == null || courseId <= 0) {
             throw new IllegalArgumentException("courseId 无效: " + courseId);
         }
-        ensureGraphReconcileEnabled();
+        courseAccessService.assertManageCourse(courseId);
+        courseMutationLock.lockActive(courseId);
         courseAccessService.assertManageCourse(courseId);
         if (req == null) {
             throw new IllegalArgumentException("请求参数不能为空");
@@ -360,10 +420,12 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     @Override
     @Transactional
     public void updateNode(Long nodeId, NodeUpsertRequest req) {
+        ensureGraphReconcileEnabled();
         if (nodeId == null || nodeId <= 0) {
             throw new IllegalArgumentException("nodeId 无效: " + nodeId);
         }
-        ensureGraphReconcileEnabled();
+        Long courseId = courseAccessService.assertManageNode(nodeId);
+        courseMutationLock.lockActive(courseId);
         courseAccessService.assertManageNode(nodeId);
         if (req == null) {
             throw new IllegalArgumentException("请求参数不能为空");
@@ -385,10 +447,12 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     @Override
     @Transactional
     public void deleteNode(Long nodeId) {
+        ensureGraphReconcileEnabled();
         if (nodeId == null || nodeId <= 0) {
             throw new IllegalArgumentException("nodeId 无效: " + nodeId);
         }
-        ensureGraphReconcileEnabled();
+        Long courseId = courseAccessService.assertManageNode(nodeId);
+        courseMutationLock.lockActive(courseId);
         courseAccessService.assertManageNode(nodeId);
 
         KgNode node = nodeMapper.selectById(nodeId);
