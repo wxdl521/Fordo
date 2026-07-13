@@ -301,7 +301,7 @@ CREATE TABLE `answer_record` (
     `is_correct`     TINYINT  DEFAULT NULL            COMMENT '是否正确：1=对, 0=错（简答可由AI判定）',
     `answered_at`    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '作答时间',
     `scene`          TINYINT  NOT NULL DEFAULT 1      COMMENT '作答场景：1=诊断, 2=节点练习【M1补充】',
-    `session_id`     BIGINT   DEFAULT NULL            COMMENT '练习会话ID（scene=2 时非空，物理外键→practice_session.id）【M1补充】',
+    `session_id`     BIGINT   DEFAULT NULL            COMMENT '按 scene 解释的逻辑兼容会话ID；可指 adaptive_diag_session 或 practice_session，不设单表物理外键',
     `fixed_diagnostic_session_id` BIGINT DEFAULT NULL COMMENT '固定诊断会话ID（scene=1 固定卷时非空，物理外键→diagnostic_session.id）【V3】',
     PRIMARY KEY (`id`),
     KEY `idx_student_course` (`student_id`, `course_id`),
@@ -310,7 +310,6 @@ CREATE TABLE `answer_record` (
     CONSTRAINT `fk_answer_student` FOREIGN KEY (`student_id`) REFERENCES `sys_user` (`id`),
     CONSTRAINT `fk_answer_course` FOREIGN KEY (`course_id`) REFERENCES `course` (`id`),
     CONSTRAINT `fk_answer_question` FOREIGN KEY (`question_id`) REFERENCES `question` (`id`),
-    CONSTRAINT `fk_answer_practice_session` FOREIGN KEY (`session_id`) REFERENCES `practice_session` (`id`),
     CONSTRAINT `fk_answer_fixed_diag` FOREIGN KEY (`fixed_diagnostic_session_id`) REFERENCES `diagnostic_session` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='答题记录表（每次作答留痕，掌握度计算原始来源）';
 

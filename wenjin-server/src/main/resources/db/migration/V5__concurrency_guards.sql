@@ -2,7 +2,44 @@
 -- - student_course.current_path_id: single pointer to the current path
 -- - learning_path.active_guard: at most one active path per student×course
 -- - learning_path_item unique (path_id, step_order) / (path_id, node_id)
--- Dedupe before adding unique constraints. One-shot Flyway (no DELIMITER).
+-- Duplicate path items are migration-blocking data debt: abort before the first
+-- persistent DDL so no source rows are deleted or partially transformed.
+
+DELIMITER $$
+
+DROP PROCEDURE IF EXISTS `_v5_precheck`$$
+
+CREATE PROCEDURE `_v5_precheck`()
+BEGIN
+    DECLARE v_cnt BIGINT DEFAULT 0;
+
+    SELECT COUNT(*) INTO v_cnt FROM (
+        SELECT `path_id`, `step_order`
+        FROM `learning_path_item`
+        GROUP BY `path_id`, `step_order`
+        HAVING COUNT(*) > 1
+    ) duplicate_steps;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V5 precheck: duplicate learning_path_item(path_id, step_order)';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM (
+        SELECT `path_id`, `node_id`
+        FROM `learning_path_item`
+        GROUP BY `path_id`, `node_id`
+        HAVING COUNT(*) > 1
+    ) duplicate_nodes;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V5 precheck: duplicate learning_path_item(path_id, node_id)';
+    END IF;
+END$$
+
+DELIMITER ;
+
+CALL `_v5_precheck`();
+DROP PROCEDURE IF EXISTS `_v5_precheck`;
 
 -- ── 1. student_course.current_path_id ────────────────────────────────────────
 ALTER TABLE `student_course`
@@ -45,19 +82,7 @@ ALTER TABLE `student_course`
     ADD CONSTRAINT `fk_sc_current_path`
         FOREIGN KEY (`current_path_id`) REFERENCES `learning_path` (`id`);
 
--- ── 4. learning_path_item unique keys (dedupe first, keep max id) ────────────
-DELETE i FROM `learning_path_item` i
-    INNER JOIN `learning_path_item` j
-        ON i.`path_id` = j.`path_id`
-       AND i.`step_order` = j.`step_order`
-       AND i.`id` < j.`id`;
-
-DELETE i FROM `learning_path_item` i
-    INNER JOIN `learning_path_item` j
-        ON i.`path_id` = j.`path_id`
-       AND i.`node_id` = j.`node_id`
-       AND i.`id` < j.`id`;
-
+-- ── 4. learning_path_item unique keys ───────────────────────────────────────
 ALTER TABLE `learning_path_item`
     ADD UNIQUE KEY `uk_path_step_order` (`path_id`, `step_order`),
     ADD UNIQUE KEY `uk_path_node` (`path_id`, `node_id`);

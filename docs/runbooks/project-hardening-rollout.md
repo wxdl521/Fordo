@@ -77,7 +77,10 @@ Steps:
 
 1. Backup.
 2. `flyway info` → expected pending V3…V8 (or subset if partial).
-3. `flyway migrate` (or `WENJIN_FLYWAY_ENABLED=true` one-shot migrator job).
+3. Run the one-shot migrator with an explicit V8 ceiling (never allow this phase to pick up V9):
+   ```bash
+   SPRING_FLYWAY_TARGET=8 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar
+   ```
 4. On non-zero exit: **stop release**, keep old app instances, restore dump if schema half-applied and unclean.
 5. Spot-check columns/tables; app still runs with flags off.
 
@@ -145,7 +148,10 @@ export WENJIN_FEATURE_FIXED_DIAGNOSTIC=true
    - `ops/sql/preflight-integrity.sql`
 2. Any `bad_count > 0` → human ticket; optional `ops/sql/quarantine-orphans.sql` / manual DML; re-audit.
 3. Backup again.
-4. Migrator: apply **only** `V9__relational_integrity.sql` (Flyway pending version 9).
+4. Migrator: apply **only** `V9__relational_integrity.sql` (Flyway pending version 9):
+   ```bash
+   SPRING_FLYWAY_TARGET=9 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar
+   ```
 5. Run `ops/sql/post-migration-verification.sql` — all checks green.
 6. Restart app (still DML account). Smoke ownership + practice + diagnostic.
 
@@ -156,6 +162,7 @@ V9 enforces:
 - `course.teacher_id NOT NULL`
 - `question.stem_hash NOT NULL` (re-assert)
 - `CHECK (sys_user.role IN (1,2,3))`
+- `answer_record.session_id` remains a scene-interpreted logical compatibility field; fixed diagnostic rows keep the dedicated physical FK on `fixed_diagnostic_session_id`
 
 **Rollback**:
 

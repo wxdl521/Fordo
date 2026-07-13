@@ -156,13 +156,16 @@ export DB_PASSWORD='足够强的随机密码_app'
      -baselineOnMigrate=true -baselineVersion=2 \
      info
    ```
-3. **migrate**  
+3. **migrate V3–V8 expand only**
    ```bash
-   flyway ... migrate
-   # 或：WENJIN_FLYWAY_ENABLED=true + migrator 凭据启动一次性迁移作业，成功后立即退出
+   SPRING_FLYWAY_TARGET=8 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar
    ```
-4. **校验** `flyway info` 全部 Success；抽查关键表结构。
-5. **再启动** 普通应用实例（`DB_USER=wenjin`，`WENJIN_FLYWAY_ENABLED=false` 或不设）。
+4. **校验并清零 V9 前审计**：`flyway info` 精确到 V8 Success；运行 `ops/sql/security-role-audit.sql` 与 `ops/sql/preflight-integrity.sql`。
+5. **在独立发布窗口 migrate V9 contract only**
+   ```bash
+   SPRING_FLYWAY_TARGET=9 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar
+   ```
+6. **再启动** 普通应用实例（`DB_USER=wenjin`，`WENJIN_FLYWAY_ENABLED=false` 或不设）。
 
 **失败停止与回滚规则**：
 
@@ -176,6 +179,7 @@ export DB_PASSWORD='足够强的随机密码_app'
 - **V3–V8** 为 expand（可与 wave-1 后端分波次上线）；**`V9__relational_integrity.sql` 必须单独发布**，不得与首次 expand 混在同一变更单强行合并，除非预发库审计已全零并书面确认。
 - V9 前必跑只读审计：`ops/sql/security-role-audit.sql`、`ops/sql/preflight-integrity.sql`（任一 `bad_count > 0` → 人工修复，禁止硬上）。
 - V9 内含 `SIGNAL 45000` 预检 + 命名物理外键 + `course.teacher_id NOT NULL` + `sys_user.role CHECK`；失败即整次 migrate 失败。
+- `answer_record.session_id` 是按 `scene` 解释的多态逻辑兼容字段，可对应自适应诊断或练习会话，因此不物理绑定到单一 session 表；`fixed_diagnostic_session_id` 仍保留固定诊断物理外键。
 - V9 后验收：`ops/sql/post-migration-verification.sql`。
 - **备份与还原**：每次 migrate（含 V9）前 `mysqldump`；V9 失败或验收不通过时，优先 **restore 迁移前备份**，禁止用 `DROP TABLE` / 重跑 `schema.sql` 回滚。功能回滚优先关 feature flags（见 runbook）。
 - 分阶段上线、观测与安全回滚细则见 **[docs/runbooks/project-hardening-rollout.md](docs/runbooks/project-hardening-rollout.md)**。
@@ -458,13 +462,13 @@ management:
 # 3) 迁移作业（migrator + WENJIN_FLYWAY_ENABLED=true）
 export DB_USER=wenjin_migrator
 export DB_PASSWORD='替换为 migrator 强密码'
-export WENJIN_FLYWAY_ENABLED=true
-# flyway info && flyway migrate   或等价一次性 Spring 迁移作业
-# 失败则停止发布（见 2.3 回滚规则）
-# 建议：先落到 V8（expand），审计清零后再单独发布 V9（contract）
+# 先只落到 V8（expand），绝不能在该阶段捎带 V9
+SPRING_FLYWAY_TARGET=8 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar
 # 4) V9 前：mysql ... < ops/sql/security-role-audit.sql （bad_count 全 0）
-# 5) V9 后：mysql ... < ops/sql/post-migration-verification.sql
-# 6) 开通真实教师/管理员：见 2.3.1
+# 5) 独立窗口只落 V9（contract）
+SPRING_FLYWAY_TARGET=9 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar
+# 6) V9 后：mysql ... < ops/sql/post-migration-verification.sql
+# 7) 开通真实教师/管理员：见 2.3.1
 # 分阶段顺序与 flag 开关：docs/runbooks/project-hardening-rollout.md
 ```
 

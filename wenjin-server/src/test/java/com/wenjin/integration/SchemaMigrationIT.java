@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -22,6 +23,7 @@ import java.util.TreeSet;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 /**
  * 受控迁移两条路径：
@@ -184,14 +186,149 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(successChecksums()).isEqualTo(history);
     }
 
+    @Test
+    @DisplayName("V5 遇到重复路径步骤时以 45000 中止，且不删除任何原始路径项")
+    void v5DuplicatePathSteps_failBeforeDeletingRows() throws Exception {
+        createFlyway("4").migrate();
+
+        executeSql(
+                "INSERT INTO sys_user (id, username, password, role) VALUES "
+                        + "(101, 'v5-teacher', 'x', 1), (102, 'v5-student', 'x', 2)",
+                "INSERT INTO course (id, code, name, teacher_id) "
+                        + "VALUES (201, 'V5-C', 'V5 course', 101)",
+                "INSERT INTO kg_node (id, course_id, node_code, name) VALUES "
+                        + "(301, 201, 'V5-N1', 'node 1'), (302, 201, 'V5-N2', 'node 2')",
+                "INSERT INTO learning_path (id, student_id, course_id, status) "
+                        + "VALUES (401, 102, 201, 1)",
+                "INSERT INTO learning_path_item (id, path_id, node_id, step_order) VALUES "
+                        + "(501, 401, 301, 1), (502, 401, 302, 1)"
+        );
+
+        Throwable failure = catchThrowable(() -> createFlyway("5").migrate());
+
+        assertThat(failure).isNotNull();
+        assertThat(sqlStateFromCauseChain(failure)).isEqualTo("45000");
+        assertThat(countRows("learning_path_item", "id IN (501, 502)")).isEqualTo(2);
+        assertThat(columnExists("student_course", "current_path_id")).isFalse();
+        assertThat(successChecksums().keySet()).containsExactly("1", "2", "3", "4");
+    }
+
+    @Test
+    @DisplayName("V6 遇到 trim 后重复题干时以 45000 中止，且不留下 stem_hash 列")
+    void v6DuplicateTrimmedStems_failBeforeFirstDdl() throws Exception {
+        createFlyway("5").migrate();
+
+        executeSql(
+                "INSERT INTO sys_user (id, username, password, role) "
+                        + "VALUES (111, 'v6-teacher', 'x', 1)",
+                "INSERT INTO course (id, code, name, teacher_id) "
+                        + "VALUES (211, 'V6-C', 'V6 course', 111)",
+                "INSERT INTO question (id, course_id, stem, type) VALUES "
+                        + "(311, 211, 'duplicate stem', 1), "
+                        + "(312, 211, '  duplicate stem  ', 1)"
+        );
+
+        Throwable failure = catchThrowable(() -> createFlyway("6").migrate());
+
+        assertThat(failure).isNotNull();
+        assertThat(sqlStateFromCauseChain(failure)).isEqualTo("45000");
+        assertThat(columnExists("question", "stem_hash")).isFalse();
+        assertThat(successChecksums().keySet()).containsExactly("1", "2", "3", "4", "5");
+    }
+
+    @Test
+    @DisplayName("target 8 只执行 V1 到 V8，不提前创建 V9 外键")
+    void target8_stopsBeforeV9Contract() throws Exception {
+        MigrateResult result = createFlyway("8").migrate();
+
+        assertThat(result.success).isTrue();
+        assertThat(result.migrationsExecuted).isEqualTo(8);
+        assertThat(successChecksums().keySet())
+                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+        assertThat(constraintExists("course", "fk_course_teacher")).isFalse();
+    }
+
+    @Test
+    @DisplayName("V9 保留 adaptive diagnostic 的多态 session_id 写入兼容性")
+    void v9AllowsAdaptiveDiagnosticSessionIdsInAnswerRecord() throws Exception {
+        createFlyway("8").migrate();
+        executeSql(
+                "INSERT INTO sys_user (id, username, password, role, status) VALUES "
+                        + "(121, 'v9-teacher', 'x', 1, 1), (122, 'v9-student', 'x', 2, 1)",
+                "INSERT INTO course (id, code, name, teacher_id) "
+                        + "VALUES (221, 'V9-C', 'V9 course', 121)",
+                "INSERT INTO question (id, course_id, stem, stem_hash, type) "
+                        + "VALUES (321, 221, 'adaptive question', SHA2('adaptive question', 256), 1)",
+                "INSERT INTO adaptive_diag_session (id, student_id, course_id, state_json) "
+                        + "VALUES (421, 122, 221, '{}')",
+                "INSERT INTO answer_record "
+                        + "(id, student_id, course_id, question_id, scene, session_id) "
+                        + "VALUES (521, 122, 221, 321, 1, 421)"
+        );
+
+        createFlyway("9").migrate();
+        executeSql(
+                "INSERT INTO answer_record "
+                        + "(id, student_id, course_id, question_id, scene, session_id) "
+                        + "VALUES (522, 122, 221, 321, 1, 421)"
+        );
+
+        assertThat(countRows("answer_record", "id IN (521, 522)")).isEqualTo(2);
+        assertThat(constraintExists("answer_record", "fk_answer_practice_session")).isFalse();
+        assertThat(constraintExists("answer_record", "fk_answer_fixed_diag")).isTrue();
+    }
+
     private static Flyway createFlyway() {
-        return Flyway.configure()
+        return createFlyway(null);
+    }
+
+    private static Flyway createFlyway(String target) {
+        var configuration = Flyway.configure()
                 .dataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword())
                 .locations("classpath:db/migration")
                 .baselineOnMigrate(true)
                 .baselineVersion("2")
-                .validateOnMigrate(true)
-                .load();
+                .validateOnMigrate(true);
+        if (target != null) {
+            configuration.target(target);
+        }
+        return configuration.load();
+    }
+
+    private static void executeSql(String... statements) throws Exception {
+        try (Connection conn = MYSQL.createConnection("");
+             Statement st = conn.createStatement()) {
+            for (String sql : statements) {
+                st.execute(sql);
+            }
+        }
+    }
+
+    private static int countRows(String table, String predicate) throws Exception {
+        try (Connection conn = MYSQL.createConnection("");
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT COUNT(*) FROM `" + table + "` WHERE " + predicate)) {
+            rs.next();
+            return rs.getInt(1);
+        }
+    }
+
+    private static String sqlStateFromCauseChain(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof SQLException sqlException) {
+                SQLException candidate = sqlException;
+                while (candidate != null) {
+                    if (candidate.getSQLState() != null) {
+                        return candidate.getSQLState();
+                    }
+                    candidate = candidate.getNextException();
+                }
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 
     /**

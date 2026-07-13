@@ -361,14 +361,14 @@ ALTER TABLE `adaptive_diag_session`
         FOREIGN KEY (`course_id`) REFERENCES `course` (`id`);
 
 ALTER TABLE `answer_record`
+    -- session_id is interpreted by scene for backward compatibility and may
+    -- identify different session tables; it cannot have one physical FK.
     ADD CONSTRAINT `fk_answer_student`
         FOREIGN KEY (`student_id`) REFERENCES `sys_user` (`id`),
     ADD CONSTRAINT `fk_answer_course`
         FOREIGN KEY (`course_id`) REFERENCES `course` (`id`),
     ADD CONSTRAINT `fk_answer_question`
         FOREIGN KEY (`question_id`) REFERENCES `question` (`id`),
-    ADD CONSTRAINT `fk_answer_practice_session`
-        FOREIGN KEY (`session_id`) REFERENCES `practice_session` (`id`),
     ADD CONSTRAINT `fk_answer_fixed_diag`
         FOREIGN KEY (`fixed_diagnostic_session_id`) REFERENCES `diagnostic_session` (`id`);
 
