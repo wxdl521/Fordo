@@ -283,6 +283,47 @@ class DiagnosticServiceImplTest {
     }
 
     @Test
+    @DisplayName("归档主节点：仅归档主节点的题排除，仍有 active 主节点的题保留")
+    void compose_excludesQuestionsWithoutAnyActiveMainNode() {
+        Question archivedOnly = approved(901L);
+        Question mixed = approved(902L);
+
+        QuestionNode archivedOnlyLink = new QuestionNode();
+        archivedOnlyLink.setQuestionId(archivedOnly.getId());
+        archivedOnlyLink.setNodeId(900L);
+        archivedOnlyLink.setWeight(1);
+
+        QuestionNode mixedArchivedLink = new QuestionNode();
+        mixedArchivedLink.setQuestionId(mixed.getId());
+        mixedArchivedLink.setNodeId(900L);
+        mixedArchivedLink.setWeight(1);
+
+        QuestionNode mixedActiveLink = new QuestionNode();
+        mixedActiveLink.setQuestionId(mixed.getId());
+        mixedActiveLink.setNodeId(100L);
+        mixedActiveLink.setWeight(1);
+
+        KgNode active = new KgNode();
+        active.setId(100L);
+        active.setCourseId(COURSE_ID);
+        active.setChapter("生效章节");
+        active.setIsKey(1);
+
+        stubComposeHappyPath(
+                List.of(archivedOnly, mixed),
+                List.of(archivedOnlyLink, mixedArchivedLink, mixedActiveLink),
+                List.of(active));
+
+        PaperVO paper = impl().composePaper(COURSE_ID);
+
+        assertThat(paper.getQuestions())
+                .extracting(PaperQuestionVO::getQuestionId)
+                .containsExactly(mixed.getId());
+        verify(diagnosticSessionQuestionMapper, times(1)).insert(any(DiagnosticSessionQuestion.class));
+        verify(kgNodeMapper).selectList(any());
+    }
+
+    @Test
     @DisplayName("特性关闭 → compose 503")
     void compose_featureDisabled_503() {
         featureFlags.setFixedDiagnosticEnabled(false);
@@ -373,8 +414,8 @@ class DiagnosticServiceImplTest {
     }
 
     @Test
-    @DisplayName("幂等重放：已完成会话返回 result_json，不再 applyAnswers")
-    void submit_completedSession_replaysWithoutMastery() throws Exception {
+    @DisplayName("幂等重放：完成后关闭开关仍返回 result_json，且不产生任何诊断写入")
+    void submit_completedSession_replaysAfterFeatureDisabledWithoutWrites() throws Exception {
         SubmitResult stored = new SubmitResult();
         stored.setTotal(2);
         stored.setCorrectCount(1);
@@ -388,13 +429,20 @@ class DiagnosticServiceImplTest {
         done.setStatus(1);
         done.setResultJson(objectMapper.writeValueAsString(stored));
         when(diagnosticSessionMapper.selectByTokenForUpdate(TOKEN)).thenReturn(done);
+        featureFlags.setFixedDiagnosticEnabled(false);
 
         SubmitResult result = impl().submit(submitReq(List.of(ans(101L, "A"), ans(102L, "B"))));
 
         assertThat(result.getTotal()).isEqualTo(2);
         assertThat(result.getCorrectCount()).isEqualTo(1);
+        verify(diagnosticSessionMapper).selectByTokenForUpdate(TOKEN);
+        verify(diagnosticSessionMapper, never()).update(any(), any());
+        verify(diagnosticSessionQuestionMapper, never()).selectList(any());
+        verify(questionMapper, never()).selectList(any());
+        verify(questionOptionMapper, never()).selectList(any());
         verify(masteryService, never()).applyAnswers(any(), any(), any());
         verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
+        verify(answerRecordMapper, never()).selectList(any());
     }
 
     @Test
@@ -486,11 +534,18 @@ class DiagnosticServiceImplTest {
     @Test
     @DisplayName("特性关闭 → submit 503")
     void submit_featureDisabled_503() {
+        when(diagnosticSessionMapper.selectByTokenForUpdate(TOKEN))
+                .thenReturn(inProgressSession(7L, STUDENT_ID, COURSE_ID));
         featureFlags.setFixedDiagnosticEnabled(false);
         assertThatThrownBy(() -> impl().submit(submitReq(List.of(ans(1L, "A")))))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
+        verify(diagnosticSessionMapper).selectByTokenForUpdate(TOKEN);
+        verify(diagnosticSessionMapper, never()).update(any(), any());
+        verify(diagnosticSessionQuestionMapper, never()).selectList(any());
+        verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
+        verify(masteryService, never()).applyAnswers(any(), any(), any());
     }
 
     @Test

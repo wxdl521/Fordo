@@ -2,6 +2,7 @@ package com.wenjin.integration;
 
 import com.wenjin.common.BusinessException;
 import com.wenjin.config.CurrentUser;
+import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.dto.PaperVO;
 import com.wenjin.dto.SubmitRequest;
 import com.wenjin.dto.SubmitResult;
@@ -39,6 +40,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.time.LocalDateTime;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -79,6 +81,7 @@ class FixedDiagnosticSessionIT extends MySqlContainerSupport {
     @Autowired private AnswerRecordMapper answerRecordMapper;
     @Autowired private StudentMasteryMapper studentMasteryMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private FeatureFlagsProperties featureFlags;
 
     private long studentId;
     private long otherStudentId;
@@ -87,6 +90,7 @@ class FixedDiagnosticSessionIT extends MySqlContainerSupport {
     @BeforeEach
     void seed() {
         CurrentUser.clear();
+        featureFlags.setFixedDiagnosticEnabled(true);
         jdbcTemplate.execute("SET FOREIGN_KEY_CHECKS = 0");
         for (String table : new String[]{
                 "answer_record", "student_mastery", "mastery_snapshot",
@@ -178,6 +182,7 @@ class FixedDiagnosticSessionIT extends MySqlContainerSupport {
     @AfterEach
     void tearDown() {
         CurrentUser.clear();
+        featureFlags.setFixedDiagnosticEnabled(true);
     }
 
     private PaperVO composeAs(long sid) {
@@ -205,6 +210,57 @@ class FixedDiagnosticSessionIT extends MySqlContainerSupport {
         return req;
     }
 
+    private Map<String, Long> diagnosticWriteCounts() {
+        return Map.of(
+                "answer", jdbcTemplate.queryForObject("SELECT COUNT(*) FROM answer_record", Long.class),
+                "mastery", jdbcTemplate.queryForObject("SELECT COUNT(*) FROM student_mastery", Long.class),
+                "snapshot", jdbcTemplate.queryForObject("SELECT COUNT(*) FROM mastery_snapshot", Long.class),
+                "path", jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learning_path", Long.class),
+                "pathItem", jdbcTemplate.queryForObject("SELECT COUNT(*) FROM learning_path_item", Long.class),
+                "session", jdbcTemplate.queryForObject("SELECT COUNT(*) FROM diagnostic_session", Long.class),
+                "sessionQuestion", jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM diagnostic_session_question", Long.class));
+    }
+
+    @Test
+    @DisplayName("IT：组卷排除仅关联归档主节点的题，存在 active 主节点时保留")
+    void compose_excludesArchivedOnlyMainNodes() {
+        Long activeNodeId = jdbcTemplate.queryForObject(
+                "SELECT id FROM kg_node WHERE course_id = ? AND archived_at IS NULL ORDER BY id LIMIT 1",
+                Long.class, courseId);
+        List<Long> questionIds = jdbcTemplate.queryForList(
+                "SELECT id FROM question WHERE course_id = ? ORDER BY id", Long.class, courseId);
+        Long archivedOnlyQuestionId = questionIds.get(0);
+        Long mixedQuestionId = questionIds.get(1);
+
+        KgNode archived = new KgNode();
+        archived.setCourseId(courseId);
+        archived.setNodeCode("D_ARCHIVED");
+        archived.setName("Archived diagnostic node");
+        archived.setChapter("归档章节");
+        archived.setIsKey(1);
+        archived.setArchivedAt(LocalDateTime.now());
+        kgNodeMapper.insert(archived);
+
+        jdbcTemplate.update(
+                "UPDATE question_node SET node_id = ? WHERE question_id IN (?, ?) AND weight = 1",
+                archived.getId(), archivedOnlyQuestionId, mixedQuestionId);
+        QuestionNode activeLink = new QuestionNode();
+        activeLink.setQuestionId(mixedQuestionId);
+        activeLink.setNodeId(activeNodeId);
+        activeLink.setWeight(1);
+        questionNodeMapper.insert(activeLink);
+
+        PaperVO paper = composeAs(studentId);
+        List<Long> paperQuestionIds = paper.getQuestions().stream()
+                .map(q -> q.getQuestionId())
+                .toList();
+
+        assertThat(paperQuestionIds).doesNotContain(archivedOnlyQuestionId);
+        assertThat(paperQuestionIds).contains(mixedQuestionId);
+        assertThat(paper.getTotal()).isEqualTo(3);
+    }
+
     @Test
     @DisplayName("IT：组卷返回 sessionToken；精确提交成功；重放同分不重复掌握度")
     void composeSubmitReplay_idempotentMastery() {
@@ -229,15 +285,29 @@ class FixedDiagnosticSessionIT extends MySqlContainerSupport {
                 Long.class, studentId);
         assertThat(masteryCount).isEqualTo(1);
 
-        // 重放
+        Map<String, Long> countsBeforeReplay = diagnosticWriteCounts();
+        featureFlags.setFixedDiagnosticEnabled(false);
+
+        // 开关关闭后，相同 token 仍从持久化结果重放
         SubmitResult second = diagnosticService.submit(req);
         assertThat(second.getCorrectCount()).isEqualTo(first.getCorrectCount());
         assertThat(second.getTotal()).isEqualTo(first.getTotal());
+        assertThat(diagnosticWriteCounts()).isEqualTo(countsBeforeReplay);
+    }
 
-        Long answerCountAfter = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM answer_record WHERE fixed_diagnostic_session_id IS NOT NULL",
-                Long.class);
-        assertThat(answerCountAfter).isEqualTo(3);
+    @Test
+    @DisplayName("IT：开关关闭拒绝未完成会话，且不产生任何写入")
+    void incompleteSession_featureDisabledRejectedWithoutWrites() {
+        PaperVO paper = composeAs(studentId);
+        SubmitRequest req = fullCorrect(paper);
+        Map<String, Long> countsBeforeSubmit = diagnosticWriteCounts();
+        featureFlags.setFixedDiagnosticEnabled(false);
+
+        assertThatThrownBy(() -> diagnosticService.submit(req))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(503);
+        assertThat(diagnosticWriteCounts()).isEqualTo(countsBeforeSubmit);
     }
 
     @Test

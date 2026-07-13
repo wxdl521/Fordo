@@ -154,11 +154,6 @@ public class DiagnosticServiceImpl implements DiagnosticService {
                         .in(QuestionNode::getQuestionId, approvedIds)
                         .eq(QuestionNode::getWeight, WEIGHT_MAIN));
 
-        Map<Long, Long> questionToNodeId = new HashMap<>();
-        for (QuestionNode qn : mainNodes) {
-            questionToNodeId.putIfAbsent(qn.getQuestionId(), qn.getNodeId());
-        }
-
         // ── 3. 取课程所有图谱节点，构建 nodeId → KgNode ──────────────────────
         List<KgNode> kgNodes = kgNodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>()
@@ -168,6 +163,23 @@ public class DiagnosticServiceImpl implements DiagnosticService {
         Map<Long, KgNode> nodeMap = new HashMap<>();
         for (KgNode n : kgNodes) {
             nodeMap.put(n.getId(), n);
+        }
+
+        // 只有至少一个主知识点仍在本课程 active 节点集中，题目才可参与组卷。
+        // 多主节点时忽略已归档链接，保留遇到的第一个 active 主节点用于分章。
+        Map<Long, Long> questionToNodeId = new HashMap<>();
+        for (QuestionNode qn : mainNodes) {
+            if (nodeMap.containsKey(qn.getNodeId())) {
+                questionToNodeId.putIfAbsent(qn.getQuestionId(), qn.getNodeId());
+            }
+        }
+        approved = approved.stream()
+                .filter(q -> questionToNodeId.containsKey(q.getId()))
+                .collect(Collectors.toList());
+        if (approved.isEmpty()) {
+            paper.setTotal(0);
+            paper.setQuestions(List.of());
+            return paper;
         }
 
         Map<Long, String> questionChapter = new HashMap<>();
@@ -323,8 +335,6 @@ public class DiagnosticServiceImpl implements DiagnosticService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public SubmitResult submit(SubmitRequest req) {
-        ensureFixedDiagnosticEnabled();
-
         if (req == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "提交请求不能为空");
         }
@@ -353,6 +363,9 @@ public class DiagnosticServiceImpl implements DiagnosticService {
         if (session.getStatus() != null && session.getStatus() == SESSION_COMPLETED) {
             return replayCompletedResult(session);
         }
+
+        // 开关只阻止需要产生写入的未完成会话；已完成结果的幂等读取不受影响。
+        ensureFixedDiagnosticEnabled();
 
         // ── 5. 加载冻结题集 ──────────────────────────────────────────────────
         List<DiagnosticSessionQuestion> frozenRows = diagnosticSessionQuestionMapper.selectList(
