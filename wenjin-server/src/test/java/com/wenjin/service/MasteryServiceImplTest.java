@@ -10,6 +10,7 @@ import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.impl.MasteryServiceImpl;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,11 +26,13 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -62,8 +65,13 @@ class MasteryServiceImplTest {
     @BeforeEach
     void stubTxManager() {
         when(transactionManager.getTransaction(any(TransactionDefinition.class)))
-                .thenReturn(new SimpleTransactionStatus());
+                .thenAnswer(invocation -> new SimpleTransactionStatus());
         doNothing().when(transactionManager).commit(any());
+    }
+
+    @AfterEach
+    void clearTransactionState() {
+        TransactionSynchronizationManager.setActualTransactionActive(false);
     }
 
     private MasteryServiceImpl impl() {
@@ -304,6 +312,46 @@ class MasteryServiceImplTest {
         verify(studentMasteryMapper, times(2)).insertEnsure(STUDENT, COURSE, 100L);
         verify(studentMasteryMapper, times(1)).updateById(any(StudentMastery.class));
         verify(masterySnapshotMapper, times(1)).insert(any(MasterySnapshot.class));
+    }
+
+    @Test
+    @DisplayName("J2 standalone：bounded deadlock retry 的每次尝试都使用 REQUIRED 事务")
+    void standaloneRetryUsesRequiredTransactions() {
+        when(questionMapper.selectList(any())).thenReturn(List.of(question(1L, 3)));
+        when(questionNodeMapper.selectList(any())).thenReturn(List.of(qnode(1L, 100L, 1)));
+        when(studentMasteryMapper.insertEnsure(eq(STUDENT), eq(COURSE), eq(100L)))
+                .thenThrow(new DeadlockLoserDataAccessException("deadlock", null))
+                .thenReturn(1);
+        when(studentMasteryMapper.selectForUpdate(eq(STUDENT), eq(COURSE), eq(100L)))
+                .thenReturn(existing(100L, "0.00", 0));
+
+        impl().applyAnswers(STUDENT, COURSE, List.of(new GradedAnswer(1L, true)));
+
+        ArgumentCaptor<TransactionDefinition> definitions =
+                ArgumentCaptor.forClass(TransactionDefinition.class);
+        verify(transactionManager, times(2)).getTransaction(definitions.capture());
+        assertThat(definitions.getAllValues())
+                .allSatisfy(definition -> assertThat(definition.getPropagationBehavior())
+                        .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRED));
+    }
+
+    @Test
+    @DisplayName("J3 ambient transaction：直接执行一次 locked write，不开内层事务且异常原样外抛")
+    void ambientTransactionDoesNotStartOrRetryInnerTransaction() {
+        when(questionMapper.selectList(any())).thenReturn(List.of(question(1L, 3)));
+        when(questionNodeMapper.selectList(any())).thenReturn(List.of(qnode(1L, 100L, 1)));
+        DeadlockLoserDataAccessException failure =
+                new DeadlockLoserDataAccessException("outer transaction must decide rollback", null);
+        when(studentMasteryMapper.insertEnsure(eq(STUDENT), eq(COURSE), eq(100L)))
+                .thenThrow(failure);
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+
+        assertThatThrownBy(() -> impl().applyAnswers(
+                STUDENT, COURSE, List.of(new GradedAnswer(1L, true))))
+                .isSameAs(failure);
+
+        verify(studentMasteryMapper, times(1)).insertEnsure(STUDENT, COURSE, 100L);
+        verify(transactionManager, never()).getTransaction(any(TransactionDefinition.class));
     }
 
     @Test

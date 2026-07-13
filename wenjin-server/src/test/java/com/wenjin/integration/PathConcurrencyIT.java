@@ -22,6 +22,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -33,6 +35,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 学习路径并发：两线程同时 generate → 仅一条 active 路径，current_path_id 指向它。
@@ -59,6 +62,7 @@ class PathConcurrencyIT extends MySqlContainerSupport {
     @Autowired private KgNodeMapper kgNodeMapper;
     @Autowired private StudentMasteryMapper studentMasteryMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private PlatformTransactionManager transactionManager;
 
     private long studentId;
     private long courseId;
@@ -173,5 +177,58 @@ class PathConcurrencyIT extends MySqlContainerSupport {
         LearningPathVO current = pathService.getCurrent(studentId, courseId);
         assertThat(current.getPathId()).isEqualTo(currentPathId);
         assertThat(current.getSteps()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("IT：practice 外层事务重写 path/current pointer 后失败 → 路径、步骤、指针均保持原值")
+    void practiceOuterTransactionRollbackKeepsPathRowsAndPointerUnchanged() {
+        PathGenerateRequest req = request();
+        LearningPathVO original = pathService.generate(req);
+        Long originalPathId = original.getPathId();
+        Long pathsBefore = countPaths();
+        Long itemsBefore = countPathItems();
+        RuntimeException failure = new RuntimeException("force practice rollback");
+        TransactionTemplate outer = new TransactionTemplate(transactionManager);
+
+        assertThatThrownBy(() -> outer.executeWithoutResult(status -> {
+            pathService.generate(req);
+            throw failure;
+        })).isSameAs(failure);
+
+        assertThat(countPaths()).isEqualTo(pathsBefore);
+        assertThat(countPathItems()).isEqualTo(itemsBefore);
+        assertThat(currentPathId()).isEqualTo(originalPathId);
+        Long originalStatus = jdbcTemplate.queryForObject(
+                "SELECT status FROM learning_path WHERE id = ?", Long.class, originalPathId);
+        assertThat(originalStatus).isEqualTo(1L);
+        assertThat(pathService.getCurrent(studentId, courseId).getPathId()).isEqualTo(originalPathId);
+    }
+
+    private PathGenerateRequest request() {
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setStudentId(studentId);
+        req.setCourseId(courseId);
+        req.setTargetNodeId(targetNodeId);
+        req.setUseAi(false);
+        return req;
+    }
+
+    private Long countPaths() {
+        return jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM learning_path WHERE student_id = ? AND course_id = ?",
+                Long.class, studentId, courseId);
+    }
+
+    private Long countPathItems() {
+        return jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM learning_path_item i JOIN learning_path p ON p.id = i.path_id "
+                        + "WHERE p.student_id = ? AND p.course_id = ?",
+                Long.class, studentId, courseId);
+    }
+
+    private Long currentPathId() {
+        return jdbcTemplate.queryForObject(
+                "SELECT current_path_id FROM student_course WHERE student_id = ? AND course_id = ?",
+                Long.class, studentId, courseId);
     }
 }

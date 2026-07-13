@@ -27,6 +27,7 @@ import com.wenjin.service.LearningPathWriter;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.impl.PathServiceImpl;
 import com.wenjin.support.QuestionStatus;
+import org.springframework.dao.DeadlockLoserDataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -38,6 +39,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
@@ -52,6 +56,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -74,6 +79,7 @@ class PathServiceImplTest {
     @Mock QuestionAiClient questionAiClient;
     @Mock QuestionNodeMapper questionNodeMapper;
     @Mock QuestionMapper questionMapper;
+    @Mock PlatformTransactionManager transactionManager;
 
     private static final Long S = 2L, C = 1L;
 
@@ -81,6 +87,7 @@ class PathServiceImplTest {
     @AfterEach
     void clearCurrentUser() {
         CurrentUser.clear();
+        TransactionSynchronizationManager.setActualTransactionActive(false);
     }
 
     /**
@@ -92,6 +99,10 @@ class PathServiceImplTest {
     void stubAvailCountDefaults() {
         when(questionNodeMapper.selectList(any())).thenReturn(List.of());
         when(questionMapper.selectList(any())).thenReturn(List.of());
+        when(transactionManager.getTransaction(any(TransactionDefinition.class)))
+                .thenAnswer(invocation -> new SimpleTransactionStatus());
+        doNothing().when(transactionManager).commit(any());
+        doNothing().when(transactionManager).rollback(any());
         StudentCourse sc = new StudentCourse();
         sc.setId(900L);
         sc.setStudentId(S);
@@ -124,12 +135,16 @@ class PathServiceImplTest {
     }
 
     private PathServiceImpl implWithDecay(boolean decayEnabled) {
-        LearningPathWriter writer = new LearningPathWriter(
-                learningPathMapper, learningPathItemMapper, studentCourseMapper);
+        LearningPathWriter writer = newLearningPathWriter();
         return new PathServiceImpl(studentMasteryMapper, kgNodeMapper, kgEdgeMapper,
                 learningPathMapper, learningPathItemMapper, studentCourseMapper,
                 diagnosticResultService, questionAiClient,
                 questionNodeMapper, questionMapper, calculator(decayEnabled), writer);
+    }
+
+    private LearningPathWriter newLearningPathWriter() {
+        return new LearningPathWriter(
+                learningPathMapper, learningPathItemMapper, studentCourseMapper, transactionManager);
     }
 
     private KgNode node(long id, String code, String name) {
@@ -172,6 +187,18 @@ class PathServiceImplTest {
         it.setId(id); it.setPathId(pathId); it.setNodeId(nodeId);
         it.setStepOrder(order); it.setStatus(status); it.setReason("r");
         return it;
+    }
+
+    private PathGenerateRequest singleTargetRequest() {
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(node(4, "T", "卡点")));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of());
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(mastery(4, "30.00", 0)));
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setStudentId(S);
+        req.setCourseId(C);
+        req.setTargetNodeId(4L);
+        req.setUseAi(false);
+        return req;
     }
 
     @Test
@@ -329,6 +356,40 @@ class PathServiceImplTest {
         impl().generate(req);
 
         verify(questionAiClient, never()).explainLearningStep(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("F2 standalone：writer 最多尝试 3 次且每次使用 REQUIRED 事务")
+    void standaloneWriterRetriesAreBoundedAndRequired() {
+        PathGenerateRequest req = singleTargetRequest();
+        DeadlockLoserDataAccessException failure =
+                new DeadlockLoserDataAccessException("deadlock", null);
+        when(studentCourseMapper.selectForUpdate(S, C)).thenThrow(failure);
+
+        assertThatThrownBy(() -> impl().generate(req)).isSameAs(failure);
+
+        verify(studentCourseMapper, times(3)).selectForUpdate(S, C);
+        ArgumentCaptor<TransactionDefinition> definitions =
+                ArgumentCaptor.forClass(TransactionDefinition.class);
+        verify(transactionManager, times(3)).getTransaction(definitions.capture());
+        assertThat(definitions.getAllValues())
+                .allSatisfy(definition -> assertThat(definition.getPropagationBehavior())
+                        .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRED));
+    }
+
+    @Test
+    @DisplayName("F3 ambient transaction：writer 只写一次，不开内层事务且异常原样外抛")
+    void ambientWriterDoesNotStartOrRetryInnerTransaction() {
+        PathGenerateRequest req = singleTargetRequest();
+        DeadlockLoserDataAccessException failure =
+                new DeadlockLoserDataAccessException("outer transaction must decide rollback", null);
+        when(studentCourseMapper.selectForUpdate(S, C)).thenThrow(failure);
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+
+        assertThatThrownBy(() -> impl().generate(req)).isSameAs(failure);
+
+        verify(studentCourseMapper, times(1)).selectForUpdate(S, C);
+        verify(transactionManager, never()).getTransaction(any(TransactionDefinition.class));
     }
 
     @Test

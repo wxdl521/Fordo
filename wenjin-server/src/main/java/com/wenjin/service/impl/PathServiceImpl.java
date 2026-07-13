@@ -34,11 +34,8 @@ import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.PathService;
 import com.wenjin.support.QuestionStatus;
 import com.wenjin.support.RelationType;
-import org.springframework.dao.CannotAcquireLockException;
-import org.springframework.dao.DeadlockLoserDataAccessException;
 import org.springframework.stereotype.Service;
 
-import java.sql.SQLException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -54,7 +51,7 @@ import java.util.stream.Collectors;
 /**
  * 学习路径服务实现（PRD 8.3）。
  * <p>聚焦卡点：从 target 沿前置边逆向 BFS 收集未掌握前置，Kahn 拓扑排序后落库。
- * <p>并发：读快照与 AI 理由在事务外；短写由 {@link LearningPathWriter}（REQUIRES_NEW）完成。
+ * <p>并发：读快照与 AI 理由在事务外；短写由 {@link LearningPathWriter} 加入调用方事务或独立短事务完成。
  */
 @Service
 public class PathServiceImpl implements PathService {
@@ -62,9 +59,6 @@ public class PathServiceImpl implements PathService {
     private static final int PREREQ = RelationType.PREREQUISITE.getCode();
     private static final int ITEM_DONE = 1;
     private static final String CONCLUSION_TEXT = "从根因补起，沿前置链逐步推进——根基稳了，卡点自然松动。";
-    private static final int MAX_DEADLOCK_ATTEMPTS = 3;
-    private static final long DEADLOCK_BACKOFF_MS = 40L;
-
     private final StudentMasteryMapper studentMasteryMapper;
     private final KgNodeMapper kgNodeMapper;
     private final KgEdgeMapper kgEdgeMapper;
@@ -182,10 +176,10 @@ public class PathServiceImpl implements PathService {
             order++;
         }
 
-        // ── 短事务写路径（LearningPathWriter REQUIRES_NEW） ───────────────
+        // ── 路径写入（LearningPathWriter 负责 ambient/standalone 事务边界） ──
         final Long finalTargetId = targetId;
-        LearningPath path = runWithDeadlockRetry(() ->
-                learningPathWriter.persistPath(studentId, courseId, finalTargetId, prepared));
+        LearningPath path = learningPathWriter.persistPath(
+                studentId, courseId, finalTargetId, prepared);
 
         List<StepVO> steps = new ArrayList<>();
         for (PreparedPathStep ps : prepared) {
@@ -494,40 +488,4 @@ public class PathServiceImpl implements PathService {
         return vo;
     }
 
-    private <T> T runWithDeadlockRetry(java.util.function.Supplier<T> action) {
-        int attempt = 0;
-        while (true) {
-            attempt++;
-            try {
-                return action.get();
-            } catch (RuntimeException ex) {
-                if (attempt >= MAX_DEADLOCK_ATTEMPTS || !isRetryableConcurrency(ex)) {
-                    throw ex;
-                }
-                try {
-                    Thread.sleep(DEADLOCK_BACKOFF_MS * attempt);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw ex;
-                }
-            }
-        }
-    }
-
-    private static boolean isRetryableConcurrency(Throwable ex) {
-        Throwable t = ex;
-        while (t != null) {
-            if (t instanceof DeadlockLoserDataAccessException
-                    || t instanceof CannotAcquireLockException) {
-                return true;
-            }
-            if (t instanceof SQLException sql) {
-                if (sql.getErrorCode() == 1213 || sql.getErrorCode() == 1205) {
-                    return true;
-                }
-            }
-            t = t.getCause();
-        }
-        return false;
-    }
 }

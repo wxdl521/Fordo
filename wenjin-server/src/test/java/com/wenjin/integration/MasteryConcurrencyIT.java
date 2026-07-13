@@ -24,6 +24,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -35,6 +37,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 掌握度并发：两线程对同一节点施加相反结果，最终分数串行化两事件，快照 +2。
@@ -64,6 +67,7 @@ class MasteryConcurrencyIT extends MySqlContainerSupport {
     @Autowired private QuestionNodeMapper questionNodeMapper;
     @Autowired private StudentMasteryMapper studentMasteryMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private PlatformTransactionManager transactionManager;
 
     private long studentId;
     private long courseId;
@@ -189,6 +193,35 @@ class MasteryConcurrencyIT extends MySqlContainerSupport {
 
         long snapsAfter = countSnapshots();
         assertThat(snapsAfter - snapsBefore).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("IT：diagnostic 外层事务写 mastery/snapshot 后失败 → 两表均保持原值")
+    void diagnosticOuterTransactionRollbackKeepsMasteryAndSnapshotsUnchanged() {
+        StudentMastery before = loadMastery();
+        long snapshotsBefore = countSnapshots();
+        RuntimeException failure = new RuntimeException("force diagnostic rollback");
+        TransactionTemplate outer = new TransactionTemplate(transactionManager);
+
+        assertThatThrownBy(() -> outer.executeWithoutResult(status -> {
+            masteryService.applyAnswers(studentId, courseId,
+                    List.of(new GradedAnswer(qCorrectId, true)));
+            throw failure;
+        })).isSameAs(failure);
+
+        StudentMastery after = loadMastery();
+        assertThat(after.getId()).isEqualTo(before.getId());
+        assertThat(after.getMasteryScore()).isEqualByComparingTo(before.getMasteryScore());
+        assertThat(after.getMasteryLevel()).isEqualTo(before.getMasteryLevel());
+        assertThat(countSnapshots()).isEqualTo(snapshotsBefore);
+    }
+
+    private StudentMastery loadMastery() {
+        return studentMasteryMapper.selectOne(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<StudentMastery>()
+                        .eq(StudentMastery::getStudentId, studentId)
+                        .eq(StudentMastery::getCourseId, courseId)
+                        .eq(StudentMastery::getNodeId, nodeId));
     }
 
     private long countSnapshots() {

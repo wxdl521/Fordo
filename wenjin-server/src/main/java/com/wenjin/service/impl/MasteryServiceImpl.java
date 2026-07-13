@@ -19,6 +19,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
@@ -75,7 +76,7 @@ public class MasteryServiceImpl implements MasteryService {
     private final QuestionNodeMapper questionNodeMapper;
     private final StudentMasteryMapper studentMasteryMapper;
     private final MasterySnapshotMapper masterySnapshotMapper;
-    private final TransactionTemplate requiresNewTx;
+    private final TransactionTemplate requiredTx;
 
     /** EWMA 平滑系数基准 */
     @Value("${wenjin.mastery.alpha:0.3}")
@@ -96,9 +97,9 @@ public class MasteryServiceImpl implements MasteryService {
         this.questionNodeMapper = questionNodeMapper;
         this.studentMasteryMapper = studentMasteryMapper;
         this.masterySnapshotMapper = masterySnapshotMapper;
-        this.requiresNewTx = new TransactionTemplate(transactionManager);
-        this.requiresNewTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        this.requiresNewTx.setName("mastery-applyAnswers");
+        this.requiredTx = new TransactionTemplate(transactionManager);
+        this.requiredTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
+        this.requiredTx.setName("mastery-applyAnswers");
     }
 
     @Override
@@ -133,8 +134,12 @@ public class MasteryServiceImpl implements MasteryService {
             return;
         }
 
-        // 4. 短事务 + 服务边界死锁重试
-        runWithDeadlockRetry(() -> requiresNewTx.executeWithoutResult(status ->
+        // 4. 外层事务内单次写；standalone 才开启短事务并做 bounded deadlock retry
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            applyAnswersLocked(studentId, courseId, answers, difficultyByQuestion, nodesByQuestion, nodeIds);
+            return;
+        }
+        runWithDeadlockRetry(() -> requiredTx.executeWithoutResult(status ->
                 applyAnswersLocked(studentId, courseId, answers, difficultyByQuestion, nodesByQuestion, nodeIds)));
     }
 
