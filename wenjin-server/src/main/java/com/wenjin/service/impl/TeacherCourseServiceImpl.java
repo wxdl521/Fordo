@@ -147,7 +147,12 @@ public class TeacherCourseServiceImpl implements TeacherCourseService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void setPublished(Long courseId, boolean published) {
+        courseAccessService.assertManageCourse(courseId);
+        if (courseAccessMapper.lockActiveCourse(courseId) == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage());
+        }
         courseAccessService.assertManageCourse(courseId);
         Course c = courseMapper.selectById(courseId);
         if (c == null || c.getArchivedAt() != null) {

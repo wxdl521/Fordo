@@ -96,8 +96,11 @@ public interface CourseAccessMapper {
      */
     @Select("""
             <script>
-            SELECT course_id FROM question
-            WHERE id IN
+            SELECT q.course_id
+            FROM question q
+            JOIN course c ON c.id = q.course_id
+            WHERE c.archived_at IS NULL
+              AND q.id IN
             <foreach collection="questionIds" item="id" open="(" separator="," close=")">
               #{id}
             </foreach>

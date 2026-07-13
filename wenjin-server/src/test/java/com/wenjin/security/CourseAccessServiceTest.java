@@ -153,6 +153,7 @@ class CourseAccessServiceTest {
         assertSelectContainsArchivedFilter("courseIdForNode", Long.class);
         assertSelectContainsArchivedFilter("courseIdForEdge", Long.class);
         assertSelectContainsArchivedFilter("courseIdForQuestion", Long.class);
+        assertSelectContainsArchivedFilter("courseIdsForQuestions", java.util.Collection.class);
     }
 
     @Test

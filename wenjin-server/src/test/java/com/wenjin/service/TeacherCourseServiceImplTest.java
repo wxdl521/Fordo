@@ -306,6 +306,13 @@ class TeacherCourseServiceImplTest {
         ArgumentCaptor<Course> cap = ArgumentCaptor.forClass(Course.class);
         verify(courseMapper).updateById(cap.capture());
         assertThat(cap.getValue().getStatus()).isEqualTo(1);
+        verify(courseAccessService, times(2)).assertManageCourse(5L);
+        InOrder order = org.mockito.Mockito.inOrder(courseAccessService, courseAccessMapper, courseMapper);
+        order.verify(courseAccessService).assertManageCourse(5L);
+        order.verify(courseAccessMapper).lockActiveCourse(5L);
+        order.verify(courseAccessService).assertManageCourse(5L);
+        order.verify(courseMapper).selectById(5L);
+        order.verify(courseMapper).updateById(any(Course.class));
     }
 
     @Test
@@ -330,6 +337,52 @@ class TeacherCourseServiceImplTest {
         when(courseMapper.selectById(404L)).thenReturn(null);
         assertThatThrownBy(() -> service.setPublished(404L, true))
                 .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void setPublished_missingActiveLock_404BeforeFreshReadOrUpdate() {
+        asTeacher(9L);
+        doNothing().when(courseAccessService).assertManageCourse(404L);
+        when(courseAccessMapper.lockActiveCourse(404L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.setPublished(404L, true))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(ResultCode.NOT_FOUND.getCode());
+
+        verify(courseAccessService).assertManageCourse(404L);
+        verify(courseMapper, never()).selectById(any());
+        verify(courseMapper, never()).updateById(any(Course.class));
+    }
+
+    @Test
+    void setPublished_archivedAfterLock_404WithoutUpdate() {
+        asTeacher(9L);
+        doNothing().when(courseAccessService).assertManageCourse(5L);
+        Course archived = new Course();
+        archived.setId(5L);
+        archived.setStatus(0);
+        archived.setArchivedAt(java.time.LocalDateTime.now());
+        when(courseMapper.selectById(5L)).thenReturn(archived);
+
+        assertThatThrownBy(() -> service.setPublished(5L, true))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(ResultCode.NOT_FOUND.getCode());
+
+        verify(courseAccessService, times(2)).assertManageCourse(5L);
+        verify(courseAccessMapper).lockActiveCourse(5L);
+        verify(courseMapper, never()).updateById(any(Course.class));
+    }
+
+    @Test
+    void setPublished_isTransactionalForCourseRowLockScope() throws NoSuchMethodException {
+        org.springframework.transaction.annotation.Transactional tx = TeacherCourseServiceImpl.class
+                .getMethod("setPublished", Long.class, boolean.class)
+                .getAnnotation(org.springframework.transaction.annotation.Transactional.class);
+
+        assertThat(tx).isNotNull();
+        assertThat(tx.rollbackFor()).contains(Exception.class);
     }
 
     @Test
