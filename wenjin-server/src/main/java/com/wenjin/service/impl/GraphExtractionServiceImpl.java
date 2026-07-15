@@ -10,6 +10,7 @@ import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.GraphExtractionService;
 import com.wenjin.support.DocumentTextExtractor;
 import com.wenjin.support.ImagePreprocessor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -30,6 +31,7 @@ public class GraphExtractionServiceImpl implements GraphExtractionService {
     private final CourseAccessService courseAccessService;
     private final LimitsProperties limits;
 
+    @Autowired
     public GraphExtractionServiceImpl(ImagePreprocessor imagePreprocessor,
                                       ImageToMarkdownAiClient imageToMarkdownAiClient,
                                       SyllabusGraphAiClient syllabusGraphAiClient,

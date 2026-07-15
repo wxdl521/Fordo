@@ -34,8 +34,8 @@ class ApplicationContextIT extends MySqlContainerSupport {
         registry.add("spring.datasource.username", MYSQL::getUsername);
         registry.add("spring.datasource.password", MYSQL::getPassword);
         registry.add("spring.datasource.driver-class-name", () -> "com.mysql.cj.jdbc.Driver");
-        registry.add("WENJIN_AUTH_SECRET", () -> "it-test-secret-not-for-prod");
-        registry.add("wenjin.auth.secret", () -> "it-test-secret-not-for-prod");
+        registry.add("WENJIN_AUTH_SECRET", () -> "it-test-secret-at-least-32-bytes-long");
+        registry.add("wenjin.auth.secret", () -> "it-test-secret-at-least-32-bytes-long");
         // 显式清空真实 Key；Fake AI @Primary 覆盖出网客户端
         registry.add("wenjin.ai.enabled", () -> "false");
         registry.add("wenjin.ai.api-key", () -> "");
