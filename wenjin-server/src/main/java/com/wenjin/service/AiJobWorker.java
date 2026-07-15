@@ -2,18 +2,25 @@ package com.wenjin.service;
 
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.dto.AnnotateRequest;
 import com.wenjin.entity.AiJob;
+import com.wenjin.security.CurrentPrincipal;
+import com.wenjin.security.PrincipalLoader;
 import com.wenjin.support.AiJobErrorCodes;
+import com.wenjin.support.AiJobHeartbeatScheduler;
 import com.wenjin.support.AiJobKind;
 import com.wenjin.support.AiJobPayloadStore;
 import com.wenjin.support.InMemoryMultipartFile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ScheduledFuture;
 
 /** Polls, executes, and lease-qualifies every write made by an AI job worker. */
 @Component
@@ -27,23 +34,38 @@ public class AiJobWorker {
     private final QuestionBankImportService questionBankImportService;
     private final GraphExtractReviewService graphExtractReviewService;
     private final GraphImportService graphImportService;
+    private final PrincipalLoader principalLoader;
+    private final FeatureFlagsProperties featureFlags;
+    private final AiJobHeartbeatScheduler heartbeatScheduler;
+    private final long heartbeatIntervalMs;
 
     public AiJobWorker(AiJobService aiJobService,
                        AiJobPayloadStore payloadStore,
                        QuestionService questionService,
                        QuestionBankImportService questionBankImportService,
                        GraphExtractReviewService graphExtractReviewService,
-                       GraphImportService graphImportService) {
+                       GraphImportService graphImportService,
+                       PrincipalLoader principalLoader,
+                       FeatureFlagsProperties featureFlags,
+                       AiJobHeartbeatScheduler heartbeatScheduler,
+                       @Value("${wenjin.jobs.heartbeat-interval-ms:30000}") long heartbeatIntervalMs) {
         this.aiJobService = aiJobService;
         this.payloadStore = payloadStore;
         this.questionService = questionService;
         this.questionBankImportService = questionBankImportService;
         this.graphExtractReviewService = graphExtractReviewService;
         this.graphImportService = graphImportService;
+        this.principalLoader = principalLoader;
+        this.featureFlags = featureFlags;
+        this.heartbeatScheduler = heartbeatScheduler;
+        this.heartbeatIntervalMs = Math.max(10L, heartbeatIntervalMs);
     }
 
     @Scheduled(fixedDelayString = "${wenjin.jobs.poll-interval-ms:2000}")
     public void tick() {
+        if (featureFlags == null || !featureFlags.isAiJobDispatchEnabled()) {
+            return;
+        }
         try {
             aiJobService.recoverStale();
         } catch (Exception e) {
@@ -65,88 +87,125 @@ public class AiJobWorker {
         Long jobId = job.getId();
         // Capture once: a stale worker must never adopt a replacement attempt's token.
         String leaseToken = job.getLeaseToken();
-        if (checkCancelOrLeaseLoss(jobId, leaseToken)) {
+        Optional<CurrentPrincipal> loadedActor = job.getOwnerId() == null
+                ? Optional.empty()
+                : principalLoader.load(job.getOwnerId());
+        if (loadedActor.isEmpty()
+                || (!loadedActor.get().isTeacher() && !loadedActor.get().isAdmin())) {
+            aiJobService.markFailed(jobId, leaseToken, AiJobErrorCodes.JOB_ACTOR_REVOKED);
             return;
         }
+        HeartbeatGuard heartbeat = new HeartbeatGuard(jobId, leaseToken);
         try (AiJobService.WorkerPrincipalScope ignored =
-                     new AiJobService.WorkerPrincipalScope(job.getOwnerId())) {
-            markProgressOrLose(jobId, leaseToken, 5);
-            if (checkCancelOrLeaseLoss(jobId, leaseToken)) {
+                     new AiJobService.WorkerPrincipalScope(loadedActor.get());
+             heartbeat) {
+            heartbeat.start();
+            if (checkCancelOrLeaseLoss(jobId, leaseToken, heartbeat)) {
                 return;
             }
+            markProgressOrLose(jobId, leaseToken, 5, heartbeat);
+            if (checkCancelOrLeaseLoss(jobId, leaseToken, heartbeat)) {
+                return;
+            }
+            heartbeat.requireOwned();
             if (!aiJobService.markEffectStarted(jobId, leaseToken)) {
                 return;
             }
-            Object result = runKind(job, leaseToken);
-            if (checkCancelOrLeaseLoss(jobId, leaseToken)) {
+            heartbeat.requireOwned();
+            Object result = runKind(job, leaseToken, heartbeat);
+            if (checkCancelOrLeaseLoss(jobId, leaseToken, heartbeat)) {
                 return;
             }
+            heartbeat.requireOwned();
             aiJobService.markSucceeded(jobId, leaseToken, result);
         } catch (LeaseLostException e) {
             log.info("AI job {} stopped after lease loss", jobId);
         } catch (BusinessException e) {
             String code = mapBusinessError(e);
             log.warn("AI job {} failed: code={} msg={}", jobId, code, e.getMessage());
-            aiJobService.markFailed(jobId, leaseToken, code);
+            if (!heartbeat.isLeaseLost()) {
+                aiJobService.markFailed(jobId, leaseToken, code);
+            }
         } catch (Exception e) {
             log.error("AI job {} internal error: {}", jobId, e.getMessage());
-            aiJobService.markFailed(jobId, leaseToken, AiJobErrorCodes.INTERNAL_ERROR);
+            if (!heartbeat.isLeaseLost()) {
+                aiJobService.markFailed(jobId, leaseToken, AiJobErrorCodes.INTERNAL_ERROR);
+            }
         }
     }
 
-    private Object runKind(AiJob job, String leaseToken) {
+    private Object runKind(AiJob job, String leaseToken, HeartbeatGuard heartbeat) {
         String kind = job.getKind();
         Map<String, Object> request = aiJobService.parseRequestMap(job.getRequestJson());
         return switch (kind) {
-            case AiJobKind.QUESTION_GENERATE -> runGenerate(job, leaseToken, request);
-            case AiJobKind.QUESTION_ANNOTATE -> runAnnotate(job, leaseToken);
-            case AiJobKind.QUESTION_IMPORT_EXCEL -> runQuestionImportExcel(job, leaseToken, request);
-            case AiJobKind.GRAPH_EXTRACT -> runGraphExtract(job, leaseToken, request);
-            case AiJobKind.GRAPH_IMPORT_EXCEL -> runGraphImportExcel(job, leaseToken, request);
+            case AiJobKind.QUESTION_GENERATE -> runGenerate(job, leaseToken, request, heartbeat);
+            case AiJobKind.QUESTION_ANNOTATE -> runAnnotate(job, leaseToken, heartbeat);
+            case AiJobKind.QUESTION_IMPORT_EXCEL ->
+                    runQuestionImportExcel(job, leaseToken, request, heartbeat);
+            case AiJobKind.GRAPH_EXTRACT -> runGraphExtract(job, leaseToken, request, heartbeat);
+            case AiJobKind.GRAPH_IMPORT_EXCEL ->
+                    runGraphImportExcel(job, leaseToken, request, heartbeat);
             default -> throw new BusinessException(ResultCode.BAD_REQUEST, "未知作业类型: " + kind);
         };
     }
 
-    private Object runGenerate(AiJob job, String leaseToken, Map<String, Object> request) {
+    private Object runGenerate(AiJob job,
+                               String leaseToken,
+                               Map<String, Object> request,
+                               HeartbeatGuard heartbeat) {
         String nodeCode = stringVal(request.get("nodeCode"));
         int count = intVal(request.get("count"), 5);
-        markProgressOrLose(job.getId(), leaseToken, 20);
+        markProgressOrLose(job.getId(), leaseToken, 20, heartbeat);
+        heartbeat.requireOwned();
         Object result = questionService.generate(job.getCourseId(), nodeCode, count);
-        markProgressOrLose(job.getId(), leaseToken, 90);
+        markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
         return result;
     }
 
-    private Object runAnnotate(AiJob job, String leaseToken) {
+    private Object runAnnotate(AiJob job, String leaseToken, HeartbeatGuard heartbeat) {
         AnnotateRequest body = aiJobService.parseRequest(job.getRequestJson(), AnnotateRequest.class);
-        markProgressOrLose(job.getId(), leaseToken, 20);
+        markProgressOrLose(job.getId(), leaseToken, 20, heartbeat);
+        heartbeat.requireOwned();
         Object result = questionService.annotate(job.getCourseId(), body);
-        markProgressOrLose(job.getId(), leaseToken, 90);
+        markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
         return result;
     }
 
-    private Object runQuestionImportExcel(AiJob job, String leaseToken, Map<String, Object> request) {
+    private Object runQuestionImportExcel(AiJob job,
+                                          String leaseToken,
+                                          Map<String, Object> request,
+                                          HeartbeatGuard heartbeat) {
         InMemoryMultipartFile file = loadFile(request);
-        markProgressOrLose(job.getId(), leaseToken, 15);
+        markProgressOrLose(job.getId(), leaseToken, 15, heartbeat);
+        heartbeat.requireOwned();
         Object result = questionBankImportService.importFromExcel(job.getCourseId(), file);
-        markProgressOrLose(job.getId(), leaseToken, 90);
+        markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
         return result;
     }
 
-    private Object runGraphExtract(AiJob job, String leaseToken, Map<String, Object> request) {
+    private Object runGraphExtract(AiJob job,
+                                   String leaseToken,
+                                   Map<String, Object> request,
+                                   HeartbeatGuard heartbeat) {
         String courseCode = stringVal(request.get("courseCode"));
         InMemoryMultipartFile file = loadFile(request);
-        markProgressOrLose(job.getId(), leaseToken, 10);
+        markProgressOrLose(job.getId(), leaseToken, 10, heartbeat);
+        heartbeat.requireOwned();
         Object result = graphExtractReviewService.extractAndStash(courseCode, file);
-        markProgressOrLose(job.getId(), leaseToken, 90);
+        markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
         return result;
     }
 
-    private Object runGraphImportExcel(AiJob job, String leaseToken, Map<String, Object> request) {
+    private Object runGraphImportExcel(AiJob job,
+                                       String leaseToken,
+                                       Map<String, Object> request,
+                                       HeartbeatGuard heartbeat) {
         String courseCode = stringVal(request.get("courseCode"));
         InMemoryMultipartFile file = loadFile(request);
-        markProgressOrLose(job.getId(), leaseToken, 15);
+        markProgressOrLose(job.getId(), leaseToken, 15, heartbeat);
+        heartbeat.requireOwned();
         Object result = graphImportService.importFromExcel(courseCode, file);
-        markProgressOrLose(job.getId(), leaseToken, 90);
+        markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
         return result;
     }
 
@@ -158,18 +217,30 @@ public class AiJobWorker {
         return new InMemoryMultipartFile("file", fileName, contentType, bytes);
     }
 
-    private boolean checkCancelOrLeaseLoss(Long jobId, String leaseToken) {
-        if (aiJobService.isCancelRequested(jobId, leaseToken)) {
-            aiJobService.markCancelled(jobId, leaseToken);
+    private boolean checkCancelOrLeaseLoss(Long jobId,
+                                           String leaseToken,
+                                           HeartbeatGuard heartbeat) {
+        if (heartbeat.isLeaseLost()) {
             return true;
         }
-        return !aiJobService.isCurrentLease(jobId, leaseToken);
+        if (aiJobService.isCancelRequested(jobId, leaseToken)) {
+            if (!heartbeat.isLeaseLost()) {
+                aiJobService.markCancelled(jobId, leaseToken);
+            }
+            return true;
+        }
+        return heartbeat.isLeaseLost() || !aiJobService.isCurrentLease(jobId, leaseToken);
     }
 
-    private void markProgressOrLose(Long jobId, String leaseToken, int progress) {
+    private void markProgressOrLose(Long jobId,
+                                    String leaseToken,
+                                    int progress,
+                                    HeartbeatGuard heartbeat) {
+        heartbeat.requireOwned();
         if (!aiJobService.markProgress(jobId, leaseToken, progress)) {
             throw new LeaseLostException();
         }
+        heartbeat.requireOwned();
     }
 
     private static String mapBusinessError(BusinessException e) {
@@ -205,6 +276,81 @@ public class AiJobWorker {
             return Integer.parseInt(String.valueOf(value));
         } catch (NumberFormatException e) {
             return defaultValue;
+        }
+    }
+
+    private final class HeartbeatGuard implements AutoCloseable {
+        private final Long jobId;
+        private final String leaseToken;
+        private volatile boolean leaseLost;
+        private boolean stopped;
+        private ScheduledFuture<?> future;
+
+        private HeartbeatGuard(Long jobId, String leaseToken) {
+            this.jobId = jobId;
+            this.leaseToken = leaseToken;
+        }
+
+        private void start() {
+            ScheduledFuture<?> scheduled = heartbeatScheduler.scheduleAtFixedRate(
+                    this::pulse, heartbeatIntervalMs);
+            synchronized (this) {
+                future = scheduled;
+                if (scheduled == null) {
+                    leaseLost = true;
+                    stopped = true;
+                } else if (stopped) {
+                    scheduled.cancel(false);
+                }
+            }
+        }
+
+        private void pulse() {
+            synchronized (this) {
+                if (stopped) {
+                    return;
+                }
+            }
+            boolean extended;
+            try {
+                extended = aiJobService.heartbeat(jobId, leaseToken);
+            } catch (RuntimeException e) {
+                log.warn("AI job {} heartbeat failed: {}", jobId, e.getMessage());
+                return;
+            }
+            if (!extended) {
+                loseLease();
+            }
+        }
+
+        private void requireOwned() {
+            if (leaseLost) {
+                throw new LeaseLostException();
+            }
+        }
+
+        private boolean isLeaseLost() {
+            return leaseLost;
+        }
+
+        private synchronized void loseLease() {
+            leaseLost = true;
+            stop();
+        }
+
+        private synchronized void stop() {
+            if (stopped) {
+                return;
+            }
+            stopped = true;
+            if (future != null) {
+                future.cancel(false);
+            }
+        }
+
+        @Override
+        public void close() {
+            stop();
         }
     }
 

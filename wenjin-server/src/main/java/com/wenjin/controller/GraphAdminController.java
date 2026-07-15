@@ -6,11 +6,10 @@ import com.wenjin.dto.ExtractCommitResult;
 import com.wenjin.dto.GraphImportRequest;
 import com.wenjin.dto.GraphImportResult;
 import com.wenjin.entity.ExtractionReview;
-import com.wenjin.service.AiJobService;
+import com.wenjin.service.AiJobPayloadSubmissionService;
 import com.wenjin.service.GraphExtractReviewService;
 import com.wenjin.service.GraphService;
 import com.wenjin.support.AiJobKind;
-import com.wenjin.support.AiJobPayloadStore;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.http.HttpStatus;
@@ -19,9 +18,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /** 图谱管理接口(教师/管理侧)。长写 import/excel 与 extract 派发为 AI 作业（HTTP 202）。 */
 @RestController
@@ -31,17 +28,14 @@ public class GraphAdminController {
 
     private final GraphService graphService;
     private final GraphExtractReviewService graphExtractReviewService;
-    private final AiJobService aiJobService;
-    private final AiJobPayloadStore payloadStore;
+    private final AiJobPayloadSubmissionService payloadSubmissionService;
 
     public GraphAdminController(GraphService graphService,
                                 GraphExtractReviewService graphExtractReviewService,
-                                AiJobService aiJobService,
-                                AiJobPayloadStore payloadStore) {
+                                AiJobPayloadSubmissionService payloadSubmissionService) {
         this.graphService = graphService;
         this.graphExtractReviewService = graphExtractReviewService;
-        this.aiJobService = aiJobService;
-        this.payloadStore = payloadStore;
+        this.payloadSubmissionService = payloadSubmissionService;
     }
 
     @PostMapping("/import")
@@ -56,10 +50,8 @@ public class GraphAdminController {
             @RequestParam("courseCode") @NotBlank String courseCode,
             @RequestParam("file") MultipartFile file,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
-        Map<String, Object> meta = new HashMap<>(payloadStore.store(file));
-        meta.put("courseCode", courseCode);
-        AiJobVO job = aiJobService.dispatchByCourseCode(
-                courseCode, AiJobKind.GRAPH_IMPORT_EXCEL, idempotencyKey, meta);
+        AiJobVO job = payloadSubmissionService.submitForCourseCode(
+                courseCode, AiJobKind.GRAPH_IMPORT_EXCEL, idempotencyKey, file);
         return accepted(job);
     }
 
@@ -69,10 +61,8 @@ public class GraphAdminController {
             @RequestParam("courseCode") @NotBlank String courseCode,
             @RequestParam("file") MultipartFile file,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
-        Map<String, Object> meta = new HashMap<>(payloadStore.store(file));
-        meta.put("courseCode", courseCode);
-        AiJobVO job = aiJobService.dispatchByCourseCode(
-                courseCode, AiJobKind.GRAPH_EXTRACT, idempotencyKey, meta);
+        AiJobVO job = payloadSubmissionService.submitForCourseCode(
+                courseCode, AiJobKind.GRAPH_EXTRACT, idempotencyKey, file);
         return accepted(job);
     }
 

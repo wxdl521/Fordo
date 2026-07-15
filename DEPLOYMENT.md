@@ -589,6 +589,19 @@ curl -s -H "Authorization: Bearer $TOK" "$BASE/api/teacher/courses"
 - [ ] 教师由 ADMIN `PATCH /api/system-admin/users/{id}/role`（或 SQL 备份）开通，非公开注册
 - [ ] AI 伴侣流式对话能逐字输出（SSE 反代生效）
 
+### 6.1 AI job payload topology constraint
+
+AI job upload payloads are stored in the local directory configured by
+`wenjin.jobs.payload-dir`. The current deployment topology supports exactly one
+Spring Boot application process. Submission and cleanup are coordinated inside
+that process so cleanup cannot remove a payload before its job transaction
+commits.
+
+Do not run multiple application replicas while file-backed AI jobs are enabled.
+Horizontal scaling requires shared object storage plus distributed lifecycle
+coordination before enabling `WENJIN_FEATURE_AI_JOB_DISPATCH` on more than one
+process.
+
 ---
 
 ## 7. 环境变量速查表

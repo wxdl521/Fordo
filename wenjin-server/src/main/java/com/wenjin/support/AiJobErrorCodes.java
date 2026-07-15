@@ -13,6 +13,7 @@ public final class AiJobErrorCodes {
     public static final String UNKNOWN_OUTCOME = "UNKNOWN_OUTCOME";
     public static final String MAX_ATTEMPTS = "MAX_ATTEMPTS";
     public static final String SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE";
+    public static final String JOB_ACTOR_REVOKED = "JOB_ACTOR_REVOKED";
 
     private AiJobErrorCodes() {}
 }

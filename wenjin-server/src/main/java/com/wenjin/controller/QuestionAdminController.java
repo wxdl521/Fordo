@@ -8,10 +8,10 @@ import com.wenjin.dto.AiJobVO;
 import com.wenjin.dto.AnnotateRequest;
 import com.wenjin.dto.ImportBankResult;
 import com.wenjin.dto.QuestionBankFile;
+import com.wenjin.service.AiJobPayloadSubmissionService;
 import com.wenjin.service.AiJobService;
 import com.wenjin.service.QuestionBankImportService;
 import com.wenjin.support.AiJobKind;
-import com.wenjin.support.AiJobPayloadStore;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -43,16 +43,16 @@ public class QuestionAdminController {
     private final QuestionBankImportService importService;
     private final ObjectMapper objectMapper;
     private final AiJobService aiJobService;
-    private final AiJobPayloadStore payloadStore;
+    private final AiJobPayloadSubmissionService payloadSubmissionService;
 
     public QuestionAdminController(QuestionBankImportService importService,
                                    ObjectMapper objectMapper,
                                    AiJobService aiJobService,
-                                   AiJobPayloadStore payloadStore) {
+                                   AiJobPayloadSubmissionService payloadSubmissionService) {
         this.importService = importService;
         this.objectMapper = objectMapper;
         this.aiJobService = aiJobService;
-        this.payloadStore = payloadStore;
+        this.payloadSubmissionService = payloadSubmissionService;
     }
 
     /**
@@ -117,8 +117,8 @@ public class QuestionAdminController {
             @RequestParam("courseId") @Positive Long courseId,
             @RequestParam("file") MultipartFile file,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
-        Map<String, Object> meta = new HashMap<>(payloadStore.store(file));
-        AiJobVO job = aiJobService.dispatch(courseId, AiJobKind.QUESTION_IMPORT_EXCEL, idempotencyKey, meta);
+        AiJobVO job = payloadSubmissionService.submitForCourse(
+                courseId, AiJobKind.QUESTION_IMPORT_EXCEL, idempotencyKey, file);
         return accepted(job);
     }
 

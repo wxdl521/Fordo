@@ -404,10 +404,103 @@ class AiJobRecoveryIT extends MySqlContainerSupport {
                 .isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
     }
 
+    @Test
+    @DisplayName("payload hash is eligible only when every reference is terminal and older than cutoff")
+    void payloadCleanupEligibility_requiresAllReferencesOldAndTerminal() {
+        String eligible = "a".repeat(64);
+        String active = "b".repeat(64);
+        String recentTerminal = "c".repeat(64);
+        String missingFinishedAt = "d".repeat(64);
+        String running = "e".repeat(64);
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(7);
+        LocalDateTime old = cutoff.minusDays(1);
+        LocalDateTime recent = cutoff.plusDays(1);
+
+        insertPayloadReference("eligible-success", eligible, AiJobStatus.SUCCEEDED, old);
+        insertPayloadReference("eligible-failed", eligible, AiJobStatus.FAILED, old);
+        insertPayloadReference("eligible-cancelled", eligible, AiJobStatus.CANCELLED, old);
+        insertPayloadReference("active-old", active, AiJobStatus.SUCCEEDED, old);
+        insertPayloadReference("active-pending", active, AiJobStatus.PENDING, null);
+        insertPayloadReference("active-running", running, AiJobStatus.RUNNING, null);
+        insertPayloadReference("recent-old", recentTerminal, AiJobStatus.SUCCEEDED, old);
+        insertPayloadReference("recent-new", recentTerminal, AiJobStatus.FAILED, recent);
+        insertPayloadReference("missing-finished", missingFinishedAt, AiJobStatus.SUCCEEDED, null);
+
+        assertThat(aiJobMapper.selectPayloadHashesEligibleForDeletion(cutoff, 100))
+                .containsExactly(eligible);
+    }
+
+    @Test
+    @DisplayName("payload cleanup queries ignore malformed or noncanonical hashes and honor batch limit")
+    void payloadCleanupQueries_ignoreMalformedJsonAndHonorLimit() {
+        String first = "a".repeat(64);
+        String second = "b".repeat(64);
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(7);
+        LocalDateTime old = cutoff.minusDays(1);
+        AiJob firstJob = insertPayloadReference(
+                "cleanup-first", first, AiJobStatus.SUCCEEDED, old);
+        AiJob secondJob = insertPayloadReference(
+                "cleanup-second", second, AiJobStatus.FAILED, old);
+        insertPayloadReference("cleanup-uppercase", "C".repeat(64), AiJobStatus.SUCCEEDED, old);
+        AiJob malformedJob = insertRawRequest(
+                "cleanup-malformed", "{not-json", AiJobStatus.SUCCEEDED, old);
+
+        assertThat(aiJobMapper.selectPayloadHashesEligibleForDeletion(cutoff, 1))
+                .containsExactly(first);
+        assertThat(aiJobMapper.clearPayloadReferencesAfterDeletion(first, cutoff)).isEqualTo(1);
+        assertThat(aiJobMapper.selectPayloadHashesEligibleForDeletion(cutoff, 1))
+                .containsExactly(second);
+        assertThat(aiJobMapper.selectAllReferencedPayloadHashes())
+                .containsExactly(second);
+        assertThat(aiJobMapper.countPayloadReferences(first)).isZero();
+        assertThat(aiJobMapper.countPayloadReferences("f".repeat(64))).isZero();
+        assertThat(aiJobMapper.countJobPayloadReference(firstJob.getId(), first)).isZero();
+        assertThat(aiJobMapper.countJobPayloadReference(secondJob.getId(), second)).isEqualTo(1);
+        assertThat(aiJobMapper.countJobPayloadReference(malformedJob.getId(), second)).isZero();
+    }
+
     private AiJobVO dispatch(String key) {
         CurrentUser.set(new CurrentPrincipal(teacherAId, UserRole.TEACHER));
         return aiJobService.dispatch(courseAId, AiJobKind.QUESTION_GENERATE, key,
                 Map.of("nodeCode", "KT01", "count", 1));
+    }
+
+    private AiJob insertPayloadReference(String key,
+                                         String fileHash,
+                                         int status,
+                                         LocalDateTime finishedAt) {
+        AiJob job = new AiJob();
+        job.setKind(AiJobKind.QUESTION_IMPORT_EXCEL);
+        job.setOwnerId(teacherAId);
+        job.setCourseId(courseAId);
+        job.setRequestKey(key);
+        job.setStatus(status);
+        job.setProgress(AiJobStatus.isTerminal(status) ? 100 : 0);
+        job.setAttempts(0);
+        job.setRequestJson("{\"fileHash\":\"" + fileHash + "\"}");
+        job.setCreatedAt(LocalDateTime.now().minusDays(10));
+        job.setFinishedAt(finishedAt);
+        aiJobMapper.insert(job);
+        return job;
+    }
+
+    private AiJob insertRawRequest(String key,
+                                   String requestJson,
+                                   int status,
+                                   LocalDateTime finishedAt) {
+        AiJob job = new AiJob();
+        job.setKind(AiJobKind.QUESTION_IMPORT_EXCEL);
+        job.setOwnerId(teacherAId);
+        job.setCourseId(courseAId);
+        job.setRequestKey(key);
+        job.setStatus(status);
+        job.setProgress(100);
+        job.setAttempts(0);
+        job.setRequestJson(requestJson);
+        job.setCreatedAt(LocalDateTime.now().minusDays(10));
+        job.setFinishedAt(finishedAt);
+        aiJobMapper.insert(job);
+        return job;
     }
 
     private AiJob claim(String key) {

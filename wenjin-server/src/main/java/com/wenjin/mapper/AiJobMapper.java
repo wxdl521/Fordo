@@ -8,6 +8,7 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /** Atomic queue, lease, cancellation, and terminal transitions for AI jobs. */
 @Mapper
@@ -84,6 +85,18 @@ public interface AiJobMapper extends BaseMapper<AiJob> {
             """)
     int requestRunningCancel(@Param("jobId") Long jobId,
                              @Param("now") LocalDateTime now);
+
+    @Select("""
+            SELECT COUNT(*)
+            FROM ai_job
+            WHERE id = #{jobId}
+              AND JSON_TYPE(JSON_EXTRACT(
+                    IF(JSON_VALID(request_json), request_json, '{}'), '$.fileHash')) = 'STRING'
+              AND JSON_UNQUOTE(JSON_EXTRACT(
+                    IF(JSON_VALID(request_json), request_json, '{}'), '$.fileHash')) = #{fileHash}
+            """)
+    int countJobPayloadReference(@Param("jobId") Long jobId,
+                                 @Param("fileHash") String fileHash);
 
     @Select("""
             SELECT COUNT(*)
@@ -246,4 +259,63 @@ public interface AiJobMapper extends BaseMapper<AiJob> {
             """)
     int requeueExpiredPreEffect(@Param("maxAttempts") int maxAttempts,
                                 @Param("now") LocalDateTime now);
+
+    @Select("""
+            SELECT COUNT(*)
+            FROM ai_job
+            WHERE JSON_TYPE(JSON_EXTRACT(
+                    IF(JSON_VALID(request_json), request_json, '{}'), '$.fileHash')) = 'STRING'
+              AND JSON_UNQUOTE(JSON_EXTRACT(
+                    IF(JSON_VALID(request_json), request_json, '{}'), '$.fileHash')) = #{fileHash}
+            """)
+    int countPayloadReferences(@Param("fileHash") String fileHash);
+
+    @Update("""
+            UPDATE ai_job
+            SET request_json = JSON_REMOVE(
+                    IF(JSON_VALID(request_json), request_json, '{}'), '$.fileHash')
+            WHERE status IN (2, 3, 4)
+              AND finished_at IS NOT NULL
+              AND finished_at < #{before}
+              AND JSON_TYPE(JSON_EXTRACT(
+                    IF(JSON_VALID(request_json), request_json, '{}'), '$.fileHash')) = 'STRING'
+              AND JSON_UNQUOTE(JSON_EXTRACT(
+                    IF(JSON_VALID(request_json), request_json, '{}'), '$.fileHash')) = #{fileHash}
+            """)
+    int clearPayloadReferencesAfterDeletion(@Param("fileHash") String fileHash,
+                                             @Param("before") LocalDateTime before);
+
+    @Select("""
+            SELECT DISTINCT JSON_UNQUOTE(JSON_EXTRACT(
+                    IF(JSON_VALID(request_json), request_json, '{}'), '$.fileHash')) AS file_hash
+            FROM ai_job
+            WHERE JSON_TYPE(JSON_EXTRACT(
+                    IF(JSON_VALID(request_json), request_json, '{}'), '$.fileHash')) = 'STRING'
+              AND JSON_UNQUOTE(JSON_EXTRACT(
+                    IF(JSON_VALID(request_json), request_json, '{}'), '$.fileHash'))
+                    REGEXP BINARY '^[a-f0-9]{64}$'
+            ORDER BY file_hash
+            """)
+    List<String> selectAllReferencedPayloadHashes();
+
+    @Select("""
+            SELECT JSON_UNQUOTE(JSON_EXTRACT(
+                    IF(JSON_VALID(request_json), request_json, '{}'), '$.fileHash')) AS file_hash
+            FROM ai_job
+            WHERE JSON_TYPE(JSON_EXTRACT(
+                    IF(JSON_VALID(request_json), request_json, '{}'), '$.fileHash')) = 'STRING'
+              AND JSON_UNQUOTE(JSON_EXTRACT(
+                    IF(JSON_VALID(request_json), request_json, '{}'), '$.fileHash'))
+                    REGEXP BINARY '^[a-f0-9]{64}$'
+            GROUP BY file_hash
+            HAVING SUM(CASE WHEN status NOT IN (2, 3, 4) THEN 1 ELSE 0 END) = 0
+               AND SUM(CASE
+                         WHEN finished_at IS NULL OR finished_at >= #{before} THEN 1
+                         ELSE 0
+                       END) = 0
+            ORDER BY file_hash
+            LIMIT #{limit}
+            """)
+    List<String> selectPayloadHashesEligibleForDeletion(@Param("before") LocalDateTime before,
+                                                         @Param("limit") int limit);
 }

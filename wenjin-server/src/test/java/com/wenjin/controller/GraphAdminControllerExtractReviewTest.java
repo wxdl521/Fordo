@@ -4,10 +4,9 @@ import com.wenjin.dto.ExtractCommitResult;
 import com.wenjin.dto.ExtractionMetrics;
 import com.wenjin.dto.GraphImportResult;
 import com.wenjin.entity.ExtractionReview;
-import com.wenjin.service.AiJobService;
+import com.wenjin.service.AiJobPayloadSubmissionService;
 import com.wenjin.service.GraphExtractReviewService;
 import com.wenjin.service.GraphService;
-import com.wenjin.support.AiJobPayloadStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -31,8 +30,7 @@ class GraphAdminControllerExtractReviewTest {
             new GraphAdminController(
                     mock(GraphService.class),
                     svc,
-                    mock(AiJobService.class),
-                    mock(AiJobPayloadStore.class))).build();
+                    mock(AiJobPayloadSubmissionService.class))).build();
 
     @Test
     void commit_returnsMetrics() throws Exception {

@@ -13,7 +13,6 @@ import com.wenjin.entity.AiJob;
 import com.wenjin.mapper.AiJobMapper;
 import com.wenjin.security.CourseAccessService;
 import com.wenjin.security.CurrentPrincipal;
-import com.wenjin.security.UserRole;
 import com.wenjin.support.AiJobErrorCodes;
 import com.wenjin.support.AiJobStatus;
 import org.slf4j.Logger;
@@ -403,8 +402,8 @@ public class AiJobService {
      * 身份来源是 job.ownerId，而非 HTTP 请求 ThreadLocal。
      */
     public static final class WorkerPrincipalScope implements AutoCloseable {
-        public WorkerPrincipalScope(long ownerId) {
-            CurrentUser.set(new CurrentPrincipal(ownerId, UserRole.TEACHER));
+        public WorkerPrincipalScope(CurrentPrincipal principal) {
+            CurrentUser.set(principal);
         }
 
         @Override
