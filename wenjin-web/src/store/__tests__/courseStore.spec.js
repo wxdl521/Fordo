@@ -58,6 +58,7 @@ describe('courseStore', () => {
   })
 
   it('teacher pages share teacherCourseId via store', async () => {
+    useSessionStore().setSession({ token: 'teacher-token', user: { id: 1, role: 2 } })
     fetchTeacherCourses.mockResolvedValue([
       { id: 10, name: '课A', code: 'A' },
       { id: 20, name: '课B', code: 'B' }

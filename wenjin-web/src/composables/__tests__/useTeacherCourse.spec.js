@@ -33,6 +33,7 @@ describe('useTeacherCourse lifecycle ownership', () => {
     pinia = createPinia()
     setActivePinia(pinia)
     vi.clearAllMocks()
+    mocks.fetchTeacherCourses.mockReset()
     useSessionStore(pinia).setSession({
       token: 'token-a',
       user: { id: 1, role: 2 }
@@ -100,8 +101,10 @@ describe('useTeacherCourse lifecycle ownership', () => {
     const pending = deferred()
     mocks.fetchTeacherCourses.mockReturnValue(pending.promise)
     const { wrapper } = mountHarness()
+    const config = mocks.fetchTeacherCourses.mock.calls[0][0]
 
     useSessionStore(pinia).clearSession()
+    expect(config.signal.aborted).toBe(true)
     pending.resolve([{ id: 1, name: 'Logged-out course', code: 'A' }])
     await flushPromises()
 
@@ -110,14 +113,19 @@ describe('useTeacherCourse lifecycle ownership', () => {
     wrapper.unmount()
   })
 
-  it('does not let an old token response overwrite a newer user course context', async () => {
+  it.each([
+    ['token', { token: 'token-b', user: { id: 1, role: 2 } }],
+    ['user', { token: 'token-a', user: { id: 2, role: 2 } }]
+  ])('aborts and suppresses an old response when the session %s changes', async (_label, nextSession) => {
     const pending = deferred()
     mocks.fetchTeacherCourses.mockReturnValue(pending.promise)
     const { wrapper } = mountHarness()
     const session = useSessionStore(pinia)
     const courses = useCourseStore(pinia)
+    const config = mocks.fetchTeacherCourses.mock.calls[0][0]
 
-    session.setSession({ token: 'token-b', user: { id: 2, role: 2 } })
+    session.setSession(nextSession)
+    expect(config.signal.aborted).toBe(true)
     courses.setTeacherCourses([{ id: 2, name: 'New user course', code: 'B' }])
     courses.setTeacherCourseId(2)
     pending.resolve([{ id: 1, name: 'Old user course', code: 'A' }])
@@ -126,5 +134,25 @@ describe('useTeacherCourse lifecycle ownership', () => {
     expect.soft(courses.teacherCourseId).toBe(2)
     expect(courses.teacherCourses).toEqual([{ id: 2, name: 'New user course', code: 'B' }])
     wrapper.unmount()
+  })
+
+  it.each([
+    ['token', { token: null, user: { id: 1, role: 2 } }],
+    ['user id', { token: 'token-a', user: null }]
+  ])('does not fetch or mutate courses without a valid session %s', async (_label, ownerlessSession) => {
+    const session = useSessionStore(pinia)
+    const courses = useCourseStore(pinia)
+    const teacherCourse = useTeacherCourse({ autoLoad: false })
+    session.setSession(ownerlessSession)
+    courses.setTeacherCourses([{ id: 9, name: 'Preserved course', code: 'P' }])
+    courses.setTeacherCourseId(9)
+    mocks.fetchTeacherCourses.mockResolvedValue([{ id: 1, name: 'Unauthorized course', code: 'A' }])
+
+    const result = await teacherCourse.loadCourses()
+
+    expect.soft(result).toBeNull()
+    expect.soft(mocks.fetchTeacherCourses).not.toHaveBeenCalled()
+    expect.soft(courses.teacherCourseId).toBe(9)
+    expect(courses.teacherCourses).toEqual([{ id: 9, name: 'Preserved course', code: 'P' }])
   })
 })

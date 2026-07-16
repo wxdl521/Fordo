@@ -1,4 +1,4 @@
-import { computed, getCurrentInstance, onBeforeUnmount, onMounted } from 'vue'
+import { computed, getCurrentInstance, onBeforeUnmount, onMounted, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { fetchTeacherCourses } from '../api/teacher.js'
 import { useCourseStore } from '../store/course.js'
@@ -17,6 +17,7 @@ export function useTeacherCourse(options = {}) {
   const sessionStore = useSessionStore()
   if (!courseStore.hydrated) courseStore.hydrate()
   const coursesRequest = createLatestRequest()
+  const instance = getCurrentInstance()
   let disposed = false
 
   const { teacherCourses: courses, teacherCourseId } = storeToRefs(courseStore)
@@ -27,8 +28,13 @@ export function useTeacherCourse(options = {}) {
     return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
   }
 
+  function hasValidOwner(owner) {
+    return Boolean(owner.token) && Number(owner.userId) > 0
+  }
+
   function isCurrentOwner(request, owner) {
     return !disposed
+      && hasValidOwner(owner)
       && request.isCurrent()
       && sessionStore.token === owner.token
       && sessionStore.userId === owner.userId
@@ -39,8 +45,12 @@ export function useTeacherCourse(options = {}) {
    */
   async function loadCourses(preferId) {
     if (disposed) return null
-    const request = coursesRequest.next()
     const owner = { token: sessionStore.token, userId: sessionStore.userId }
+    if (!hasValidOwner(owner)) {
+      coursesRequest.cancel()
+      return null
+    }
+    const request = coursesRequest.next()
     try {
       const list = await fetchTeacherCourses({ signal: request.signal })
       if (!isCurrentOwner(request, owner)) return null
@@ -69,7 +79,16 @@ export function useTeacherCourse(options = {}) {
     })
   }
 
-  if (getCurrentInstance()) {
+  if (instance) {
+    watch(
+      () => [sessionStore.token, sessionStore.userId],
+      ([nextToken, nextUserId], [previousToken, previousUserId]) => {
+        if (nextToken !== previousToken || nextUserId !== previousUserId) {
+          coursesRequest.cancel()
+        }
+      },
+      { flush: 'sync' }
+    )
     onBeforeUnmount(() => {
       disposed = true
       coursesRequest.cancel()
