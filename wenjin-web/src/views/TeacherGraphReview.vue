@@ -540,6 +540,7 @@ const processed = ref(0)
 const graphRequest = createLatestRequest()
 const pendingRequest = createLatestRequest()
 const historyRequest = createLatestRequest()
+let disposed = false
 
 function isAbortError(err) {
   return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
@@ -1395,7 +1396,9 @@ function onResize() {
 onMounted(async () => {
   readColors()
   await loadCourses()
+  if (disposed) return
   await reload()
+  if (disposed) return
   window.addEventListener('resize', onResize)
   window.addEventListener('keydown', handleKeydown)
   document.addEventListener('click', closeMenus, true)
@@ -1439,6 +1442,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   graphRequest.cancel()
   pendingRequest.cancel()
   historyRequest.cancel()

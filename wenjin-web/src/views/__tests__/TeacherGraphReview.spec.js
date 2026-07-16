@@ -498,4 +498,68 @@ describe('TeacherGraphReview edge create', () => {
     expect(wrapper.text()).not.toContain('A-stale-history')
     wrapper.unmount()
   })
+
+  it('stops mount work when unmounted while courses are still loading', async () => {
+    const courses = deferred()
+    fetchTeacherCoursesMock.mockReset()
+    fetchTeacherCoursesMock.mockReturnValue(courses.promise)
+    fetchTeacherGraphMock.mockClear()
+    fetchPendingEdgesMock.mockClear()
+    const windowAdd = vi.spyOn(window, 'addEventListener')
+    const documentAdd = vi.spyOn(document, 'addEventListener')
+
+    const wrapper = await mountReview()
+    expect(fetchTeacherCoursesMock).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+    const windowCallsAtUnmount = windowAdd.mock.calls.length
+    const documentCallsAtUnmount = documentAdd.mock.calls.length
+
+    courses.resolve([{ id: 1, name: 'Course A', code: 'A', published: true }])
+    await flushPromises()
+    await flushPromises()
+
+    expect(fetchTeacherGraphMock).not.toHaveBeenCalled()
+    expect(fetchPendingEdgesMock).not.toHaveBeenCalled()
+    expect(windowAdd.mock.calls.slice(windowCallsAtUnmount).filter(([event]) => (
+      event === 'resize' || event === 'keydown'
+    ))).toHaveLength(0)
+    expect(documentAdd.mock.calls.slice(documentCallsAtUnmount).filter(([event]) => event === 'click'))
+      .toHaveLength(0)
+    expect(window.__wjTeacherGraph).toBeUndefined()
+  })
+
+  it('does not register mount listeners or DEV hook after a pending reload outlives unmount', async () => {
+    const graph = deferred()
+    const pendingEdges = deferred()
+    fetchTeacherGraphMock.mockReset()
+    fetchPendingEdgesMock.mockReset()
+    fetchTeacherGraphMock.mockReturnValue(graph.promise)
+    fetchPendingEdgesMock.mockReturnValue(pendingEdges.promise)
+    const windowAdd = vi.spyOn(window, 'addEventListener')
+    const documentAdd = vi.spyOn(document, 'addEventListener')
+
+    const wrapper = await mountReview()
+    expect(fetchTeacherGraphMock).toHaveBeenCalledTimes(1)
+    expect(fetchPendingEdgesMock).toHaveBeenCalledTimes(1)
+    const graphSignal = fetchTeacherGraphMock.mock.calls[0][1].signal
+    const pendingSignal = fetchPendingEdgesMock.mock.calls[0][1].signal
+
+    wrapper.unmount()
+    expect(graphSignal.aborted).toBe(true)
+    expect(pendingSignal.aborted).toBe(true)
+    const windowCallsAtUnmount = windowAdd.mock.calls.length
+    const documentCallsAtUnmount = documentAdd.mock.calls.length
+
+    graph.resolve(graphResult('A'))
+    pendingEdges.resolve(pendingResult('A'))
+    await flushPromises()
+    await flushPromises()
+
+    expect(windowAdd.mock.calls.slice(windowCallsAtUnmount).filter(([event]) => (
+      event === 'resize' || event === 'keydown'
+    ))).toHaveLength(0)
+    expect(documentAdd.mock.calls.slice(documentCallsAtUnmount).filter(([event]) => event === 'click'))
+      .toHaveLength(0)
+    expect(window.__wjTeacherGraph).toBeUndefined()
+  })
 })
