@@ -8,7 +8,15 @@
           <div :style="progressBarStyle"></div>
         </div>
         <span>{{ progressText }}</span>
-        <button @click="toggleLinkMode" :style="linkMode ? linkBtnActiveStyle : linkBtnStyle">连线模式</button>
+        <button
+          ref="linkModeToggleRef"
+          type="button"
+          data-testid="link-mode-toggle"
+          :aria-pressed="linkMode"
+          @click="toggleLinkMode"
+          @keydown="onLinkModeKeydown"
+          :style="linkMode ? linkBtnActiveStyle : linkBtnStyle"
+        >连线模式</button>
         <!-- 课程切换下拉（自定义，样式与下方两个菜单一致） -->
         <div :style="dropdownWrapStyle">
           <button data-testid="course-switch" @click.stop="currentCourse && toggleMenu('switch')"
@@ -16,7 +24,7 @@
                   :aria-haspopup="true" :aria-expanded="openMenu === 'switch'" aria-controls="menu-switch">
             <span :style="courseSwitchNameStyle">{{ currentCourse?.name || '（暂无课程）' }}</span>
             <span v-if="currentCourse" :style="{ marginLeft: '8px', fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
-                     color: currentCourse.published ? 'var(--ok, #2e7d32)' : 'var(--mut)',
+                     color: currentCourse.published ? 'var(--ink)' : 'var(--mut)',
                      background: currentCourse.published ? 'var(--okSoft, #eaf5ea)' : 'transparent',
                      border: currentCourse.published ? 'none' : '1px solid var(--line)' }">
               {{ currentCourse.published ? '已发布' : '未发布' }}
@@ -95,6 +103,26 @@
         <!-- 操作提示 -->
         <div :style="hintStyle">
           <button @click="showNodeForm = true" :style="addNodeBtnStyle">+ 新增节点</button>
+          <div
+            v-if="linkMode"
+            role="group"
+            aria-label="选择连线端点"
+            data-testid="link-node-picker"
+            :style="linkNodePickerStyle"
+          >
+            <button
+              v-for="node in graph?.nodes || []"
+              :key="node.nodeCode"
+              type="button"
+              :data-testid="`link-node-${node.nodeCode}`"
+              :data-node-code="node.nodeCode"
+              :aria-pressed="linkSource?.nodeCode === node.nodeCode"
+              :aria-label="linkNodeAriaLabel(node)"
+              :style="linkNodeButtonStyle(node)"
+              @click="selectLinkNode(node, $event.currentTarget)"
+              @keydown="onLinkNodeKeydown($event, node)"
+            >{{ node.name }}（{{ node.nodeCode }}）</button>
+          </div>
           <span v-if="linkMode" :style="{ fontSize: '11.5px', color: 'var(--accent)', fontWeight: 500 }">
             {{ linkSource ? `已选起点：${linkSource.name}，请点击终点节点` : '请点击起点节点' }} · Esc 取消
           </span>
@@ -115,7 +143,7 @@
             <div :style="{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }">
               <span :style="typeTagStyle">{{ edge.type }}</span>
               <span :style="confTagStyle(edge)">置信度 {{ edge.confidence }}%</span>
-              <span :style="{ marginLeft: 'auto', fontSize: '11px', color: 'var(--text-mut)', opacity: 0.7 }">ID-{{ edge.id }}</span>
+              <span :style="{ marginLeft: 'auto', fontSize: '11px', color: 'var(--text-mut)' }">ID-{{ edge.id }}</span>
             </div>
             <div :style="{ display: 'flex', alignItems: 'center', gap: '9px', fontSize: '13.5px', fontWeight: 500, marginBottom: '9px' }">
               <span>{{ edge.fromName }}</span>
@@ -338,22 +366,31 @@
     <!-- 右键菜单 -->
     <div
       v-if="contextMenu.visible"
+      ref="contextMenuRef"
+      role="menu"
+      :aria-label="`${contextMenu.node?.name || '节点'}操作`"
       :style="contextMenuStyle(contextMenu.x, contextMenu.y)"
       @click.stop
+      @keydown="onMenuNavigationKeydown"
     >
-      <div :style="ctxMenuItemStyle" @click="ctxEdit">编辑</div>
-      <div :style="{ ...ctxMenuItemStyle, color: 'var(--weak)' }" @click="ctxDelete">删除</div>
-      <div :style="ctxMenuItemStyle" @click="contextMenu.visible = false">取消</div>
+      <button ref="contextMenuFirstRef" type="button" role="menuitem" :style="menuButtonStyle" @click="ctxEdit">编辑</button>
+      <button type="button" role="menuitem" :style="{ ...menuButtonStyle, color: 'var(--weak)' }" @click="ctxDelete">删除</button>
+      <button type="button" role="menuitem" :style="menuButtonStyle" @click="closeContextMenu(true)">取消</button>
     </div>
 
     <!-- 边类型选择弹窗 -->
     <div
       v-if="edgeTypePopup.visible"
+      ref="edgeTypePopupRef"
       data-testid="edge-type-popup"
+      role="menu"
+      aria-labelledby="edge-type-popup-label"
       :style="contextMenuStyle(edgeTypePopup.x, edgeTypePopup.y)"
       @click.stop
+      @keydown.esc.prevent.stop="closeEdgeTypePopup()"
+      @keydown="onMenuNavigationKeydown"
     >
-      <div :style="{ ...ctxMenuItemStyle, fontSize: '11px', color: 'var(--text-mut)', cursor: 'default' }">
+      <div id="edge-type-popup-label" role="presentation" :style="{ ...ctxMenuItemStyle, fontSize: '11px', color: 'var(--text-mut)', cursor: 'default' }">
         选择边类型
         <template v-if="edgeTypePopup.source && edgeTypePopup.target">
           · {{ edgeTypePopup.source }} → {{ edgeTypePopup.target }}
@@ -362,10 +399,35 @@
       <div v-if="edgeError" role="alert" data-testid="edge-error" :style="{ ...ctxMenuItemStyle, color: 'var(--accent)', cursor: 'default', whiteSpace: 'normal', maxWidth: '240px' }">
         {{ edgeError }}
       </div>
-      <div :style="edgeTypeItemStyle" data-testid="edge-type-prereq" @click="confirmEdgeType('前置')">前置</div>
-      <div :style="edgeTypeItemStyle" data-testid="edge-type-contains" @click="confirmEdgeType('包含')">包含</div>
-      <div :style="edgeTypeItemStyle" data-testid="edge-type-related" @click="confirmEdgeType('相关')">相关</div>
-      <div v-if="edgeSaving" :style="{ ...ctxMenuItemStyle, color: 'var(--text-mut)', cursor: 'default' }">保存中…</div>
+      <button
+        ref="edgeTypeFirstRef"
+        type="button"
+        role="menuitem"
+        :aria-disabled="edgeSaving"
+        :style="edgeTypeItemStyle"
+        data-testid="edge-type-prereq"
+        @click="confirmEdgeType('前置')"
+        @keydown="onEdgeTypeKeydown($event, '前置')"
+      >前置</button>
+      <button
+        type="button"
+        role="menuitem"
+        :aria-disabled="edgeSaving"
+        :style="edgeTypeItemStyle"
+        data-testid="edge-type-contains"
+        @click="confirmEdgeType('包含')"
+        @keydown="onEdgeTypeKeydown($event, '包含')"
+      >包含</button>
+      <button
+        type="button"
+        role="menuitem"
+        :aria-disabled="edgeSaving"
+        :style="edgeTypeItemStyle"
+        data-testid="edge-type-related"
+        @click="confirmEdgeType('相关')"
+        @keydown="onEdgeTypeKeydown($event, '相关')"
+      >相关</button>
+      <div v-if="edgeSaving" role="status" aria-live="polite" :style="{ ...ctxMenuItemStyle, color: 'var(--text-mut)', cursor: 'default' }">保存中…</div>
     </div>
 
     <!-- 抽取历史弹层 -->
@@ -553,10 +615,14 @@ function isCurrentCourse(courseId) {
 
 // ── 连线模式 ──
 const linkMode = ref(false)
+const linkModeToggleRef = ref(null)
 const linkSource = ref(null) // { nodeCode, name }
 const edgeTypePopup = ref({ visible: false, x: 0, y: 0, source: null, target: null })
 const edgeSaving = ref(false)
 const edgeError = ref(null)
+const edgeTypePopupRef = ref(null)
+const edgeTypeFirstRef = ref(null)
+let edgeTypeReturnFocus = null
 
 function resetEdgeActionState() {
   linkMode.value = false
@@ -564,6 +630,7 @@ function resetEdgeActionState() {
   edgeTypePopup.value = { visible: false, x: 0, y: 0, source: null, target: null }
   edgeSaving.value = false
   edgeError.value = null
+  edgeTypeReturnFocus = null
 }
 
 function resetCourseActionOwnership() {
@@ -580,13 +647,16 @@ function resetCourseActionOwnership() {
 const RELATION_TYPE_CODE = { '前置': 1, '包含': 2, '相关': 3, '应用': 4 }
 
 const edgeTypeItemStyle = computed(() => ({
-  ...ctxMenuItemStyle,
+  ...menuButtonStyle,
   opacity: edgeSaving.value ? 0.5 : 1,
-  pointerEvents: edgeSaving.value ? 'none' : 'auto'
+  cursor: edgeSaving.value ? 'wait' : 'pointer'
 }))
 
 // ── 右键菜单 ──
 const contextMenu = ref({ visible: false, x: 0, y: 0, node: null })
+const contextMenuRef = ref(null)
+const contextMenuFirstRef = ref(null)
+let contextMenuReturnFocus = null
 
 // ── 导入状态 ──
 const showImportModal = ref(false)
@@ -968,7 +1038,9 @@ function renderChart() {
     const e = params.event?.event || params.event
     const x = e?.clientX || e?.offsetX || 200
     const y = e?.clientY || e?.offsetY || 200
+    contextMenuReturnFocus = document.activeElement
     contextMenu.value = { visible: true, x, y, node: params.data._raw }
+    nextTick(() => contextMenuFirstRef.value?.focus())
   })
 }
 
@@ -1086,6 +1158,23 @@ function toggleLinkMode() {
 function exitLinkMode() {
   resetEdgeActionState()
   highlightLinkSource() // 清除高亮
+  nextTick(() => linkModeToggleRef.value?.focus())
+}
+
+function isActivationKey(e) {
+  return e.key === 'Enter' || e.key === ' ' || e.key === 'Space' || e.key === 'Spacebar'
+}
+
+function onLinkModeKeydown(e) {
+  if (!isActivationKey(e)) return
+  e.preventDefault()
+  toggleLinkMode()
+}
+
+function onLinkNodeKeydown(e, node) {
+  if (!isActivationKey(e)) return
+  e.preventDefault()
+  selectLinkNode(node, e.currentTarget)
 }
 
 function highlightLinkSource() {
@@ -1106,12 +1195,13 @@ function highlightLinkSource() {
   chart.setOption({ series: [{ data: nodes }] }, { replaceMerge: ['series'] })
 }
 
-function selectLinkNode(rawNode) {
+function selectLinkNode(rawNode, returnFocus = null) {
   if (!linkSource.value) {
     linkSource.value = { nodeCode: rawNode.nodeCode, name: rawNode.name }
     highlightLinkSource()
   } else if (rawNode.nodeCode !== linkSource.value.nodeCode) {
     // 第二个节点：显示边类型选择弹窗
+    edgeTypeReturnFocus = returnFocus
     edgeTypePopup.value = {
       visible: true,
       x: 200,
@@ -1119,7 +1209,47 @@ function selectLinkNode(rawNode) {
       source: linkSource.value.nodeCode,
       target: rawNode.nodeCode
     }
+    nextTick(() => edgeTypeFirstRef.value?.focus())
   }
+}
+
+function closeEdgeTypePopup(restore = true) {
+  if (edgeSaving.value) return
+  const focusTarget = edgeTypeReturnFocus
+  edgeTypePopup.value = { visible: false, x: 0, y: 0, source: null, target: null }
+  edgeError.value = null
+  edgeTypeReturnFocus = null
+  if (restore && focusTarget && typeof focusTarget.focus === 'function') {
+    nextTick(() => focusTarget.focus())
+  }
+}
+
+function onEdgeTypeKeydown(e, type) {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    closeEdgeTypePopup()
+    return
+  }
+  if (!isActivationKey(e)) return
+  e.preventDefault()
+  e.stopPropagation()
+  confirmEdgeType(type)
+}
+
+function onMenuNavigationKeydown(e) {
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
+  const items = Array.from(e.currentTarget.querySelectorAll('button[role="menuitem"]'))
+    .filter((item) => item.getAttribute('aria-disabled') !== 'true' && !item.disabled)
+  if (!items.length) return
+  e.preventDefault()
+  const current = Math.max(0, items.indexOf(document.activeElement))
+  let next = current
+  if (e.key === 'Home') next = 0
+  else if (e.key === 'End') next = items.length - 1
+  else if (e.key === 'ArrowDown') next = (current + 1) % items.length
+  else next = (current - 1 + items.length) % items.length
+  items[next].focus()
 }
 
 async function confirmEdgeType(type) {
@@ -1166,12 +1296,12 @@ async function confirmEdgeType(type) {
 // ── 右键菜单 ──
 function ctxEdit() {
   if (contextMenu.value.node) openEditForm(contextMenu.value.node)
-  contextMenu.value = { visible: false, x: 0, y: 0, node: null }
+  closeContextMenu(false)
 }
 
 function ctxDelete() {
   const node = contextMenu.value.node
-  contextMenu.value = { visible: false, x: 0, y: 0, node: null }
+  closeContextMenu(false)
   if (!node) return
   editForm.value = {
     id: node.id,
@@ -1186,24 +1316,32 @@ function ctxDelete() {
   confirmDelete()
 }
 
-// ── 键盘事件 ──
-function closeMenus() {
-  if (contextMenu.value.visible) contextMenu.value = { visible: false, x: 0, y: 0, node: null }
-  if (edgeTypePopup.value.visible && !edgeSaving.value) {
-    edgeTypePopup.value = { visible: false, x: 0, y: 0, source: null, target: null }
-    edgeError.value = null
+function closeContextMenu(restore = false) {
+  const focusTarget = contextMenuReturnFocus
+  contextMenu.value = { visible: false, x: 0, y: 0, node: null }
+  contextMenuReturnFocus = null
+  if (restore && focusTarget && typeof focusTarget.focus === 'function') {
+    nextTick(() => focusTarget.focus())
   }
+}
+
+// ── 键盘事件 ──
+function closeMenus(e) {
+  const target = e?.target
+  if (contextMenuRef.value?.contains(target) || edgeTypePopupRef.value?.contains(target)) return
+  if (contextMenu.value.visible) closeContextMenu(false)
+  if (edgeTypePopup.value.visible && !edgeSaving.value) closeEdgeTypePopup(false)
 }
 
 function handleKeydown(e) {
   if (e.key === 'Escape') {
     if (openMenu.value) { openMenu.value = null; return }
     if (edgeTypePopup.value.visible && !edgeSaving.value) {
-      edgeTypePopup.value = { visible: false, x: 0, y: 0, source: null, target: null }
-      edgeError.value = null
+      e.preventDefault()
+      closeEdgeTypePopup()
       return
     }
-    if (contextMenu.value.visible) { contextMenu.value = { visible: false, x: 0, y: 0, node: null }; return }
+    if (contextMenu.value.visible) { e.preventDefault(); closeContextMenu(true); return }
     if (showNodeForm.value) { closeNodeForm(); return }
     if (showEditForm.value) { closeEditForm(); return }
     if (showCourseForm.value) { closeCourseForm(); return }
@@ -2079,6 +2217,43 @@ const linkBtnActiveStyle = {
   fontWeight: 500
 }
 
+const linkNodePickerStyle = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  justifyContent: 'flex-end',
+  gap: '6px',
+  width: 'min(360px, calc(100vw - 48px))',
+  maxHeight: '132px',
+  overflowY: 'auto',
+  padding: '8px',
+  background: 'var(--panel)',
+  border: '1px solid var(--line)',
+  borderRadius: '8px',
+  boxSizing: 'border-box'
+}
+
+function linkNodeAriaLabel(node) {
+  if (linkSource.value?.nodeCode === node.nodeCode) return `${node.name}，已选为起点`
+  return linkSource.value ? `${node.name}，选为终点` : `${node.name}，选为起点`
+}
+
+function linkNodeButtonStyle(node) {
+  const selected = linkSource.value?.nodeCode === node.nodeCode
+  return {
+    maxWidth: '100%',
+    padding: '6px 9px',
+    color: selected ? '#fff' : 'var(--text)',
+    background: selected ? 'var(--accent)' : 'transparent',
+    border: `1px solid ${selected ? 'var(--accent)' : 'var(--line)'}`,
+    borderRadius: '6px',
+    fontFamily: 'inherit',
+    fontSize: '12px',
+    textAlign: 'left',
+    overflowWrap: 'anywhere',
+    cursor: 'pointer'
+  }
+}
+
 // ── 右键菜单 / 边类型弹窗 ──
 function contextMenuStyle(x, y) {
   return {
@@ -2101,5 +2276,15 @@ const ctxMenuItemStyle = {
   color: 'var(--text)',
   cursor: 'pointer',
   transition: 'background 0.15s'
+}
+
+const menuButtonStyle = {
+  ...ctxMenuItemStyle,
+  display: 'block',
+  width: '100%',
+  border: 'none',
+  background: 'transparent',
+  fontFamily: 'inherit',
+  textAlign: 'left'
 }
 </script>

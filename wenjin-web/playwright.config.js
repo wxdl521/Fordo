@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const previewPort = process.env.WJ_PREVIEW_PORT || '4173'
+const previewURL = `http://127.0.0.1:${previewPort}`
+
 /**
  * Browser CI gate: Chromium smoke against Vite preview.
  * Full backend-dependent acceptance scripts remain under e2e/*.mjs (manual / WJ_E2E).
@@ -14,7 +17,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
-    baseURL: process.env.WJ_BASE_URL || 'http://127.0.0.1:4173',
+    baseURL: process.env.WJ_BASE_URL || previewURL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure'
   },
@@ -30,8 +33,8 @@ export default defineConfig({
   webServer: process.env.WJ_SKIP_WEBSERVER
     ? undefined
     : {
-        command: 'npm run preview -- --host 127.0.0.1 --port 4173',
-        url: 'http://127.0.0.1:4173',
+        command: `npm run preview -- --host 127.0.0.1 --port ${previewPort}`,
+        url: previewURL,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000
       }

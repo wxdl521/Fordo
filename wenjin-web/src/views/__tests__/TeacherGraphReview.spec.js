@@ -84,7 +84,7 @@ vi.mock('../../utils/graphSvgRenderer.js', () => ({
 
 import TeacherGraphReview from '../TeacherGraphReview.vue'
 
-async function mountReview() {
+async function mountReview(options = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const router = createRouter({
@@ -99,6 +99,7 @@ async function mountReview() {
   await router.isReady()
 
   const wrapper = mount(TeacherGraphReview, {
+    ...options,
     global: {
       plugins: [pinia, router],
       stubs: {
@@ -108,6 +109,38 @@ async function mountReview() {
   })
   await flushPromises()
   return wrapper
+}
+
+const attachedMounts = []
+
+async function mountAttachedReview() {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const wrapper = await mountReview({ attachTo: host })
+  attachedMounts.push({ wrapper, host })
+  return wrapper
+}
+
+async function openEdgeTypeMenuWithKeyboard(wrapper) {
+  const toggle = wrapper.get('[data-testid="link-mode-toggle"]')
+  toggle.element.focus()
+  await toggle.trigger('keydown', { key: 'Enter' })
+
+  const source = wrapper.get('[data-testid="link-node-N1"]')
+  source.element.focus()
+  await source.trigger('keydown', { key: 'Enter' })
+
+  const target = wrapper.get('[data-testid="link-node-N2"]')
+  target.element.focus()
+  await target.trigger('keydown', { key: ' ' })
+  await nextTick()
+
+  return {
+    toggle,
+    source,
+    target,
+    firstType: wrapper.get('[data-testid="edge-type-prereq"]')
+  }
 }
 
 function api() {
@@ -164,8 +197,102 @@ describe('TeacherGraphReview edge create', () => {
   })
 
   afterEach(() => {
+    for (const { wrapper, host } of attachedMounts.splice(0)) {
+      wrapper.unmount()
+      host.remove()
+    }
     vi.restoreAllMocks()
     delete window.__wjTeacherGraph
+  })
+
+  it('selects N1 and N2 through focusable DOM controls and focuses the first edge type', async () => {
+    const wrapper = await mountAttachedReview()
+    const { source, target, firstType } = await openEdgeTypeMenuWithKeyboard(wrapper)
+
+    expect(source.attributes('aria-pressed')).toBe('true')
+    expect(api().state().linkSource).toMatchObject({ nodeCode: 'N1', name: '节点1' })
+    expect(api().state().edgeTypePopup).toMatchObject({
+      visible: true,
+      source: 'N1',
+      target: 'N2'
+    })
+    expect(document.activeElement).toBe(firstType.element)
+    expect(target.element.tagName).toBe('BUTTON')
+  })
+
+  it('submits the focused edge type with Enter', async () => {
+    const wrapper = await mountAttachedReview()
+    const { toggle, firstType } = await openEdgeTypeMenuWithKeyboard(wrapper)
+
+    await firstType.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(createEdgeMock).toHaveBeenCalledTimes(1)
+    expect(createEdgeMock).toHaveBeenCalledWith(1, {
+      sourceNodeCode: 'N1',
+      targetNodeCode: 'N2',
+      relationType: 1
+    })
+    expect(document.activeElement).toBe(toggle.element)
+  })
+
+  it('submits an edge type with Space', async () => {
+    const wrapper = await mountAttachedReview()
+    await openEdgeTypeMenuWithKeyboard(wrapper)
+    const containsType = wrapper.get('[data-testid="edge-type-contains"]')
+    containsType.element.focus()
+
+    await containsType.trigger('keydown', { key: ' ' })
+    await flushPromises()
+
+    expect(createEdgeMock).toHaveBeenCalledTimes(1)
+    expect(createEdgeMock).toHaveBeenCalledWith(1, {
+      sourceNodeCode: 'N1',
+      targetNodeCode: 'N2',
+      relationType: 2
+    })
+  })
+
+  it('closes the edge type menu with Escape without submitting and restores node focus', async () => {
+    const wrapper = await mountAttachedReview()
+    const { target, firstType } = await openEdgeTypeMenuWithKeyboard(wrapper)
+
+    await firstType.trigger('keydown', { key: 'Escape' })
+    await nextTick()
+
+    expect(createEdgeMock).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="edge-type-popup"]').exists()).toBe(false)
+    expect(api().state().linkMode).toBe(true)
+    expect(api().state().linkSource?.nodeCode).toBe('N1')
+    expect(document.activeElement).toBe(target.element)
+  })
+
+  it('keeps focus in the edge type menu when saving fails', async () => {
+    const err = new Error('边已存在')
+    err.code = 409
+    createEdgeMock.mockRejectedValue(err)
+    const wrapper = await mountAttachedReview()
+    const { firstType } = await openEdgeTypeMenuWithKeyboard(wrapper)
+
+    await firstType.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="edge-error"]').text()).toContain('边已存在')
+    expect(document.activeElement).toBe(firstType.element)
+  })
+
+  it('supports Arrow, Home, and End navigation in the edge type menu', async () => {
+    const wrapper = await mountAttachedReview()
+    const { firstType } = await openEdgeTypeMenuWithKeyboard(wrapper)
+    const containsType = wrapper.get('[data-testid="edge-type-contains"]')
+    const relatedType = wrapper.get('[data-testid="edge-type-related"]')
+
+    await firstType.trigger('keydown', { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(containsType.element)
+    await containsType.trigger('keydown', { key: 'End' })
+    expect(document.activeElement).toBe(relatedType.element)
+    await relatedType.trigger('keydown', { key: 'Home' })
+    expect(document.activeElement).toBe(firstType.element)
   })
 
   it('success: createEdge then reload and exit link mode', async () => {

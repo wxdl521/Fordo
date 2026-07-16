@@ -182,11 +182,12 @@
         <textarea
           v-model="input"
           class="cp-input"
+          aria-label="消息"
           placeholder="输入你的问题…"
           rows="1"
           @keydown="onKey"
         ></textarea>
-        <button class="cp-btn-send" :disabled="!canSend" @click="sendText">
+        <button class="cp-btn-send" aria-label="发送消息" :disabled="!canSend" @click="sendText">
           <svg v-if="!typing" width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
             <path
               d="M16 2L8 10M16 2l-6 14-2-6-6-2 14-6z"
