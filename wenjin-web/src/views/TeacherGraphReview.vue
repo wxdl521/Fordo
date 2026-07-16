@@ -434,7 +434,7 @@ let importActionCourse = null
 
 function sameCourse(actionCourse) {
   if (!actionCourse || currentCourse.value?.id == null) return false
-  return Number(actionCourse.id) === Number(currentCourse.value.id)
+  return !disposed && Number(actionCourse.id) === Number(currentCourse.value.id)
 }
 
 const {
@@ -540,6 +540,7 @@ const processed = ref(0)
 const graphRequest = createLatestRequest()
 const pendingRequest = createLatestRequest()
 const historyRequest = createLatestRequest()
+const coursesRequest = createLatestRequest()
 let disposed = false
 
 function isAbortError(err) {
@@ -662,35 +663,44 @@ function readColors() {
 }
 
 async function loadCourses(preferId) {
-  const list = await fetchTeacherCourses()
-  courses.value = Array.isArray(list) ? list : []
-  courseStore.setTeacherCourses(courses.value)
-  if (courses.value.length === 0) {
-    graphRequest.cancel()
-    pendingRequest.cancel()
-    historyRequest.cancel()
-    reviews.value = []
-    currentCourse.value = null
-    courseStore.setTeacherCourseId(null)
-    graph.value = { nodes: [], edges: [] }
-    pending.value = []
-    processed.value = 0
-    graphLoading.value = false
-    pendingLoading.value = false
-    graphError.value = null
-    pendingError.value = null
-    if (chart) chart.clear()
-    return
+  if (disposed) return false
+  const request = coursesRequest.next()
+  try {
+    const list = await fetchTeacherCourses({ signal: request.signal })
+    if (!request.isCurrent() || disposed) return false
+    courses.value = Array.isArray(list) ? list : []
+    courseStore.setTeacherCourses(courses.value)
+    if (courses.value.length === 0) {
+      graphRequest.cancel()
+      pendingRequest.cancel()
+      historyRequest.cancel()
+      reviews.value = []
+      currentCourse.value = null
+      courseStore.setTeacherCourseId(null)
+      graph.value = { nodes: [], edges: [] }
+      pending.value = []
+      processed.value = 0
+      graphLoading.value = false
+      pendingLoading.value = false
+      graphError.value = null
+      pendingError.value = null
+      if (chart) chart.clear()
+      return true
+    }
+    const saved = preferId ?? courseStore.teacherCourseId
+    const previousCourseId = Number(currentCourse.value?.id)
+    const nextCourse = courses.value.find(c => c.id === saved) || courses.value[0]
+    if (Number(nextCourse.id) !== previousCourseId) {
+      historyRequest.cancel()
+      reviews.value = []
+    }
+    currentCourse.value = nextCourse
+    courseStore.setTeacherCourseId(currentCourse.value.id)
+    return true
+  } catch (err) {
+    if (!request.isCurrent() || disposed || isAbortError(err)) return false
+    throw err
   }
-  const saved = preferId ?? courseStore.teacherCourseId
-  const previousCourseId = Number(currentCourse.value?.id)
-  const nextCourse = courses.value.find(c => c.id === saved) || courses.value[0]
-  if (Number(nextCourse.id) !== previousCourseId) {
-    historyRequest.cancel()
-    reviews.value = []
-  }
-  currentCourse.value = nextCourse
-  courseStore.setTeacherCourseId(currentCourse.value.id)
 }
 
 async function switchCourse(id) {
@@ -712,34 +722,46 @@ async function addCourse() {
   if (!name) { alert('请输入课程名'); return }
   try {
     const created = await createTeacherCourse(name)
+    if (disposed) return
     showCourseForm.value = false
     newCourseName.value = ''
-    await loadCourses(created.id)
+    const loaded = await loadCourses(created.id)
+    if (!loaded || disposed) return
     await reload()
   } catch (e) {
+    if (disposed) return
     alert('新增失败：' + (e.message || '网络错误'))
   }
 }
 
 async function removeCourse() {
   if (!currentCourse.value) return
-  if (!confirm(`确定删除课程「${currentCourse.value.name}」及其全部图谱节点与边吗？此操作不可撤销。`)) return
+  const actionCourseId = Number(currentCourse.value.id)
+  const actionCourseName = currentCourse.value.name
+  if (!confirm(`确定删除课程「${actionCourseName}」及其全部图谱节点与边吗？此操作不可撤销。`)) return
   try {
-    await deleteTeacherCourse(currentCourse.value.id)
-    await loadCourses()        // 切到列表里下一门或空态
-    if (currentCourse.value) await reload()
+    await deleteTeacherCourse(actionCourseId)
+    if (disposed) return
+    const shouldReloadSelection = isCurrentCourse(actionCourseId)
+    const loaded = await loadCourses() // 切到列表里下一门或空态
+    if (!loaded || disposed) return
+    if (shouldReloadSelection && currentCourse.value) await reload()
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     alert('删除失败：' + (e.message || '网络错误'))
   }
 }
 
 async function togglePublish() {
   if (!currentCourse.value) return
+  const actionCourseId = Number(currentCourse.value.id)
   const next = !currentCourse.value.published
   try {
-    await setTeacherCourseStatus(currentCourse.value.id, next)
-    await loadCourses(currentCourse.value.id)
+    await setTeacherCourseStatus(actionCourseId, next)
+    if (!isCurrentCourse(actionCourseId)) return
+    await loadCourses(actionCourseId)
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     alert(e.message || '操作失败')
   }
 }
@@ -953,20 +975,28 @@ function openEditForm(node) {
 }
 
 async function accept(id) {
+  const actionCourseId = Number(currentCourse.value?.id)
+  if (!(actionCourseId > 0)) return
   try {
     await acceptEdge(id)
+    if (!isCurrentCourse(actionCourseId)) return
     await reload()
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     console.error('采纳失败', e)
     alert('操作失败：' + (e.message || '网络错误'))
   }
 }
 
 async function reject(id) {
+  const actionCourseId = Number(currentCourse.value?.id)
+  if (!(actionCourseId > 0)) return
   try {
     await rejectEdge(id)
+    if (!isCurrentCourse(actionCourseId)) return
     await reload()
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     console.error('驳回失败', e)
     alert('操作失败：' + (e.message || '网络错误'))
   }
@@ -977,12 +1007,17 @@ async function submitCreate() {
     alert('节点编码和名称为必填项')
     return
   }
+  const actionCourseId = Number(currentCourse.value?.id)
+  if (!(actionCourseId > 0)) return
+  const payload = { ...nodeForm.value }
   try {
-    await createNode(currentCourse.value.id, nodeForm.value)
+    await createNode(actionCourseId, payload)
+    if (!isCurrentCourse(actionCourseId)) return
     closeNodeForm()
     nodeForm.value = { nodeCode: '', name: '', chapter: '', difficulty: 3, isKey: false, description: '', note: '', x: null, y: null }
     await reload()
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     console.error('创建失败', e)
     alert('创建失败：' + (e.message || '网络错误'))
   }
@@ -993,24 +1028,34 @@ async function submitUpdate() {
     alert('名称为必填项')
     return
   }
+  const actionCourseId = Number(currentCourse.value?.id)
+  if (!(actionCourseId > 0)) return
   try {
     const { id, nodeCode, ...req } = editForm.value
     await updateNode(id, req)
+    if (!isCurrentCourse(actionCourseId)) return
     closeEditForm()
     await reload()
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     console.error('更新失败', e)
     alert('更新失败：' + (e.message || '网络错误'))
   }
 }
 
 async function confirmDelete() {
-  if (!confirm(`确定删除节点「${editForm.value.name}」吗？此操作不可撤销。`)) return
+  const actionCourseId = Number(currentCourse.value?.id)
+  if (!(actionCourseId > 0)) return
+  const nodeId = editForm.value.id
+  const nodeName = editForm.value.name
+  if (!confirm(`确定删除节点「${nodeName}」吗？此操作不可撤销。`)) return
   try {
-    await deleteNode(editForm.value.id)
+    await deleteNode(nodeId)
+    if (!isCurrentCourse(actionCourseId)) return
     closeEditForm()
     await reload()
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     console.error('删除失败', e)
     alert('删除失败：' + (e.message || '网络错误'))
   }
@@ -1074,6 +1119,7 @@ async function confirmEdgeType(type) {
   const src = edgeTypePopup.value.source
   const tgt = edgeTypePopup.value.target
   if (!src || !tgt || !currentCourse.value) return
+  const actionCourseId = Number(currentCourse.value.id)
 
   const relationType = RELATION_TYPE_CODE[type]
   if (!relationType) {
@@ -1084,15 +1130,17 @@ async function confirmEdgeType(type) {
   edgeError.value = null
   edgeSaving.value = true
   try {
-    await createEdge(currentCourse.value.id, {
+    await createEdge(actionCourseId, {
       sourceNodeCode: src,
       targetNodeCode: tgt,
       relationType
     })
+    if (!isCurrentCourse(actionCourseId)) return
     edgeTypePopup.value = { visible: false, x: 0, y: 0, source: null, target: null }
     exitLinkMode()
     await reload()
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     // 409 等失败：保留端点与弹窗，内联展示错误
     edgeError.value = e?.message || '创建边失败'
     edgeTypePopup.value = {
@@ -1103,7 +1151,7 @@ async function confirmEdgeType(type) {
       target: tgt
     }
   } finally {
-    edgeSaving.value = false
+    if (isCurrentCourse(actionCourseId)) edgeSaving.value = false
   }
 }
 
@@ -1363,12 +1411,15 @@ async function doImport(file) {
   try {
     if (isJson) {
       const text = await file.text()
+      if (!sameCourse(actionCourse)) return
       const data = JSON.parse(text)
       importProgress.value = 50
       const res = await importGraphJson(actionCourse.code, data)
+      if (!sameCourse(actionCourse)) return
       importProgress.value = 100
       importResult.value = res || {}
       await reload()
+      if (!sameCourse(actionCourse)) return
       importUploading.value = false
     } else {
       importActionCourse = actionCourse
@@ -1377,11 +1428,14 @@ async function doImport(file) {
           importGraphExcel(actionCourse.code, file, {
             headers,
             onUploadProgress: (e) => {
-              if (e.total) importProgress.value = Math.min(40, Math.round((e.loaded / e.total) * 40))
+              if (sameCourse(actionCourse) && e.total) {
+                importProgress.value = Math.min(40, Math.round((e.loaded / e.total) * 40))
+              }
             }
           }),
         { courseId: actionCourse.id }
       )
+      if (!sameCourse(actionCourse)) return
       // 轮询中进度由 job 驱动；上传完成先显示 40+
       if (importExcelJobProgress.value > 0) {
         importProgress.value = Math.max(importProgress.value, importExcelJobProgress.value)
@@ -1451,6 +1505,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   disposed = true
+  coursesRequest.cancel()
   graphRequest.cancel()
   pendingRequest.cancel()
   historyRequest.cancel()

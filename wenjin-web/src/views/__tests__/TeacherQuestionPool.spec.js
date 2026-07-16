@@ -20,6 +20,8 @@ const courseState = vi.hoisted(() => ({
   courseId: null
 }))
 
+const useJobControls = []
+
 vi.mock('../../api/teacher.js', () => ({
   fetchQuestions: (...args) => mocks.fetchQuestions(...args),
   reviewQuestions: (...args) => mocks.reviewQuestions(...args),
@@ -43,6 +45,20 @@ vi.mock('../../api/jobs.js', () => ({
 
 vi.mock('../../composables/useTeacherCourse.js', () => ({
   useTeacherCourse: () => courseState
+}))
+
+vi.mock('../../composables/useJob.js', () => ({
+  useJob: (options) => {
+    const valueRef = (value) => ({ __v_isRef: true, value })
+    const control = {
+      options,
+      loading: valueRef(false),
+      progress: valueRef(0),
+      start: vi.fn().mockResolvedValue({ id: 1, status: 0 })
+    }
+    useJobControls.push(control)
+    return control
+  }
 }))
 
 import TeacherQuestionPool from '../TeacherQuestionPool.vue'
@@ -102,6 +118,7 @@ describe('TeacherQuestionPool batch job cancellation', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
+    useJobControls.length = 0
     vi.stubGlobal('confirm', vi.fn(() => true))
     courseState.currentCourse = ref({ id: 1, name: '软件工程', code: 'SE' })
     courseState.courseId = ref(1)
@@ -336,5 +353,178 @@ describe('TeacherQuestionPool batch job cancellation', () => {
     expect.soft(mocks.fetchQuestions).not.toHaveBeenCalled()
     expect.soft(mocks.fetchTeacherGraph).not.toHaveBeenCalled()
     expect(hook.state()).toBe(mountedState)
+  })
+
+  it.each([
+    ['success', 'resolve'],
+    ['failure', 'reject']
+  ])('keeps course B approve-all state when course A %s arrives late', async (_label, outcome) => {
+    mocks.fetchQuestions.mockResolvedValue(questionPage('A'))
+    const action = deferred()
+    mocks.reviewAllQuestions.mockReturnValue(action.promise)
+    const wrapper = await mountPool()
+    const state = wrapper.vm.$.setupState
+    const actionPromise = state.handleApproveAll()
+
+    mocks.fetchQuestions.mockResolvedValue(questionPage('B'))
+    mocks.fetchTeacherGraph.mockResolvedValue(graphPage('B'))
+    courseState.currentCourse.value = { id: 2, name: 'Course B', code: 'B' }
+    courseState.courseId.value = 2
+    await nextTick()
+    await flushPromises()
+    mocks.fetchQuestions.mockClear()
+    state.checked = { 'B-question': true }
+    state.approveAllLoading = true
+    state.approveAllMessage = 'B approval in progress'
+
+    if (outcome === 'resolve') action.resolve(7)
+    else action.reject(new Error('course A approval failed'))
+    await actionPromise
+    await flushPromises()
+
+    expect.soft(mocks.fetchQuestions).not.toHaveBeenCalled()
+    expect.soft(state.checked).toEqual({ 'B-question': true })
+    expect.soft(state.approveAllLoading).toBe(true)
+    expect(state.approveAllMessage).toBe('B approval in progress')
+    wrapper.unmount()
+  })
+
+  it('keeps course B JSON import state when course A import resolves late', async () => {
+    const action = deferred()
+    mocks.importQuestionJson.mockReturnValue(action.promise)
+    const wrapper = await mountPool()
+    const state = wrapper.vm.$.setupState
+    const file = new File(['{}'], 'questions.json', { type: 'application/json' })
+    state.handleImportSelect({ target: { files: [file] } })
+    const importPromise = state.handleImportFile()
+
+    mocks.fetchQuestions.mockResolvedValue(questionPage('B'))
+    mocks.fetchTeacherGraph.mockResolvedValue(graphPage('B'))
+    courseState.currentCourse.value = { id: 2, name: 'Course B', code: 'B' }
+    courseState.courseId.value = 2
+    await nextTick()
+    await flushPromises()
+    mocks.fetchQuestions.mockClear()
+    state.importLoading = true
+    state.importResult = { imported: 22, skipped: 0, course: 'B' }
+    state.importError = 'B import in progress'
+
+    action.resolve({ imported: 1, skipped: 0, course: 'A' })
+    await importPromise
+    await flushPromises()
+
+    expect.soft(mocks.fetchQuestions).not.toHaveBeenCalled()
+    expect.soft(state.importLoading).toBe(true)
+    expect.soft(state.importError).toBe('B import in progress')
+    expect(state.importResult).toEqual({ imported: 22, skipped: 0, course: 'B' })
+    wrapper.unmount()
+  })
+
+  it('does not publish a stale useJob wrapper error after switching courses', async () => {
+    const wrapper = await mountPool()
+    const state = wrapper.vm.$.setupState
+    const action = deferred()
+    useJobControls[0].start.mockReturnValue(action.promise)
+    const generatePromise = state.handleGenerate()
+
+    courseState.currentCourse.value = { id: 2, name: 'Course B', code: 'B' }
+    courseState.courseId.value = 2
+    await nextTick()
+    state.genError = 'B generation error'
+
+    action.reject(new Error('course A generation failed'))
+    await generatePromise
+
+    expect(state.genError).toBe('B generation error')
+    wrapper.unmount()
+  })
+
+  it('stops the course A custom batch without sending course B nodes or changing B state', async () => {
+    const action = deferred()
+    mocks.generateQuestions.mockReturnValueOnce(action.promise)
+    const wrapper = await mountPool()
+    const state = wrapper.vm.$.setupState
+    const batchPromise = state.handleBatchGenerate()
+
+    mocks.fetchQuestions.mockResolvedValue(questionPage('B'))
+    mocks.fetchTeacherGraph.mockResolvedValue({
+      nodes: [
+        { nodeCode: 'B-N1', name: 'B node 1' },
+        { nodeCode: 'B-N2', name: 'B node 2' }
+      ],
+      edges: []
+    })
+    courseState.currentCourse.value = { id: 2, name: 'Course B', code: 'B' }
+    courseState.courseId.value = 2
+    await nextTick()
+    await flushPromises()
+    mocks.fetchQuestions.mockClear()
+    state.batchLoading = true
+    state.batchProgress = { index: 1, total: 2, nodeCode: 'B-N1', nodeName: 'B node 1' }
+    state.batchResult = { generated: 20, dropped: 0, duplicated: 0, failed: [], cancelled: false, course: 'B' }
+    state.batchError = 'B batch in progress'
+
+    action.resolve({ id: 71, status: 2, result: { generated: 3, dropped: 0, duplicated: 0 } })
+    await batchPromise
+    await flushPromises()
+
+    expect.soft(mocks.generateQuestions).toHaveBeenCalledTimes(1)
+    expect.soft(mocks.fetchQuestions).not.toHaveBeenCalled()
+    expect.soft(state.batchLoading).toBe(true)
+    expect.soft(state.batchProgress?.nodeCode).toBe('B-N1')
+    expect.soft(state.batchError).toBe('B batch in progress')
+    expect(state.batchResult).toEqual({ generated: 20, dropped: 0, duplicated: 0, failed: [], cancelled: false, course: 'B' })
+    wrapper.unmount()
+  })
+
+  it('does not commit custom batch completion after unmount', async () => {
+    const action = deferred()
+    mocks.generateQuestions.mockReturnValue(action.promise)
+    const wrapper = await mountPool()
+    const state = wrapper.vm.$.setupState
+    const batchPromise = state.handleBatchGenerate()
+    const snapshot = {
+      loading: state.batchLoading,
+      progress: state.batchProgress,
+      result: { ...state.batchResult }
+    }
+
+    wrapper.unmount()
+    action.resolve({ id: 72, status: 2, result: { generated: 4, dropped: 0, duplicated: 0 } })
+    await batchPromise
+    await flushPromises()
+
+    expect(state.batchLoading).toBe(snapshot.loading)
+    expect(state.batchProgress).toEqual(snapshot.progress)
+    expect(state.batchResult).toEqual(snapshot.result)
+  })
+
+  it('ignores a course A cancellation response after switching to course B', async () => {
+    const cancellation = deferred()
+    mocks.generateQuestions.mockResolvedValue({ id: 73, status: 1, progress: 0 })
+    mocks.cancelJob.mockReturnValue(cancellation.promise)
+    const wrapper = await mountPool()
+    const state = wrapper.vm.$.setupState
+    void state.handleBatchGenerate()
+    await flushPromises()
+    expect(mocks.generateQuestions).toHaveBeenCalledTimes(1)
+    const cancelPromise = state.cancelBatchGenerate()
+    expect(mocks.cancelJob).toHaveBeenCalledWith(73)
+
+    courseState.currentCourse.value = { id: 2, name: 'Course B', code: 'B' }
+    courseState.courseId.value = 2
+    await nextTick()
+    state.batchLoading = true
+    state.batchResult = { generated: 9, dropped: 0, duplicated: 0, failed: [], cancelled: false, course: 'B' }
+    state.batchError = 'B cancellation state'
+
+    cancellation.resolve({ id: 73, status: 4, progress: 0, errorCode: 'CANCELLED' })
+    await cancelPromise
+    await flushPromises()
+
+    expect.soft(state.batchLoading).toBe(true)
+    expect.soft(state.batchError).toBe('B cancellation state')
+    expect(state.batchResult).toEqual({ generated: 9, dropped: 0, duplicated: 0, failed: [], cancelled: false, course: 'B' })
+    wrapper.unmount()
   })
 })

@@ -5,12 +5,19 @@ import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 
 const createEdgeMock = vi.fn()
+const acceptEdgeMock = vi.fn()
+const rejectEdgeMock = vi.fn()
+const createNodeMock = vi.fn()
+const updateNodeMock = vi.fn()
+const deleteNodeMock = vi.fn()
 const fetchTeacherGraphMock = vi.fn()
 const fetchPendingEdgesMock = vi.fn()
 const fetchTeacherCoursesMock = vi.fn()
 const fetchExtractionReviewsMock = vi.fn()
 const extractGraphFromFileMock = vi.fn()
+const importGraphJsonMock = vi.fn()
 const importGraphExcelMock = vi.fn()
+const setTeacherCourseStatusMock = vi.fn()
 const useJobControls = []
 
 vi.mock('../../utils/echartsGraph.js', () => {
@@ -35,20 +42,20 @@ vi.mock('../../utils/echartsGraph.js', () => {
 vi.mock('../../api/teacher.js', () => ({
   fetchTeacherGraph: (...a) => fetchTeacherGraphMock(...a),
   fetchPendingEdges: (...a) => fetchPendingEdgesMock(...a),
-  acceptEdge: vi.fn(),
-  rejectEdge: vi.fn(),
+  acceptEdge: (...a) => acceptEdgeMock(...a),
+  rejectEdge: (...a) => rejectEdgeMock(...a),
   createEdge: (...a) => createEdgeMock(...a),
-  createNode: vi.fn(),
-  updateNode: vi.fn(),
-  deleteNode: vi.fn(),
+  createNode: (...a) => createNodeMock(...a),
+  updateNode: (...a) => updateNodeMock(...a),
+  deleteNode: (...a) => deleteNodeMock(...a),
   fetchTeacherCourses: (...a) => fetchTeacherCoursesMock(...a),
   createTeacherCourse: vi.fn(),
   deleteTeacherCourse: vi.fn(),
-  setTeacherCourseStatus: vi.fn()
+  setTeacherCourseStatus: (...a) => setTeacherCourseStatusMock(...a)
 }))
 
 vi.mock('../../api/admin.js', () => ({
-  importGraphJson: vi.fn(),
+  importGraphJson: (...a) => importGraphJsonMock(...a),
   importGraphExcel: (...a) => importGraphExcelMock(...a),
   extractGraphFromFile: (...a) => extractGraphFromFileMock(...a),
   fetchExtractionReviews: (...a) => fetchExtractionReviewsMock(...a)
@@ -143,7 +150,14 @@ describe('TeacherGraphReview edge create', () => {
       edges: []
     })
     fetchPendingEdgesMock.mockResolvedValue([])
+    acceptEdgeMock.mockReset().mockResolvedValue(undefined)
+    rejectEdgeMock.mockReset().mockResolvedValue(undefined)
+    createNodeMock.mockReset().mockResolvedValue(1)
+    updateNodeMock.mockReset().mockResolvedValue(undefined)
+    deleteNodeMock.mockReset().mockResolvedValue(undefined)
     createEdgeMock.mockResolvedValue(99)
+    importGraphJsonMock.mockReset().mockResolvedValue({ nodeCount: 1, edgeCount: 0 })
+    setTeacherCourseStatusMock.mockReset().mockResolvedValue(undefined)
     extractGraphFromFileMock.mockResolvedValue({ id: 20, status: 0, progress: 0 })
     importGraphExcelMock.mockResolvedValue({ id: 21, status: 0, progress: 0 })
     fetchExtractionReviewsMock.mockResolvedValue([])
@@ -554,6 +568,208 @@ describe('TeacherGraphReview edge create', () => {
     historyA.reject(new Error('course A history failed late'))
     await flushPromises()
     expect(wrapper.text()).toContain('B-history-ok')
+    wrapper.unmount()
+  })
+
+  it('ignores stale edge and node mutation success after switching courses', async () => {
+    fetchTeacherCoursesMock.mockResolvedValue([
+      { id: 1, name: 'Course A', code: 'A', published: true },
+      { id: 2, name: 'Course B', code: 'B', published: true }
+    ])
+    const edgeAction = deferred()
+    const nodeAction = deferred()
+    acceptEdgeMock.mockReturnValue(edgeAction.promise)
+    createNodeMock.mockReturnValue(nodeAction.promise)
+    const wrapper = await mountReview()
+    const state = wrapper.vm.$.setupState
+    state.nodeForm = {
+      nodeCode: 'A-NODE', name: 'A node', chapter: '', difficulty: 3,
+      isKey: false, description: '', note: '', x: null, y: null
+    }
+    state.showNodeForm = true
+
+    const acceptPromise = state.accept(11)
+    const createPromise = state.submitCreate()
+    await api().switchCourse(2)
+    state.nodeForm = {
+      nodeCode: 'B-DRAFT', name: 'B draft', chapter: '', difficulty: 3,
+      isKey: false, description: '', note: '', x: null, y: null
+    }
+    state.showNodeForm = true
+    fetchTeacherGraphMock.mockClear()
+    fetchPendingEdgesMock.mockClear()
+
+    edgeAction.resolve()
+    nodeAction.resolve()
+    await Promise.all([acceptPromise, createPromise])
+    await flushPromises()
+
+    expect.soft(fetchTeacherGraphMock).not.toHaveBeenCalled()
+    expect.soft(fetchPendingEdgesMock).not.toHaveBeenCalled()
+    expect.soft(state.showNodeForm).toBe(true)
+    expect(state.nodeForm.nodeCode).toBe('B-DRAFT')
+    wrapper.unmount()
+  })
+
+  it('does not publish stale edge-creation errors into course B', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    fetchTeacherCoursesMock.mockResolvedValue([
+      { id: 1, name: 'Course A', code: 'A', published: true },
+      { id: 2, name: 'Course B', code: 'B', published: true }
+    ])
+    const action = deferred()
+    createEdgeMock.mockReturnValue(action.promise)
+    const wrapper = await mountReview()
+    const hook = api()
+    const state = wrapper.vm.$.setupState
+    hook.setLinkEndpoints('A-SOURCE', 'A-TARGET')
+    const actionPromise = hook.confirmEdgeType('前置')
+
+    await hook.switchCourse(2)
+    state.edgeSaving = false
+    hook.setLinkEndpoints('B-SOURCE', 'B-TARGET')
+    action.reject(new Error('course A edge failed'))
+    await actionPromise
+    await flushPromises()
+
+    expect.soft(hook.state().edgeError).toBeNull()
+    expect.soft(hook.state().edgeTypePopup.source).toBe('B-SOURCE')
+    expect.soft(hook.state().edgeTypePopup.target).toBe('B-TARGET')
+    expect(hook.state().edgeSaving).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('stops JSON import after file reading when the course changes', async () => {
+    fetchTeacherCoursesMock.mockResolvedValue([
+      { id: 1, name: 'Course A', code: 'A', published: true },
+      { id: 2, name: 'Course B', code: 'B', published: true }
+    ])
+    const text = deferred()
+    const wrapper = await mountReview()
+    const state = wrapper.vm.$.setupState
+    const importPromise = state.doImport({ name: 'graph.json', text: () => text.promise })
+    await api().switchCourse(2)
+    state.importProgress = 17
+    state.importResult = { course: 'B' }
+    fetchTeacherGraphMock.mockClear()
+    fetchPendingEdgesMock.mockClear()
+
+    text.resolve('{}')
+    await importPromise
+    await flushPromises()
+
+    expect.soft(importGraphJsonMock).not.toHaveBeenCalled()
+    expect.soft(fetchTeacherGraphMock).not.toHaveBeenCalled()
+    expect.soft(fetchPendingEdgesMock).not.toHaveBeenCalled()
+    expect.soft(state.importProgress).toBe(17)
+    expect(state.importResult).toEqual({ course: 'B' })
+    wrapper.unmount()
+  })
+
+  it('does not write JSON import completion after unmount', async () => {
+    const action = deferred()
+    importGraphJsonMock.mockReturnValue(action.promise)
+    const wrapper = await mountReview()
+    const state = wrapper.vm.$.setupState
+    const importPromise = state.doImport({ name: 'graph.json', text: vi.fn().mockResolvedValue('{}') })
+    await flushPromises()
+    expect(importGraphJsonMock).toHaveBeenCalledTimes(1)
+    const snapshot = {
+      progress: state.importProgress,
+      result: state.importResult,
+      uploading: state.importUploading
+    }
+
+    wrapper.unmount()
+    action.resolve({ nodeCount: 9, edgeCount: 4 })
+    await importPromise
+    await flushPromises()
+
+    expect(state.importProgress).toBe(snapshot.progress)
+    expect(state.importResult).toBe(snapshot.result)
+    expect(state.importUploading).toBe(snapshot.uploading)
+  })
+
+  it('guards Excel upload progress and post-start writes by action course', async () => {
+    fetchTeacherCoursesMock.mockResolvedValue([
+      { id: 1, name: 'Course A', code: 'A', published: true },
+      { id: 2, name: 'Course B', code: 'B', published: true }
+    ])
+    const wrapper = await mountReview()
+    const state = wrapper.vm.$.setupState
+    const importControl = useJobControls[1]
+    const start = deferred()
+    const upload = deferred()
+    importControl.start.mockReturnValue(start.promise)
+    importGraphExcelMock.mockReturnValue(upload.promise)
+    const importPromise = state.doImport(new File(['excel'], 'graph.xlsx'))
+    await nextTick()
+    const dispatch = importControl.start.mock.calls[0][0]
+    const dispatchPromise = dispatch({ 'Idempotency-Key': 'excel-key' })
+    await nextTick()
+    const uploadOptions = importGraphExcelMock.mock.calls[0][2]
+
+    await api().switchCourse(2)
+    state.importProgress = 17
+    importControl.progress.value = 80
+    uploadOptions.onUploadProgress({ loaded: 5, total: 10 })
+    upload.resolve({ id: 91, status: 0 })
+    start.resolve({ id: 91, status: 0 })
+    await Promise.all([dispatchPromise, importPromise])
+
+    expect(state.importProgress).toBe(17)
+    wrapper.unmount()
+  })
+
+  it('takes the latest course-list load and aborts the older request', async () => {
+    fetchTeacherCoursesMock.mockResolvedValue([
+      { id: 1, name: 'Course A', code: 'A', published: true }
+    ])
+    const wrapper = await mountReview()
+    const state = wrapper.vm.$.setupState
+    const older = deferred()
+    const newer = deferred()
+    fetchTeacherCoursesMock.mockReset()
+    fetchTeacherCoursesMock
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(newer.promise)
+
+    const olderLoad = state.togglePublish()
+    await flushPromises()
+    const newerLoad = state.togglePublish()
+    await flushPromises()
+    const olderConfig = fetchTeacherCoursesMock.mock.calls[0][0]
+    expect.soft(olderConfig).toEqual(expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect.soft(olderConfig?.signal.aborted).toBe(true)
+
+    newer.resolve([{ id: 1, name: 'Fresh Course', code: 'A', published: false }])
+    await newerLoad
+    older.resolve([{ id: 1, name: 'Stale Course', code: 'A', published: false }])
+    await olderLoad
+    await flushPromises()
+
+    expect.soft(wrapper.text()).toContain('Fresh Course')
+    expect(wrapper.text()).not.toContain('Stale Course')
+    wrapper.unmount()
+  })
+
+  it('does not refresh a different course after toggle publish resolves late', async () => {
+    fetchTeacherCoursesMock.mockResolvedValue([
+      { id: 1, name: 'Course A', code: 'A', published: true },
+      { id: 2, name: 'Course B', code: 'B', published: true }
+    ])
+    const action = deferred()
+    setTeacherCourseStatusMock.mockReturnValue(action.promise)
+    const wrapper = await mountReview()
+    const togglePromise = wrapper.vm.$.setupState.togglePublish()
+    await api().switchCourse(2)
+    fetchTeacherCoursesMock.mockClear()
+
+    action.resolve()
+    await togglePromise
+    await flushPromises()
+
+    expect(fetchTeacherCoursesMock).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

@@ -352,6 +352,7 @@ let batchCancelAccepted = false
 let batchCancelFailed = false
 let activeBatchJobId = null
 let activeBatchCancel = null
+let batchActionCourseId = null
 const importLoading = ref(false)
 const importError = ref('')
 const importResult = ref(null)
@@ -369,6 +370,10 @@ function isAbortError(err) {
 
 function isActiveCourse(id) {
   return !disposed && Number(courseId.value) === Number(id)
+}
+
+function isActiveBatchCourse(id) {
+  return isActiveCourse(id) && Number(batchActionCourseId) === Number(id)
 }
 
 // ── 计算属性 ──
@@ -513,13 +518,14 @@ async function handleGenerate() {
   genResult.value = null
   const count = clampCount(genCount.value)
   const node = genNodeCode.value
-  const cid = courseId.value
+  const cid = Number(courseId.value)
   try {
     await startGenJob(
       (headers) => generateQuestions(cid, node, count, { headers }),
       { courseId: cid }
     )
   } catch (e) {
+    if (!isActiveCourse(cid)) return
     genError.value = e.message || '出题失败'
   }
 }
@@ -532,6 +538,7 @@ async function waitGenerateJob(cid, node, count) {
   const created = await generateQuestions(cid, node, count, {
     headers: { 'Idempotency-Key': requestKey }
   })
+  if (!isActiveBatchCourse(cid)) return null
   if (created?.id == null) throw new Error('出题作业未返回 ID')
 
   const jobId = created.id
@@ -540,14 +547,17 @@ async function waitGenerateJob(cid, node, count) {
   try {
     if (batchCancelRequested && !batchCancelFailed) {
       try {
-        latest = (await requestActiveBatchCancel()) || latest
+        latest = (await requestActiveBatchCancel(cid)) || latest
+        if (!isActiveBatchCourse(cid)) return null
       } catch (e) {
+        if (!isActiveBatchCourse(cid)) return null
         batchError.value = e?.message || '取消作业失败'
       }
     }
 
     const deadline = Date.now() + 30 * 60 * 1000
     while (Date.now() < deadline) {
+      if (!isActiveBatchCourse(cid)) return null
       if (isJobSucceeded(latest)) return latest.result || {}
       if (latest.status === 4) {
         if (batchCancelRequested && batchCancelAccepted) {
@@ -563,42 +573,51 @@ async function waitGenerateJob(cid, node, count) {
 
       if (batchCancelRequested && !batchCancelAccepted && !batchCancelFailed) {
         try {
-          latest = (await requestActiveBatchCancel()) || latest
+          latest = (await requestActiveBatchCancel(cid)) || latest
+          if (!isActiveBatchCourse(cid)) return null
           continue
         } catch (e) {
+          if (!isActiveBatchCourse(cid)) return null
           batchError.value = e?.message || '取消作业失败'
         }
       }
 
       await new Promise((resolve) => setTimeout(resolve, 1000))
+      if (!isActiveBatchCourse(cid)) return null
       latest = await getJob(jobId)
+      if (!isActiveBatchCourse(cid)) return null
     }
     throw new Error('出题超时')
   } finally {
-    if (activeBatchJobId === jobId) activeBatchJobId = null
-    if (activeBatchCancel?.id === jobId) activeBatchCancel = null
+    if (isActiveBatchCourse(cid) && activeBatchJobId === jobId) activeBatchJobId = null
+    if (isActiveBatchCourse(cid) && activeBatchCancel?.id === jobId) activeBatchCancel = null
   }
 }
 
-async function requestActiveBatchCancel() {
+async function requestActiveBatchCancel(cid) {
+  if (!isActiveBatchCourse(cid)) return null
   const jobId = activeBatchJobId
   if (jobId == null) return null
-  if (activeBatchCancel?.id === jobId) return activeBatchCancel.promise
+  if (activeBatchCancel?.id === jobId && Number(activeBatchCancel.courseId) === Number(cid)) {
+    return activeBatchCancel.promise
+  }
 
   const entry = {
     id: jobId,
+    courseId: cid,
     promise: cancelJob(jobId)
   }
   activeBatchCancel = entry
   try {
     const updated = await entry.promise
+    if (!isActiveBatchCourse(cid)) return updated
     if (activeBatchJobId === jobId) batchCancelAccepted = true
     return updated
   } catch (e) {
-    if (activeBatchJobId === jobId) batchCancelFailed = true
+    if (isActiveBatchCourse(cid) && activeBatchJobId === jobId) batchCancelFailed = true
     throw e
   } finally {
-    if (activeBatchCancel === entry) activeBatchCancel = null
+    if (isActiveBatchCourse(cid) && activeBatchCancel === entry) activeBatchCancel = null
   }
 }
 
@@ -613,10 +632,13 @@ async function handleBatchGenerate() {
     return
   }
 
+  const cid = Number(courseId.value)
+  const nodes = graphNodes.value.slice()
   const count = clampCount(batchCountPerNode.value, 3)
-  const total = graphNodes.value.length
+  const total = nodes.length
   if (!confirm(`将对全部 ${total} 个节点各生成 ${count} 道题，耗时可能较长，是否继续？`)) return
 
+  batchActionCourseId = cid
   batchLoading.value = true
   batchCancelRequested = false
   batchCancelAccepted = false
@@ -627,11 +649,10 @@ async function handleBatchGenerate() {
   batchResult.value = { generated: 0, dropped: 0, duplicated: 0, failed: [], cancelled: false }
   genResult.value = null
   genError.value = ''
-  const cid = courseId.value
-
-  for (let i = 0; i < graphNodes.value.length; i++) {
+  for (let i = 0; i < nodes.length; i++) {
+    if (!isActiveBatchCourse(cid)) return
     if (batchCancelRequested) break
-    const node = graphNodes.value[i]
+    const node = nodes[i]
     batchProgress.value = {
       index: i + 1,
       total,
@@ -640,11 +661,13 @@ async function handleBatchGenerate() {
     }
     try {
       const res = await waitGenerateJob(cid, node.nodeCode, count)
+      if (!isActiveBatchCourse(cid) || res == null) return
       batchResult.value.generated += res.generated || 0
       batchResult.value.dropped += res.dropped || 0
       batchResult.value.duplicated += res.duplicated || 0
       if (batchCancelRequested) break
     } catch (e) {
+      if (!isActiveBatchCourse(cid)) return
       if (e?.code === 'BATCH_CANCELLED') {
         batchResult.value.cancelled = true
         break
@@ -657,22 +680,28 @@ async function handleBatchGenerate() {
     }
   }
 
+  if (!isActiveBatchCourse(cid)) return
   batchProgress.value = null
   batchLoading.value = false
+  batchActionCourseId = null
   await load()
+  if (!isActiveCourse(cid)) return
 }
 
 async function cancelBatchGenerate() {
-  if (!batchLoading.value || batchCancelRequested) return
+  const cid = Number(batchActionCourseId)
+  if (!isActiveBatchCourse(cid) || !batchLoading.value || batchCancelRequested) return
   batchCancelRequested = true
   if (activeBatchJobId == null) return
 
   try {
-    const updated = await requestActiveBatchCancel()
+    const updated = await requestActiveBatchCancel(cid)
+    if (!isActiveBatchCourse(cid)) return
     if (updated?.status === 4 && batchResult.value) {
       batchResult.value.cancelled = true
     }
   } catch (e) {
+    if (!isActiveBatchCourse(cid)) return
     batchError.value = e?.message || '取消作业失败'
   }
 }
@@ -691,24 +720,29 @@ function handleImportDrop(e) {
 
 async function handleImportFile() {
   if (!importFile.value) return
+  const file = importFile.value
+  const cid = Number(courseId.value)
+  if (!isActiveCourse(cid)) return
   importError.value = ''
   importResult.value = null
-  const isExcel = /\.(xlsx?|xls)$/i.test(importFile.value.name)
+  const isExcel = /\.(xlsx?|xls)$/i.test(file.name)
   try {
     if (isExcel) {
-      const file = importFile.value
-      const cid = courseId.value
       await startImportJob(
         (headers) => importQuestionExcel(cid, file, { headers }),
         { courseId: cid }
       )
     } else {
       importLoading.value = true
-      importResult.value = await importQuestionJson(courseId.value, importFile.value)
+      const result = await importQuestionJson(cid, file)
+      if (!isActiveCourse(cid)) return
+      importResult.value = result
       await load()
+      if (!isActiveCourse(cid)) return
       importLoading.value = false
     }
   } catch (e) {
+    if (!isActiveCourse(cid)) return
     importError.value = e.message || '导入失败'
     importLoading.value = false
   }
@@ -725,13 +759,14 @@ async function handleAnnotate() {
     annotateError.value = 'JSON 格式有误'
     return
   }
-  const cid = courseId.value
+  const cid = Number(courseId.value)
   try {
     await startAnnotateJob(
       (headers) => annotateQuestions(cid, parsed, { headers }),
       { courseId: cid }
     )
   } catch (e) {
+    if (!isActiveCourse(cid)) return
     annotateError.value = e.message || '标注失败'
   }
 }
@@ -786,6 +821,7 @@ async function review(ids, action) {
 // T6: 服务端全量审批 — 单次请求，避免前端分页漂移漏审/重审
 async function handleApproveAll() {
   if (!courseId.value || pendingCount.value === 0) return
+  const cid = Number(courseId.value)
 
   const scope = hasReviewFilter.value ? '当前筛选条件下' : '全部'
   if (!confirm(`确定将${scope}的 ${pendingCount.value} 道待审核题目全部通过吗？`)) return
@@ -794,18 +830,22 @@ async function handleApproveAll() {
   approveAllMessage.value = ''
   try {
     // http 拦截器已剥 Result 信封，affected 直接是数字
-    const affected = await reviewAllQuestions(courseId.value, {
+    const affected = await reviewAllQuestions(cid, {
       status: 0,
       conf: conf.value || undefined,
       nodeCode: nodeCode.value || undefined,
       action: 'pass'
     })
+    if (!isActiveCourse(cid)) return
     checked.value = {}
     await load()
+    if (!isActiveCourse(cid)) return
     approveAllMessage.value = `已通过 ${affected} 题`
   } catch (e) {
+    if (!isActiveCourse(cid)) return
     approveAllMessage.value = e.message || '批量审批失败'
   } finally {
+    if (!isActiveCourse(cid)) return
     approveAllLoading.value = false
   }
 }
@@ -851,7 +891,23 @@ watch([tab, conf, nodeCode, page], () => {
   load()
 })
 
-watch(courseId, () => {
+watch(courseId, (next, previous) => {
+  if (Number(next) !== Number(previous)) {
+    if (batchActionCourseId != null && Number(batchActionCourseId) !== Number(next)) {
+      batchActionCourseId = null
+      batchLoading.value = false
+      batchProgress.value = null
+      batchResult.value = null
+      batchError.value = ''
+      batchCancelRequested = false
+      batchCancelAccepted = false
+      batchCancelFailed = false
+      activeBatchJobId = null
+      activeBatchCancel = null
+    }
+    importLoading.value = false
+    approveAllLoading.value = false
+  }
   load()
   loadGraphNodes()
 }, { immediate: true })

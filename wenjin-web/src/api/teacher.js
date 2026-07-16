@@ -54,8 +54,8 @@ export function fetchDashboard(courseId) {
 }
 
 // ── 课程管理（多课程切换）──
-export function fetchTeacherCourses() {
-  return http.get('/teacher/courses')
+export function fetchTeacherCourses(config = {}) {
+  return http.get('/teacher/courses', config)
 }
 export function createTeacherCourse(name) {
   return http.post('/teacher/courses', { name })
