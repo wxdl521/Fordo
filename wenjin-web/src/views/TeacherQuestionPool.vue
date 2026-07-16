@@ -245,7 +245,7 @@ import { fetchQuestions, reviewQuestions, fetchTeacherGraph, reviewAllQuestions 
 import { generateQuestions, annotateQuestions, importQuestionJson, importQuestionExcel } from '../api/admin.js'
 import { useTeacherCourse } from '../composables/useTeacherCourse.js'
 import { useJob } from '../composables/useJob.js'
-import { isJobSucceeded } from '../api/jobs.js'
+import { cancelJob, getJob, isJobSucceeded } from '../api/jobs.js'
 
 const { currentCourse, courseId } = useTeacherCourse()
 const optionKeys = ['A', 'B', 'C', 'D']
@@ -332,7 +332,11 @@ const batchLoading = ref(false)
 const batchProgress = ref(null)
 const batchResult = ref(null)
 const batchError = ref('')
-let batchAbort = false
+let batchCancelRequested = false
+let batchCancelAccepted = false
+let batchCancelFailed = false
+let activeBatchJobId = null
+let activeBatchCancel = null
 const importLoading = ref(false)
 const importError = ref('')
 const importResult = ref(null)
@@ -439,9 +443,10 @@ function clampCount(n, fallback = 5) {
   return Math.min(20, Math.max(1, Math.round(v)))
 }
 
-/** 稳定 requestKey：同课程+节点+数量，便于双击复用 */
-function genRequestKey(node, count) {
-  return clipKey(`qg:${courseId.value}:${node}:${count}`)
+function createActionKey() {
+  return typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID().replace(/-/g, '')
+    : `k${Date.now()}${Math.random().toString(16).slice(2)}`
 }
 
 // ── AI 出题（单节点，可恢复 job）──
@@ -462,7 +467,7 @@ async function handleGenerate() {
   try {
     await startGenJob(
       (headers) => generateQuestions(cid, node, count, { headers }),
-      { requestKey: genRequestKey(node, count), courseId: cid }
+      { courseId: cid }
     )
   } catch (e) {
     genError.value = e.message || '出题失败'
@@ -473,27 +478,78 @@ async function handleGenerate() {
  * 等待单个 generate job 终态（批量串行用，不走共享 genJob 避免互相抢 epoch）
  */
 async function waitGenerateJob(cid, node, count) {
-  const requestKey = genRequestKey(node, count)
+  const requestKey = createActionKey()
   const created = await generateQuestions(cid, node, count, {
     headers: { 'Idempotency-Key': requestKey }
   })
-  if (isJobSucceeded(created)) return created.result || {}
-  if (created.status === 3 || created.status === 4) {
-    throw new Error(created.errorCode || '出题失败')
-  }
-  const { getJob } = await import('../api/jobs.js')
-  const deadline = Date.now() + 30 * 60 * 1000
+  if (created?.id == null) throw new Error('出题作业未返回 ID')
+
+  const jobId = created.id
+  activeBatchJobId = jobId
   let latest = created
-  while (Date.now() < deadline) {
-    if (batchAbort) throw new Error('已取消')
-    await new Promise((r) => setTimeout(r, 1000))
-    latest = await getJob(created.id)
-    if (isJobSucceeded(latest)) return latest.result || {}
-    if (latest.status === 3 || latest.status === 4) {
-      throw new Error(latest.errorCode || '出题失败')
+  try {
+    if (batchCancelRequested && !batchCancelFailed) {
+      try {
+        latest = (await requestActiveBatchCancel()) || latest
+      } catch (e) {
+        batchError.value = e?.message || '取消作业失败'
+      }
     }
+
+    const deadline = Date.now() + 30 * 60 * 1000
+    while (Date.now() < deadline) {
+      if (isJobSucceeded(latest)) return latest.result || {}
+      if (latest.status === 4) {
+        if (batchCancelRequested && batchCancelAccepted) {
+          const cancelled = new Error('已取消')
+          cancelled.code = 'BATCH_CANCELLED'
+          throw cancelled
+        }
+        throw new Error(latest.errorCode || '出题失败')
+      }
+      if (latest.status === 3) {
+        throw new Error(latest.errorCode || '出题失败')
+      }
+
+      if (batchCancelRequested && !batchCancelAccepted && !batchCancelFailed) {
+        try {
+          latest = (await requestActiveBatchCancel()) || latest
+          continue
+        } catch (e) {
+          batchError.value = e?.message || '取消作业失败'
+        }
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      latest = await getJob(jobId)
+    }
+    throw new Error('出题超时')
+  } finally {
+    if (activeBatchJobId === jobId) activeBatchJobId = null
+    if (activeBatchCancel?.id === jobId) activeBatchCancel = null
   }
-  throw new Error('出题超时')
+}
+
+async function requestActiveBatchCancel() {
+  const jobId = activeBatchJobId
+  if (jobId == null) return null
+  if (activeBatchCancel?.id === jobId) return activeBatchCancel.promise
+
+  const entry = {
+    id: jobId,
+    promise: cancelJob(jobId)
+  }
+  activeBatchCancel = entry
+  try {
+    const updated = await entry.promise
+    if (activeBatchJobId === jobId) batchCancelAccepted = true
+    return updated
+  } catch (e) {
+    if (activeBatchJobId === jobId) batchCancelFailed = true
+    throw e
+  } finally {
+    if (activeBatchCancel === entry) activeBatchCancel = null
+  }
 }
 
 // ── AI 出题（全节点批量）──
@@ -512,7 +568,11 @@ async function handleBatchGenerate() {
   if (!confirm(`将对全部 ${total} 个节点各生成 ${count} 道题，耗时可能较长，是否继续？`)) return
 
   batchLoading.value = true
-  batchAbort = false
+  batchCancelRequested = false
+  batchCancelAccepted = false
+  batchCancelFailed = false
+  activeBatchJobId = null
+  activeBatchCancel = null
   batchError.value = ''
   batchResult.value = { generated: 0, dropped: 0, duplicated: 0, failed: [], cancelled: false }
   genResult.value = null
@@ -520,10 +580,7 @@ async function handleBatchGenerate() {
   const cid = courseId.value
 
   for (let i = 0; i < graphNodes.value.length; i++) {
-    if (batchAbort) {
-      batchResult.value.cancelled = true
-      break
-    }
+    if (batchCancelRequested) break
     const node = graphNodes.value[i]
     batchProgress.value = {
       index: i + 1,
@@ -536,8 +593,9 @@ async function handleBatchGenerate() {
       batchResult.value.generated += res.generated || 0
       batchResult.value.dropped += res.dropped || 0
       batchResult.value.duplicated += res.duplicated || 0
+      if (batchCancelRequested) break
     } catch (e) {
-      if (batchAbort) {
+      if (e?.code === 'BATCH_CANCELLED') {
         batchResult.value.cancelled = true
         break
       }
@@ -554,8 +612,19 @@ async function handleBatchGenerate() {
   await load()
 }
 
-function cancelBatchGenerate() {
-  batchAbort = true
+async function cancelBatchGenerate() {
+  if (!batchLoading.value || batchCancelRequested) return
+  batchCancelRequested = true
+  if (activeBatchJobId == null) return
+
+  try {
+    const updated = await requestActiveBatchCancel()
+    if (updated?.status === 4 && batchResult.value) {
+      batchResult.value.cancelled = true
+    }
+  } catch (e) {
+    batchError.value = e?.message || '取消作业失败'
+  }
 }
 
 // ── 导入题库 ──
@@ -579,10 +648,9 @@ async function handleImportFile() {
     if (isExcel) {
       const file = importFile.value
       const cid = courseId.value
-      const key = clipKey(`qie:${cid}:${file.name}:${file.size}:${file.lastModified}`)
       await startImportJob(
         (headers) => importQuestionExcel(cid, file, { headers }),
-        { requestKey: key, courseId: cid }
+        { courseId: cid }
       )
     } else {
       importLoading.value = true
@@ -608,32 +676,14 @@ async function handleAnnotate() {
     return
   }
   const cid = courseId.value
-  // 以内容哈希片段作 key 防双击
-  let keyBody = annotateJson.value
-  try {
-    keyBody = JSON.stringify(parsed)
-  } catch { /* keep raw */ }
-  const key = clipKey(`qa:${cid}:${simpleHash(keyBody)}`)
   try {
     await startAnnotateJob(
       (headers) => annotateQuestions(cid, parsed, { headers }),
-      { requestKey: key, courseId: cid }
+      { courseId: cid }
     )
   } catch (e) {
     annotateError.value = e.message || '标注失败'
   }
-}
-
-function simpleHash(s) {
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
-  return Math.abs(h).toString(16)
-}
-
-/** Idempotency-Key 后端上限 64 */
-function clipKey(k) {
-  const s = String(k)
-  return s.length <= 64 ? s : s.slice(0, 40) + simpleHash(s)
 }
 
 // ── 操作 ──

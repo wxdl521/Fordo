@@ -4,12 +4,11 @@ import { getJob, cancelJob, isJobTerminal, isJobSucceeded } from '../api/jobs.js
 const POLL_MS = 1000
 
 /**
- * 教师端 AI 作业轮询：1s 一次；离开/切课停止；双击复用 requestKey；take-latest。
+ * 教师端 AI 作业轮询：串行查询；离开/切课停止；一次用户动作复用一个幂等键。
  *
  * @param {object} [options]
  * @param {import('vue').Ref<number|null>|import('vue').ComputedRef<number|null>|(() => number|null)} [options.courseId]
- *   当前课程；切换时停止轮询并作废进行中的成功回调
- * @param {(job: object) => void} [options.onSuccess] 成功且仍属当前课程时回调
+ * @param {(job: object) => void} [options.onSuccess]
  * @param {(err: Error, job?: object) => void} [options.onError]
  * @param {number} [options.pollIntervalMs]
  */
@@ -27,12 +26,11 @@ export function useJob(options = {}) {
   const progress = ref(0)
 
   let pollTimer = null
+  let pollInFlightEpoch = null
   let disposed = false
-  /** take-latest：仅最新一次 start 可写回结果 */
   let epoch = 0
-  /** 进行中幂等键 → jobId，双击复用 */
-  const inflightByKey = new Map()
   let boundCourseId = null
+  let activeAction = null
 
   function readCourseId() {
     if (courseIdSource == null) return null
@@ -40,34 +38,202 @@ export function useJob(options = {}) {
     return unref(courseIdSource)
   }
 
+  function createRequestKey() {
+    return typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID().replace(/-/g, '')
+      : `k${Date.now()}${Math.random().toString(16).slice(2)}`
+  }
+
   function stopPolling() {
     if (pollTimer != null) {
-      clearInterval(pollTimer)
+      clearTimeout(pollTimer)
       pollTimer = null
     }
   }
 
-  function resetUi() {
-    loading.value = false
-    // 保留 job/error/progress 供 UI 展示终态，除非显式 clear
+  function clearActiveAction(myEpoch = null) {
+    if (myEpoch == null || activeAction?.epoch === myEpoch) {
+      activeAction = null
+    }
   }
 
   function clear() {
+    epoch += 1
     stopPolling()
+    clearActiveAction()
     job.value = null
     loading.value = false
     error.value = ''
     progress.value = 0
-    inflightByKey.clear()
     boundCourseId = null
+  }
+
+  function courseStillCurrent(courseAtStart) {
+    if (courseIdSource == null) return true
+    const current = readCourseId()
+    if (courseAtStart == null || current == null) {
+      return courseAtStart == null && current == null
+    }
+    return Number(current) === Number(courseAtStart)
+  }
+
+  async function handleTerminal(latest, myEpoch, courseAtStart) {
+    if (disposed || myEpoch !== epoch) return
+    loading.value = false
+    clearActiveAction(myEpoch)
+
+    if (isJobSucceeded(latest)) {
+      if (courseStillCurrent(courseAtStart) && myEpoch === epoch && onSuccess) {
+        onSuccess(latest)
+      }
+      return
+    }
+
+    error.value = latest?.errorCode || '作业失败'
+    if (onError) {
+      const terminalError = new Error(error.value)
+      terminalError.job = latest
+      onError(terminalError, latest)
+    }
+  }
+
+  function finishCancellation(myEpoch) {
+    if (disposed || myEpoch !== epoch) return
+    loading.value = false
+    clearActiveAction(myEpoch)
+  }
+
+  async function pollOnce(myEpoch, courseAtStart, cancellationObservation) {
+    if (disposed || myEpoch !== epoch) return false
+    const id = job.value?.id
+    if (id == null) return false
+
+    try {
+      const latest = await getJob(id)
+      if (disposed || myEpoch !== epoch) return false
+
+      job.value = latest
+      progress.value = latest?.progress ?? 0
+      if (!isJobTerminal(latest)) return true
+
+      if (cancellationObservation) {
+        finishCancellation(myEpoch)
+      } else {
+        await handleTerminal(latest, myEpoch, courseAtStart)
+      }
+      return false
+    } catch (pollError) {
+      if (disposed || myEpoch !== epoch) return false
+      loading.value = false
+      error.value = pollError?.message || '查询作业失败'
+      if (onError) onError(pollError, job.value)
+      return false
+    }
+  }
+
+  function schedulePoll(myEpoch, courseAtStart, cancellationObservation = false) {
+    stopPolling()
+    if (disposed || myEpoch !== epoch || isJobTerminal(job.value)) return
+    pollTimer = setTimeout(() => {
+      pollTimer = null
+      void pollLoop(myEpoch, courseAtStart, cancellationObservation)
+    }, pollIntervalMs)
+  }
+
+  async function pollLoop(myEpoch, courseAtStart, cancellationObservation) {
+    pollInFlightEpoch = myEpoch
+    let shouldContinue
+    try {
+      shouldContinue = await pollOnce(myEpoch, courseAtStart, cancellationObservation)
+    } finally {
+      if (pollInFlightEpoch === myEpoch) pollInFlightEpoch = null
+    }
+
+    const action = activeAction?.epoch === myEpoch ? activeAction : null
+    const resumeRequested = Boolean(action?.resumeRequested)
+    if (action) action.resumeRequested = false
+    if (
+      (shouldContinue || resumeRequested) &&
+      !disposed &&
+      myEpoch === epoch &&
+      !isJobTerminal(job.value)
+    ) {
+      schedulePoll(myEpoch, courseAtStart, cancellationObservation)
+    }
+  }
+
+  function applyCancellationResult(updated, myEpoch, courseAtCancel) {
+    if (disposed || myEpoch !== epoch) return
+    job.value = updated
+    progress.value = updated?.progress ?? progress.value
+    if (isJobTerminal(updated)) {
+      loading.value = false
+    } else {
+      loading.value = true
+      schedulePoll(myEpoch, courseAtCancel, true)
+    }
+  }
+
+  async function cancelKnownJob(id, myEpoch, courseAtCancel) {
+    try {
+      const updated = await cancelJob(id)
+      applyCancellationResult(updated, myEpoch, courseAtCancel)
+      return updated
+    } catch (cancelError) {
+      if (!disposed && myEpoch === epoch) {
+        loading.value = false
+        error.value = cancelError?.message || '取消失败'
+      }
+      throw cancelError
+    }
+  }
+
+  async function dispatchAction(action, dispatchFn) {
+    const { epoch: myEpoch, courseId, key } = action
+    try {
+      const created = await dispatchFn({ 'Idempotency-Key': key })
+      action.jobId = created?.id ?? null
+
+      if (action.cancelRequested) {
+        if (action.jobId != null) {
+          return cancelKnownJob(action.jobId, action.cancelEpoch, courseId)
+        }
+        if (!isJobTerminal(created)) {
+          throw new Error('派发作业未返回 ID')
+        }
+        if (!disposed && action.cancelEpoch === epoch) {
+          job.value = created
+          progress.value = created?.progress ?? 0
+          loading.value = false
+        }
+        return created
+      }
+      if (disposed || myEpoch !== epoch) return created
+
+      job.value = created
+      progress.value = created?.progress ?? 0
+      if (isJobTerminal(created)) {
+        await handleTerminal(created, myEpoch, courseId)
+      } else {
+        schedulePoll(myEpoch, courseId)
+      }
+      return created
+    } catch (dispatchError) {
+      const writeEpoch = action.cancelRequested ? action.cancelEpoch : myEpoch
+      if (disposed || writeEpoch !== epoch) return null
+      loading.value = false
+      error.value = dispatchError?.message || '派发失败'
+      clearActiveAction(writeEpoch)
+      if (onError) onError(dispatchError)
+      throw dispatchError
+    }
   }
 
   /**
    * 派发并轮询。
    * @param {(headers: Record<string,string>) => Promise<object>} dispatchFn
-   *   调用后端派发接口，须返回 AiJobVO；headers 已含 Idempotency-Key
    * @param {object} [opts]
-   * @param {string} [opts.requestKey] 幂等键；缺省自动生成
+   * @param {string} [opts.requestKey] 显式幂等键；缺省时按当前用户动作生成
    * @param {number|null} [opts.courseId] 绑定课程；缺省取 courseIdSource
    */
   async function start(dispatchFn, opts = {}) {
@@ -76,141 +242,81 @@ export function useJob(options = {}) {
     }
     if (disposed) return null
 
-    const myEpoch = ++epoch
-    const courseId = opts.courseId !== undefined ? opts.courseId : readCourseId()
-    const requestKey =
-      (opts.requestKey && String(opts.requestKey)) ||
-      (typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID().replace(/-/g, '')
-        : `k${Date.now()}${Math.random().toString(16).slice(2)}`)
-
-    // 双击：同一 requestKey 且仍在进行 → 复用原 job 继续轮询
-    const existingId = inflightByKey.get(requestKey)
-    if (existingId != null && job.value?.id === existingId && !isJobTerminal(job.value)) {
+    const requestedKey = opts.requestKey ? String(opts.requestKey) : null
+    if (
+      activeAction &&
+      activeAction.epoch === epoch &&
+      (requestedKey == null || requestedKey === activeAction.key)
+    ) {
       loading.value = true
-      ensurePolling(myEpoch)
-      return job.value
+      error.value = ''
+      if (activeAction.jobId != null && !isJobTerminal(job.value) && pollTimer == null) {
+        if (pollInFlightEpoch === epoch) {
+          activeAction.resumeRequested = true
+        } else {
+          schedulePoll(activeAction.epoch, activeAction.courseId)
+        }
+      }
+      return activeAction.promise
+    }
+
+    const myEpoch = ++epoch
+    stopPolling()
+    const courseId = opts.courseId !== undefined ? opts.courseId : readCourseId()
+    const action = {
+      cancelEpoch: null,
+      cancelRequested: false,
+      courseId,
+      epoch: myEpoch,
+      jobId: null,
+      key: requestedKey || createRequestKey(),
+      promise: null,
+      resumeRequested: false
     }
 
     boundCourseId = courseId
     loading.value = true
     error.value = ''
     progress.value = 0
-
-    try {
-      const headers = { 'Idempotency-Key': requestKey }
-      const created = await dispatchFn(headers)
-      if (disposed || myEpoch !== epoch) return created
-
-      job.value = created
-      progress.value = created?.progress ?? 0
-      inflightByKey.set(requestKey, created.id)
-
-      if (isJobTerminal(created)) {
-        await handleTerminal(created, myEpoch, courseId)
-        return created
-      }
-      ensurePolling(myEpoch)
-      return created
-    } catch (e) {
-      if (disposed || myEpoch !== epoch) return null
-      loading.value = false
-      error.value = e?.message || '派发失败'
-      if (onError) onError(e)
-      throw e
-    }
-  }
-
-  function ensurePolling(myEpoch) {
-    stopPolling()
-    pollTimer = setInterval(() => {
-      void pollOnce(myEpoch)
-    }, pollIntervalMs)
-  }
-
-  async function pollOnce(myEpoch) {
-    if (disposed || myEpoch !== epoch) {
-      stopPolling()
-      return
-    }
-    const id = job.value?.id
-    if (id == null) {
-      stopPolling()
-      return
-    }
-    try {
-      const latest = await getJob(id)
-      if (disposed || myEpoch !== epoch) return
-      job.value = latest
-      progress.value = latest?.progress ?? 0
-      if (isJobTerminal(latest)) {
-        stopPolling()
-        await handleTerminal(latest, myEpoch, boundCourseId)
-      }
-    } catch (e) {
-      if (disposed || myEpoch !== epoch) return
-      stopPolling()
-      loading.value = false
-      error.value = e?.message || '查询作业失败'
-      if (onError) onError(e, job.value)
-    }
-  }
-
-  async function handleTerminal(latest, myEpoch, courseAtStart) {
-    loading.value = false
-    // 清理 inflight
-    for (const [k, id] of [...inflightByKey.entries()]) {
-      if (id === latest?.id) inflightByKey.delete(k)
-    }
-    if (isJobSucceeded(latest)) {
-      const current = readCourseId()
-      // 仅当仍属当前课程时刷新
-      if (courseAtStart == null || current == null || Number(current) === Number(courseAtStart)) {
-        if (myEpoch === epoch && onSuccess) {
-          onSuccess(latest)
-        }
-      }
-    } else {
-      error.value = latest?.errorCode || '作业失败'
-      if (onError) {
-        const err = new Error(error.value)
-        err.job = latest
-        onError(err, latest)
-      }
-    }
+    activeAction = action
+    action.promise = dispatchAction(action, dispatchFn)
+    return action.promise
   }
 
   async function cancel() {
-    const id = job.value?.id
-    if (id == null) return null
-    const myEpoch = epoch
-    try {
-      const updated = await cancelJob(id)
-      if (disposed || myEpoch !== epoch) return updated
-      job.value = updated
-      if (isJobTerminal(updated)) {
-        stopPolling()
-        loading.value = false
-      }
-      return updated
-    } catch (e) {
-      error.value = e?.message || '取消失败'
-      throw e
+    const action = activeAction
+    if (action && action.jobId == null) {
+      const myEpoch = ++epoch
+      action.cancelRequested = true
+      action.cancelEpoch = myEpoch
+      stopPolling()
+      clearActiveAction()
+      loading.value = true
+      error.value = ''
+      return action.promise
     }
+
+    const id = action?.jobId ?? (!isJobTerminal(job.value) ? job.value?.id : null)
+    if (id == null) return null
+
+    const myEpoch = ++epoch
+    const courseAtCancel = action?.courseId ?? boundCourseId
+    stopPolling()
+    clearActiveAction()
+    error.value = ''
+    return cancelKnownJob(id, myEpoch, courseAtCancel)
   }
 
-  // 切课：停止轮询并作废 epoch（成功回调不再触发）
-  if (courseIdSource != null && typeof courseIdSource !== 'function') {
+  if (courseIdSource != null) {
     watch(
-      () => unref(courseIdSource),
-      (next, prev) => {
-        if (next !== prev) {
-          epoch += 1
-          stopPolling()
-          loading.value = false
-          inflightByKey.clear()
-          boundCourseId = next
-        }
+      () => readCourseId(),
+      (next, previous) => {
+        if (next === previous) return
+        epoch += 1
+        stopPolling()
+        clearActiveAction()
+        loading.value = false
+        boundCourseId = next
       }
     )
   }
@@ -219,14 +325,11 @@ export function useJob(options = {}) {
     disposed = true
     epoch += 1
     stopPolling()
-    inflightByKey.clear()
+    clearActiveAction()
   }
 
-  // 组件 setup 内自动清理；单测 / 非组件调用可手动 dispose()
   if (getCurrentInstance()) {
-    onBeforeUnmount(() => {
-      dispose()
-    })
+    onBeforeUnmount(dispose)
   }
 
   return {

@@ -424,25 +424,44 @@ const router = useRouter()
 const courseStore = useCourseStore()
 if (!courseStore.hydrated) courseStore.hydrate()
 
+// 多课程切换：两个异步 job 共享同一个响应式课程边界。
+const courses = ref([])
+const currentCourse = ref(null) // { id, code, name }
+const currentCourseId = computed(() => currentCourse.value?.id ?? null)
+let extractActionCourse = null
+let importActionCourse = null
+
+function sameCourse(actionCourse) {
+  if (!actionCourse || currentCourse.value?.id == null) return false
+  return Number(actionCourse.id) === Number(currentCourse.value.id)
+}
 
 const {
   loading: extractJobLoading,
   progress: extractJobProgress,
   start: startExtractJob
 } = useJob({
+  courseId: currentCourseId,
   onSuccess: (j) => {
+    const actionCourse = extractActionCourse
+    if (!sameCourse(actionCourse)) return
     const draftId = j?.result?.draftId
-    const courseCode = currentCourse.value?.code
     if (draftId) {
-      router.push({ path: '/teacher/graph-extract-review', query: { draftId, courseCode } })
+      router.push({
+        path: '/teacher/graph-extract-review',
+        query: { draftId, courseCode: actionCourse.code }
+      })
     } else {
       syllabusError.value = '抽取完成但未返回草稿 ID'
     }
     syllabusBusy.value = false
+    extractActionCourse = null
   },
   onError: (e) => {
+    if (!sameCourse(extractActionCourse)) return
     syllabusError.value = e?.message || '识别失败'
     syllabusBusy.value = false
+    extractActionCourse = null
   }
 })
 
@@ -451,21 +470,23 @@ const {
   progress: importExcelJobProgress,
   start: startImportExcelJob
 } = useJob({
+  courseId: currentCourseId,
   onSuccess: (j) => {
+    if (!sameCourse(importActionCourse)) return
     importResult.value = j?.result || {}
     importProgress.value = 100
     importUploading.value = false
+    importActionCourse = null
     reload()
   },
   onError: (e) => {
+    if (!sameCourse(importActionCourse)) return
     importError.value = e?.message || '导入失败，请检查文件格式和内容'
     importUploading.value = false
+    importActionCourse = null
   }
 })
 
-// ── 多课程切换（teacherCourseId 与各教师页共享 course store）──
-const courses = ref([])
-const currentCourse = ref(null) // { id, code, name }
 const showCourseForm = ref(false)
 const newCourseName = ref('')
 
@@ -544,15 +565,6 @@ const fileInput = ref(null)
 // ── 课程标准图片抽取状态 ──
 const syllabusBusy = ref(false)
 const syllabusError = ref('')
-
-/** Idempotency-Key 后端上限 64 */
-function clipIdemKey(k) {
-  const s = String(k)
-  if (s.length <= 64) return s
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
-  return s.slice(0, 40) + Math.abs(h).toString(16)
-}
 
 // ── 抽取历史 ──
 const showHistory = ref(false)
@@ -641,6 +653,10 @@ async function switchCourse(id) {
   const c = courses.value.find(x => x.id === Number(id))
   if (!c || (currentCourse.value && c.id === currentCourse.value.id)) return
   currentCourse.value = c
+  extractActionCourse = null
+  importActionCourse = null
+  syllabusBusy.value = false
+  importUploading.value = false
   courseStore.setTeacherCourseId(c.id)
   await reload()
 }
@@ -1191,20 +1207,25 @@ async function handleSyllabusImage(event) {
   const file = event.target.files && event.target.files[0]
   event.target.value = ''
   if (!file) return
-  const courseCode = currentCourse.value?.code
-  if (!courseCode) { alert('请先选择或新增课程'); return }
+  const actionCourse = currentCourse.value
+    ? { id: currentCourse.value.id, code: currentCourse.value.code }
+    : null
+  if (!actionCourse?.code) { alert('请先选择或新增课程'); return }
   if (syllabusBusy.value || extractJobLoading.value) return
   syllabusError.value = ''
   syllabusBusy.value = true
-  const key = clipIdemKey(`gex:${courseCode}:${file.name}:${file.size}:${file.lastModified}`)
+  extractActionCourse = actionCourse
   try {
     await startExtractJob(
-      (headers) => extractGraphFromFile(courseCode, file, { headers }),
-      { requestKey: key, courseId: currentCourse.value?.id }
+      (headers) => extractGraphFromFile(actionCourse.code, file, { headers }),
+      { courseId: actionCourse.id }
     )
   } catch (e) {
-    syllabusError.value = e.message || '识别失败'
-    syllabusBusy.value = false
+    if (sameCourse(actionCourse)) {
+      syllabusError.value = e.message || '识别失败'
+      syllabusBusy.value = false
+      extractActionCourse = null
+    }
   }
 }
 
@@ -1241,8 +1262,10 @@ async function doImport(file) {
     return
   }
 
-  const courseCode = currentCourse.value?.code
-  if (!courseCode) {
+  const actionCourse = currentCourse.value
+    ? { id: currentCourse.value.id, code: currentCourse.value.code }
+    : null
+  if (!actionCourse?.code) {
     importError.value = '请先选择或新增课程'
     return
   }
@@ -1258,22 +1281,22 @@ async function doImport(file) {
       const text = await file.text()
       const data = JSON.parse(text)
       importProgress.value = 50
-      const res = await importGraphJson(courseCode, data)
+      const res = await importGraphJson(actionCourse.code, data)
       importProgress.value = 100
       importResult.value = res || {}
       await reload()
       importUploading.value = false
     } else {
-      const key = clipIdemKey(`gie:${courseCode}:${file.name}:${file.size}:${file.lastModified}`)
+      importActionCourse = actionCourse
       await startImportExcelJob(
         (headers) =>
-          importGraphExcel(courseCode, file, {
+          importGraphExcel(actionCourse.code, file, {
             headers,
             onUploadProgress: (e) => {
               if (e.total) importProgress.value = Math.min(40, Math.round((e.loaded / e.total) * 40))
             }
           }),
-        { requestKey: key, courseId: currentCourse.value?.id }
+        { courseId: actionCourse.id }
       )
       // 轮询中进度由 job 驱动；上传完成先显示 40+
       if (importExcelJobProgress.value > 0) {
@@ -1282,8 +1305,11 @@ async function doImport(file) {
     }
   } catch (e) {
     console.error('导入失败', e)
-    importError.value = e.message || '导入失败，请检查文件格式和内容'
-    importUploading.value = false
+    if (sameCourse(actionCourse)) {
+      importError.value = e.message || '导入失败，请检查文件格式和内容'
+      importUploading.value = false
+      importActionCourse = null
+    }
   }
 }
 

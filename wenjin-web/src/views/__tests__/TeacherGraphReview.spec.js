@@ -8,6 +8,9 @@ const createEdgeMock = vi.fn()
 const fetchTeacherGraphMock = vi.fn()
 const fetchPendingEdgesMock = vi.fn()
 const fetchTeacherCoursesMock = vi.fn()
+const extractGraphFromFileMock = vi.fn()
+const importGraphExcelMock = vi.fn()
+const useJobControls = []
 
 vi.mock('../../utils/echartsGraph.js', () => {
   const chart = {
@@ -45,17 +48,22 @@ vi.mock('../../api/teacher.js', () => ({
 
 vi.mock('../../api/admin.js', () => ({
   importGraphJson: vi.fn(),
-  importGraphExcel: vi.fn(),
-  extractGraphFromFile: vi.fn(),
+  importGraphExcel: (...a) => importGraphExcelMock(...a),
+  extractGraphFromFile: (...a) => extractGraphFromFileMock(...a),
   fetchExtractionReviews: vi.fn().mockResolvedValue([])
 }))
 
 vi.mock('../../composables/useJob.js', () => ({
-  useJob: () => ({
-    loading: { value: false },
-    progress: { value: 0 },
-    start: vi.fn()
-  })
+  useJob: (options) => {
+    const control = {
+      options,
+      loading: { value: false },
+      progress: { value: 0 },
+      start: vi.fn().mockResolvedValue({ id: 1, status: 0, progress: 0 })
+    }
+    useJobControls.push(control)
+    return control
+  }
 }))
 
 vi.mock('../../api/jobs.js', () => ({
@@ -101,6 +109,7 @@ function api() {
 describe('TeacherGraphReview edge create', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    useJobControls.length = 0
     fetchTeacherCoursesMock.mockResolvedValue([
       { id: 1, name: '软件工程', code: 'SE', published: true }
     ])
@@ -113,6 +122,8 @@ describe('TeacherGraphReview edge create', () => {
     })
     fetchPendingEdgesMock.mockResolvedValue([])
     createEdgeMock.mockResolvedValue(99)
+    extractGraphFromFileMock.mockResolvedValue({ id: 20, status: 0, progress: 0 })
+    importGraphExcelMock.mockResolvedValue({ id: 21, status: 0, progress: 0 })
   })
 
   afterEach(() => {
@@ -201,5 +212,105 @@ describe('TeacherGraphReview edge create', () => {
       targetNodeCode: 'N2',
       relationType: 2
     })
+  })
+
+  it('binds both jobs to one reactive course id and lets useJob own random request keys', async () => {
+    fetchTeacherCoursesMock.mockResolvedValue([
+      { id: 1, name: '软件工程', code: 'SE', published: true },
+      { id: 2, name: '数据库', code: 'DB', published: true }
+    ])
+    const wrapper = await mountReview()
+    const hook = api()
+    const [extractControl, importControl] = useJobControls
+
+    expect(useJobControls).toHaveLength(2)
+    expect(extractControl.options.courseId).toBe(importControl.options.courseId)
+    expect(extractControl.options.courseId.value).toBe(1)
+
+    const syllabusFile = new File(['syllabus'], 'course.pdf', { type: 'application/pdf' })
+    const syllabusInput = wrapper.find('input[accept*="image/png"]')
+    Object.defineProperty(syllabusInput.element, 'files', {
+      configurable: true,
+      value: [syllabusFile]
+    })
+    await syllabusInput.trigger('change')
+    await flushPromises()
+
+    expect(extractControl.start).toHaveBeenCalledTimes(1)
+    const [extractDispatch, extractOptions] = extractControl.start.mock.calls[0]
+    expect(extractOptions).toEqual({ courseId: 1 })
+    await extractDispatch({ 'Idempotency-Key': 'random-extract-key' })
+    expect(extractGraphFromFileMock).toHaveBeenCalledWith('SE', syllabusFile, {
+      headers: { 'Idempotency-Key': 'random-extract-key' }
+    })
+
+    hook.openImport()
+    await nextTick()
+    const excelFile = new File(['excel'], 'graph.xlsx')
+    const importInput = wrapper.find('input[accept=".json,.xlsx,.xls"]')
+    Object.defineProperty(importInput.element, 'files', {
+      configurable: true,
+      value: [excelFile]
+    })
+    await importInput.trigger('change')
+    await flushPromises()
+
+    expect(importControl.start).toHaveBeenCalledTimes(1)
+    const [importDispatch, importOptions] = importControl.start.mock.calls[0]
+    expect(importOptions).toEqual({ courseId: 1 })
+    await importDispatch({ 'Idempotency-Key': 'random-import-key' })
+    expect(importGraphExcelMock).toHaveBeenCalledWith(
+      'SE',
+      excelFile,
+      expect.objectContaining({ headers: { 'Idempotency-Key': 'random-import-key' } })
+    )
+
+    await hook.switchCourse(2)
+    expect(extractControl.options.courseId.value).toBe(2)
+    expect(importControl.options.courseId.value).toBe(2)
+  })
+
+  it('does not let stale course-A job callbacks navigate or reload course B', async () => {
+    fetchTeacherCoursesMock.mockResolvedValue([
+      { id: 1, name: '软件工程', code: 'SE', published: true },
+      { id: 2, name: '数据库', code: 'DB', published: true }
+    ])
+    const wrapper = await mountReview()
+    const hook = api()
+    const [extractControl, importControl] = useJobControls
+
+    const syllabusFile = new File(['syllabus'], 'course.pdf', { type: 'application/pdf' })
+    const syllabusInput = wrapper.find('input[accept*="image/png"]')
+    Object.defineProperty(syllabusInput.element, 'files', {
+      configurable: true,
+      value: [syllabusFile]
+    })
+    await syllabusInput.trigger('change')
+    await flushPromises()
+
+    hook.openImport()
+    await nextTick()
+    const excelFile = new File(['excel'], 'graph.xlsx')
+    const importInput = wrapper.find('input[accept=".json,.xlsx,.xls"]')
+    Object.defineProperty(importInput.element, 'files', {
+      configurable: true,
+      value: [excelFile]
+    })
+    await importInput.trigger('change')
+    await flushPromises()
+
+    await hook.switchCourse(2)
+    await flushPromises()
+    fetchTeacherGraphMock.mockClear()
+    fetchPendingEdgesMock.mockClear()
+
+    extractControl.options.onSuccess({ result: { draftId: 'draft-A' } })
+    importControl.options.onSuccess({ result: { nodeCount: 1, edgeCount: 0 } })
+    await flushPromises()
+
+    expect(wrapper.vm.$router.currentRoute.value.path).toBe('/teacher/graph')
+    expect(wrapper.vm.$router.currentRoute.value.query.courseCode).not.toBe('DB')
+    expect(fetchTeacherGraphMock).not.toHaveBeenCalled()
+    expect(fetchPendingEdgesMock).not.toHaveBeenCalled()
   })
 })
