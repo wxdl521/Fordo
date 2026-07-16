@@ -259,4 +259,36 @@ describe('ColorMap session/course/graph wiring', () => {
     expect(panel.attributes('data-error')).toBe('course B review failed')
     wrapper.unmount()
   })
+
+  it('aborts and clears review state when logout invalidates the course context', async () => {
+    const review = deferred()
+    fetchTodayReviewMock.mockReturnValue(review.promise)
+    const { wrapper, pinia } = await mountMap({})
+    useCourseStore(pinia).setStudentCourseId(1)
+    await nextTick()
+    await flushPromises()
+
+    expect(fetchTodayReviewMock).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+    const signal = fetchTodayReviewMock.mock.calls[0][1].signal
+    const state = wrapper.vm.$.setupState
+
+    useSessionStore(pinia).clearSession()
+    await nextTick()
+
+    expect.soft(signal.aborted).toBe(true)
+    expect.soft(state.reviewItems).toEqual([])
+    expect.soft(state.reviewError).toBe('')
+    expect.soft(state.reviewLoading).toBe(false)
+
+    review.reject(new Error('late review failed'))
+    await flushPromises()
+
+    expect(state.reviewItems).toEqual([])
+    expect(state.reviewError).toBe('')
+    expect(state.reviewLoading).toBe(false)
+    wrapper.unmount()
+  })
 })

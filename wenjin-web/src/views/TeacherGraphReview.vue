@@ -547,7 +547,7 @@ function isAbortError(err) {
 }
 
 function isCurrentCourse(courseId) {
-  return Number(currentCourse.value?.id) === Number(courseId)
+  return !disposed && Number(currentCourse.value?.id) === Number(courseId)
 }
 
 // ── 连线模式 ──
@@ -738,6 +738,7 @@ async function togglePublish() {
 }
 
 async function reload() {
+  if (disposed) return
   const courseId = Number(currentCourse.value?.id)
   if (!(courseId > 0)) {
     graphRequest.cancel()
@@ -770,12 +771,12 @@ async function reload() {
       renderChart()
       return true
     } catch (err) {
-      if (!graphRun.isCurrent() || isAbortError(err)) return false
+      if (!graphRun.isCurrent() || !isCurrentCourse(courseId) || isAbortError(err)) return false
       console.error('加载图谱失败', err)
       graphError.value = err.message || '网络错误'
       return false
     } finally {
-      if (graphRun.isCurrent()) graphLoading.value = false
+      if (graphRun.isCurrent() && isCurrentCourse(courseId)) graphLoading.value = false
     }
   }
 
@@ -786,12 +787,12 @@ async function reload() {
       pending.value = result.data || result
       return true
     } catch (err) {
-      if (!pendingRun.isCurrent() || isAbortError(err)) return false
+      if (!pendingRun.isCurrent() || !isCurrentCourse(courseId) || isAbortError(err)) return false
       console.error('加载待复核边失败', err)
       pendingError.value = err.message || '网络错误'
       return false
     } finally {
-      if (pendingRun.isCurrent()) pendingLoading.value = false
+      if (pendingRun.isCurrent() && isCurrentCourse(courseId)) pendingLoading.value = false
     }
   }
 
@@ -1450,6 +1451,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeydown)
   document.removeEventListener('click', closeMenus, true)
   document.removeEventListener('click', closeDropdowns)
+  if (window.__wjTeacherGraph?.reload === reload) delete window.__wjTeacherGraph
   if (chart) disposeChart(chart)
 })
 

@@ -321,6 +321,12 @@ function isAbortError(err) {
   return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
 }
 
+function isCurrentReviewContext(request, userId, id) {
+  return request.isCurrent()
+    && Number(courseId.value) === id
+    && currentUser.value?.id === userId
+}
+
 const reviewCount = computed(() => {
   if (reviewTotalCount.value > 0) return reviewTotalCount.value
   return reviewItems.value.length
@@ -344,20 +350,16 @@ async function loadReview() {
   reviewTotalCount.value = 0
   try {
     const vo = await fetchTodayReview(id, { signal: request.signal })
-    if (
-      !request.isCurrent() ||
-      Number(courseId.value) !== id ||
-      currentUser.value?.id !== userId
-    ) return
+    if (!isCurrentReviewContext(request, userId, id)) return
     reviewItems.value = vo?.items || []
     reviewTotalCount.value = vo?.totalDecayingCount ?? reviewItems.value.length
   } catch (e) {
-    if (!request.isCurrent() || isAbortError(e)) return
+    if (!isCurrentReviewContext(request, userId, id) || isAbortError(e)) return
     reviewError.value = e.message || '加载复习队列失败'
     reviewItems.value = []
     reviewTotalCount.value = 0
   } finally {
-    if (request.isCurrent()) reviewLoading.value = false
+    if (isCurrentReviewContext(request, userId, id)) reviewLoading.value = false
   }
 }
 
@@ -843,7 +845,7 @@ watch(courseId, () => {
   mapIn.value = false
   selectedId.value = null
   hoverId.value = null
-  if (currentUser.value) loadReview()
+  loadReview()
 })
 
 // ── 布局 ──

@@ -323,6 +323,7 @@ const data = ref(null)
 const loading = ref(false)
 const loadError = ref('')
 const questionsRequest = createLatestRequest()
+let disposed = false
 
 const confOptions = [
   { value: '', label: '全部' },
@@ -364,6 +365,10 @@ const approveAllMessage = ref('')
 
 function isAbortError(err) {
   return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+}
+
+function isActiveCourse(id) {
+  return !disposed && Number(courseId.value) === Number(id)
 }
 
 // ── 计算属性 ──
@@ -410,6 +415,7 @@ const totalPages = computed(() => {
 
 // ── 数据加载 ──
 async function load() {
+  if (disposed) return
   const id = Number(courseId.value)
   if (!(id > 0)) {
     questionsRequest.cancel()
@@ -432,19 +438,20 @@ async function load() {
   data.value = null
   try {
     const res = await fetchQuestions(params, { signal: request.signal })
-    if (!request.isCurrent() || Number(courseId.value) !== id) return
+    if (!request.isCurrent() || !isActiveCourse(id)) return
     data.value = res
   } catch (err) {
-    if (!request.isCurrent() || isAbortError(err)) return
+    if (!request.isCurrent() || !isActiveCourse(id) || isAbortError(err)) return
     console.error('加载题目失败', err)
     loadError.value = err?.message || '加载题目失败'
   } finally {
-    if (request.isCurrent()) loading.value = false
+    if (request.isCurrent() && isActiveCourse(id)) loading.value = false
   }
 }
 
 // ── 加载图谱节点 ──
 async function loadGraphNodes() {
+  if (disposed) return
   const id = Number(courseId.value)
   if (!(id > 0)) {
     graphNodesRequest.cancel()
@@ -461,7 +468,7 @@ async function loadGraphNodes() {
   genNodeCode.value = ''
   try {
     const graph = await fetchTeacherGraph(id, { signal: request.signal })
-    if (!request.isCurrent() || Number(courseId.value) !== id) return
+    if (!request.isCurrent() || !isActiveCourse(id)) return
     graphNodes.value = (graph.nodes || []).sort((a, b) => a.nodeCode.localeCompare(b.nodeCode))
     if (graphNodes.value.length > 0) {
       const stillValid = graphNodes.value.some(n => n.nodeCode === genNodeCode.value)
@@ -470,13 +477,13 @@ async function loadGraphNodes() {
       genNodeCode.value = ''
     }
   } catch (err) {
-    if (!request.isCurrent() || isAbortError(err)) return
+    if (!request.isCurrent() || !isActiveCourse(id) || isAbortError(err)) return
     console.error('加载图谱节点失败', err)
     graphNodes.value = []
     genNodeCode.value = ''
     graphNodesError.value = err?.message || '加载图谱节点失败'
   } finally {
-    if (request.isCurrent()) graphNodesLoading.value = false
+    if (request.isCurrent() && isActiveCourse(id)) graphNodesLoading.value = false
   }
 }
 
@@ -764,8 +771,11 @@ function clearChecked() {
 }
 
 async function review(ids, action) {
+  const id = Number(courseId.value)
+  if (disposed || !(id > 0)) return
   try {
-    await reviewQuestions(courseId.value, ids, action)
+    await reviewQuestions(id, ids, action)
+    if (!isActiveCourse(id)) return
     checked.value = {}
     await load()
   } catch (err) {
@@ -847,8 +857,10 @@ watch(courseId, () => {
 }, { immediate: true })
 
 onUnmounted(() => {
+  disposed = true
   questionsRequest.cancel()
   graphNodesRequest.cancel()
+  if (window.__wjTeacherQuestions?.load === load) delete window.__wjTeacherQuestions
 })
 
 // ── DEV 钩子 ──

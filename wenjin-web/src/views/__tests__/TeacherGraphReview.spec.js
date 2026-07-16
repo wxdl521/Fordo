@@ -562,4 +562,21 @@ describe('TeacherGraphReview edge create', () => {
       .toHaveLength(0)
     expect(window.__wjTeacherGraph).toBeUndefined()
   })
+
+  it('removes the DEV hook and refuses captured reloads after normal unmount', async () => {
+    const wrapper = await mountReview()
+    const hook = api()
+    expect(hook).toBeTruthy()
+    fetchTeacherGraphMock.mockClear()
+    fetchPendingEdgesMock.mockClear()
+
+    wrapper.unmount()
+    expect.soft(window.__wjTeacherGraph).toBeUndefined()
+
+    await hook.reload()
+    await flushPromises()
+
+    expect(fetchTeacherGraphMock).not.toHaveBeenCalled()
+    expect(fetchPendingEdgesMock).not.toHaveBeenCalled()
+  })
 })

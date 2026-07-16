@@ -124,6 +124,7 @@ describe('TeacherQuestionPool batch job cancellation', () => {
     vi.restoreAllMocks()
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    delete window.__wjTeacherQuestions
   })
 
   it('cancels the server job even when cancel is clicked before dispatch returns', async () => {
@@ -307,5 +308,33 @@ describe('TeacherQuestionPool batch job cancellation', () => {
     expect(wrapper.get('[data-testid="graph-nodes-error"]').text()).toContain('course B graph failed')
     expect(wrapper.text()).not.toContain('A graph node')
     wrapper.unmount()
+  })
+
+  it('does not reload or write state when review resolves after unmount', async () => {
+    const review = deferred()
+    mocks.fetchQuestions.mockResolvedValue(questionPage('A'))
+    mocks.reviewQuestions.mockReturnValue(review.promise)
+    const wrapper = await mountPool()
+    const hook = window.__wjTeacherQuestions
+    expect(hook).toBeTruthy()
+    const mountedState = hook.state()
+
+    mocks.fetchQuestions.mockReset()
+    mocks.fetchQuestions.mockResolvedValue(questionPage('late'))
+    mocks.fetchTeacherGraph.mockClear()
+    const passButton = wrapper.findAll('button').find((button) => button.text() === '通过')
+    expect(passButton).toBeTruthy()
+    await passButton.trigger('click')
+    expect(mocks.reviewQuestions).toHaveBeenCalledWith(1, ['A-question'], 'pass')
+
+    wrapper.unmount()
+    expect.soft(window.__wjTeacherQuestions).toBeUndefined()
+
+    review.resolve()
+    await flushPromises()
+
+    expect.soft(mocks.fetchQuestions).not.toHaveBeenCalled()
+    expect.soft(mocks.fetchTeacherGraph).not.toHaveBeenCalled()
+    expect(hook.state()).toBe(mountedState)
   })
 })
