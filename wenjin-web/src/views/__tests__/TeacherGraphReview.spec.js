@@ -499,6 +499,64 @@ describe('TeacherGraphReview edge create', () => {
     wrapper.unmount()
   })
 
+  it('invalidates course A history when loadCourses indirectly replaces the course', async () => {
+    fetchTeacherCoursesMock.mockReset()
+    fetchTeacherCoursesMock
+      .mockResolvedValueOnce([
+        { id: 1, name: 'Course A', code: 'A', published: true },
+        { id: 2, name: 'Course B', code: 'B', published: true }
+      ])
+      .mockResolvedValueOnce([
+        { id: 2, name: 'Course B', code: 'B', published: true }
+      ])
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const wrapper = await mountReview()
+    const historyA = deferred()
+    const historyB = deferred()
+    fetchExtractionReviewsMock.mockReset()
+    fetchExtractionReviewsMock.mockImplementation((code) => (
+      code === 'A' ? historyA.promise : historyB.promise
+    ))
+
+    const graphMenu = wrapper.findAll('button').find((button) => button.text().includes('图谱操作'))
+    await graphMenu.trigger('click')
+    const historyButton = wrapper.findAll('button').find((button) => button.text().includes('抽取历史'))
+    await historyButton.trigger('click')
+    await nextTick()
+    const historyASignal = fetchExtractionReviewsMock.mock.calls[0][1].signal
+
+    const courseMenu = wrapper.findAll('button').find((button) => button.text().includes('课程管理'))
+    await courseMenu.trigger('click')
+    const deleteButton = wrapper.findAll('button').find((button) => button.text().includes('删除当前课程'))
+    await deleteButton.trigger('click')
+    await flushPromises()
+
+    expect.soft(historyASignal.aborted).toBe(true)
+    expect(wrapper.text()).toContain('Course B')
+
+    const closeHistory = wrapper.findAll('button').find((button) => button.text() === '关闭')
+    await closeHistory.trigger('click')
+    await graphMenu.trigger('click')
+    const historyButtonB = wrapper.findAll('button').find((button) => button.text().includes('抽取历史'))
+    await historyButtonB.trigger('click')
+    historyB.resolve([{
+      createdAt: 'B-history-ok',
+      nodeRecall: 1,
+      nodePrecision: 1,
+      nodeKeptCount: 1,
+      nodeDeletedCount: 0,
+      nodeAddedCount: 0,
+      edgeRecall: 1
+    }])
+    await flushPromises()
+    expect(wrapper.text()).toContain('B-history-ok')
+
+    historyA.reject(new Error('course A history failed late'))
+    await flushPromises()
+    expect(wrapper.text()).toContain('B-history-ok')
+    wrapper.unmount()
+  })
+
   it('stops mount work when unmounted while courses are still loading', async () => {
     const courses = deferred()
     fetchTeacherCoursesMock.mockReset()

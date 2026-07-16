@@ -600,7 +600,7 @@ async function openHistory() {
     if (!request.isCurrent() || !isCurrentCourse(actionCourse.id)) return
     reviews.value = result
   } catch (err) {
-    if (!request.isCurrent() || isAbortError(err)) return
+    if (!request.isCurrent() || !isCurrentCourse(actionCourse.id) || isAbortError(err)) return
     reviews.value = []
   }
 }
@@ -669,6 +669,7 @@ async function loadCourses(preferId) {
     graphRequest.cancel()
     pendingRequest.cancel()
     historyRequest.cancel()
+    reviews.value = []
     currentCourse.value = null
     courseStore.setTeacherCourseId(null)
     graph.value = { nodes: [], edges: [] }
@@ -682,7 +683,13 @@ async function loadCourses(preferId) {
     return
   }
   const saved = preferId ?? courseStore.teacherCourseId
-  currentCourse.value = courses.value.find(c => c.id === saved) || courses.value[0]
+  const previousCourseId = Number(currentCourse.value?.id)
+  const nextCourse = courses.value.find(c => c.id === saved) || courses.value[0]
+  if (Number(nextCourse.id) !== previousCourseId) {
+    historyRequest.cancel()
+    reviews.value = []
+  }
+  currentCourse.value = nextCourse
   courseStore.setTeacherCourseId(currentCourse.value.id)
 }
 

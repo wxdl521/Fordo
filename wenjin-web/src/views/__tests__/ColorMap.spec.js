@@ -130,6 +130,7 @@ describe('ColorMap session/course/graph wiring', () => {
 
   afterEach(() => {
     localStorage.clear()
+    delete window.__wjColorMap
   })
 
   it('uses store courseId (no || 1 fallback) and shows empty without course', async () => {
@@ -290,5 +291,45 @@ describe('ColorMap session/course/graph wiring', () => {
     expect(state.reviewError).toBe('')
     expect(state.reviewLoading).toBe(false)
     wrapper.unmount()
+  })
+
+  it('aborts review on logout when the course id remains pinned by the route query', async () => {
+    const review = deferred()
+    fetchTodayReviewMock.mockReturnValue(review.promise)
+    const { wrapper, pinia } = await mountMap({ courseId: '1' })
+    const signal = fetchTodayReviewMock.mock.calls[0][1].signal
+    const state = wrapper.vm.$.setupState
+
+    useSessionStore(pinia).clearSession()
+    await nextTick()
+
+    expect.soft(courseIdPassed()).toBe(1)
+    expect.soft(signal.aborted).toBe(true)
+    expect.soft(state.reviewItems).toEqual([])
+    expect.soft(state.reviewError).toBe('')
+    expect.soft(state.reviewLoading).toBe(false)
+
+    review.reject(new Error('query review failed late'))
+    await flushPromises()
+
+    expect(state.reviewItems).toEqual([])
+    expect(state.reviewError).toBe('')
+    expect(state.reviewLoading).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('removes the DEV hook and refuses captured review loads after unmount', async () => {
+    const { wrapper } = await mountMap({ courseId: '1' })
+    const hook = window.__wjColorMap
+    expect(hook).toBeTruthy()
+    fetchTodayReviewMock.mockClear()
+
+    wrapper.unmount()
+    expect.soft(window.__wjColorMap).toBeUndefined()
+
+    await hook.loadReview()
+    await flushPromises()
+
+    expect(fetchTodayReviewMock).not.toHaveBeenCalled()
   })
 })

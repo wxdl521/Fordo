@@ -316,13 +316,15 @@ const reviewTotalCount = ref(0)
 const reviewLoading = ref(false)
 const reviewError = ref('')
 const reviewRequest = createLatestRequest()
+let disposed = false
 
 function isAbortError(err) {
   return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
 }
 
 function isCurrentReviewContext(request, userId, id) {
-  return request.isCurrent()
+  return !disposed
+    && request.isCurrent()
     && Number(courseId.value) === id
     && currentUser.value?.id === userId
 }
@@ -333,6 +335,7 @@ const reviewCount = computed(() => {
 })
 
 async function loadReview() {
+  if (disposed) return
   const userId = currentUser.value?.id
   const id = Number(courseId.value)
   if (!userId || !(id > 0)) {
@@ -839,12 +842,14 @@ const hoverTip = computed(() => {
   }
 })
 
-// ── 课程切换：清空布局，避免旧图残留；再刷复习队列 ──
-watch(courseId, () => {
-  layout.value = null
-  mapIn.value = false
-  selectedId.value = null
-  hoverId.value = null
+// ── 课程/用户边界变化：作废旧复习请求；切课时同时清空布局 ──
+watch([courseId, () => currentUser.value?.id], ([nextCourseId], [previousCourseId]) => {
+  if (nextCourseId !== previousCourseId) {
+    layout.value = null
+    mapIn.value = false
+    selectedId.value = null
+    hoverId.value = null
+  }
   loadReview()
 })
 
@@ -861,9 +866,11 @@ onMounted(() => {
   window.addEventListener('keyup', onKeyUp)
 })
 onUnmounted(() => {
+  disposed = true
   reviewRequest.cancel()
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('keyup', onKeyUp)
+  if (window.__wjColorMap?.loadReview === loadReview) delete window.__wjColorMap
 })
 
 function buildLayout() {
