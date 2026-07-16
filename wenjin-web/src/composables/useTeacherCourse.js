@@ -1,7 +1,9 @@
-import { computed, onMounted } from 'vue'
+import { computed, getCurrentInstance, onBeforeUnmount, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { fetchTeacherCourses } from '../api/teacher.js'
 import { useCourseStore } from '../store/course.js'
+import { useSessionStore } from '../store/session.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 
 export { TEACHER_COURSE_KEY as LS_KEY } from '../store/course.js'
 
@@ -12,22 +14,42 @@ export { TEACHER_COURSE_KEY as LS_KEY } from '../store/course.js'
 export function useTeacherCourse(options = {}) {
   const { autoLoad = true } = options
   const courseStore = useCourseStore()
+  const sessionStore = useSessionStore()
   if (!courseStore.hydrated) courseStore.hydrate()
+  const coursesRequest = createLatestRequest()
+  let disposed = false
 
   const { teacherCourses: courses, teacherCourseId } = storeToRefs(courseStore)
   const currentCourse = computed(() => courseStore.teacherCourse)
   const courseId = computed(() => courseStore.teacherCourseId)
 
+  function isAbortError(err) {
+    return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+  }
+
+  function isCurrentOwner(request, owner) {
+    return !disposed
+      && request.isCurrent()
+      && sessionStore.token === owner.token
+      && sessionStore.userId === owner.userId
+  }
+
   /**
    * @param {unknown} [preferId]
    */
   async function loadCourses(preferId) {
+    if (disposed) return null
+    const request = coursesRequest.next()
+    const owner = { token: sessionStore.token, userId: sessionStore.userId }
     try {
-      const list = await fetchTeacherCourses()
+      const list = await fetchTeacherCourses({ signal: request.signal })
+      if (!isCurrentOwner(request, owner)) return null
       courseStore.setTeacherCourses(Array.isArray(list) ? list : [])
-    } catch {
+    } catch (err) {
+      if (!isCurrentOwner(request, owner) || isAbortError(err)) return null
       courseStore.setTeacherCourses([])
     }
+    if (!isCurrentOwner(request, owner)) return null
     return courseStore.selectTeacherCourse(preferId)
   }
 
@@ -43,7 +65,14 @@ export function useTeacherCourse(options = {}) {
 
   if (autoLoad) {
     onMounted(() => {
-      loadCourses()
+      void loadCourses()
+    })
+  }
+
+  if (getCurrentInstance()) {
+    onBeforeUnmount(() => {
+      disposed = true
+      coursesRequest.cancel()
     })
   }
 

@@ -558,6 +558,24 @@ const edgeTypePopup = ref({ visible: false, x: 0, y: 0, source: null, target: nu
 const edgeSaving = ref(false)
 const edgeError = ref(null)
 
+function resetEdgeActionState() {
+  linkMode.value = false
+  linkSource.value = null
+  edgeTypePopup.value = { visible: false, x: 0, y: 0, source: null, target: null }
+  edgeSaving.value = false
+  edgeError.value = null
+}
+
+function resetCourseActionOwnership() {
+  historyRequest.cancel()
+  reviews.value = []
+  resetEdgeActionState()
+  extractActionCourse = null
+  importActionCourse = null
+  syllabusBusy.value = false
+  importUploading.value = false
+}
+
 /** 中文关系标签 → 数据库编码 1..4 */
 const RELATION_TYPE_CODE = { '前置': 1, '包含': 2, '相关': 3, '应用': 4 }
 
@@ -671,10 +689,9 @@ async function loadCourses(preferId) {
     courses.value = Array.isArray(list) ? list : []
     courseStore.setTeacherCourses(courses.value)
     if (courses.value.length === 0) {
+      resetCourseActionOwnership()
       graphRequest.cancel()
       pendingRequest.cancel()
-      historyRequest.cancel()
-      reviews.value = []
       currentCourse.value = null
       courseStore.setTeacherCourseId(null)
       graph.value = { nodes: [], edges: [] }
@@ -691,8 +708,7 @@ async function loadCourses(preferId) {
     const previousCourseId = Number(currentCourse.value?.id)
     const nextCourse = courses.value.find(c => c.id === saved) || courses.value[0]
     if (Number(nextCourse.id) !== previousCourseId) {
-      historyRequest.cancel()
-      reviews.value = []
+      resetCourseActionOwnership()
     }
     currentCourse.value = nextCourse
     courseStore.setTeacherCourseId(currentCourse.value.id)
@@ -706,13 +722,9 @@ async function loadCourses(preferId) {
 async function switchCourse(id) {
   const c = courses.value.find(x => x.id === Number(id))
   if (!c || (currentCourse.value && c.id === currentCourse.value.id)) return
+  coursesRequest.cancel()
+  resetCourseActionOwnership()
   currentCourse.value = c
-  historyRequest.cancel()
-  reviews.value = []
-  extractActionCourse = null
-  importActionCourse = null
-  syllabusBusy.value = false
-  importUploading.value = false
   courseStore.setTeacherCourseId(c.id)
   await reload()
 }
@@ -1072,11 +1084,7 @@ function toggleLinkMode() {
 }
 
 function exitLinkMode() {
-  linkMode.value = false
-  linkSource.value = null
-  edgeTypePopup.value = { visible: false, x: 0, y: 0, source: null, target: null }
-  edgeError.value = null
-  edgeSaving.value = false
+  resetEdgeActionState()
   highlightLinkSource() // 清除高亮
 }
 

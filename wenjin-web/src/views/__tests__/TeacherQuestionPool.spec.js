@@ -527,4 +527,57 @@ describe('TeacherQuestionPool batch job cancellation', () => {
     expect(state.batchResult).toEqual({ generated: 9, dropped: 0, duplicated: 0, failed: [], cancelled: false, course: 'B' })
     wrapper.unmount()
   })
+
+  it.each([
+    ['success', 'resolve'],
+    ['failure', 'reject']
+  ])('ignores same-course run 1 cancellation %s after run 2 starts', async (_label, outcome) => {
+    const staleCancellation = deferred()
+    mocks.fetchTeacherGraph.mockResolvedValue({
+      nodes: [{ nodeCode: 'N1', name: '节点一' }],
+      edges: []
+    })
+    mocks.generateQuestions
+      .mockResolvedValueOnce({ id: 73, status: 1, progress: 0 })
+      .mockResolvedValueOnce({ id: 74, status: 1, progress: 0 })
+    mocks.cancelJob.mockReturnValue(staleCancellation.promise)
+    const wrapper = await mountPool()
+    const state = wrapper.vm.$.setupState
+
+    const run1Promise = state.handleBatchGenerate()
+    await flushPromises()
+    expect(mocks.generateQuestions).toHaveBeenCalledTimes(1)
+    const staleCancelPromise = state.cancelBatchGenerate()
+    expect(mocks.cancelJob).toHaveBeenCalledWith(73)
+
+    const run2Promise = state.handleBatchGenerate()
+    await flushPromises()
+    expect(mocks.generateQuestions).toHaveBeenCalledTimes(2)
+    const run2Progress = { ...state.batchProgress }
+    const run2Result = { ...state.batchResult, failed: [...state.batchResult.failed] }
+
+    if (outcome === 'resolve') {
+      staleCancellation.resolve({ id: 73, status: 4, progress: 0, errorCode: 'CANCELLED' })
+    } else {
+      staleCancellation.reject(new Error('run 1 cancellation failed'))
+    }
+    await staleCancelPromise
+    await flushPromises()
+
+    expect.soft(state.batchLoading).toBe(true)
+    expect.soft(state.batchProgress).toEqual(run2Progress)
+    expect.soft(state.batchResult).toEqual(run2Result)
+    expect.soft(state.batchError).toBe('')
+    expect.soft(state.batchCancelRequested).toBe(false)
+    expect.soft(state.batchCancelAccepted).toBe(false)
+    expect.soft(state.batchCancelFailed).toBe(false)
+    expect.soft(state.activeBatchJobId).toBe(74)
+    expect.soft(state.activeBatchCancel).toBeNull()
+    expect.soft(state.batchActionCourseId).toBe(1)
+    expect.soft(mocks.cancelJob).toHaveBeenCalledTimes(1)
+
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(1000)
+    await Promise.all([run1Promise, run2Promise])
+  })
 })

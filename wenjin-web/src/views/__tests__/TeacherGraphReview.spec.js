@@ -525,6 +525,25 @@ describe('TeacherGraphReview edge create', () => {
       ])
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = await mountReview()
+    const edgeAction = deferred()
+    createEdgeMock.mockReturnValue(edgeAction.promise)
+    const hook = api()
+    const state = wrapper.vm.$.setupState
+    hook.setLinkEndpoints('A-SOURCE', 'A-TARGET')
+    const edgePromise = hook.confirmEdgeType('前置')
+    await nextTick()
+    state.edgeError = 'course A edge error'
+
+    const extractAction = deferred()
+    const importAction = deferred()
+    useJobControls[0].start.mockReturnValue(extractAction.promise)
+    useJobControls[1].start.mockReturnValue(importAction.promise)
+    const syllabusTarget = { files: [new File(['syllabus'], 'course.pdf')], value: 'selected' }
+    const extractPromise = state.handleSyllabusImage({ target: syllabusTarget })
+    const importPromise = state.doImport(new File(['excel'], 'graph.xlsx'))
+    await nextTick()
+    expect.soft(state.syllabusBusy).toBe(true)
+    expect.soft(state.importUploading).toBe(true)
     const historyA = deferred()
     const historyB = deferred()
     fetchExtractionReviewsMock.mockReset()
@@ -547,6 +566,21 @@ describe('TeacherGraphReview edge create', () => {
 
     expect.soft(historyASignal.aborted).toBe(true)
     expect(wrapper.text()).toContain('Course B')
+    expect.soft(hook.state().edgeSaving).toBe(false)
+    expect.soft(hook.state().edgeError).toBeNull()
+    expect.soft(hook.state().edgeTypePopup).toEqual({ visible: false, x: 0, y: 0, source: null, target: null })
+    expect.soft(hook.state().linkMode).toBe(false)
+    expect.soft(hook.state().linkSource).toBeNull()
+    expect.soft(state.syllabusBusy).toBe(false)
+    expect.soft(state.importUploading).toBe(false)
+    expect.soft(state.extractActionCourse).toBeNull()
+    expect.soft(state.importActionCourse).toBeNull()
+
+    edgeAction.resolve(99)
+    extractAction.resolve({ id: 20, status: 0 })
+    importAction.resolve({ id: 21, status: 0 })
+    await Promise.all([edgePromise, extractPromise, importPromise])
+    await flushPromises()
 
     const closeHistory = wrapper.findAll('button').find((button) => button.text() === '关闭')
     await closeHistory.trigger('click')
@@ -611,30 +645,56 @@ describe('TeacherGraphReview edge create', () => {
     wrapper.unmount()
   })
 
-  it('does not publish stale edge-creation errors into course B', async () => {
+  it('resets course A edge action state so course B can create its own edge', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     fetchTeacherCoursesMock.mockResolvedValue([
       { id: 1, name: 'Course A', code: 'A', published: true },
       { id: 2, name: 'Course B', code: 'B', published: true }
     ])
-    const action = deferred()
-    createEdgeMock.mockReturnValue(action.promise)
+    const actionA = deferred()
+    const actionB = deferred()
+    createEdgeMock
+      .mockReturnValueOnce(actionA.promise)
+      .mockReturnValueOnce(actionB.promise)
     const wrapper = await mountReview()
     const hook = api()
     const state = wrapper.vm.$.setupState
     hook.setLinkEndpoints('A-SOURCE', 'A-TARGET')
-    const actionPromise = hook.confirmEdgeType('前置')
+    const actionAPromise = hook.confirmEdgeType('前置')
+    await nextTick()
+    expect(hook.state().edgeSaving).toBe(true)
+    state.edgeError = 'course A edge error'
 
     await hook.switchCourse(2)
-    state.edgeSaving = false
+    expect.soft(hook.state().edgeSaving).toBe(false)
+    expect.soft(hook.state().edgeError).toBeNull()
+    expect.soft(hook.state().edgeTypePopup).toEqual({ visible: false, x: 0, y: 0, source: null, target: null })
+    expect.soft(hook.state().linkMode).toBe(false)
+    expect.soft(hook.state().linkSource).toBeNull()
+
     hook.setLinkEndpoints('B-SOURCE', 'B-TARGET')
-    action.reject(new Error('course A edge failed'))
-    await actionPromise
+    const actionBPromise = hook.confirmEdgeType('相关')
+    await nextTick()
+    expect.soft(createEdgeMock).toHaveBeenCalledTimes(2)
+    expect.soft(createEdgeMock).toHaveBeenLastCalledWith(2, {
+      sourceNodeCode: 'B-SOURCE',
+      targetNodeCode: 'B-TARGET',
+      relationType: 3
+    })
+    expect(hook.state().edgeSaving).toBe(true)
+
+    actionA.reject(new Error('course A edge failed'))
+    await actionAPromise
     await flushPromises()
 
     expect.soft(hook.state().edgeError).toBeNull()
     expect.soft(hook.state().edgeTypePopup.source).toBe('B-SOURCE')
     expect.soft(hook.state().edgeTypePopup.target).toBe('B-TARGET')
+    expect.soft(hook.state().edgeSaving).toBe(true)
+
+    actionB.resolve(100)
+    await actionBPromise
+    await flushPromises()
     expect(hook.state().edgeSaving).toBe(false)
     wrapper.unmount()
   })
@@ -750,6 +810,34 @@ describe('TeacherGraphReview edge create', () => {
 
     expect.soft(wrapper.text()).toContain('Fresh Course')
     expect(wrapper.text()).not.toContain('Stale Course')
+    wrapper.unmount()
+  })
+
+  it('invalidates a pending course-list selection when the user switches courses', async () => {
+    fetchTeacherCoursesMock.mockResolvedValue([
+      { id: 1, name: 'Course A', code: 'A', published: true },
+      { id: 2, name: 'Course B', code: 'B', published: true }
+    ])
+    const wrapper = await mountReview()
+    const state = wrapper.vm.$.setupState
+    const pendingCourses = deferred()
+    fetchTeacherCoursesMock.mockReset().mockReturnValue(pendingCourses.promise)
+
+    const pendingLoad = state.loadCourses(1)
+    await nextTick()
+    const pendingSignal = fetchTeacherCoursesMock.mock.calls[0][0].signal
+
+    await api().switchCourse(2)
+    expect.soft(pendingSignal.aborted).toBe(true)
+
+    pendingCourses.resolve([
+      { id: 1, name: 'Late Course A', code: 'A', published: true },
+      { id: 2, name: 'Course B', code: 'B', published: true }
+    ])
+    await pendingLoad
+    await flushPromises()
+
+    expect(state.currentCourse.id).toBe(2)
     wrapper.unmount()
   })
 

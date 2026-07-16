@@ -353,6 +353,8 @@ let batchCancelFailed = false
 let activeBatchJobId = null
 let activeBatchCancel = null
 let batchActionCourseId = null
+let batchRunSequence = 0
+let activeBatchRunToken = null
 const importLoading = ref(false)
 const importError = ref('')
 const importResult = ref(null)
@@ -372,8 +374,20 @@ function isActiveCourse(id) {
   return !disposed && Number(courseId.value) === Number(id)
 }
 
-function isActiveBatchCourse(id) {
-  return isActiveCourse(id) && Number(batchActionCourseId) === Number(id)
+function isActiveBatchRun(id, runToken) {
+  return isActiveCourse(id)
+    && Number(batchActionCourseId) === Number(id)
+    && activeBatchRunToken === runToken
+}
+
+function invalidateBatchRun(expectedRunToken = null) {
+  if (expectedRunToken != null && activeBatchRunToken !== expectedRunToken) return false
+  batchRunSequence += 1
+  activeBatchRunToken = null
+  batchActionCourseId = null
+  activeBatchJobId = null
+  activeBatchCancel = null
+  return true
 }
 
 // ── 计算属性 ──
@@ -533,12 +547,12 @@ async function handleGenerate() {
 /**
  * 等待单个 generate job 终态（批量串行用，不走共享 genJob 避免互相抢 epoch）
  */
-async function waitGenerateJob(cid, node, count) {
+async function waitGenerateJob(cid, runToken, node, count) {
   const requestKey = createActionKey()
   const created = await generateQuestions(cid, node, count, {
     headers: { 'Idempotency-Key': requestKey }
   })
-  if (!isActiveBatchCourse(cid)) return null
+  if (!isActiveBatchRun(cid, runToken)) return null
   if (created?.id == null) throw new Error('出题作业未返回 ID')
 
   const jobId = created.id
@@ -547,17 +561,17 @@ async function waitGenerateJob(cid, node, count) {
   try {
     if (batchCancelRequested && !batchCancelFailed) {
       try {
-        latest = (await requestActiveBatchCancel(cid)) || latest
-        if (!isActiveBatchCourse(cid)) return null
+        latest = (await requestActiveBatchCancel(cid, runToken)) || latest
+        if (!isActiveBatchRun(cid, runToken)) return null
       } catch (e) {
-        if (!isActiveBatchCourse(cid)) return null
+        if (!isActiveBatchRun(cid, runToken)) return null
         batchError.value = e?.message || '取消作业失败'
       }
     }
 
     const deadline = Date.now() + 30 * 60 * 1000
     while (Date.now() < deadline) {
-      if (!isActiveBatchCourse(cid)) return null
+      if (!isActiveBatchRun(cid, runToken)) return null
       if (isJobSucceeded(latest)) return latest.result || {}
       if (latest.status === 4) {
         if (batchCancelRequested && batchCancelAccepted) {
@@ -573,51 +587,56 @@ async function waitGenerateJob(cid, node, count) {
 
       if (batchCancelRequested && !batchCancelAccepted && !batchCancelFailed) {
         try {
-          latest = (await requestActiveBatchCancel(cid)) || latest
-          if (!isActiveBatchCourse(cid)) return null
+          latest = (await requestActiveBatchCancel(cid, runToken)) || latest
+          if (!isActiveBatchRun(cid, runToken)) return null
           continue
         } catch (e) {
-          if (!isActiveBatchCourse(cid)) return null
+          if (!isActiveBatchRun(cid, runToken)) return null
           batchError.value = e?.message || '取消作业失败'
         }
       }
 
       await new Promise((resolve) => setTimeout(resolve, 1000))
-      if (!isActiveBatchCourse(cid)) return null
+      if (!isActiveBatchRun(cid, runToken)) return null
       latest = await getJob(jobId)
-      if (!isActiveBatchCourse(cid)) return null
+      if (!isActiveBatchRun(cid, runToken)) return null
     }
     throw new Error('出题超时')
   } finally {
-    if (isActiveBatchCourse(cid) && activeBatchJobId === jobId) activeBatchJobId = null
-    if (isActiveBatchCourse(cid) && activeBatchCancel?.id === jobId) activeBatchCancel = null
+    if (isActiveBatchRun(cid, runToken) && activeBatchJobId === jobId) activeBatchJobId = null
+    if (isActiveBatchRun(cid, runToken) && activeBatchCancel?.id === jobId) activeBatchCancel = null
   }
 }
 
-async function requestActiveBatchCancel(cid) {
-  if (!isActiveBatchCourse(cid)) return null
+async function requestActiveBatchCancel(cid, runToken) {
+  if (!isActiveBatchRun(cid, runToken)) return null
   const jobId = activeBatchJobId
   if (jobId == null) return null
-  if (activeBatchCancel?.id === jobId && Number(activeBatchCancel.courseId) === Number(cid)) {
+  if (
+    activeBatchCancel?.id === jobId
+    && Number(activeBatchCancel.courseId) === Number(cid)
+    && activeBatchCancel.runToken === runToken
+  ) {
     return activeBatchCancel.promise
   }
 
   const entry = {
     id: jobId,
     courseId: cid,
+    runToken,
     promise: cancelJob(jobId)
   }
   activeBatchCancel = entry
   try {
     const updated = await entry.promise
-    if (!isActiveBatchCourse(cid)) return updated
+    if (!isActiveBatchRun(cid, runToken)) return updated
     if (activeBatchJobId === jobId) batchCancelAccepted = true
     return updated
   } catch (e) {
-    if (isActiveBatchCourse(cid) && activeBatchJobId === jobId) batchCancelFailed = true
+    if (isActiveBatchRun(cid, runToken) && activeBatchJobId === jobId) batchCancelFailed = true
     throw e
   } finally {
-    if (isActiveBatchCourse(cid) && activeBatchCancel === entry) activeBatchCancel = null
+    if (isActiveBatchRun(cid, runToken) && activeBatchCancel === entry) activeBatchCancel = null
   }
 }
 
@@ -638,6 +657,8 @@ async function handleBatchGenerate() {
   const total = nodes.length
   if (!confirm(`将对全部 ${total} 个节点各生成 ${count} 道题，耗时可能较长，是否继续？`)) return
 
+  const runToken = ++batchRunSequence
+  activeBatchRunToken = runToken
   batchActionCourseId = cid
   batchLoading.value = true
   batchCancelRequested = false
@@ -650,7 +671,7 @@ async function handleBatchGenerate() {
   genResult.value = null
   genError.value = ''
   for (let i = 0; i < nodes.length; i++) {
-    if (!isActiveBatchCourse(cid)) return
+    if (!isActiveBatchRun(cid, runToken)) return
     if (batchCancelRequested) break
     const node = nodes[i]
     batchProgress.value = {
@@ -660,14 +681,14 @@ async function handleBatchGenerate() {
       nodeName: node.name
     }
     try {
-      const res = await waitGenerateJob(cid, node.nodeCode, count)
-      if (!isActiveBatchCourse(cid) || res == null) return
+      const res = await waitGenerateJob(cid, runToken, node.nodeCode, count)
+      if (!isActiveBatchRun(cid, runToken) || res == null) return
       batchResult.value.generated += res.generated || 0
       batchResult.value.dropped += res.dropped || 0
       batchResult.value.duplicated += res.duplicated || 0
       if (batchCancelRequested) break
     } catch (e) {
-      if (!isActiveBatchCourse(cid)) return
+      if (!isActiveBatchRun(cid, runToken)) return
       if (e?.code === 'BATCH_CANCELLED') {
         batchResult.value.cancelled = true
         break
@@ -680,28 +701,29 @@ async function handleBatchGenerate() {
     }
   }
 
-  if (!isActiveBatchCourse(cid)) return
+  if (!isActiveBatchRun(cid, runToken)) return
   batchProgress.value = null
   batchLoading.value = false
-  batchActionCourseId = null
+  invalidateBatchRun(runToken)
   await load()
   if (!isActiveCourse(cid)) return
 }
 
 async function cancelBatchGenerate() {
   const cid = Number(batchActionCourseId)
-  if (!isActiveBatchCourse(cid) || !batchLoading.value || batchCancelRequested) return
+  const runToken = activeBatchRunToken
+  if (!isActiveBatchRun(cid, runToken) || !batchLoading.value || batchCancelRequested) return
   batchCancelRequested = true
   if (activeBatchJobId == null) return
 
   try {
-    const updated = await requestActiveBatchCancel(cid)
-    if (!isActiveBatchCourse(cid)) return
+    const updated = await requestActiveBatchCancel(cid, runToken)
+    if (!isActiveBatchRun(cid, runToken)) return
     if (updated?.status === 4 && batchResult.value) {
       batchResult.value.cancelled = true
     }
   } catch (e) {
-    if (!isActiveBatchCourse(cid)) return
+    if (!isActiveBatchRun(cid, runToken)) return
     batchError.value = e?.message || '取消作业失败'
   }
 }
@@ -893,8 +915,9 @@ watch([tab, conf, nodeCode, page], () => {
 
 watch(courseId, (next, previous) => {
   if (Number(next) !== Number(previous)) {
-    if (batchActionCourseId != null && Number(batchActionCourseId) !== Number(next)) {
-      batchActionCourseId = null
+    const hadBatchOwner = activeBatchRunToken != null || batchActionCourseId != null
+    invalidateBatchRun()
+    if (hadBatchOwner) {
       batchLoading.value = false
       batchProgress.value = null
       batchResult.value = null
@@ -902,8 +925,6 @@ watch(courseId, (next, previous) => {
       batchCancelRequested = false
       batchCancelAccepted = false
       batchCancelFailed = false
-      activeBatchJobId = null
-      activeBatchCancel = null
     }
     importLoading.value = false
     approveAllLoading.value = false
@@ -914,6 +935,7 @@ watch(courseId, (next, previous) => {
 
 onUnmounted(() => {
   disposed = true
+  invalidateBatchRun()
   questionsRequest.cancel()
   graphNodesRequest.cancel()
   if (window.__wjTeacherQuestions?.load === load) delete window.__wjTeacherQuestions
