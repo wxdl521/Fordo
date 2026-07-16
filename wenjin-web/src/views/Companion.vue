@@ -186,7 +186,7 @@
           rows="1"
           @keydown="onKey"
         ></textarea>
-        <button class="cp-btn-send" :disabled="!hasText || typing" @click="sendText">
+        <button class="cp-btn-send" :disabled="!canSend" @click="sendText">
           <svg v-if="!typing" width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
             <path
               d="M16 2L8 10M16 2l-6 14-2-6-6-2 14-6z"
@@ -243,6 +243,7 @@ const msgs = ref([])
 const input = ref('')
 const typing = ref(false)
 const conversationId = ref(null)
+const conversationLoadingTarget = ref(null)
 const conversations = ref([])
 const ctxNodeCode = ref(null)
 const scrollEl = ref(null)
@@ -267,6 +268,7 @@ function resetCompanionSessionState() {
   snapshotPersist?.flush()
   cancelAllCompanionRequests()
   conversationId.value = null
+  conversationLoadingTarget.value = null
   msgs.value = []
   input.value = ''
   typing.value = false
@@ -279,6 +281,7 @@ const starters = computed(() => [
 ])
 
 const hasText = computed(() => input.value.trim().length > 0)
+const canSend = computed(() => hasText.value && !typing.value && conversationLoadingTarget.value === null)
 
 /** Index of assistant in the current turn only (stop at user). */
 function currentTurnAssistantIdx(list = msgs.value) {
@@ -584,19 +587,27 @@ async function openConversation(id) {
   streamGate.cancel()
   typing.value = false
   const { signal, isCurrent } = conversationDetailGate.next()
-  conversationId.value = id
+  conversationLoadingTarget.value = id
   try {
     const conversation = await fetchConversation(id, { signal })
     if (!isCurrent()) return
     const serverMessages = (Array.isArray(conversation) ? conversation : (conversation?.messages || []))
       .map(normalizeConversationMessage)
+
+    // The previous conversation remains interactive while this request is pending.
+    // Persist its last edits before reading and committing the target snapshot.
+    snapshotPersist.flush()
+    if (!isCurrent()) return
     const snapshot = readConversationSnapshot(id)
     const restored = restoreTypedMessagesFromSnapshot(serverMessages, snapshot)
 
-    msgs.value = restored.messages
     if (!restored.usedSnapshot && snapshot) {
       clearConversationSnapshot(id)
     }
+
+    if (!isCurrent()) return
+    conversationId.value = id
+    msgs.value = restored.messages
 
     await nextTick()
     if (!isCurrent()) return
@@ -604,7 +615,8 @@ async function openConversation(id) {
   } catch (error) {
     if (!isCurrent() || isAbortError(error)) return
     console.error('Failed to fetch conversation:', error)
-    msgs.value = []
+  } finally {
+    if (isCurrent()) conversationLoadingTarget.value = null
   }
 }
 
@@ -614,6 +626,7 @@ function newChat() {
   streamGate.cancel()
   conversationDetailGate.cancel()
   conversationId.value = null
+  conversationLoadingTarget.value = null
   msgs.value = []
   input.value = ''
   typing.value = false
@@ -626,12 +639,23 @@ function clearContextNodeCode() {
 }
 
 async function handleDelete(id) {
+  if (conversationLoadingTarget.value === id) {
+    conversationDetailGate.cancel()
+    conversationLoadingTarget.value = null
+  }
   try {
     await deleteConversation(id)
     clearConversationSnapshot(id)
-    if (conversationId.value === id) {
+    const deletingCurrent = conversationId.value === id
+    const deletingLoadingTarget = conversationLoadingTarget.value === id
+    if (deletingCurrent) {
       streamGate.cancel()
+    }
+    if (deletingCurrent || deletingLoadingTarget) {
       conversationDetailGate.cancel()
+      conversationLoadingTarget.value = null
+    }
+    if (deletingCurrent) {
       conversationId.value = null
       msgs.value = []
       typing.value = false
@@ -653,8 +677,8 @@ function sendStarter(starter) {
 }
 
 async function sendText() {
+  if (!canSend.value) return
   const text = input.value.trim()
-  if (!text || typing.value) return
 
   // Do not pre-push empty assistant — tools/practice must land before final AI reply.
   msgs.value.push({ role: 'user', content: text })
@@ -793,9 +817,11 @@ onMounted(() => {
       input,
       typing,
       conversationId,
+      conversationLoadingTarget,
       conversations,
       ctxNodeCode,
       scrollEl,
+      canSend,
       loadConversations,
       openConversation,
       newChat,

@@ -5,6 +5,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import { useSessionStore } from '../src/store/session.js'
 import { useCourseStore } from '../src/store/course.js'
+import { conversationSnapshotKey } from '../src/utils/companionMessages.js'
 
 const listConversations = vi.fn()
 const fetchConversation = vi.fn()
@@ -79,6 +80,194 @@ describe('Companion race hardening', () => {
   afterEach(() => {
     delete window.__wjCompanion
     vi.restoreAllMocks()
+  })
+
+  it('keeps the current conversation visible and blocks sending until the next conversation commits', async () => {
+    let resolve20
+    fetchConversation.mockImplementation((id) => {
+      if (Number(id) === 20) {
+        return new Promise((resolve) => {
+          resolve20 = resolve
+        })
+      }
+      return Promise.resolve({ messages: [] })
+    })
+
+    const { wrapper } = await mountCompanion({ courseId: '5' })
+    const c = api()
+    const previousMessages = [
+      { role: 'user', content: 'from-10' },
+      { role: 'assistant', content: 'reply-10' }
+    ]
+    c.conversationId.value = 10
+    c.conversations.value = [
+      { id: 10, title: 'Conversation 10' },
+      { id: 20, title: 'Conversation 20' }
+    ]
+    c.msgs.value = previousMessages
+    c.input.value = 'must wait for the switch'
+    await nextTick()
+
+    expect(wrapper.find('.cp-conv-item.active').text()).toContain('Conversation 10')
+    expect(wrapper.text()).toContain('from-10')
+
+    const switchPromise = c.openConversation(20)
+    await nextTick()
+
+    expect(c.conversationLoadingTarget.value).toBe(20)
+    expect(c.conversationId.value).toBe(10)
+    expect(c.msgs.value).toEqual(previousMessages)
+    expect(wrapper.find('.cp-btn-send').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.cp-conv-item.active').text()).toContain('Conversation 10')
+    expect(wrapper.text()).toContain('from-10')
+
+    await c.sendText()
+    expect(chatStream).not.toHaveBeenCalled()
+    expect(c.input.value).toBe('must wait for the switch')
+    expect(c.msgs.value).toEqual(previousMessages)
+
+    resolve20({
+      messages: [
+        { role: 'user', content: 'from-20' },
+        { role: 'assistant', content: 'reply-20' }
+      ]
+    })
+    await switchPromise
+    await flushPromises()
+
+    expect(c.conversationId.value).toBe(20)
+    expect(c.msgs.value.map(({ role, content }) => ({ role, content }))).toEqual([
+      { role: 'user', content: 'from-20' },
+      { role: 'assistant', content: 'reply-20' }
+    ])
+    expect(c.conversationLoadingTarget.value).toBe(null)
+    expect(wrapper.find('.cp-conv-item.active').text()).toContain('Conversation 20')
+    expect(wrapper.text()).toContain('from-20')
+    expect(wrapper.text()).not.toContain('from-10')
+
+    wrapper.unmount()
+  })
+
+  it('flushes edits made to the visible conversation before committing the loaded conversation', async () => {
+    let resolve20
+    fetchConversation.mockImplementation((id) => {
+      if (Number(id) === 20) {
+        return new Promise((resolve) => {
+          resolve20 = resolve
+        })
+      }
+      return Promise.resolve({ messages: [] })
+    })
+
+    const { wrapper } = await mountCompanion({ courseId: '5' })
+    const c = api()
+    c.conversationId.value = 10
+    c.msgs.value = [{ role: 'user', content: 'from-10' }]
+    await nextTick()
+
+    const switchPromise = c.openConversation(20)
+    await nextTick()
+    c.msgs.value[0].content = 'edited-while-loading'
+    await nextTick()
+
+    resolve20({ messages: [{ role: 'user', content: 'from-20' }] })
+    await switchPromise
+    await flushPromises()
+
+    const snapshot = JSON.parse(localStorage.getItem(conversationSnapshotKey(2, 5, 10)))
+    expect(snapshot.messages[0].content).toBe('edited-while-loading')
+    expect(c.conversationId.value).toBe(20)
+
+    wrapper.unmount()
+  })
+
+  it('cancels a pending detail request when its conversation is deleted', async () => {
+    let resolve20
+    let resolveDelete
+    let detailSignal
+    fetchConversation.mockImplementation((id, config) => {
+      if (Number(id) === 20) {
+        detailSignal = config?.signal
+        return new Promise((resolve) => {
+          resolve20 = resolve
+        })
+      }
+      return Promise.resolve({ messages: [] })
+    })
+    deleteConversation.mockImplementation(() => new Promise((resolve) => {
+      resolveDelete = resolve
+    }))
+
+    const { wrapper } = await mountCompanion({ courseId: '5' })
+    const c = api()
+    const previousMessages = [{ role: 'user', content: 'from-10' }]
+    c.conversationId.value = 10
+    c.conversations.value = [{ id: 20, title: 'Conversation 20' }]
+    c.msgs.value = previousMessages
+    await nextTick()
+
+    const switchPromise = c.openConversation(20)
+    await nextTick()
+    await wrapper.find('.cp-conv-del').trigger('click')
+    await flushPromises()
+
+    expect(deleteConversation).toHaveBeenCalledWith(20)
+    expect(detailSignal.aborted).toBe(true)
+    expect(c.conversationLoadingTarget.value).toBe(null)
+    expect(c.conversationId.value).toBe(10)
+    expect(c.msgs.value).toEqual(previousMessages)
+
+    resolve20({ messages: [{ role: 'user', content: 'deleted-20' }] })
+    await switchPromise
+    await flushPromises()
+
+    expect(c.conversationId.value).toBe(10)
+    expect(c.msgs.value).toEqual(previousMessages)
+    expect(wrapper.text()).not.toContain('deleted-20')
+
+    resolveDelete()
+    await flushPromises()
+    expect(c.conversationId.value).toBe(10)
+    expect(c.msgs.value).toEqual(previousMessages)
+
+    wrapper.unmount()
+  })
+
+  it('keeps the current conversation when the next conversation fails to load', async () => {
+    let reject20
+    fetchConversation.mockImplementation((id) => {
+      if (Number(id) === 20) {
+        return new Promise((_resolve, reject) => {
+          reject20 = reject
+        })
+      }
+      return Promise.resolve({ messages: [] })
+    })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { wrapper } = await mountCompanion({ courseId: '5' })
+    const c = api()
+    const previousMessages = [
+      { role: 'user', content: 'from-10' },
+      { role: 'assistant', content: 'reply-10' }
+    ]
+    c.conversationId.value = 10
+    c.msgs.value = previousMessages
+
+    const switchPromise = c.openConversation(20)
+    await nextTick()
+    expect(c.conversationId.value).toBe(10)
+    expect(c.msgs.value).toEqual(previousMessages)
+
+    reject20(new Error('detail unavailable'))
+    await switchPromise
+    await flushPromises()
+
+    expect(c.conversationId.value).toBe(10)
+    expect(c.msgs.value).toEqual(previousMessages)
+    expect(c.conversationLoadingTarget.value).toBe(null)
+
+    wrapper.unmount()
   })
 
   it('open session 10→20: resolve 20 then 10 shows only 20', async () => {
@@ -270,37 +459,42 @@ describe('Companion race hardening', () => {
       })
     })
 
-    const { wrapper } = await mountCompanion({ courseId: '5' })
+    const first = await mountCompanion({ courseId: '5' })
     const c = api()
 
-    // Start detail + stream so all three gates are live
+    // A pending detail blocks sending, so exercise detail and stream aborts in separate mounts.
     c.openConversation(42)
     await nextTick()
-    c.input.value = 'ping'
-    const sendPromise = c.sendText()
-    await flushPromises()
 
     expect(listSignal).toBeTruthy()
     expect(detailSignal).toBeTruthy()
-    expect(streamSignal).toBeTruthy()
     expect(listSignal.aborted).toBe(false)
     expect(detailSignal.aborted).toBe(false)
-    expect(streamSignal.aborted).toBe(false)
 
-    wrapper.unmount()
+    first.wrapper.unmount()
     await flushPromises()
-    try {
-      await sendPromise
-    } catch {
-      /* abort may reject */
-    }
 
     expect(listSignal.aborted).toBe(true)
     expect(detailSignal.aborted).toBe(true)
+
+    listConversations.mockResolvedValue([])
+    const second = await mountCompanion({ courseId: '5' })
+    const c2 = api()
+    c2.input.value = 'ping'
+    const sendPromise = c2.sendText()
+    await flushPromises()
+
+    expect(streamSignal).toBeTruthy()
+    expect(streamSignal.aborted).toBe(false)
+
+    second.wrapper.unmount()
+    await sendPromise
+    await flushPromises()
+
     expect(streamSignal.aborted).toBe(true)
 
     // Abort path must not have written a network/error bubble (msgs cleared or no [网络错误])
-    const errBubbles = (c.msgs?.value || []).filter(
+    const errBubbles = (c2.msgs?.value || []).filter(
       (m) => typeof m.content === 'string' && (m.content.includes('[网络错误]') || m.content.includes('[错误]'))
     )
     expect(errBubbles).toEqual([])
@@ -311,15 +505,13 @@ describe('Companion race hardening', () => {
       const err = new Error('boom-once')
       throw err
     })
-    listConversations.mockResolvedValue([])
-
-    const second = await mountCompanion({ courseId: '5' })
-    const c2 = api()
-    c2.input.value = 'fail please'
-    await c2.sendText()
+    const third = await mountCompanion({ courseId: '5' })
+    const c3 = api()
+    c3.input.value = 'fail please'
+    await c3.sendText()
     await flushPromises()
 
-    const errorMsgs = c2.msgs.value.filter(
+    const errorMsgs = c3.msgs.value.filter(
       (m) => typeof m.content === 'string' && (m.content.includes('boom-once') || m.content.includes('[错误]') || m.content.includes('[网络错误]'))
     )
     expect(errorMsgs.length).toBe(1)
@@ -327,6 +519,7 @@ describe('Companion race hardening', () => {
 
     // Late abort-style callback must not add another
     streamCallbacks?.onToken?.('after-unmount')
-    second.wrapper.unmount()
+    expect(c2.msgs.value.some((message) => message.content === 'after-unmount')).toBe(false)
+    third.wrapper.unmount()
   })
 })
