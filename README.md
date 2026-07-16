@@ -48,7 +48,7 @@
 | AI | OpenAI 兼容 `/chat/completions`，文本模型默认 DeepSeek，视觉模型默认 GLM，可用环境变量替换 |
 | 文档解析 | Apache POI、PDFBox |
 | 安全 | 自研 HMAC Bearer 令牌、BCrypt 密码、教师拦截器、学生资源归属校验 |
-| 测试 | JUnit 5、Mockito、Spring Boot Test、Testcontainers MySQL、Node test、Playwright + 系统 Edge |
+| 测试 | JUnit 5、Mockito、Spring Boot Test、Testcontainers MySQL、Vitest + V8 coverage、Playwright |
 
 ## 目录结构
 
@@ -254,15 +254,15 @@ M4 把 AI 伴侣从“读取上下文并回答”升级为“按白名单工具�
 
 ```powershell
 cd wenjin-server
-.\mvnw.cmd test
+.\mvnw.cmd clean verify
 ```
 
 前端测试与构建：
 
 ```powershell
 cd wenjin-web
-node --test
-npm run build
+npm run test:coverage
+npm run check
 ```
 
 真机验收脚本位于 `wenjin-web/e2e/`。这些脚本通常需要后端、前端、MySQL 和系统 Edge 已经可用；M4 验收还需要可用的文本模型 Key。
@@ -274,7 +274,7 @@ node .\e2e\m2-adaptive-diag.mjs
 node .\e2e\m4-companion-tools.mjs
 ```
 
-当前仓库中后端测试文件约 60+ 个，`@Test` 用例约 580 个；前端包含 Node test 与多条 Playwright 验收脚本。验收截图集中在 `测试截图/`。
+当前仓库中后端测试文件约 60+ 个，`@Test` 用例约 580 个；前端包含 Vitest 单元/覆盖率门禁与多条 Playwright 验收脚本。验收截图集中在 `测试截图/`。
 
 ## 生产部署注意
 

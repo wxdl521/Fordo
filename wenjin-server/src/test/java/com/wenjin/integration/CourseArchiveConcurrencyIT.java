@@ -41,8 +41,8 @@ class CourseArchiveConcurrencyIT extends MySqlContainerSupport {
         registry.add("spring.datasource.username", MYSQL::getUsername);
         registry.add("spring.datasource.password", MYSQL::getPassword);
         registry.add("spring.datasource.driver-class-name", () -> "com.mysql.cj.jdbc.Driver");
-        registry.add("WENJIN_AUTH_SECRET", () -> "it-test-secret-not-for-prod");
-        registry.add("wenjin.auth.secret", () -> "it-test-secret-not-for-prod");
+        registry.add("WENJIN_AUTH_SECRET", () -> "it-test-secret-not-for-prod-at-least-32-bytes");
+        registry.add("wenjin.auth.secret", () -> "it-test-secret-not-for-prod-at-least-32-bytes");
         registry.add("wenjin.features.graph-reconcile-enabled", () -> "true");
     }
 

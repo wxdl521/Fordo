@@ -13,6 +13,7 @@ import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.mapper.SysUserMapper;
+import com.wenjin.security.UserRole;
 import com.wenjin.service.MasteryService;
 import com.wenjin.support.QuestionStatus;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,12 +49,12 @@ class MasteryConcurrencyIT extends MySqlContainerSupport {
 
     @DynamicPropertySource
     static void datasourceProps(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", () -> MYSQL.getJdbcUrl() + "&useAffectedRows=true");
+        registry.add("spring.datasource.url", () -> MYSQL.getJdbcUrl() + "?useAffectedRows=true");
         registry.add("spring.datasource.username", MYSQL::getUsername);
         registry.add("spring.datasource.password", MYSQL::getPassword);
         registry.add("spring.datasource.driver-class-name", () -> "com.mysql.cj.jdbc.Driver");
-        registry.add("WENJIN_AUTH_SECRET", () -> "it-test-secret-not-for-prod");
-        registry.add("wenjin.auth.secret", () -> "it-test-secret-not-for-prod");
+        registry.add("WENJIN_AUTH_SECRET", () -> "it-test-secret-not-for-prod-at-least-32-bytes");
+        registry.add("wenjin.auth.secret", () -> "it-test-secret-not-for-prod-at-least-32-bytes");
         registry.add("wenjin.mastery.alpha", () -> "0.3");
         registry.add("wenjin.mastery.mastered-threshold", () -> "75");
         registry.add("wenjin.mastery.weak-threshold", () -> "40");
@@ -91,6 +92,13 @@ class MasteryConcurrencyIT extends MySqlContainerSupport {
         }
         jdbcTemplate.execute("SET FOREIGN_KEY_CHECKS = 1");
 
+        SysUser teacher = new SysUser();
+        teacher.setUsername("it_mastery_cc_teacher");
+        teacher.setPassword("$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012");
+        teacher.setRole(UserRole.TEACHER.code());
+        teacher.setStatus(1);
+        sysUserMapper.insert(teacher);
+
         SysUser student = new SysUser();
         student.setUsername("it_mastery_cc");
         student.setPassword("$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012");
@@ -102,6 +110,7 @@ class MasteryConcurrencyIT extends MySqlContainerSupport {
         Course course = new Course();
         course.setCode("IT_MASTERY_CC");
         course.setName("Mastery CC");
+        course.setTeacherId(teacher.getId());
         course.setStatus(1);
         courseMapper.insert(course);
         courseId = course.getId();

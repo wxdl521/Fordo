@@ -22,6 +22,7 @@ import com.wenjin.support.ReviewMarker;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.SQLException;
@@ -138,7 +139,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     }
 
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public void acceptEdge(Long edgeId) {
         ensureGraphReconcileEnabled();
         if (edgeId == null || edgeId <= 0) {
@@ -166,7 +167,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     }
 
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public void rejectEdge(Long edgeId) {
         ensureGraphReconcileEnabled();
         if (edgeId == null || edgeId <= 0) {
@@ -187,7 +188,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     }
 
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public Long createEdge(Long courseId, EdgeCreateRequest req) {
         ensureGraphReconcileEnabled();
         if (courseId == null || courseId <= 0) {
@@ -372,7 +373,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     }
 
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public Long createNode(Long courseId, NodeUpsertRequest req) {
         ensureGraphReconcileEnabled();
         if (courseId == null || courseId <= 0) {
@@ -421,7 +422,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     }
 
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public void updateNode(Long nodeId, NodeUpsertRequest req) {
         ensureGraphReconcileEnabled();
         if (nodeId == null || nodeId <= 0) {
@@ -448,7 +449,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
     }
 
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public void deleteNode(Long nodeId) {
         ensureGraphReconcileEnabled();
         if (nodeId == null || nodeId <= 0) {

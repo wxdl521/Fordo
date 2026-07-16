@@ -12,6 +12,7 @@ import com.wenjin.mapper.ExtractionReviewMapper;
 import com.wenjin.security.CourseAccessService;
 import com.wenjin.support.GraphDraftStore;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -58,7 +59,7 @@ public class GraphExtractReviewService {
     }
 
     /** 全量替换导入与指标落库同事务：insert 失败则图谱替换一并回滚。 */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public ExtractCommitResult commit(String draftId, GraphImportRequest finalGraph) {
         Long teacherId = CurrentUser.requireTeacher().userId();
         GraphDraftStore.Entry entry = draftStore.get(draftId, teacherId);

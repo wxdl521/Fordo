@@ -889,8 +889,7 @@ async function handleApproveAll() {
     if (!isActiveCourse(cid)) return
     approveAllMessage.value = e.message || '批量审批失败'
   } finally {
-    if (!isActiveCourse(cid)) return
-    approveAllLoading.value = false
+    if (isActiveCourse(cid)) approveAllLoading.value = false
   }
 }
 

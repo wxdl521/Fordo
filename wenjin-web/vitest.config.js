@@ -41,10 +41,10 @@ export default defineConfig({
       ],
       // 诚实阈值：门禁关键路径，可随覆盖提升上调
       thresholds: {
-        lines: 50,
-        functions: 50,
-        branches: 40,
-        statements: 50
+        lines: 80,
+        statements: 80,
+        branches: 70,
+        functions: 70
       }
     }
   }

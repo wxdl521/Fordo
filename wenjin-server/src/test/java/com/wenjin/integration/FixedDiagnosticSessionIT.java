@@ -61,12 +61,12 @@ class FixedDiagnosticSessionIT extends MySqlContainerSupport {
 
     @DynamicPropertySource
     static void datasourceProps(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", () -> MYSQL.getJdbcUrl() + "&useAffectedRows=true");
+        registry.add("spring.datasource.url", () -> MYSQL.getJdbcUrl() + "?useAffectedRows=true");
         registry.add("spring.datasource.username", MYSQL::getUsername);
         registry.add("spring.datasource.password", MYSQL::getPassword);
         registry.add("spring.datasource.driver-class-name", () -> "com.mysql.cj.jdbc.Driver");
-        registry.add("WENJIN_AUTH_SECRET", () -> "it-test-secret-not-for-prod");
-        registry.add("wenjin.auth.secret", () -> "it-test-secret-not-for-prod");
+        registry.add("WENJIN_AUTH_SECRET", () -> "it-test-secret-not-for-prod-at-least-32-bytes");
+        registry.add("wenjin.auth.secret", () -> "it-test-secret-not-for-prod-at-least-32-bytes");
         registry.add("wenjin.diagnostic.paper-size", () -> "3");
     }
 
@@ -106,6 +106,13 @@ class FixedDiagnosticSessionIT extends MySqlContainerSupport {
         }
         jdbcTemplate.execute("SET FOREIGN_KEY_CHECKS = 1");
 
+        SysUser teacher = new SysUser();
+        teacher.setUsername("it_diag_teacher");
+        teacher.setPassword("$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012");
+        teacher.setRole(UserRole.TEACHER.code());
+        teacher.setStatus(1);
+        sysUserMapper.insert(teacher);
+
         SysUser student = new SysUser();
         student.setUsername("it_diag_student");
         student.setPassword("$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012");
@@ -125,6 +132,7 @@ class FixedDiagnosticSessionIT extends MySqlContainerSupport {
         Course course = new Course();
         course.setCode("IT_DIAG_COURSE");
         course.setName("Diag Course");
+        course.setTeacherId(teacher.getId());
         course.setStatus(1);
         courseMapper.insert(course);
         courseId = course.getId();

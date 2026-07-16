@@ -56,8 +56,8 @@ class TeacherReadModelIT extends MySqlContainerSupport {
         registry.add("spring.datasource.username", MYSQL::getUsername);
         registry.add("spring.datasource.password", MYSQL::getPassword);
         registry.add("spring.datasource.driver-class-name", () -> "com.mysql.cj.jdbc.Driver");
-        registry.add("WENJIN_AUTH_SECRET", () -> "it-test-secret-not-for-prod");
-        registry.add("wenjin.auth.secret", () -> "it-test-secret-not-for-prod");
+        registry.add("WENJIN_AUTH_SECRET", () -> "it-test-secret-not-for-prod-at-least-32-bytes");
+        registry.add("wenjin.auth.secret", () -> "it-test-secret-not-for-prod-at-least-32-bytes");
         // 关闭衰减，便于用 raw mastery_level 断言
         registry.add("wenjin.mastery.decay.enabled", () -> "false");
     }

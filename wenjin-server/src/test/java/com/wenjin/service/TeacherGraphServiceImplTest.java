@@ -23,7 +23,10 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -87,6 +90,26 @@ class TeacherGraphServiceImplTest {
                 .extracting("code").isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
 
         verifyNoInteractions(courseAccessService, courseMutationLock, nodeMapper, edgeMapper);
+    }
+
+    @Test
+    void everyMutation_usesReadCommittedTransaction() throws NoSuchMethodException {
+        Method[] mutations = {
+                TeacherGraphServiceImpl.class.getMethod("acceptEdge", Long.class),
+                TeacherGraphServiceImpl.class.getMethod("rejectEdge", Long.class),
+                TeacherGraphServiceImpl.class.getMethod("createEdge", Long.class, EdgeCreateRequest.class),
+                TeacherGraphServiceImpl.class.getMethod("createNode", Long.class, NodeUpsertRequest.class),
+                TeacherGraphServiceImpl.class.getMethod("updateNode", Long.class, NodeUpsertRequest.class),
+                TeacherGraphServiceImpl.class.getMethod("deleteNode", Long.class)
+        };
+
+        for (Method mutation : mutations) {
+            Transactional tx = mutation.getAnnotation(Transactional.class);
+            assertThat(tx).as(mutation.getName() + " transaction").isNotNull();
+            assertThat(tx.isolation())
+                    .as(mutation.getName() + " isolation")
+                    .isEqualTo(Isolation.READ_COMMITTED);
+        }
     }
 
     @Test

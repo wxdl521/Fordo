@@ -29,6 +29,8 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -154,6 +156,18 @@ class GraphServiceImplTest {
         assertThat(options).isNotNull();
         assertThat(options.useCache()).isFalse();
         assertThat(options.flushCache()).isEqualTo(Options.FlushCachePolicy.TRUE);
+    }
+
+    @Test
+    @DisplayName("图谱导入使用 READ_COMMITTED，锁等待后读取最新已提交快照")
+    void import_usesReadCommittedTransaction() throws NoSuchMethodException {
+        Transactional tx = GraphServiceImpl.class
+                .getMethod("importGraph", String.class, GraphImportRequest.class)
+                .getAnnotation(Transactional.class);
+
+        assertThat(tx).isNotNull();
+        assertThat(tx.isolation()).isEqualTo(Isolation.READ_COMMITTED);
+        assertThat(tx.rollbackFor()).contains(Exception.class);
     }
 
     @Test

@@ -19,7 +19,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
@@ -59,6 +62,16 @@ class GraphExtractReviewServiceTest {
     @AfterEach
     void clearUser() {
         CurrentUser.clear();
+    }
+
+    @Test
+    void commit_usesReadCommittedTransactionForNestedGraphImport() throws NoSuchMethodException {
+        Transactional tx = GraphExtractReviewService.class
+                .getMethod("commit", String.class, GraphImportRequest.class)
+                .getAnnotation(Transactional.class);
+
+        assertThat(tx).isNotNull();
+        assertThat(tx.isolation()).isEqualTo(Isolation.READ_COMMITTED);
     }
 
     @Test
