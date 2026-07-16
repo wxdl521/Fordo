@@ -390,6 +390,28 @@ function invalidateBatchRun(expectedRunToken = null) {
   return true
 }
 
+function resetCourseActionUiState() {
+  checked.value = {}
+  genResult.value = null
+  genError.value = ''
+  batchLoading.value = false
+  batchProgress.value = null
+  batchResult.value = null
+  batchError.value = ''
+  batchCancelRequested = false
+  batchCancelAccepted = false
+  batchCancelFailed = false
+  importLoading.value = false
+  importResult.value = null
+  importError.value = ''
+  importFile.value = null
+  importDrag.value = false
+  annotateResult.value = null
+  annotateError.value = ''
+  approveAllLoading.value = false
+  approveAllMessage.value = ''
+}
+
 // ── 计算属性 ──
 const pendingCount = computed(() => {
   if (tab.value !== 0 || !data.value) return 0
@@ -915,19 +937,8 @@ watch([tab, conf, nodeCode, page], () => {
 
 watch(courseId, (next, previous) => {
   if (Number(next) !== Number(previous)) {
-    const hadBatchOwner = activeBatchRunToken != null || batchActionCourseId != null
     invalidateBatchRun()
-    if (hadBatchOwner) {
-      batchLoading.value = false
-      batchProgress.value = null
-      batchResult.value = null
-      batchError.value = ''
-      batchCancelRequested = false
-      batchCancelAccepted = false
-      batchCancelFailed = false
-    }
-    importLoading.value = false
-    approveAllLoading.value = false
+    resetCourseActionUiState()
   }
   load()
   loadGraphNodes()

@@ -420,6 +420,57 @@ describe('TeacherQuestionPool batch job cancellation', () => {
     wrapper.unmount()
   })
 
+  it('clears completed course A action UI state when switching to course B', async () => {
+    const wrapper = await mountPool()
+    const state = wrapper.vm.$.setupState
+    const importFile = new File(['{}'], 'course-a.json', { type: 'application/json' })
+
+    state.checked = { 'A-question': true }
+    state.genResult = { generated: 3, course: 'A' }
+    state.genError = 'course A generation error'
+    state.batchLoading = true
+    state.batchProgress = { index: 1, total: 1, nodeCode: 'A-NODE', nodeName: 'A node' }
+    state.batchResult = { generated: 3, dropped: 0, duplicated: 0, failed: [], cancelled: false, course: 'A' }
+    state.batchError = 'course A batch error'
+    state.batchCancelRequested = true
+    state.batchCancelAccepted = true
+    state.batchCancelFailed = true
+    state.importLoading = true
+    state.importResult = { imported: 4, course: 'A' }
+    state.importError = 'course A import error'
+    state.importFile = importFile
+    state.importDrag = true
+    state.annotateResult = [{ id: 'A-annotation' }]
+    state.annotateError = 'course A annotation error'
+    state.approveAllLoading = true
+    state.approveAllMessage = 'course A approval result'
+
+    courseState.currentCourse.value = { id: 2, name: 'Course B', code: 'B' }
+    courseState.courseId.value = 2
+    await nextTick()
+
+    expect.soft(state.checked).toEqual({})
+    expect.soft(state.genResult).toBeNull()
+    expect.soft(state.genError).toBe('')
+    expect.soft(state.batchLoading).toBe(false)
+    expect.soft(state.batchProgress).toBeNull()
+    expect.soft(state.batchResult).toBeNull()
+    expect.soft(state.batchError).toBe('')
+    expect.soft(state.batchCancelRequested).toBe(false)
+    expect.soft(state.batchCancelAccepted).toBe(false)
+    expect.soft(state.batchCancelFailed).toBe(false)
+    expect.soft(state.importLoading).toBe(false)
+    expect.soft(state.importResult).toBeNull()
+    expect.soft(state.importError).toBe('')
+    expect.soft(state.importFile).toBeNull()
+    expect.soft(state.importDrag).toBe(false)
+    expect.soft(state.annotateResult).toBeNull()
+    expect.soft(state.annotateError).toBe('')
+    expect.soft(state.approveAllLoading).toBe(false)
+    expect(state.approveAllMessage).toBe('')
+    wrapper.unmount()
+  })
+
   it('does not publish a stale useJob wrapper error after switching courses', async () => {
     const wrapper = await mountPool()
     const state = wrapper.vm.$.setupState
