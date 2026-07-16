@@ -278,6 +278,7 @@ import { useSessionStore } from '../store/session.js'
 import { computeLayout, shortName, radiusOf } from '../utils/graphLayout.js'
 import { fetchTodayReview } from '../api/review.js'
 import ReviewPanel from '../components/ReviewPanel.vue'
+import { createLatestRequest } from '../utils/latestRequest.js'
 
 const serif = "'Noto Serif SC', serif"
 const { theme } = useTheme()
@@ -314,6 +315,11 @@ const reviewItems = ref([])
 const reviewTotalCount = ref(0)
 const reviewLoading = ref(false)
 const reviewError = ref('')
+const reviewRequest = createLatestRequest()
+
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+}
 
 const reviewCount = computed(() => {
   if (reviewTotalCount.value > 0) return reviewTotalCount.value
@@ -321,23 +327,37 @@ const reviewCount = computed(() => {
 })
 
 async function loadReview() {
-  if (!currentUser.value?.id || !courseId.value) {
+  const userId = currentUser.value?.id
+  const id = Number(courseId.value)
+  if (!userId || !(id > 0)) {
+    reviewRequest.cancel()
     reviewItems.value = []
     reviewTotalCount.value = 0
+    reviewLoading.value = false
+    reviewError.value = ''
     return
   }
+  const request = reviewRequest.next()
   reviewLoading.value = true
   reviewError.value = ''
+  reviewItems.value = []
+  reviewTotalCount.value = 0
   try {
-    const vo = await fetchTodayReview(courseId.value)
+    const vo = await fetchTodayReview(id, { signal: request.signal })
+    if (
+      !request.isCurrent() ||
+      Number(courseId.value) !== id ||
+      currentUser.value?.id !== userId
+    ) return
     reviewItems.value = vo?.items || []
     reviewTotalCount.value = vo?.totalDecayingCount ?? reviewItems.value.length
   } catch (e) {
+    if (!request.isCurrent() || isAbortError(e)) return
     reviewError.value = e.message || '加载复习队列失败'
     reviewItems.value = []
     reviewTotalCount.value = 0
   } finally {
-    reviewLoading.value = false
+    if (request.isCurrent()) reviewLoading.value = false
   }
 }
 
@@ -839,6 +859,7 @@ onMounted(() => {
   window.addEventListener('keyup', onKeyUp)
 })
 onUnmounted(() => {
+  reviewRequest.cancel()
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('keyup', onKeyUp)
 })

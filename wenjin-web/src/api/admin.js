@@ -135,8 +135,11 @@ export function commitExtractDraft(draftId, finalGraph) {
  * 抽取审核指标历史
  * @param {string} courseCode
  */
-export function fetchExtractionReviews(courseCode) {
-  return http.get('/admin/graph/extract/reviews', { params: { courseCode } })
+export function fetchExtractionReviews(courseCode, config = {}) {
+  return http.get('/admin/graph/extract/reviews', {
+    ...config,
+    params: { ...config.params, courseCode }
+  })
 }
 
 /** @deprecated 兼容旧签名：第三参为 onUploadProgress 函数 */

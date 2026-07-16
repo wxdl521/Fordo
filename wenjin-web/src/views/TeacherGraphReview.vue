@@ -419,6 +419,7 @@ import { useJob } from '../composables/useJob.js'
 import { isJobSucceeded } from '../api/jobs.js'
 import { useRouter } from 'vue-router'
 import { useCourseStore } from '../store/course.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 
 const router = useRouter()
 const courseStore = useCourseStore()
@@ -527,11 +528,26 @@ function closeDropdowns() {
 const chartEl = ref(null)
 const graph = ref(null)
 const pending = ref([])
-const loading = ref(true)
-const error = ref(null)
+const graphLoading = ref(true)
+const pendingLoading = ref(true)
+const graphError = ref(null)
+const pendingError = ref(null)
+const loading = computed(() => graphLoading.value || pendingLoading.value)
+const error = computed(() => graphError.value || pendingError.value)
 const showNodeForm = ref(false)
 const showEditForm = ref(false)
 const processed = ref(0)
+const graphRequest = createLatestRequest()
+const pendingRequest = createLatestRequest()
+const historyRequest = createLatestRequest()
+
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+}
+
+function isCurrentCourse(courseId) {
+  return Number(currentCourse.value?.id) === Number(courseId)
+}
 
 // ── 连线模式 ──
 const linkMode = ref(false)
@@ -571,9 +587,21 @@ const showHistory = ref(false)
 const reviews = ref([])
 async function openHistory() {
   if (!currentCourse.value) return
+  const actionCourse = {
+    id: Number(currentCourse.value.id),
+    code: currentCourse.value.code
+  }
+  const request = historyRequest.next()
   showHistory.value = true
-  try { reviews.value = await fetchExtractionReviews(currentCourse.value.code) }
-  catch { reviews.value = [] }
+  reviews.value = []
+  try {
+    const result = await fetchExtractionReviews(actionCourse.code, { signal: request.signal })
+    if (!request.isCurrent() || !isCurrentCourse(actionCourse.id)) return
+    reviews.value = result
+  } catch (err) {
+    if (!request.isCurrent() || isAbortError(err)) return
+    reviews.value = []
+  }
 }
 function histPct(v) { return v == null ? '—' : (Number(v) * 100).toFixed(1) + '%' }
 
@@ -637,10 +665,18 @@ async function loadCourses(preferId) {
   courses.value = Array.isArray(list) ? list : []
   courseStore.setTeacherCourses(courses.value)
   if (courses.value.length === 0) {
+    graphRequest.cancel()
+    pendingRequest.cancel()
+    historyRequest.cancel()
     currentCourse.value = null
     courseStore.setTeacherCourseId(null)
     graph.value = { nodes: [], edges: [] }
     pending.value = []
+    processed.value = 0
+    graphLoading.value = false
+    pendingLoading.value = false
+    graphError.value = null
+    pendingError.value = null
     if (chart) chart.clear()
     return
   }
@@ -653,6 +689,8 @@ async function switchCourse(id) {
   const c = courses.value.find(x => x.id === Number(id))
   if (!c || (currentCourse.value && c.id === currentCourse.value.id)) return
   currentCourse.value = c
+  historyRequest.cancel()
+  reviews.value = []
   extractActionCourse = null
   importActionCourse = null
   syllabusBusy.value = false
@@ -699,30 +737,67 @@ async function togglePublish() {
 }
 
 async function reload() {
-  if (!currentCourse.value) { loading.value = false; return }
-  loading.value = true
-  error.value = null
-  try {
-    const [g, p] = await Promise.all([
-      fetchTeacherGraph(currentCourse.value.id),
-      fetchPendingEdges(currentCourse.value.id)
-    ])
-
-    // 提取 .data（接口返回 Result 信封）
-    graph.value = g.data || g
-    pending.value = p.data || p
-
-    // 计算已处理数（根据初始待复核边总数）
-    const initialTotal = (graph.value.edges || []).filter(e => e.pending !== false).length
-    processed.value = Math.max(0, initialTotal - pending.value.length)
-
-    renderChart()
-  } catch (e) {
-    console.error('加载失败', e)
-    error.value = e.message || '网络错误'
-  } finally {
-    loading.value = false
+  const courseId = Number(currentCourse.value?.id)
+  if (!(courseId > 0)) {
+    graphRequest.cancel()
+    pendingRequest.cancel()
+    graphLoading.value = false
+    pendingLoading.value = false
+    graphError.value = null
+    pendingError.value = null
+    graph.value = { nodes: [], edges: [] }
+    pending.value = []
+    processed.value = 0
+    return
   }
+
+  const graphRun = graphRequest.next()
+  const pendingRun = pendingRequest.next()
+  graphLoading.value = true
+  pendingLoading.value = true
+  graphError.value = null
+  pendingError.value = null
+  graph.value = { nodes: [], edges: [] }
+  pending.value = []
+  processed.value = 0
+
+  const loadGraph = async () => {
+    try {
+      const result = await fetchTeacherGraph(courseId, { signal: graphRun.signal })
+      if (!graphRun.isCurrent() || !isCurrentCourse(courseId)) return false
+      graph.value = result.data || result
+      renderChart()
+      return true
+    } catch (err) {
+      if (!graphRun.isCurrent() || isAbortError(err)) return false
+      console.error('加载图谱失败', err)
+      graphError.value = err.message || '网络错误'
+      return false
+    } finally {
+      if (graphRun.isCurrent()) graphLoading.value = false
+    }
+  }
+
+  const loadPending = async () => {
+    try {
+      const result = await fetchPendingEdges(courseId, { signal: pendingRun.signal })
+      if (!pendingRun.isCurrent() || !isCurrentCourse(courseId)) return false
+      pending.value = result.data || result
+      return true
+    } catch (err) {
+      if (!pendingRun.isCurrent() || isAbortError(err)) return false
+      console.error('加载待复核边失败', err)
+      pendingError.value = err.message || '网络错误'
+      return false
+    } finally {
+      if (pendingRun.isCurrent()) pendingLoading.value = false
+    }
+  }
+
+  const [graphApplied, pendingApplied] = await Promise.all([loadGraph(), loadPending()])
+  if (!graphApplied || !pendingApplied || !isCurrentCourse(courseId)) return
+  const initialTotal = (graph.value.edges || []).filter(e => e.pending !== false).length
+  processed.value = Math.max(0, initialTotal - pending.value.length)
 }
 
 function renderChart() {
@@ -1364,6 +1439,9 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  graphRequest.cancel()
+  pendingRequest.cancel()
+  historyRequest.cancel()
   window.removeEventListener('resize', onResize)
   window.removeEventListener('keydown', handleKeydown)
   document.removeEventListener('click', closeMenus, true)

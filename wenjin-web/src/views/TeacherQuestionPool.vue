@@ -94,7 +94,11 @@
         </div>
         <div v-if="batchError" role="alert" :style="toolErrorStyle">{{ batchError }}</div>
 
-        <div v-if="graphNodes.length === 0 && courseId" :style="toolErrorStyle">
+        <div v-if="graphNodesLoading" :style="toolResultStyle">图谱节点加载中…</div>
+        <div v-if="graphNodesError" data-testid="graph-nodes-error" role="alert" :style="toolErrorStyle">
+          {{ graphNodesError }}
+        </div>
+        <div v-if="!graphNodesLoading && !graphNodesError && graphNodes.length === 0 && courseId" :style="toolErrorStyle">
           当前课程暂无图谱节点，请先在「图谱审核」页导入或生成图谱。
         </div>
         <div v-if="!courseId" :style="toolErrorStyle">
@@ -221,8 +225,12 @@
       </div>
     </div>
 
+    <div v-if="loadError" data-testid="question-load-error" role="alert" :style="toolErrorStyle">
+      {{ loadError }}
+    </div>
+
     <!-- 空态 -->
-    <div v-if="!loading && list.length === 0" :style="emptyStyle">
+    <div v-if="!loading && !loadError && list.length === 0" :style="emptyStyle">
       <div :style="emptyTitleStyle">此处无题</div>
       <div :style="emptyDescStyle">当前筛选条件下没有题目。</div>
     </div>
@@ -240,12 +248,13 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { fetchQuestions, reviewQuestions, fetchTeacherGraph, reviewAllQuestions } from '../api/teacher.js'
 import { generateQuestions, annotateQuestions, importQuestionJson, importQuestionExcel } from '../api/admin.js'
 import { useTeacherCourse } from '../composables/useTeacherCourse.js'
 import { useJob } from '../composables/useJob.js'
 import { cancelJob, getJob, isJobSucceeded } from '../api/jobs.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 
 const { currentCourse, courseId } = useTeacherCourse()
 const optionKeys = ['A', 'B', 'C', 'D']
@@ -312,6 +321,8 @@ const size = ref(20)
 const checked = ref({})
 const data = ref(null)
 const loading = ref(false)
+const loadError = ref('')
+const questionsRequest = createLatestRequest()
 
 const confOptions = [
   { value: '', label: '全部' },
@@ -323,6 +334,9 @@ const confOptions = [
 // ── 批量工具状态 ──
 const showTools = ref(false)
 const graphNodes = ref([]) // [{nodeCode, name, chapter}]
+const graphNodesLoading = ref(false)
+const graphNodesError = ref('')
+const graphNodesRequest = createLatestRequest()
 const genNodeCode = ref('')
 const genCount = ref(5)
 const genError = ref('')
@@ -347,6 +361,10 @@ const annotateError = ref('')
 const annotateResult = ref(null)
 const approveAllLoading = ref(false)
 const approveAllMessage = ref('')
+
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+}
 
 // ── 计算属性 ──
 const pendingCount = computed(() => {
@@ -392,37 +410,58 @@ const totalPages = computed(() => {
 
 // ── 数据加载 ──
 async function load() {
-  if (!courseId.value) {
+  const id = Number(courseId.value)
+  if (!(id > 0)) {
+    questionsRequest.cancel()
     data.value = null
+    loading.value = false
+    loadError.value = ''
     return
   }
+  const params = {
+    courseId: id,
+    status: tab.value,
+    conf: conf.value || undefined,
+    nodeCode: nodeCode.value || undefined,
+    page: page.value,
+    size: size.value
+  }
+  const request = questionsRequest.next()
   loading.value = true
+  loadError.value = ''
+  data.value = null
   try {
-    const res = await fetchQuestions({
-      courseId: courseId.value,
-      status: tab.value,
-      conf: conf.value || undefined,
-      nodeCode: nodeCode.value || undefined,
-      page: page.value,
-      size: size.value
-    })
+    const res = await fetchQuestions(params, { signal: request.signal })
+    if (!request.isCurrent() || Number(courseId.value) !== id) return
     data.value = res
   } catch (err) {
+    if (!request.isCurrent() || isAbortError(err)) return
     console.error('加载题目失败', err)
+    loadError.value = err?.message || '加载题目失败'
   } finally {
-    loading.value = false
+    if (request.isCurrent()) loading.value = false
   }
 }
 
 // ── 加载图谱节点 ──
 async function loadGraphNodes() {
-  if (!courseId.value) {
+  const id = Number(courseId.value)
+  if (!(id > 0)) {
+    graphNodesRequest.cancel()
     graphNodes.value = []
     genNodeCode.value = ''
+    graphNodesLoading.value = false
+    graphNodesError.value = ''
     return
   }
+  const request = graphNodesRequest.next()
+  graphNodesLoading.value = true
+  graphNodesError.value = ''
+  graphNodes.value = []
+  genNodeCode.value = ''
   try {
-    const graph = await fetchTeacherGraph(courseId.value)
+    const graph = await fetchTeacherGraph(id, { signal: request.signal })
+    if (!request.isCurrent() || Number(courseId.value) !== id) return
     graphNodes.value = (graph.nodes || []).sort((a, b) => a.nodeCode.localeCompare(b.nodeCode))
     if (graphNodes.value.length > 0) {
       const stillValid = graphNodes.value.some(n => n.nodeCode === genNodeCode.value)
@@ -431,9 +470,13 @@ async function loadGraphNodes() {
       genNodeCode.value = ''
     }
   } catch (err) {
+    if (!request.isCurrent() || isAbortError(err)) return
     console.error('加载图谱节点失败', err)
     graphNodes.value = []
     genNodeCode.value = ''
+    graphNodesError.value = err?.message || '加载图谱节点失败'
+  } finally {
+    if (request.isCurrent()) graphNodesLoading.value = false
   }
 }
 
@@ -798,12 +841,15 @@ watch([tab, conf, nodeCode, page], () => {
   load()
 })
 
-watch(courseId, (id) => {
-  if (id) {
-    load()
-    loadGraphNodes()
-  }
+watch(courseId, () => {
+  load()
+  loadGraphNodes()
 }, { immediate: true })
+
+onUnmounted(() => {
+  questionsRequest.cancel()
+  graphNodesRequest.cancel()
+})
 
 // ── DEV 钩子 ──
 if (import.meta.env.DEV) {

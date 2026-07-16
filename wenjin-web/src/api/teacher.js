@@ -1,11 +1,17 @@
 import { http } from './http.js'
 
 // ── 图谱审核 ──
-export function fetchTeacherGraph(courseId) {
-  return http.get('/teacher/graph', { params: { courseId } })
+export function fetchTeacherGraph(courseId, config = {}) {
+  return http.get('/teacher/graph', {
+    ...config,
+    params: { ...config.params, courseId }
+  })
 }
-export function fetchPendingEdges(courseId) {
-  return http.get('/teacher/graph/pending-edges', { params: { courseId } })
+export function fetchPendingEdges(courseId, config = {}) {
+  return http.get('/teacher/graph/pending-edges', {
+    ...config,
+    params: { ...config.params, courseId }
+  })
 }
 export function acceptEdge(id) {
   return http.post(`/teacher/graph/edges/${id}/accept`)
@@ -28,8 +34,11 @@ export function deleteNode(id) {
 }
 
 // ── 题目审核池 ──
-export function fetchQuestions({ courseId, status, nodeCode, conf, page, size }) {
-  return http.get('/teacher/questions', { params: { courseId, status, nodeCode, conf, page, size } })
+export function fetchQuestions({ courseId, status, nodeCode, conf, page, size }, config = {}) {
+  return http.get('/teacher/questions', {
+    ...config,
+    params: { ...config.params, courseId, status, nodeCode, conf, page, size }
+  })
 }
 export function reviewQuestions(courseId, ids, action) {
   return http.post('/teacher/questions/review', { ids, action }, { params: { courseId } })

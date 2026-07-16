@@ -8,6 +8,7 @@ const createEdgeMock = vi.fn()
 const fetchTeacherGraphMock = vi.fn()
 const fetchPendingEdgesMock = vi.fn()
 const fetchTeacherCoursesMock = vi.fn()
+const fetchExtractionReviewsMock = vi.fn()
 const extractGraphFromFileMock = vi.fn()
 const importGraphExcelMock = vi.fn()
 const useJobControls = []
@@ -50,7 +51,7 @@ vi.mock('../../api/admin.js', () => ({
   importGraphJson: vi.fn(),
   importGraphExcel: (...a) => importGraphExcelMock(...a),
   extractGraphFromFile: (...a) => extractGraphFromFileMock(...a),
-  fetchExtractionReviews: vi.fn().mockResolvedValue([])
+  fetchExtractionReviews: (...a) => fetchExtractionReviewsMock(...a)
 }))
 
 vi.mock('../../composables/useJob.js', () => ({
@@ -106,6 +107,27 @@ function api() {
   return window.__wjTeacherGraph
 }
 
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+function graphResult(course) {
+  return {
+    nodes: [{ id: course, nodeCode: `${course}-NODE`, name: `${course} node`, isKey: false }],
+    edges: [{ id: course, source: `${course}-NODE`, target: `${course}-TARGET`, pending: true }]
+  }
+}
+
+function pendingResult(course) {
+  return [{ id: course, source: `${course}-NODE`, target: `${course}-TARGET` }]
+}
+
 describe('TeacherGraphReview edge create', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -124,9 +146,11 @@ describe('TeacherGraphReview edge create', () => {
     createEdgeMock.mockResolvedValue(99)
     extractGraphFromFileMock.mockResolvedValue({ id: 20, status: 0, progress: 0 })
     importGraphExcelMock.mockResolvedValue({ id: 21, status: 0, progress: 0 })
+    fetchExtractionReviewsMock.mockResolvedValue([])
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     delete window.__wjTeacherGraph
   })
 
@@ -312,5 +336,166 @@ describe('TeacherGraphReview edge create', () => {
     expect(wrapper.vm.$router.currentRoute.value.query.courseCode).not.toBe('DB')
     expect(fetchTeacherGraphMock).not.toHaveBeenCalled()
     expect(fetchPendingEdgesMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps course B graph, pending queue, and loading state when course A succeeds last', async () => {
+    fetchTeacherCoursesMock.mockResolvedValue([
+      { id: 1, name: 'Course A', code: 'A', published: true },
+      { id: 2, name: 'Course B', code: 'B', published: true }
+    ])
+    const wrapper = await mountReview()
+    const hook = api()
+    const graphA = deferred()
+    const graphB = deferred()
+    const pendingA = deferred()
+    const pendingB = deferred()
+
+    fetchTeacherGraphMock.mockReset()
+    fetchPendingEdgesMock.mockReset()
+    fetchTeacherGraphMock.mockImplementation((id) => (id === 1 ? graphA.promise : graphB.promise))
+    fetchPendingEdgesMock.mockImplementation((id) => (id === 1 ? pendingA.promise : pendingB.promise))
+
+    const loadA = hook.reload()
+    await nextTick()
+    expect(fetchTeacherGraphMock).toHaveBeenCalledWith(1, expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(fetchPendingEdgesMock).toHaveBeenCalledWith(1, expect.objectContaining({ signal: expect.any(AbortSignal) }))
+
+    const loadB = hook.switchCourse(2)
+    await nextTick()
+    const graphASignal = fetchTeacherGraphMock.mock.calls[0][1].signal
+    const pendingASignal = fetchPendingEdgesMock.mock.calls[0][1].signal
+    expect(graphASignal.aborted).toBe(true)
+    expect(pendingASignal.aborted).toBe(true)
+
+    graphB.resolve(graphResult('B'))
+    pendingB.resolve(pendingResult('B'))
+    await loadB
+    await flushPromises()
+    expect(hook.state().edges).toEqual(graphResult('B').edges)
+    expect(hook.state().pending).toEqual(pendingResult('B'))
+    expect(wrapper.text()).not.toContain('加载中')
+
+    graphA.resolve(graphResult('A'))
+    pendingA.resolve(pendingResult('A'))
+    await loadA
+    await flushPromises()
+    expect(hook.state().edges).toEqual(graphResult('B').edges)
+    expect(hook.state().pending).toEqual(pendingResult('B'))
+    expect(wrapper.text()).not.toContain('加载中')
+    wrapper.unmount()
+  })
+
+  it('keeps course B errors when an aborted course A request rejects last', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    fetchTeacherCoursesMock.mockResolvedValue([
+      { id: 1, name: 'Course A', code: 'A', published: true },
+      { id: 2, name: 'Course B', code: 'B', published: true }
+    ])
+    const wrapper = await mountReview()
+    const hook = api()
+    const graphA = deferred()
+    const graphB = deferred()
+    const pendingA = deferred()
+    const pendingB = deferred()
+
+    fetchTeacherGraphMock.mockReset()
+    fetchPendingEdgesMock.mockReset()
+    fetchTeacherGraphMock.mockImplementation((id) => (id === 1 ? graphA.promise : graphB.promise))
+    fetchPendingEdgesMock.mockImplementation((id) => (id === 1 ? pendingA.promise : pendingB.promise))
+
+    const loadA = hook.reload()
+    await nextTick()
+    const loadB = hook.switchCourse(2)
+    await nextTick()
+
+    graphB.resolve(graphResult('B'))
+    pendingB.reject(new Error('course B pending failed'))
+    await loadB
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('course B pending failed')
+
+    graphA.resolve(graphResult('A'))
+    pendingA.reject(Object.assign(new Error('course A aborted'), { name: 'AbortError' }))
+    await loadA
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('course B pending failed')
+    expect(wrapper.text()).not.toContain('course A aborted')
+    expect(hook.state().edges).not.toEqual(graphResult('A').edges)
+    wrapper.unmount()
+  })
+
+  it('does not let stale course A failure clear course B loading or set an error', async () => {
+    fetchTeacherCoursesMock.mockResolvedValue([
+      { id: 1, name: 'Course A', code: 'A', published: true },
+      { id: 2, name: 'Course B', code: 'B', published: true }
+    ])
+    const wrapper = await mountReview()
+    const graphA = deferred()
+    const graphB = deferred()
+    const pendingA = deferred()
+    const pendingB = deferred()
+
+    fetchTeacherGraphMock.mockReset()
+    fetchPendingEdgesMock.mockReset()
+    fetchTeacherGraphMock.mockImplementation((id) => (id === 1 ? graphA.promise : graphB.promise))
+    fetchPendingEdgesMock.mockImplementation((id) => (id === 1 ? pendingA.promise : pendingB.promise))
+
+    const loadA = api().reload()
+    await nextTick()
+    const loadB = api().switchCourse(2)
+    await nextTick()
+
+    graphA.reject(new Error('course A graph failed'))
+    pendingA.resolve(pendingResult('A'))
+    await loadA
+    await flushPromises()
+    expect(wrapper.text()).toContain('加载中')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+
+    graphB.resolve(graphResult('B'))
+    pendingB.resolve(pendingResult('B'))
+    await loadB
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('加载中')
+    expect(api().state().edges).toEqual(graphResult('B').edges)
+    wrapper.unmount()
+  })
+
+  it('does not let course A extraction history write after switching to course B', async () => {
+    fetchTeacherCoursesMock.mockResolvedValue([
+      { id: 1, name: 'Course A', code: 'A', published: true },
+      { id: 2, name: 'Course B', code: 'B', published: true }
+    ])
+    const wrapper = await mountReview()
+    const historyA = deferred()
+    fetchExtractionReviewsMock.mockReset()
+    fetchExtractionReviewsMock.mockReturnValue(historyA.promise)
+
+    const graphMenu = wrapper.findAll('button').find((button) => button.text().includes('图谱操作'))
+    await graphMenu.trigger('click')
+    const historyButton = wrapper.findAll('button').find((button) => button.text().includes('抽取历史'))
+    await historyButton.trigger('click')
+    await nextTick()
+    expect(fetchExtractionReviewsMock).toHaveBeenCalledWith(
+      'A',
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+
+    const historyASignal = fetchExtractionReviewsMock.mock.calls[0][1].signal
+    await api().switchCourse(2)
+    expect(historyASignal.aborted).toBe(true)
+
+    historyA.resolve([{
+      createdAt: 'A-stale-history',
+      nodeRecall: 1,
+      nodePrecision: 1,
+      nodeKeptCount: 1,
+      nodeDeletedCount: 0,
+      nodeAddedCount: 0,
+      edgeRecall: 1
+    }])
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('A-stale-history')
+    wrapper.unmount()
   })
 })

@@ -6,6 +6,9 @@ import { http } from './http.js'
  * @param {number} courseId
  * @returns {Promise<{ items: ReviewItem[], totalDecayingCount: number }>}
  */
-export function fetchTodayReview(courseId) {
-  return http.get('/review/today', { params: { courseId } })
+export function fetchTodayReview(courseId, config = {}) {
+  return http.get('/review/today', {
+    ...config,
+    params: { ...config.params, courseId }
+  })
 }
