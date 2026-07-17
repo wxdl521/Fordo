@@ -48,6 +48,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
@@ -150,6 +151,8 @@ class CompanionTraceTest {
         assertThat(toolStep.status()).isEqualTo(AgentStepStatus.OK);
         assertThat(toolStep.inputJson()).contains("KT12");
         assertThat(toolStep.outputJson()).contains("items");
+        // success path must not be recorded as GUARD
+        assertThat(steps.stream().noneMatch(s -> AgentStepType.GUARD.equals(s.stepType()))).isTrue();
 
         StepRecord phase2 = steps.stream()
                 .filter(s -> "phase2".equals(s.name()))
@@ -163,6 +166,91 @@ class CompanionTraceTest {
         assertThat(activeCtx.tokensEstimated()).isEqualTo(1);
 
         verify(agentTraceService, times(1)).finishRun(eq(activeCtx), eq(AgentRunStatus.SUCCEEDED), isNull());
+    }
+
+    @Test
+    @DisplayName("governor budget intercept → GUARD step (not TOOL_CALL)")
+    void streamReplyWithTools_budgetExceeded_recordsGuardStep() {
+        Long conversationId = 710L;
+        stubConversation(conversationId, "再查一次掌握度");
+        configureTools(true, List.of(fakeTool("query_mastery", "正在查询…")));
+
+        when(aiClient.completeWithTools(any(), any())).thenReturn(
+                new CompanionAiClient.ToolCalls(List.of(
+                        new CompanionAiClient.ToolCall("call-budget", "query_mastery", "{\"nodeCode\":\"KT12\"}"))),
+                new CompanionAiClient.FinalText("budget blocked"));
+        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+                new ToolExecutionResult(
+                        "call-budget",
+                        "query_mastery",
+                        false,
+                        "{\"error\":\"tool_budget_exceeded\",\"message\":\"Tool call budget exceeded\"}",
+                        null,
+                        true));
+        doAnswer(inv -> {
+            Consumer<String> onToken = inv.getArgument(1);
+            onToken.accept("预算已满…");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, t -> { });
+
+        ArgumentCaptor<StepRecord> stepCap = ArgumentCaptor.forClass(StepRecord.class);
+        verify(agentTraceService, times(4)).step(eq(activeCtx), stepCap.capture());
+        List<StepRecord> steps = stepCap.getAllValues();
+
+        StepRecord guard = steps.stream()
+                .filter(s -> AgentStepType.GUARD.equals(s.stepType()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(guard.name()).isEqualTo("query_mastery");
+        assertThat(guard.status()).isEqualTo(AgentStepStatus.FAILED);
+        assertThat(guard.inputJson()).contains("KT12");
+        assertThat(guard.outputJson()).contains("tool_budget_exceeded");
+        assertThat(steps.stream().noneMatch(s -> AgentStepType.TOOL_CALL.equals(s.stepType()))).isTrue();
+
+        verify(agentTraceService).finishRun(eq(activeCtx), eq(AgentRunStatus.SUCCEEDED), isNull());
+    }
+
+    @Test
+    @DisplayName("governor unknown tool intercept → GUARD step named after tool")
+    void streamReplyWithTools_unknownTool_recordsGuardStep() {
+        Long conversationId = 711L;
+        stubConversation(conversationId, "调用未知工具");
+        configureTools(true, List.of(fakeTool("query_mastery", "正在查询…")));
+
+        when(aiClient.completeWithTools(any(), any())).thenReturn(
+                new CompanionAiClient.ToolCalls(List.of(
+                        new CompanionAiClient.ToolCall("call-unk", "missing_tool", "{}"))),
+                new CompanionAiClient.FinalText("unknown"));
+        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+                new ToolExecutionResult(
+                        "call-unk",
+                        "missing_tool",
+                        false,
+                        "{\"error\":\"unknown_tool\",\"message\":\"Tool is not registered: missing_tool\"}",
+                        null,
+                        true));
+        doAnswer(inv -> {
+            Consumer<String> onToken = inv.getArgument(1);
+            onToken.accept("无法调用…");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, t -> { });
+
+        ArgumentCaptor<StepRecord> stepCap = ArgumentCaptor.forClass(StepRecord.class);
+        verify(agentTraceService, atLeastOnce()).step(eq(activeCtx), stepCap.capture());
+
+        StepRecord guard = stepCap.getAllValues().stream()
+                .filter(s -> AgentStepType.GUARD.equals(s.stepType()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(guard.name()).isEqualTo("missing_tool");
+        assertThat(guard.status()).isEqualTo(AgentStepStatus.FAILED);
+        assertThat(guard.outputJson()).contains("unknown_tool");
     }
 
     @Test

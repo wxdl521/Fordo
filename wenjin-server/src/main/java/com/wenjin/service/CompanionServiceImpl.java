@@ -731,8 +731,12 @@ public class CompanionServiceImpl implements CompanionService {
         String output = result == null ? null : result.content();
         int status = result != null && result.ok() ? AgentStepStatus.OK : AgentStepStatus.FAILED;
         String errorCode = status == AgentStepStatus.OK ? null : "TOOL_FAILED";
+        // Governor intercepts (budget/whitelist/args/timeout) → GUARD; actual execution → TOOL_CALL
+        String stepType = result != null && result.guarded()
+                ? AgentStepType.GUARD
+                : AgentStepType.TOOL_CALL;
         safeStep(ctx, new StepRecord(
-                AgentStepType.TOOL_CALL,
+                stepType,
                 toolName,
                 status,
                 input,

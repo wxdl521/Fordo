@@ -66,8 +66,66 @@ class ToolGovernorTest {
         assertThat(result.toolCallId()).isEqualTo("call_1");
         assertThat(result.toolName()).isEqualTo("missing_tool");
         assertThat(result.ok()).isFalse();
+        assertThat(result.guarded()).isTrue();
         assertThat(errorCode(result)).isEqualTo("unknown_tool");
         assertThat(state.used()).isEqualTo(1);
+    }
+
+    @Test
+    void budgetExceededIsGuardedIntercept() throws Exception {
+        ToolGovernor governor = new ToolGovernor(
+                List.of(new FakeTool("echo", new AtomicInteger(), "{\"ok\":true}")),
+                objectMapper,
+                properties(5_000, 2_000));
+        // max=2 预留 1 给 side-effect → 只读预算 1
+        ToolExecutionState state = new ToolExecutionState(2);
+        ToolContext ctx = new ToolContext(1L, 10L);
+
+        assertThat(governor.execute(
+                ctx,
+                new CompanionAiClient.ToolCall("call_1", "echo", "{}"),
+                state).ok()).isTrue();
+
+        ToolExecutionResult blocked = governor.execute(
+                ctx,
+                new CompanionAiClient.ToolCall("call_2", "echo", "{}"),
+                state);
+
+        assertThat(blocked.ok()).isFalse();
+        assertThat(blocked.guarded()).isTrue();
+        assertThat(errorCode(blocked)).isEqualTo("tool_budget_exceeded");
+    }
+
+    @Test
+    void successfulExecutionIsNotGuarded() {
+        ToolGovernor governor = new ToolGovernor(
+                List.of(new FakeTool("echo", new AtomicInteger(), "{\"ok\":true}")),
+                objectMapper,
+                properties(5_000, 2_000));
+
+        ToolExecutionResult result = governor.execute(
+                new ToolContext(1L, 10L),
+                new CompanionAiClient.ToolCall("call_1", "echo", "{}"),
+                new ToolExecutionState(3));
+
+        assertThat(result.ok()).isTrue();
+        assertThat(result.guarded()).isFalse();
+    }
+
+    @Test
+    void toolInternalErrorIsNotGuarded() {
+        ToolGovernor governor = new ToolGovernor(
+                List.of(new FailingTool("boom")),
+                objectMapper,
+                properties(5_000, 2_000));
+
+        ToolExecutionResult result = governor.execute(
+                new ToolContext(1L, 10L),
+                new CompanionAiClient.ToolCall("call_1", "boom", "{}"),
+                new ToolExecutionState(3));
+
+        assertThat(result.ok()).isFalse();
+        assertThat(result.guarded()).isFalse();
     }
 
     @Test
@@ -85,6 +143,7 @@ class ToolGovernorTest {
                 state);
 
         assertThat(result.ok()).isFalse();
+        assertThat(result.guarded()).isTrue();
         assertThat(errorCode(result)).isEqualTo("invalid_arguments");
         assertThat(executions).hasValue(0);
         assertThat(state.used()).isEqualTo(1);
@@ -357,6 +416,7 @@ class ToolGovernorTest {
         long elapsedMs = (System.nanoTime() - started) / 1_000_000;
 
         assertThat(result.ok()).isFalse();
+        assertThat(result.guarded()).isTrue();
         assertThat(errorCode(result)).isEqualTo("tool_timeout");
         assertThat(elapsedMs).isLessThan(800);
     }
@@ -495,6 +555,18 @@ class ToolGovernorTest {
                 throw new ToolException("interrupted");
             }
             return "{\"ok\":true}";
+        }
+    }
+
+    private record FailingTool(String name) implements CompanionTool {
+        @Override
+        public Map<String, Object> schema() {
+            return Map.of("type", "function", "function", Map.of("name", name));
+        }
+
+        @Override
+        public String execute(ToolContext ctx, JsonNode args) throws ToolException {
+            throw new ToolException("boom from tool body");
         }
     }
 
