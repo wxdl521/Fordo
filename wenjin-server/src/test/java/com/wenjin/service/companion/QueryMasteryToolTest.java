@@ -3,8 +3,10 @@ package com.wenjin.service.companion;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.entity.KgNode;
+import com.wenjin.entity.MasterySnapshot;
 import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.KgNodeMapper;
+import com.wenjin.mapper.MasterySnapshotMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.MasteryDecayCalculator;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +30,7 @@ class QueryMasteryToolTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final KgNodeMapper nodeMapper = mock(KgNodeMapper.class);
     private final StudentMasteryMapper masteryMapper = mock(StudentMasteryMapper.class);
+    private final MasterySnapshotMapper snapshotMapper = mock(MasterySnapshotMapper.class);
     private final MasteryDecayCalculator decayCalculator = mock(MasteryDecayCalculator.class);
 
     private QueryMasteryTool tool;
@@ -37,9 +40,11 @@ class QueryMasteryToolTest {
         tool = new QueryMasteryTool(
                 nodeMapper,
                 masteryMapper,
+                snapshotMapper,
                 decayCalculator,
                 objectMapper,
                 new NodeToolSupport(nodeMapper));
+        when(snapshotMapper.selectList(any())).thenReturn(List.of());
     }
 
     @Test
@@ -80,6 +85,8 @@ class QueryMasteryToolTest {
         assertThat(noMastery.path("effectiveLevel").asInt()).isZero();
         assertThat(noMastery.path("daysSinceEvidence").isNull()).isTrue();
         assertThat(noMastery.path("lastEvidenceAt").isNull()).isTrue();
+        assertThat(noMastery.path("trend").asText()).isEqualTo("FLAT");
+        assertThat(noMastery.path("lastPracticedAt").isNull()).isTrue();
 
         assertThat(json.at("/items/1/rawScore").asDouble()).isEqualTo(88.0);
         assertThat(json.at("/items/1/rawLevel").asInt()).isEqualTo(2);
@@ -87,6 +94,8 @@ class QueryMasteryToolTest {
         assertThat(json.at("/items/1/effectiveLevel").asInt()).isEqualTo(0);
         assertThat(json.at("/items/1/daysSinceEvidence").asDouble()).isEqualTo(40.0);
         assertThat(json.at("/items/1/lastEvidenceAt").asText()).isEqualTo("2026-05-28T09:30:00");
+        assertThat(json.at("/items/1/trend").asText()).isEqualTo("FLAT");
+        assertThat(json.at("/items/1/lastPracticedAt").asText()).isEqualTo("2026-05-28T09:30:00");
     }
 
     @Test
@@ -130,12 +139,15 @@ class QueryMasteryToolTest {
     }
 
     @Test
-    void specificNodeReturnsDetailJson() throws Exception {
+    void specificNodeReturnsDetailJsonWithTrendAndLastPracticedAt() throws Exception {
         KgNode kt01 = node(101L, 10L, "KT01", "Loops");
         StudentMastery mastery = mastery(1L, 10L, 101L, 88.0, 2, LocalDateTime.of(2026, 5, 28, 9, 30));
+        MasterySnapshot older = snapshot(101L, 70.0, LocalDateTime.of(2026, 5, 20, 8, 0));
+        MasterySnapshot newer = snapshot(101L, 88.0, LocalDateTime.of(2026, 5, 28, 9, 30));
 
         when(nodeMapper.selectOne(any())).thenReturn(kt01);
         when(masteryMapper.selectOne(any())).thenReturn(mastery);
+        when(snapshotMapper.selectList(any())).thenReturn(List.of(newer, older));
         when(decayCalculator.effectiveScoreOf(mastery)).thenReturn(41.6);
         when(decayCalculator.effectiveLevelOf(41.6)).thenReturn(1);
         when(decayCalculator.daysSinceEvidence(mastery.getUpdatedAt())).thenReturn(40.0);
@@ -152,6 +164,62 @@ class QueryMasteryToolTest {
         assertThat(json.path("effectiveLevel").asInt()).isEqualTo(1);
         assertThat(json.path("daysSinceEvidence").asDouble()).isEqualTo(40.0);
         assertThat(json.path("lastEvidenceAt").asText()).isEqualTo("2026-05-28T09:30:00");
+        assertThat(json.path("trend").asText()).isEqualTo("UP");
+        assertThat(json.path("lastPracticedAt").asText()).isEqualTo("2026-05-28T09:30:00");
+    }
+
+    @Test
+    void trendDownWhenLatestSnapshotLower() throws Exception {
+        KgNode kt01 = node(101L, 10L, "KT01", "Loops");
+        StudentMastery mastery = mastery(1L, 10L, 101L, 50.0, 1, LocalDateTime.of(2026, 6, 1, 10, 0));
+        MasterySnapshot older = snapshot(101L, 90.0, LocalDateTime.of(2026, 5, 1, 8, 0));
+        MasterySnapshot newer = snapshot(101L, 50.0, LocalDateTime.of(2026, 6, 1, 10, 0));
+
+        when(nodeMapper.selectOne(any())).thenReturn(kt01);
+        when(masteryMapper.selectOne(any())).thenReturn(mastery);
+        when(snapshotMapper.selectList(any())).thenReturn(List.of(newer, older));
+        when(decayCalculator.effectiveScoreOf(mastery)).thenReturn(50.0);
+        when(decayCalculator.effectiveLevelOf(50.0)).thenReturn(1);
+        when(decayCalculator.daysSinceEvidence(mastery.getUpdatedAt())).thenReturn(1.0);
+
+        JsonNode json = objectMapper.readTree(tool.execute(
+                new ToolContext(1L, 10L),
+                objectMapper.createObjectNode().put("nodeCode", "KT01")));
+
+        assertThat(json.path("trend").asText()).isEqualTo("DOWN");
+    }
+
+    @Test
+    void emptyNodeCodesUsesSessionFocus() throws Exception {
+        KgNode kt01 = node(101L, 10L, "KT01", "Loops");
+        when(nodeMapper.selectOne(any())).thenReturn(kt01);
+        when(masteryMapper.selectOne(any())).thenReturn(null);
+
+        JsonNode json = objectMapper.readTree(tool.execute(
+                new ToolContext(1L, 10L, "KT01"),
+                objectMapper.createObjectNode()));
+
+        assertThat(json.path("nodeCode").asText()).isEqualTo("KT01");
+        assertThat(json.path("trend").asText()).isEqualTo("FLAT");
+    }
+
+    @Test
+    void nodeCodesArrayReturnsItems() throws Exception {
+        KgNode kt01 = node(101L, 10L, "KT01", "Loops");
+        KgNode kt02 = node(102L, 10L, "KT02", "Arrays");
+
+        when(nodeMapper.selectOne(any()))
+                .thenReturn(kt01)
+                .thenReturn(kt02);
+        when(masteryMapper.selectOne(any())).thenReturn(null);
+
+        JsonNode args = objectMapper.readTree("{\"nodeCodes\":[\"KT01\",\"KT02\"]}");
+        JsonNode json = objectMapper.readTree(tool.execute(new ToolContext(1L, 10L), args));
+
+        assertThat(json.path("items")).hasSize(2);
+        assertThat(json.at("/items/0/nodeCode").asText()).isEqualTo("KT01");
+        assertThat(json.at("/items/1/nodeCode").asText()).isEqualTo("KT02");
+        assertThat(json.at("/items/0/trend").asText()).isEqualTo("FLAT");
     }
 
     @Test
@@ -167,6 +235,7 @@ class QueryMasteryToolTest {
 
         assertThat(json.path("nodeCode").asText()).isEqualTo("KT01");
         assertThat(json.path("name").asText()).isEqualTo("Loops");
+        assertThat(json.path("trend").asText()).isEqualTo("FLAT");
     }
 
     @Test
@@ -201,7 +270,20 @@ class QueryMasteryToolTest {
         assertThat(json.path("effectiveLevel").asInt()).isZero();
         assertThat(json.path("daysSinceEvidence").isNull()).isTrue();
         assertThat(json.path("lastEvidenceAt").isNull()).isTrue();
+        assertThat(json.path("trend").asText()).isEqualTo("FLAT");
+        assertThat(json.path("lastPracticedAt").isNull()).isTrue();
         verifyNoInteractions(decayCalculator);
+    }
+
+    @Test
+    void computeTrendHelpers() {
+        assertThat(QueryMasteryTool.computeTrend(List.of())).isEqualTo("FLAT");
+        MasterySnapshot a = snapshot(1L, 10.0, LocalDateTime.of(2026, 1, 2, 0, 0));
+        MasterySnapshot b = snapshot(1L, 10.02, LocalDateTime.of(2026, 1, 1, 0, 0));
+        assertThat(QueryMasteryTool.computeTrend(List.of(a, b))).isEqualTo("FLAT");
+        MasterySnapshot up = snapshot(1L, 20.0, LocalDateTime.of(2026, 1, 2, 0, 0));
+        MasterySnapshot prev = snapshot(1L, 10.0, LocalDateTime.of(2026, 1, 1, 0, 0));
+        assertThat(QueryMasteryTool.computeTrend(List.of(up, prev))).isEqualTo("UP");
     }
 
     private KgNode node(Long id, Long courseId, String nodeCode, String name) {
@@ -227,5 +309,13 @@ class QueryMasteryToolTest {
         mastery.setMasteryLevel(rawLevel);
         mastery.setUpdatedAt(updatedAt);
         return mastery;
+    }
+
+    private MasterySnapshot snapshot(Long nodeId, double score, LocalDateTime at) {
+        MasterySnapshot snap = new MasterySnapshot();
+        snap.setNodeId(nodeId);
+        snap.setMasteryScore(BigDecimal.valueOf(score));
+        snap.setSnapshotAt(at);
+        return snap;
     }
 }

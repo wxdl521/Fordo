@@ -47,19 +47,36 @@ class StartPracticeToolTest {
         ToolExecutionResult result = tool.executeForGovernor(
                 "call-1",
                 new ToolContext(1L, 10L),
-                objectMapper.readTree("{\"nodeCode\":\"KT12\",\"size\":3}"));
+                objectMapper.readTree("{\"nodeCode\":\"KT12\",\"count\":3}"));
 
         JsonNode json = objectMapper.readTree(result.content());
         assertThat(result.practiceCard()).isSameAs(card);
         assertThat(json.path("sessionId").asLong()).isEqualTo(901L);
         assertThat(json.path("questionCount").asInt()).isEqualTo(1);
-        assertThat(json).hasSize(2);
+        assertThat(json.path("mode").asText()).isEqualTo("DRILL");
+        assertThat(json.path("nodeCode").asText()).isEqualTo("KT12");
         assertThat(json.has("node")).isFalse();
         assertThat(json.has("questions")).isFalse();
         assertThat(result.content()).doesNotContain("What shape is the graph?");
         assertThat(result.content()).doesNotContain("Parabola");
 
         verify(practiceService).start(1L, 10L, 55L, null, 3);
+    }
+
+    @Test
+    void acceptsModeEnumAndEchoesIt() throws Exception {
+        KgNode node = node(55L, 10L, "KT12", "Quadratic Functions");
+        PracticeStartVO card = practiceCard(node, 901L, question("Q1", "A"));
+
+        when(nodeMapper.selectOne(any())).thenReturn(node);
+        when(practiceService.start(1L, 10L, 55L, null, 2)).thenReturn(card);
+
+        JsonNode json = objectMapper.readTree(tool.execute(
+                new ToolContext(1L, 10L),
+                objectMapper.readTree("{\"nodeCode\":\"KT12\",\"mode\":\"REVIEW\"}")));
+
+        assertThat(json.path("mode").asText()).isEqualTo("REVIEW");
+        verify(practiceService).start(1L, 10L, 55L, null, 2);
     }
 
     @Test
@@ -125,7 +142,7 @@ class StartPracticeToolTest {
     }
 
     @Test
-    void sizeDefaultsToTwo() throws Exception {
+    void countDefaultsToTwo() throws Exception {
         KgNode node = node(55L, 10L, "KT12", "Quadratic Functions");
         PracticeStartVO card = practiceCard(node, 901L, question("Q1", "A"), question("Q2", "B"));
 
@@ -138,7 +155,22 @@ class StartPracticeToolTest {
     }
 
     @Test
-    void sizeClampsToLowerBound() throws Exception {
+    void legacySizeAliasStillWorks() throws Exception {
+        KgNode node = node(55L, 10L, "KT12", "Quadratic Functions");
+        PracticeStartVO card = practiceCard(node, 901L, question("Q1", "A"));
+
+        when(nodeMapper.selectOne(any())).thenReturn(node);
+        when(practiceService.start(1L, 10L, 55L, null, 4)).thenReturn(card);
+
+        tool.execute(
+                new ToolContext(1L, 10L),
+                objectMapper.createObjectNode().put("nodeCode", "KT12").put("size", 4));
+
+        verify(practiceService).start(1L, 10L, 55L, null, 4);
+    }
+
+    @Test
+    void countClampsToLowerBound() throws Exception {
         KgNode node = node(55L, 10L, "KT12", "Quadratic Functions");
         PracticeStartVO card = practiceCard(node, 901L, question("Q1", "A"));
 
@@ -147,24 +179,24 @@ class StartPracticeToolTest {
 
         tool.execute(
                 new ToolContext(1L, 10L),
-                objectMapper.createObjectNode().put("nodeCode", "KT12").put("size", 0));
+                objectMapper.createObjectNode().put("nodeCode", "KT12").put("count", 0));
 
         verify(practiceService).start(1L, 10L, 55L, null, 1);
     }
 
     @Test
-    void sizeClampsToUpperBound() throws Exception {
+    void countClampsToUpperBound() throws Exception {
         KgNode node = node(55L, 10L, "KT12", "Quadratic Functions");
-        PracticeStartVO card = practiceCard(node, 901L, question("Q1", "A"), question("Q2", "B"), question("Q3", "C"));
+        PracticeStartVO card = practiceCard(node, 901L, question("Q1", "A"));
 
         when(nodeMapper.selectOne(any())).thenReturn(node);
-        when(practiceService.start(1L, 10L, 55L, null, 3)).thenReturn(card);
+        when(practiceService.start(1L, 10L, 55L, null, 10)).thenReturn(card);
 
         tool.execute(
                 new ToolContext(1L, 10L),
-                objectMapper.createObjectNode().put("nodeCode", "KT12").put("size", 9));
+                objectMapper.createObjectNode().put("nodeCode", "KT12").put("count", 99));
 
-        verify(practiceService).start(1L, 10L, 55L, null, 3);
+        verify(practiceService).start(1L, 10L, 55L, null, 10);
     }
 
     private KgNode node(Long id, Long courseId, String nodeCode, String name) {

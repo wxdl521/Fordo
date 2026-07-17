@@ -6,8 +6,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.entity.KgEdge;
 import com.wenjin.entity.KgNode;
+import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
+import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.support.PrereqDirection;
 import com.wenjin.support.ReviewMarker;
 import org.springframework.stereotype.Component;
@@ -28,15 +31,21 @@ public class GetNodeDetailTool implements CompanionTool {
 
     private final KgNodeMapper nodeMapper;
     private final KgEdgeMapper edgeMapper;
+    private final StudentMasteryMapper masteryMapper;
+    private final MasteryDecayCalculator decayCalculator;
     private final ObjectMapper objectMapper;
     private final NodeToolSupport nodeToolSupport;
 
     public GetNodeDetailTool(KgNodeMapper nodeMapper,
                              KgEdgeMapper edgeMapper,
+                             StudentMasteryMapper masteryMapper,
+                             MasteryDecayCalculator decayCalculator,
                              ObjectMapper objectMapper,
                              NodeToolSupport nodeToolSupport) {
         this.nodeMapper = Objects.requireNonNull(nodeMapper, "nodeMapper");
         this.edgeMapper = Objects.requireNonNull(edgeMapper, "edgeMapper");
+        this.masteryMapper = Objects.requireNonNull(masteryMapper, "masteryMapper");
+        this.decayCalculator = Objects.requireNonNull(decayCalculator, "decayCalculator");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.nodeToolSupport = Objects.requireNonNull(nodeToolSupport, "nodeToolSupport");
     }
@@ -76,7 +85,7 @@ public class GetNodeDetailTool implements CompanionTool {
 
         Map<String, Object> function = new LinkedHashMap<>();
         function.put("name", name());
-        function.put("description", "Get one node's metadata, prerequisites, and dependents.");
+        function.put("description", "Get one node's metadata, prerequisites, and successors with mastery.");
         function.put("parameters", parameters);
 
         Map<String, Object> schema = new LinkedHashMap<>();
@@ -97,7 +106,7 @@ public class GetNodeDetailTool implements CompanionTool {
                 .isNull(KgEdge::getArchivedAt));
 
         Set<Long> prerequisiteIds = new LinkedHashSet<>();
-        Set<Long> dependentIds = new LinkedHashSet<>();
+        Set<Long> successorIds = new LinkedHashSet<>();
         for (KgEdge edge : edges) {
             if (!Objects.equals(edge.getCourseId(), ctx.courseId())
                     || !Objects.equals(edge.getRelationType(), PrereqDirection.RELATION_TYPE_PREREQUISITE)
@@ -108,20 +117,35 @@ public class GetNodeDetailTool implements CompanionTool {
                 prerequisiteIds.add(PrereqDirection.prerequisiteNodeId(edge));
             }
             if (Objects.equals(PrereqDirection.prerequisiteNodeId(edge), focus.getId())) {
-                dependentIds.add(PrereqDirection.dependentNodeId(edge));
+                successorIds.add(PrereqDirection.dependentNodeId(edge));
             }
         }
 
         Set<Long> relatedIds = new LinkedHashSet<>();
+        relatedIds.add(focus.getId());
         relatedIds.addAll(prerequisiteIds);
-        relatedIds.addAll(dependentIds);
+        relatedIds.addAll(successorIds);
         Map<Long, KgNode> relatedNodes = relatedIds.isEmpty()
                 ? Map.of()
                 : nodeMapper.selectBatchIds(relatedIds).stream()
                 .filter(node -> Objects.equals(node.getCourseId(), ctx.courseId()))
                 .collect(Collectors.toMap(KgNode::getId, Function.identity()));
 
+        Map<Long, Double> effectiveByNodeId = loadEffective(ctx, relatedIds);
+
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("nodeCode", focus.getNodeCode());
+        detail.put("name", focus.getName());
+        detail.put("chapter", focus.getChapter());
+        detail.put("difficulty", focus.getDifficulty());
+        detail.put("isKey", focus.getIsKey());
+        detail.put("bloom", focus.getBloom());
+        detail.put("description", focus.getDescription());
+        detail.put("effective", effectiveByNodeId.get(focus.getId()));
+
         Map<String, Object> body = new LinkedHashMap<>();
+        body.put("detail", detail);
+        // Flat fields kept for existing consumers / prompt readability.
         body.put("nodeCode", focus.getNodeCode());
         body.put("name", focus.getName());
         body.put("chapter", focus.getChapter());
@@ -129,12 +153,32 @@ public class GetNodeDetailTool implements CompanionTool {
         body.put("isKey", focus.getIsKey());
         body.put("bloom", focus.getBloom());
         body.put("description", focus.getDescription());
-        body.put("prerequisites", refs(prerequisiteIds, relatedNodes));
-        body.put("dependents", refs(dependentIds, relatedNodes));
+        body.put("prerequisites", refs(prerequisiteIds, relatedNodes, effectiveByNodeId));
+        body.put("successors", refs(successorIds, relatedNodes, effectiveByNodeId));
         return toJson(body);
     }
 
-    private List<Map<String, Object>> refs(Set<Long> ids, Map<Long, KgNode> nodeMap) {
+    private Map<Long, Double> loadEffective(ToolContext ctx, Set<Long> nodeIds) {
+        if (nodeIds == null || nodeIds.isEmpty()) {
+            return Map.of();
+        }
+        List<StudentMastery> rows = masteryMapper.selectList(new LambdaQueryWrapper<StudentMastery>()
+                .eq(StudentMastery::getStudentId, ctx.studentId())
+                .eq(StudentMastery::getCourseId, ctx.courseId())
+                .in(StudentMastery::getNodeId, nodeIds));
+        Map<Long, Double> map = new LinkedHashMap<>();
+        for (StudentMastery m : rows) {
+            if (m.getMasteryScore() == null) {
+                continue;
+            }
+            map.put(m.getNodeId(), decayCalculator.effectiveScoreOf(m));
+        }
+        return map;
+    }
+
+    private List<Map<String, Object>> refs(Set<Long> ids,
+                                           Map<Long, KgNode> nodeMap,
+                                           Map<Long, Double> effectiveByNodeId) {
         List<KgNode> nodes = new ArrayList<>();
         for (Long id : ids) {
             KgNode node = nodeMap.get(id);
@@ -143,9 +187,15 @@ public class GetNodeDetailTool implements CompanionTool {
             }
         }
         nodes.sort(Comparator.comparing(KgNode::getNodeCode, Comparator.nullsLast(String::compareTo)));
-        return nodes.stream()
-                .map(nodeToolSupport::nodeRef)
-                .toList();
+        List<Map<String, Object>> refs = new ArrayList<>();
+        for (KgNode node : nodes) {
+            Map<String, Object> ref = new LinkedHashMap<>();
+            ref.put("code", node.getNodeCode());
+            ref.put("name", node.getName());
+            ref.put("effective", effectiveByNodeId.get(node.getId()));
+            refs.add(ref);
+        }
+        return refs;
     }
 
     private String toJson(Map<String, Object> body) throws ToolException {
