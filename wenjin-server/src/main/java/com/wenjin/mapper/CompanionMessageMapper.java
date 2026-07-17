@@ -39,4 +39,22 @@ public interface CompanionMessageMapper extends BaseMapper<CompanionMessage> {
             ORDER BY id ASC
             """)
     List<CompanionMessage> selectAllByConversationAsc(@Param("conversationId") Long conversationId);
+
+    /**
+     * 摘要 watermark 之后的历史（升序）。
+     * {@code afterId} 为空时等价全量；非空时仅 {@code id > afterId}（已进摘要的消息不再拉取）。
+     */
+    @Select("""
+            <script>
+            SELECT id, conversation_id, role, content, created_at
+            FROM companion_message
+            WHERE conversation_id = #{conversationId}
+            <if test="afterId != null">
+              AND id &gt; #{afterId}
+            </if>
+            ORDER BY id ASC
+            </script>
+            """)
+    List<CompanionMessage> selectSinceIdAsc(@Param("conversationId") Long conversationId,
+                                            @Param("afterId") Long afterId);
 }

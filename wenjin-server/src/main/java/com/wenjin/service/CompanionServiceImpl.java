@@ -149,7 +149,9 @@ public class CompanionServiceImpl implements CompanionService {
             throw new BusinessException(ResultCode.NOT_FOUND, "会话不存在: " + conversationId);
         }
 
-        List<CompanionMessage> history = messageMapper.selectAllByConversationAsc(conversationId);
+        // P0-2：仅加载 watermark 之后的消息（已折叠进摘要的 id 不再全量拉取）
+        List<CompanionMessage> history = messageMapper.selectSinceIdAsc(
+                conversationId, conversation.getSummaryThroughMessageId());
         if (history == null || history.isEmpty()) {
             // 兼容未启用自定义 SQL 的测试 stub：回退 LambdaQueryWrapper
             history = messageMapper.selectList(
