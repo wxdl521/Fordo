@@ -6,7 +6,7 @@
 
 ## 当前进度
 
-当前代码已经完成 M1-M4 主链路，并包含教师端建图、题库审核、课程标准抽取、课程发布、认证与生产配置骨架。
+当前代码已经完成 M1-M5 主链路，并包含教师端建图、题库审核、课程标准抽取、课程发布、认证与生产配置骨架。
 
 | 里程碑 | 状态 | 已落地能力 |
 | --- | --- | --- |
@@ -15,6 +15,7 @@
 | M2 图引导自适应诊断 | 已完成 | DAG 传播推断、有限题量预算、探针式诊断、实测/推断节点分类、固定 25 题诊断保留 |
 | M3 遗忘衰减与复习调度 | 已完成 | 读时指数衰减、raw/effective 双分值、今日复习队列、复习直通 M1 自由练习、ColorMap 褪色态 |
 | M4 伴侣工具调用 | 已完成 | 伴侣两段式工具调用、`query_mastery` / `get_node_detail` / `start_practice`、工具治理、SSE 工具事件、对话内练习卡 |
+| M5 Agent 轨迹 | 已完成 | `agent_run`/`agent_step` 埋点、工具结果截断与 I/O 截断、教师端轨迹列表/steps 明细、特性开关与 Flyway V10 |
 
 近期还做过 ColorMap 体验修补：今日复习面板改为地图内侧边抽屉，绘图 loading 不再误挂在 hover 状态上，左下角图例与操作提示不再重叠。
 
@@ -38,6 +39,7 @@
 - 课程标准抽取审核：从图片、PDF、Excel 等材料中抽取图谱草稿，审核后全量替换生效，并记录召回率等指标。
 - 题目审核池：AI 出题、存量题标注、JSON/Excel 题库导入、批量审核。
 - 学情看板：按课程聚合学生掌握度和薄弱分布。
+- Agent 轨迹：按课程分页查看伴侣等 Agent run，展开 steps 查看工具/LLM 调用与截断后的 I/O。
 
 ## 技术栈
 
@@ -59,6 +61,7 @@ Fordo/
 │  │  ├─ controller/                  # 学生端、教师端、管理端 API
 │  │  ├─ service/                     # 诊断、练习、路径、复习、伴侣、抽取等业务
 │  │  ├─ service/companion/           # M4 伴侣工具与治理管道
+│  │  ├─ service/trace/               # M5 Agent 执行轨迹埋点
 │  │  ├─ support/                     # 判分、自适应引擎、图方向、演示播种等支撑
 │  │  ├─ security/                    # HMAC 令牌与生产密钥守卫
 │  │  └─ config/                      # 拦截器、当前用户、AI/工具配置
@@ -227,6 +230,7 @@ npm run dev
 | 教师图谱 | `/api/teacher/graph` | 图谱审核与编辑 |
 | 教师题目 | `/api/teacher/questions` | 题目审核池 |
 | 教师看板 | `/api/teacher/dashboard` | 学情聚合 |
+| 教师 Agent 轨迹 | `/api/teacher/agent-runs` | M5 run 列表与 steps 明细（教师/管理员） |
 
 ## M4 伴侣工具调用
 
@@ -248,6 +252,34 @@ M4 把 AI 伴侣从“读取上下文并回答”升级为“按白名单工具�
 - `wenjin-web/src/views/Companion.vue`
 - `wenjin-web/src/api/companion.js`
 
+## M5 Agent 执行轨迹
+
+M5 为伴侣等 Agent 编排补齐可观测轨迹，并给教师提供按课程查询的只读页面。
+
+### 后端埋点与工具改造
+
+- Flyway **`V10__agent_trace.sql`** 新增 `agent_run` / `agent_step`（本地 `schema.sql` 已同步）。
+- `AgentTraceService` + `TraceContext`：run 开始/结束、step 写入；I/O 按 `wenjin.limits.trace.max-io-chars` 截断并标记 `[truncated]`。
+- 伴侣工具结果按 `wenjin.limits.tools.max-result-chars` / 伴侣侧 `wenjin.companion.tools.max-result-chars` 夹紧，避免超大 payload 进轨迹与上下文。
+- 特性开关 **`wenjin.features.agent-trace-enabled`**：开发默认 `true`；生产默认 `false`，经 `WENJIN_FEATURE_AGENT_TRACE` 开启。关闭时教师轨迹接口统一 404，埋点降级为 no-op。
+
+### 教师端页面
+
+- 路由：`/teacher/agent-runs`（`TeacherAgentTrace.vue`），导航「Agent 轨迹」。
+- 列表：按当前教师课程分页展示 kind / status / model / tokens / duration / stepCount。
+- 明细：点击 run 行加载 `GET /api/teacher/agent-runs/{runId}/steps`，可展开查看截断后的 input/output JSON。
+- 鉴权：仅教师/管理员；学生令牌访问 API → 401/403。
+
+相关代码：
+
+- `wenjin-server/src/main/resources/db/migration/V10__agent_trace.sql`
+- `wenjin-server/src/main/java/com/wenjin/service/trace/`
+- `wenjin-server/src/main/java/com/wenjin/controller/TeacherAgentRunController.java`
+- `wenjin-web/src/views/TeacherAgentTrace.vue`
+- `wenjin-web/src/api/teacher.js`（`fetchAgentRuns` / `fetchAgentRunSteps`）
+
+生产开关与限流配置见 **`DEPLOYMENT.md`**（`agent-trace-enabled`、`limits.trace` / `limits.tools`、调度池、V10）。
+
 ## 测试与验收
 
 后端测试：
@@ -265,16 +297,25 @@ npm run test:coverage
 npm run check
 ```
 
-真机验收脚本位于 `wenjin-web/e2e/`。这些脚本通常需要后端、前端、MySQL 和系统 Edge 已经可用；M4 验收还需要可用的文本模型 Key。
+真机验收脚本位于 `wenjin-web/e2e/`。这些脚本通常需要后端、前端、MySQL 和系统 Edge 已经可用；M4 验收还需要可用的文本模型 Key；M5 需要 V10 表与 `agent-trace-enabled=true`。
 
 ```powershell
 cd wenjin-web
 node .\e2e\m1-practice-loop.mjs
 node .\e2e\m2-adaptive-diag.mjs
 node .\e2e\m4-companion-tools.mjs
+node .\e2e\m5-agent-trace.mjs
 ```
 
-当前仓库中后端测试文件约 60+ 个，`@Test` 用例约 580 个；前端包含 Vitest 单元/覆盖率门禁与多条 Playwright 验收脚本。验收截图集中在 `测试截图/`。
+无后端时可用脚本合约测试（不启动浏览器）：
+
+```powershell
+cd wenjin-web
+npm run test -- test/m4-e2e-script-contract.test.js
+npm run test -- test/m5-e2e-script-contract.test.js
+```
+
+当前仓库中后端测试文件约 60+ 个，`@Test` 用例约 580 个；前端包含 Vitest 单元/覆盖率门禁与多条 Playwright 验收脚本。验收截图集中在 `测试截图/`（M5 为 `m5-agent-trace.png`）。
 
 ## 生产部署注意
 
@@ -289,6 +330,7 @@ node .\e2e\m4-companion-tools.mjs
 
 ## 后续建议
 
-- 把 M4 的真机验收纳入发布前检查清单，尤其是工具预算、图谱外节点注入和 `tools.enabled=false` 降级。
+- 把 M4/M5 真机验收纳入发布前检查清单：M4 工具预算与降级；M5 教师轨迹列表/展开与学生越权 403。
+- 生产开启 `WENJIN_FEATURE_AGENT_TRACE` 前确认已 migrate V10，并复核 I/O / 工具结果截断阈值。
 - 继续补充课程标准抽取和教师审核的端到端验收脚本。
 - 若要上公网，优先完成 `DEPLOYMENT.md` 中的 CORS、账号、密钥和数据库权限加固。

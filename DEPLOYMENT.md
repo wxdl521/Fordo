@@ -399,7 +399,7 @@ npm run build        # 产出 dist/
 - **HTTPS（强烈建议）**：令牌存于浏览器 `localStorage`，无 HTTPS 易被窃听 / 中间人。用 Let's Encrypt（certbot）签证书，nginx 终止 TLS。
 - **健康检查（actuator）**：已引入 `spring-boot-starter-actuator`，且仅暴露 `/actuator/health` 供负载均衡 / 探活（配置见第 4 节）。该端点不在 `/api/**` 下，不受现有鉴权拦截器影响。
 - **令牌撤销 / 轮换**：当前令牌签发后 7 天内无法主动失效（无黑名单 / 版本号）。若有「强制下线 / 改密即失效」需求，需加一层（如随用户 `tokenVersion` 校验）——属增量功能，可推迟。
-- **数据库迁移与备份**：生产 schema **只走 Flyway**（`db/migration`，migrator 账号 + `WENJIN_FLYWAY_ENABLED=true` 作业）。`schema.sql` 仅本地空库重建，**禁止**对生产执行。配置定期 `mysqldump`；迁移前必备份（见 2.3）。**V9 关系完整性为独立发布**；审计与回滚见 [project-hardening-rollout.md](docs/runbooks/project-hardening-rollout.md)。
+- **数据库迁移与备份**：生产 schema **只走 Flyway**（`db/migration`，migrator 账号 + `WENJIN_FLYWAY_ENABLED=true` 作业）。`schema.sql` 仅本地空库重建，**禁止**对生产执行。配置定期 `mysqldump`；迁移前必备份（见 2.3）。**V9 关系完整性为独立发布**；其后 **V10** 增加 `agent_run` / `agent_step`（M5，可与应用同窗或紧随 V9 后单独 migrate）。审计与回滚见 [project-hardening-rollout.md](docs/runbooks/project-hardening-rollout.md)。
 - **限流 / 防滥用**：登录端点与 AI 调用端点可在 nginx 或应用层加限流。
 
 ---
@@ -413,6 +413,9 @@ npm run build        # 产出 dist/
 | 已引入 | `wenjin-server/pom.xml` | `spring-boot-starter-actuator` | 极小 |
 | 运维 | Flyway migrator 作业 + app DML 账号 | 见 2.3；不跑 `data.sql` / 不跑生产 `schema.sql` | 中 |
 | 已配置 | `application.yml` → `spring.task.scheduling` | 调度线程池 size=2，避免长任务饿死 cleanup/草稿清理 | 小 |
+| 已配置 | `wenjin.features.agent-trace-enabled` | M5 Agent 轨迹埋点 + 教师查询 API | 小 |
+| 已配置 | `wenjin.limits.trace` / `wenjin.limits.tools` | step I/O 与工具结果截断 | 小 |
+| 已迁移 | Flyway `V10__agent_trace.sql` | `agent_run` / `agent_step` 表 | 中 |
 
 ### 4.1 配置清单（调度与基线）
 
@@ -430,7 +433,35 @@ spring:
       thread-name-prefix: wj-sched-
 ```
 
-**决策**：worker 独立 executor 方案暂不采用（当前任务量单飞足够），未来吞吐需求出现时再迁。
+**决策**：worker 独立 executor 方案暂不采用（当前任务量单飞足够），未来吞吐需求出现时再迁。生产/开发均沿用同一 `spring.task.scheduling` 基线，无需在 `application-prod.yml` 再覆盖；若未来拆独立 executor，优先只改代码与本表，不在 prod 分叉默认值。
+
+### 4.2 M5 Agent 轨迹（feature / limits / V10）
+
+| 配置项 | 默认（dev 基线） | 生产 | 说明 |
+|--------|------------------|------|------|
+| `wenjin.features.agent-trace-enabled` | `true` | `${WENJIN_FEATURE_AGENT_TRACE:false}` | 关闭时埋点 no-op，教师 `GET /api/teacher/agent-runs**` 统一 404 |
+| `wenjin.limits.trace.max-io-chars` | `8000` | 继承基线 | `agent_step.input_json` / `output_json` 超长截断并追加 `[truncated]` |
+| `wenjin.limits.tools.max-result-chars` | `4000` | 继承基线 | 通用工具结果字符上限（与伴侣侧 `wenjin.companion.tools.max-result-chars` 并存；后者偏对话上下文） |
+| `wenjin.companion.tools.max-result-chars` | `2000` | 继承基线 | 伴侣 ToolGovernor 结果截断（M4） |
+
+```yaml
+wenjin:
+  features:
+    agent-trace-enabled: true   # prod: ${WENJIN_FEATURE_AGENT_TRACE:false}
+  limits:
+    trace:
+      max-io-chars: 8000
+    tools:
+      max-result-chars: 4000
+```
+
+**决策笔记**：
+
+- **默认关生产开关**：轨迹含工具 I/O 摘要，生产需显式 `WENJIN_FEATURE_AGENT_TRACE=true`，与固定诊断 / 图谱对账 / AI job 同一 feature-flag 风格。
+- **截断而非全文落库**：`max-io-chars` / `max-result-chars` 防止 MEDIUMTEXT 膨胀与日志噪声；教师页 steps 明细展示的即截断后内容。
+- **学生端不开放 trace API**：仅教师/管理员经 `TeacherAgentRunController` 读本课 run；学生令牌应 401/403。
+- **Schema**：空库走 Flyway V1…**V10**；既有库在 V9 成功后 migrate **V10**（`CREATE TABLE agent_run` / `agent_step`）。`schema.sql` 仅本地空库快照，生产禁用。
+- **发布顺序**：migrate V10 → 滚动应用（可先 flag off）→ 冒烟教师页 `/teacher/agent-runs` → 再开 `WENJIN_FEATURE_AGENT_TRACE`。回滚优先关 flag，不必立刻 drop 表。
 
 **`application-prod.yml` 参考全文**（profile 名即文件名后缀，`SPRING_PROFILES_ACTIVE=prod` 时自动合并覆盖 `application.yml`）：
 
@@ -486,8 +517,11 @@ SPRING_FLYWAY_TARGET=8 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar --
 # 5) 独立窗口只落 V9（contract）
 SPRING_FLYWAY_TARGET=9 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar --spring.main.web-application-type=none
 # 6) V9 后：mysql ... < ops/sql/post-migration-verification.sql
-# 7) 开通真实教师/管理员：见 2.3.1
+# 7) V10 Agent 轨迹表（M5；可与应用同窗或独立 migrate）
+SPRING_FLYWAY_TARGET=10 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar --spring.main.web-application-type=none
+# 8) 开通真实教师/管理员：见 2.3.1
 # 分阶段顺序与 flag 开关：docs/runbooks/project-hardening-rollout.md
+# Agent 轨迹生产开关：WENJIN_FEATURE_AGENT_TRACE（见 4.2）
 ```
 
 上述 non-web 迁移命令仍由一次性作业编排器负责在成功后终止/回收；不得作为持有 DDL 凭据的常驻应用运行。
@@ -631,6 +665,7 @@ process.
 | `wenjin.bootstrap.admin.enabled` | 一次性首个 ADMIN 引导 | false（未设则组件不加载） | **仅建号启动一次为 true，随后立即 false** |
 | `WENJIN_BOOTSTRAP_ADMIN_USERNAME` | 引导管理员用户名 | 空 | 仅 one-shot 窗口设置 |
 | `WENJIN_BOOTSTRAP_ADMIN_PASSWORD` | 引导管理员明文口令（≥16） | 空 | 仅 one-shot；成功后**立即 unset** |
+| `WENJIN_FEATURE_AGENT_TRACE` | M5 Agent 轨迹埋点与教师查询 | prod 默认 false | 需先 migrate V10；开启后教师可访问 `/api/teacher/agent-runs` |
 
 ---
 
