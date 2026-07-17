@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.ai.CompanionAiClient;
 import com.wenjin.config.CompanionToolProperties;
+import com.wenjin.config.LimitsProperties;
+import com.wenjin.service.trace.TraceContext;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -22,14 +24,15 @@ class ToolGovernorTest {
 
     @Test
     void errorResultRemainsValidJsonWhenMaxResultCharsIsTiny() throws Exception {
-        ToolGovernor governor = new ToolGovernor(List.of(), objectMapper, properties(5_000, 5));
+        ToolGovernor governor = newGovernor(List.of(), 5_000, 5);
         ToolExecutionResult result = governor.execute(
                 new ToolContext(1L, 10L),
                 new CompanionAiClient.ToolCall("call_1", "missing_tool", "{}"),
                 new ToolExecutionState(3));
 
         assertThat(result.ok()).isFalse();
-        assertThat(objectMapper.readTree(result.content()).path("error").asText()).isEqualTo("unknown_tool");
+        assertThat(objectMapper.readTree(result.content()).path("code").asText())
+                .isEqualTo(ToolErrorCodes.TOOL_NOT_ALLOWED);
         assertThat(result.content().length()).isGreaterThan(5);
     }
 
@@ -43,7 +46,7 @@ class ToolGovernorTest {
 
     @Test
     void executeRequiresCallAndState() {
-        ToolGovernor governor = new ToolGovernor(List.of(), objectMapper, properties(5_000, 2_000));
+        ToolGovernor governor = newGovernor(List.of(), 5_000, 2_000);
 
         assertThatThrownBy(() -> governor.execute(new ToolContext(1L, 10L), null, new ToolExecutionState(3)))
                 .isInstanceOf(NullPointerException.class);
@@ -55,7 +58,7 @@ class ToolGovernorTest {
 
     @Test
     void unknownToolReturnsJsonErrorWithoutThrowing() throws Exception {
-        ToolGovernor governor = new ToolGovernor(List.of(), objectMapper, properties(5_000, 2_000));
+        ToolGovernor governor = newGovernor(List.of(), 5_000, 2_000);
         ToolExecutionState state = new ToolExecutionState(3);
 
         ToolExecutionResult result = governor.execute(
@@ -67,16 +70,16 @@ class ToolGovernorTest {
         assertThat(result.toolName()).isEqualTo("missing_tool");
         assertThat(result.ok()).isFalse();
         assertThat(result.guarded()).isTrue();
-        assertThat(errorCode(result)).isEqualTo("unknown_tool");
+        assertThat(errorCode(result)).isEqualTo(ToolErrorCodes.TOOL_NOT_ALLOWED);
+        assertThat(errorRetryable(result)).isFalse();
         assertThat(state.used()).isEqualTo(1);
     }
 
     @Test
     void budgetExceededIsGuardedIntercept() throws Exception {
-        ToolGovernor governor = new ToolGovernor(
+        ToolGovernor governor = newGovernor(
                 List.of(new FakeTool("echo", new AtomicInteger(), "{\"ok\":true}")),
-                objectMapper,
-                properties(5_000, 2_000));
+                5_000, 2_000);
         // max=2 预留 1 给 side-effect → 只读预算 1
         ToolExecutionState state = new ToolExecutionState(2);
         ToolContext ctx = new ToolContext(1L, 10L);
@@ -93,15 +96,15 @@ class ToolGovernorTest {
 
         assertThat(blocked.ok()).isFalse();
         assertThat(blocked.guarded()).isTrue();
-        assertThat(errorCode(blocked)).isEqualTo("tool_budget_exceeded");
+        assertThat(errorCode(blocked)).isEqualTo(ToolErrorCodes.TOOL_BUDGET_EXCEEDED);
+        assertThat(errorRetryable(blocked)).isFalse();
     }
 
     @Test
     void successfulExecutionIsNotGuarded() {
-        ToolGovernor governor = new ToolGovernor(
+        ToolGovernor governor = newGovernor(
                 List.of(new FakeTool("echo", new AtomicInteger(), "{\"ok\":true}")),
-                objectMapper,
-                properties(5_000, 2_000));
+                5_000, 2_000);
 
         ToolExecutionResult result = governor.execute(
                 new ToolContext(1L, 10L),
@@ -110,14 +113,14 @@ class ToolGovernorTest {
 
         assertThat(result.ok()).isTrue();
         assertThat(result.guarded()).isFalse();
+        assertThat(result.cached()).isFalse();
     }
 
     @Test
-    void toolInternalErrorIsNotGuarded() {
-        ToolGovernor governor = new ToolGovernor(
+    void toolInternalErrorIsNotGuarded() throws Exception {
+        ToolGovernor governor = newGovernor(
                 List.of(new FailingTool("boom")),
-                objectMapper,
-                properties(5_000, 2_000));
+                5_000, 2_000);
 
         ToolExecutionResult result = governor.execute(
                 new ToolContext(1L, 10L),
@@ -126,15 +129,19 @@ class ToolGovernorTest {
 
         assertThat(result.ok()).isFalse();
         assertThat(result.guarded()).isFalse();
+        assertThat(errorCode(result)).isEqualTo(ToolErrorCodes.TOOL_INTERNAL);
+        assertThat(errorRetryable(result)).isTrue();
+        // Stack traces never leak into model content
+        assertThat(result.content()).doesNotContain("ToolException");
+        assertThat(result.content()).doesNotContain("boom from tool body");
     }
 
     @Test
-    void invalidArgumentsJsonReturnsErrorAndDoesNotExecuteTool() throws Exception {
+    void invalidArgumentsJsonReturnsErrorAndDoesNotExecuteToolOrConsumeBudget() throws Exception {
         AtomicInteger executions = new AtomicInteger();
-        ToolGovernor governor = new ToolGovernor(
+        ToolGovernor governor = newGovernor(
                 List.of(new FakeTool("echo", executions, "{\"ok\":true}")),
-                objectMapper,
-                properties(5_000, 2_000));
+                5_000, 2_000);
         ToolExecutionState state = new ToolExecutionState(3);
 
         ToolExecutionResult result = governor.execute(
@@ -144,18 +151,17 @@ class ToolGovernorTest {
 
         assertThat(result.ok()).isFalse();
         assertThat(result.guarded()).isTrue();
-        assertThat(errorCode(result)).isEqualTo("invalid_arguments");
+        assertThat(errorCode(result)).isEqualTo(ToolErrorCodes.TOOL_BAD_ARGS);
         assertThat(executions).hasValue(0);
-        assertThat(state.used()).isEqualTo(1);
+        assertThat(state.used()).isEqualTo(0);
     }
 
     @Test
-    void nonObjectArgumentsReturnErrorAndDoNotExecuteTool() throws Exception {
+    void nonObjectArgumentsReturnErrorAndDoNotExecuteToolOrConsumeBudget() throws Exception {
         AtomicInteger executions = new AtomicInteger();
-        ToolGovernor governor = new ToolGovernor(
+        ToolGovernor governor = newGovernor(
                 List.of(new StrictTool("start_practice", executions, "{\"ok\":true}")),
-                objectMapper,
-                properties(5_000, 2_000));
+                5_000, 2_000);
         ToolExecutionState state = new ToolExecutionState(3);
 
         ToolExecutionResult result = governor.execute(
@@ -164,18 +170,17 @@ class ToolGovernorTest {
                 state);
 
         assertThat(result.ok()).isFalse();
-        assertThat(errorCode(result)).isEqualTo("invalid_arguments");
+        assertThat(errorCode(result)).isEqualTo(ToolErrorCodes.TOOL_BAD_ARGS);
         assertThat(executions).hasValue(0);
-        assertThat(state.used()).isEqualTo(1);
+        assertThat(state.used()).isEqualTo(0);
     }
 
     @Test
-    void unknownArgumentsReturnErrorAndDoNotExecuteTool() throws Exception {
+    void unknownArgumentsReturnErrorAndDoNotExecuteToolOrConsumeBudget() throws Exception {
         AtomicInteger executions = new AtomicInteger();
-        ToolGovernor governor = new ToolGovernor(
+        ToolGovernor governor = newGovernor(
                 List.of(new StrictTool("start_practice", executions, "{\"ok\":true}")),
-                objectMapper,
-                properties(5_000, 2_000));
+                5_000, 2_000);
         ToolExecutionState state = new ToolExecutionState(3);
 
         ToolExecutionResult result = governor.execute(
@@ -185,18 +190,17 @@ class ToolGovernorTest {
                 state);
 
         assertThat(result.ok()).isFalse();
-        assertThat(errorCode(result)).isEqualTo("invalid_arguments");
+        assertThat(errorCode(result)).isEqualTo(ToolErrorCodes.TOOL_BAD_ARGS);
         assertThat(executions).hasValue(0);
-        assertThat(state.used()).isEqualTo(1);
+        assertThat(state.used()).isEqualTo(0);
     }
 
     @Test
-    void argumentTypeMismatchReturnsErrorAndDoesNotExecuteTool() throws Exception {
+    void argumentTypeMismatchReturnsErrorAndDoesNotExecuteToolOrConsumeBudget() throws Exception {
         AtomicInteger executions = new AtomicInteger();
-        ToolGovernor governor = new ToolGovernor(
+        ToolGovernor governor = newGovernor(
                 List.of(new StrictTool("start_practice", executions, "{\"ok\":true}")),
-                objectMapper,
-                properties(5_000, 2_000));
+                5_000, 2_000);
         ToolExecutionState state = new ToolExecutionState(3);
 
         ToolExecutionResult result = governor.execute(
@@ -206,18 +210,17 @@ class ToolGovernorTest {
                 state);
 
         assertThat(result.ok()).isFalse();
-        assertThat(errorCode(result)).isEqualTo("invalid_arguments");
+        assertThat(errorCode(result)).isEqualTo(ToolErrorCodes.TOOL_BAD_ARGS);
         assertThat(executions).hasValue(0);
-        assertThat(state.used()).isEqualTo(1);
+        assertThat(state.used()).isEqualTo(0);
     }
 
     @Test
     void nodeNameArgumentIsAcceptedByStrictSchema() throws Exception {
         AtomicInteger executions = new AtomicInteger();
-        ToolGovernor governor = new ToolGovernor(
+        ToolGovernor governor = newGovernor(
                 List.of(new StrictTool("start_practice", executions, "{\"ok\":true}")),
-                objectMapper,
-                properties(5_000, 2_000));
+                5_000, 2_000);
         ToolExecutionState state = new ToolExecutionState(3);
 
         ToolExecutionResult result = governor.execute(
@@ -232,12 +235,11 @@ class ToolGovernorTest {
     }
 
     @Test
-    void missingNodeIdentifierReturnsErrorAndDoesNotExecuteTool() throws Exception {
+    void missingNodeIdentifierReturnsErrorAndDoesNotExecuteToolOrConsumeBudget() throws Exception {
         AtomicInteger executions = new AtomicInteger();
-        ToolGovernor governor = new ToolGovernor(
+        ToolGovernor governor = newGovernor(
                 List.of(new StrictTool("start_practice", executions, "{\"ok\":true}")),
-                objectMapper,
-                properties(5_000, 2_000));
+                5_000, 2_000);
         ToolExecutionState state = new ToolExecutionState(3);
 
         ToolExecutionResult result = governor.execute(
@@ -246,19 +248,18 @@ class ToolGovernorTest {
                 state);
 
         assertThat(result.ok()).isFalse();
-        assertThat(errorCode(result)).isEqualTo("invalid_arguments");
+        assertThat(errorCode(result)).isEqualTo(ToolErrorCodes.TOOL_BAD_ARGS);
         assertThat(errorMessage(result)).isEqualTo("Missing required tool argument: one of nodeCode,nodeName");
         assertThat(executions).hasValue(0);
-        assertThat(state.used()).isEqualTo(1);
+        assertThat(state.used()).isEqualTo(0);
     }
 
     @Test
-    void invalidToolCallAttemptsConsumeBudgetAndBlockLaterCalls() throws Exception {
+    void invalidArgsDoNotConsumeBudgetSoLaterValidCallsStillRun() throws Exception {
         AtomicInteger executions = new AtomicInteger();
-        ToolGovernor governor = new ToolGovernor(
+        ToolGovernor governor = newGovernor(
                 List.of(new StrictTool("start_practice", executions, "{\"ok\":true}")),
-                objectMapper,
-                properties(5_000, 2_000));
+                5_000, 2_000);
         ToolExecutionState state = new ToolExecutionState(2);
         ToolContext ctx = new ToolContext(1L, 10L);
 
@@ -270,26 +271,27 @@ class ToolGovernorTest {
                 ctx,
                 new CompanionAiClient.ToolCall("call_2", "start_practice", "{bad"),
                 state);
-        ToolExecutionResult blocked = governor.execute(
+        // unknown consumed 1 of max=2; malformed did not consume.
+        // start_practice is side-effecting and can use remaining / reserved slot.
+        ToolExecutionResult practice = governor.execute(
                 ctx,
                 new CompanionAiClient.ToolCall("call_3", "start_practice",
                         "{\"nodeName\":\"Quadratic Functions\"}"),
                 state);
 
-        assertThat(errorCode(unknown)).isEqualTo("unknown_tool");
-        assertThat(errorCode(malformed)).isEqualTo("invalid_arguments");
-        assertThat(errorCode(blocked)).isEqualTo("tool_budget_exceeded");
-        assertThat(executions).hasValue(0);
+        assertThat(errorCode(unknown)).isEqualTo(ToolErrorCodes.TOOL_NOT_ALLOWED);
+        assertThat(errorCode(malformed)).isEqualTo(ToolErrorCodes.TOOL_BAD_ARGS);
+        assertThat(practice.ok()).isTrue();
+        assertThat(executions).hasValue(1);
         assertThat(state.used()).isEqualTo(2);
     }
 
     @Test
     void toolCallBudgetBlocksExtraNonSideEffectingCalls() throws Exception {
         AtomicInteger executions = new AtomicInteger();
-        ToolGovernor governor = new ToolGovernor(
+        ToolGovernor governor = newGovernor(
                 List.of(new FakeTool("echo", executions, "{\"ok\":true}")),
-                objectMapper,
-                properties(5_000, 2_000));
+                5_000, 2_000);
         // max=3 时预留 1 给 side-effect → 只读最多 2 次
         ToolExecutionState state = new ToolExecutionState(3);
         ToolContext ctx = new ToolContext(1L, 10L);
@@ -302,7 +304,7 @@ class ToolGovernorTest {
                 state);
 
         assertThat(blocked.ok()).isFalse();
-        assertThat(errorCode(blocked)).isEqualTo("tool_budget_exceeded");
+        assertThat(errorCode(blocked)).isEqualTo(ToolErrorCodes.TOOL_BUDGET_EXCEEDED);
         assertThat(executions).hasValue(2);
         assertThat(state.used()).isEqualTo(2);
         assertThat(state.nonSideCap()).isEqualTo(2);
@@ -312,12 +314,11 @@ class ToolGovernorTest {
     void sideEffectingToolUsesReservedBudgetAfterReadOnlyCap() throws Exception {
         AtomicInteger readExec = new AtomicInteger();
         AtomicInteger practiceExec = new AtomicInteger();
-        ToolGovernor governor = new ToolGovernor(
+        ToolGovernor governor = newGovernor(
                 List.of(
                         new FakeTool("echo", readExec, "{\"ok\":true}"),
                         new StrictTool("start_practice", practiceExec, "{\"ok\":true}")),
-                objectMapper,
-                properties(5_000, 2_000));
+                5_000, 2_000);
         ToolExecutionState state = new ToolExecutionState(3);
         ToolContext ctx = new ToolContext(1L, 10L);
 
@@ -338,57 +339,30 @@ class ToolGovernorTest {
     }
 
     @Test
-    void longSuccessfulJsonResultRemainsValidJsonAndFitsLimit() throws Exception {
-        ToolGovernor governor = new ToolGovernor(
-                List.of(new FakeTool("echo", new AtomicInteger(),
-                        "{\"items\":["
-                                + "{\"nodeCode\":\"KT01\",\"name\":\"Loops\"},"
-                                + "{\"nodeCode\":\"KT02\",\"name\":\"Arrays\"},"
-                                + "{\"nodeCode\":\"KT03\",\"name\":\"Recursion\"}"
-                                + "]}")),
-                objectMapper,
-                properties(5_000, 90));
+    void longSuccessfulResultIsTruncatedWithMarker() {
+        String body = "{\"items\":[" + "\"x\"".repeat(50) + "]}";
+        // build a long content
+        String longContent = "A".repeat(500);
+        ToolGovernor governor = newGovernor(
+                List.of(new FakeTool("echo", new AtomicInteger(), longContent)),
+                5_000, 50);
 
         ToolExecutionResult result = governor.execute(
                 new ToolContext(1L, 10L),
                 new CompanionAiClient.ToolCall("call_1", "echo", "{}"),
                 new ToolExecutionState(3));
 
-        JsonNode json = objectMapper.readTree(result.content());
-
         assertThat(result.ok()).isTrue();
-        assertThat(result.content()).hasSizeLessThanOrEqualTo(90);
-        assertThat(json.path("truncated").asBoolean()).isTrue();
-        assertThat(json.path("items").isArray()).isTrue();
-        assertThat(json.path("items")).isNotEmpty();
-        assertThat(json.path("items")).hasSizeLessThan(3);
-        assertThat(json.at("/items/0/nodeCode").asText()).isEqualTo("KT01");
-    }
-
-    @Test
-    void tinySuccessfulObjectLimitReturnsPromptlyInsteadOfLoopingForever() {
-        ToolGovernor governor = new ToolGovernor(
-                List.of(new FakeTool("echo", new AtomicInteger(), "{\"nodeCode\":\"A\",\"name\":\"B\"}")),
-                objectMapper,
-                properties(5_000, 1));
-
-        ToolExecutionResult result = assertTimeoutPreemptively(
-                Duration.ofMillis(500),
-                () -> governor.execute(
-                        new ToolContext(1L, 10L),
-                        new CompanionAiClient.ToolCall("call_1", "echo", "{}"),
-                        new ToolExecutionState(3)));
-
-        assertThat(result.ok()).isTrue();
-        assertThat(result.content()).hasSizeLessThanOrEqualTo(1);
+        assertThat(result.content()).hasSize(50);
+        assertThat(result.content()).endsWith("[已截断]");
+        assertThat(result.content()).doesNotContain(body);
     }
 
     @Test
     void zeroMaxResultCharsFallsBackToEmptyStringWithinLimit() {
-        ToolGovernor governor = new ToolGovernor(
+        ToolGovernor governor = newGovernor(
                 List.of(new FakeTool("echo", new AtomicInteger(), "{\"nodeCode\":\"A\",\"name\":\"B\"}")),
-                objectMapper,
-                properties(5_000, 0));
+                5_000, 0);
 
         ToolExecutionResult result = assertTimeoutPreemptively(
                 Duration.ofMillis(500),
@@ -402,11 +376,10 @@ class ToolGovernorTest {
     }
 
     @Test
-    void timedOutToolReturnsJsonError() throws Exception {
-        ToolGovernor governor = new ToolGovernor(
+    void timedOutToolReturnsTimeoutEnvelope() throws Exception {
+        ToolGovernor governor = newGovernor(
                 List.of(new SlowTool("slow")),
-                objectMapper,
-                properties(50, 2_000));
+                50, 2_000);
         long started = System.nanoTime();
 
         ToolExecutionResult result = governor.execute(
@@ -417,17 +390,18 @@ class ToolGovernorTest {
 
         assertThat(result.ok()).isFalse();
         assertThat(result.guarded()).isTrue();
-        assertThat(errorCode(result)).isEqualTo("tool_timeout");
+        assertThat(errorCode(result)).isEqualTo(ToolErrorCodes.TOOL_TIMEOUT);
+        assertThat(errorRetryable(result)).isTrue();
+        assertThat(errorMessage(result)).contains("超时");
         assertThat(elapsedMs).isLessThan(800);
     }
 
     @Test
     void sideEffectingToolRunsInlineInsteadOfReturningTimeout() {
         AtomicInteger executions = new AtomicInteger();
-        ToolGovernor governor = new ToolGovernor(
+        ToolGovernor governor = newGovernor(
                 List.of(new SideEffectingSlowTool("start_practice", executions)),
-                objectMapper,
-                properties(10, 2_000));
+                10, 2_000);
         ToolExecutionState state = new ToolExecutionState(3);
 
         ToolExecutionResult result = assertTimeoutPreemptively(
@@ -447,10 +421,9 @@ class ToolGovernorTest {
     void executePreservesPracticeCardSideChannelFromToolOutput() {
         PracticeStartVO card = new PracticeStartVO();
         card.setSessionId(901L);
-        ToolGovernor governor = new ToolGovernor(
+        ToolGovernor governor = newGovernor(
                 List.of(new PracticeCardTool("start_practice", card)),
-                objectMapper,
-                properties(5_000, 2_000));
+                5_000, 2_000);
 
         ToolExecutionResult result = governor.execute(
                 new ToolContext(1L, 10L),
@@ -459,6 +432,137 @@ class ToolGovernorTest {
 
         assertThat(result.ok()).isTrue();
         assertThat(result.practiceCard()).isSameAs(card);
+    }
+
+    @Test
+    void cacheableToolSecondCallWithSameArgsIsCachedAndDoesNotConsumeBudgetOrReexecute() {
+        AtomicInteger executions = new AtomicInteger();
+        ToolGovernor governor = newGovernor(
+                List.of(new FakeTool("query_mastery", executions, "{\"items\":[]}")),
+                5_000, 2_000);
+        ToolExecutionState state = new ToolExecutionState(4);
+        TraceContext traceCtx = TraceContext.active(7L);
+        ToolContext ctx = new ToolContext(1L, 10L);
+        String args = "{\"nodeCode\":\"KT12\"}";
+
+        ToolExecutionResult first = governor.execute(
+                ctx,
+                new CompanionAiClient.ToolCall("call_1", "query_mastery", args),
+                state,
+                traceCtx);
+        ToolExecutionResult second = governor.execute(
+                ctx,
+                new CompanionAiClient.ToolCall("call_2", "query_mastery", args),
+                state,
+                traceCtx);
+
+        assertThat(first.ok()).isTrue();
+        assertThat(first.cached()).isFalse();
+        assertThat(second.ok()).isTrue();
+        assertThat(second.cached()).isTrue();
+        assertThat(second.content()).isEqualTo(first.content());
+        assertThat(executions).hasValue(1);
+        assertThat(state.used()).isEqualTo(1);
+        assertThat(traceCtx.toolCache()).hasSize(1);
+    }
+
+    @Test
+    void cacheKeyIgnoresWhitespaceAndKeyOrder() {
+        AtomicInteger executions = new AtomicInteger();
+        ToolGovernor governor = newGovernor(
+                List.of(new FakeTool("query_mastery", executions, "{\"items\":[]}")),
+                5_000, 2_000);
+        ToolExecutionState state = new ToolExecutionState(4);
+        TraceContext traceCtx = TraceContext.active(8L);
+        ToolContext ctx = new ToolContext(1L, 10L);
+
+        governor.execute(ctx,
+                new CompanionAiClient.ToolCall("c1", "query_mastery",
+                        "{\"b\":2,\"a\":1}"),
+                state, traceCtx);
+        ToolExecutionResult second = governor.execute(ctx,
+                new CompanionAiClient.ToolCall("c2", "query_mastery",
+                        "{ \"a\" : 1 , \"b\" : 2 }"),
+                state, traceCtx);
+
+        assertThat(second.cached()).isTrue();
+        assertThat(executions).hasValue(1);
+        assertThat(state.used()).isEqualTo(1);
+    }
+
+    @Test
+    void nonCacheableToolIsNotCached() {
+        AtomicInteger executions = new AtomicInteger();
+        ToolGovernor governor = newGovernor(
+                List.of(new FakeTool("echo", executions, "{\"ok\":true}")),
+                5_000, 2_000);
+        ToolExecutionState state = new ToolExecutionState(4);
+        TraceContext traceCtx = TraceContext.active(9L);
+        ToolContext ctx = new ToolContext(1L, 10L);
+
+        governor.execute(ctx, new CompanionAiClient.ToolCall("c1", "echo", "{}"), state, traceCtx);
+        governor.execute(ctx, new CompanionAiClient.ToolCall("c2", "echo", "{}"), state, traceCtx);
+
+        assertThat(executions).hasValue(2);
+        assertThat(state.used()).isEqualTo(2);
+        assertThat(traceCtx.toolCache()).isEmpty();
+    }
+
+    @Test
+    void eachToolErrorCodeHasEnvelopeShape() throws Exception {
+        // TOOL_NOT_ALLOWED
+        ToolExecutionResult notAllowed = newGovernor(List.of(), 5_000, 2_000).execute(
+                new ToolContext(1L, 10L),
+                new CompanionAiClient.ToolCall("c", "nope", "{}"),
+                new ToolExecutionState(3));
+        assertEnvelope(notAllowed, ToolErrorCodes.TOOL_NOT_ALLOWED, false);
+
+        // TOOL_BUDGET_EXCEEDED
+        ToolGovernor g = newGovernor(
+                List.of(new FakeTool("echo", new AtomicInteger(), "{}")), 5_000, 2_000);
+        ToolExecutionState state = new ToolExecutionState(0);
+        ToolExecutionResult budget = g.execute(
+                new ToolContext(1L, 10L),
+                new CompanionAiClient.ToolCall("c", "echo", "{}"),
+                state);
+        assertEnvelope(budget, ToolErrorCodes.TOOL_BUDGET_EXCEEDED, false);
+
+        // TOOL_BAD_ARGS
+        ToolExecutionResult badArgs = newGovernor(
+                List.of(new FakeTool("echo", new AtomicInteger(), "{}")), 5_000, 2_000)
+                .execute(new ToolContext(1L, 10L),
+                        new CompanionAiClient.ToolCall("c", "echo", "{bad"),
+                        new ToolExecutionState(3));
+        assertEnvelope(badArgs, ToolErrorCodes.TOOL_BAD_ARGS, false);
+
+        // TOOL_TIMEOUT
+        ToolExecutionResult timeout = newGovernor(List.of(new SlowTool("slow")), 30, 2_000)
+                .execute(new ToolContext(1L, 10L),
+                        new CompanionAiClient.ToolCall("c", "slow", "{}"),
+                        new ToolExecutionState(3));
+        assertEnvelope(timeout, ToolErrorCodes.TOOL_TIMEOUT, true);
+
+        // TOOL_INTERNAL
+        ToolExecutionResult internal = newGovernor(List.of(new FailingTool("boom")), 5_000, 2_000)
+                .execute(new ToolContext(1L, 10L),
+                        new CompanionAiClient.ToolCall("c", "boom", "{}"),
+                        new ToolExecutionState(3));
+        assertEnvelope(internal, ToolErrorCodes.TOOL_INTERNAL, true);
+    }
+
+    private void assertEnvelope(ToolExecutionResult result, String code, boolean retryable) throws Exception {
+        JsonNode json = objectMapper.readTree(result.content());
+        assertThat(json.path("ok").asBoolean()).isFalse();
+        assertThat(json.path("code").asText()).isEqualTo(code);
+        assertThat(json.path("message").asText()).isNotBlank();
+        assertThat(json.path("retryable").asBoolean()).isEqualTo(retryable);
+        assertThat(result.guarded()).isEqualTo(!ToolErrorCodes.TOOL_INTERNAL.equals(code));
+    }
+
+    private ToolGovernor newGovernor(List<CompanionTool> tools, long timeoutMs, int maxResultChars) {
+        LimitsProperties limits = new LimitsProperties();
+        limits.getTools().setMaxResultChars(maxResultChars);
+        return new ToolGovernor(tools, objectMapper, properties(timeoutMs, maxResultChars), limits);
     }
 
     private CompanionToolProperties properties(long timeoutMs, int maxResultChars) {
@@ -472,11 +576,15 @@ class ToolGovernorTest {
     }
 
     private String errorCode(ToolExecutionResult result) throws Exception {
-        return objectMapper.readTree(result.content()).path("error").asText();
+        return objectMapper.readTree(result.content()).path("code").asText();
     }
 
     private String errorMessage(ToolExecutionResult result) throws Exception {
         return objectMapper.readTree(result.content()).path("message").asText();
+    }
+
+    private boolean errorRetryable(ToolExecutionResult result) throws Exception {
+        return objectMapper.readTree(result.content()).path("retryable").asBoolean();
     }
 
     private record FakeTool(String name, AtomicInteger executions, String response) implements CompanionTool {
@@ -508,6 +616,14 @@ class ToolGovernorTest {
                                     "anyOf", List.of(
                                             Map.of("required", List.of("nodeCode")),
                                             Map.of("required", List.of("nodeName"))))));
+        }
+
+        @Override
+        public List<ToolParamSpec> params() {
+            return List.of(
+                    ToolParamSpec.string("nodeCode", false, 32, ToolParamSpec.NODE_CODE_PATTERN),
+                    ToolParamSpec.string("nodeName", false, 128, null),
+                    ToolParamSpec.integer("size", false, 1.0, 3.0));
         }
 
         @Override

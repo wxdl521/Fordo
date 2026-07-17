@@ -2,6 +2,7 @@ package com.wenjin.service.companion;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -14,6 +15,14 @@ public interface CompanionTool {
     String name();
 
     Map<String, Object> schema();
+
+    /**
+     * Declarative param contract for governor pre-validation.
+     * Empty list → only JSON-schema whitelist validation runs.
+     */
+    default List<ToolParamSpec> params() {
+        return List.of();
+    }
 
     default String label() {
         Map<String, Object> toolSchema = schema();

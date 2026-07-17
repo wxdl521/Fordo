@@ -84,7 +84,7 @@ public final class TraceContext {
         return tokensEstimated.get();
     }
 
-    /** Phase 3 工具结果缓存；本期仅预留结构。 */
+    /** 单次 run 内只读工具结果缓存（见 ToolGovernor.READ_CACHEABLE_TOOLS）。 */
     public Map<String, ToolCacheEntry> toolCache() {
         return toolCache;
     }

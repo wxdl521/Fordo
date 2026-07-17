@@ -114,7 +114,7 @@ class CompanionTraceTest {
                 new CompanionAiClient.ToolCalls(List.of(
                         new CompanionAiClient.ToolCall("call-1", "query_mastery", "{\"nodeCode\":\"KT12\"}"))),
                 new CompanionAiClient.FinalText("done"));
-        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult("call-1", "query_mastery", true, "{\"items\":[]}"));
         doAnswer(inv -> {
             Consumer<String> onToken = inv.getArgument(1);
@@ -179,12 +179,12 @@ class CompanionTraceTest {
                 new CompanionAiClient.ToolCalls(List.of(
                         new CompanionAiClient.ToolCall("call-budget", "query_mastery", "{\"nodeCode\":\"KT12\"}"))),
                 new CompanionAiClient.FinalText("budget blocked"));
-        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult(
                         "call-budget",
                         "query_mastery",
                         false,
-                        "{\"error\":\"tool_budget_exceeded\",\"message\":\"Tool call budget exceeded\"}",
+                        "{\"ok\":false,\"code\":\"TOOL_BUDGET_EXCEEDED\",\"message\":\"本轮工具调用次数已达上限\",\"retryable\":false}",
                         null,
                         true));
         doAnswer(inv -> {
@@ -207,7 +207,7 @@ class CompanionTraceTest {
         assertThat(guard.name()).isEqualTo("query_mastery");
         assertThat(guard.status()).isEqualTo(AgentStepStatus.FAILED);
         assertThat(guard.inputJson()).contains("KT12");
-        assertThat(guard.outputJson()).contains("tool_budget_exceeded");
+        assertThat(guard.outputJson()).contains("TOOL_BUDGET_EXCEEDED");
         assertThat(steps.stream().noneMatch(s -> AgentStepType.TOOL_CALL.equals(s.stepType()))).isTrue();
 
         verify(agentTraceService).finishRun(eq(activeCtx), eq(AgentRunStatus.SUCCEEDED), isNull());
@@ -224,12 +224,12 @@ class CompanionTraceTest {
                 new CompanionAiClient.ToolCalls(List.of(
                         new CompanionAiClient.ToolCall("call-unk", "missing_tool", "{}"))),
                 new CompanionAiClient.FinalText("unknown"));
-        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult(
                         "call-unk",
                         "missing_tool",
                         false,
-                        "{\"error\":\"unknown_tool\",\"message\":\"Tool is not registered: missing_tool\"}",
+                        "{\"ok\":false,\"code\":\"TOOL_NOT_ALLOWED\",\"message\":\"工具未授权或不存在: missing_tool\",\"retryable\":false}",
                         null,
                         true));
         doAnswer(inv -> {
@@ -250,7 +250,7 @@ class CompanionTraceTest {
                 .orElseThrow();
         assertThat(guard.name()).isEqualTo("missing_tool");
         assertThat(guard.status()).isEqualTo(AgentStepStatus.FAILED);
-        assertThat(guard.outputJson()).contains("unknown_tool");
+        assertThat(guard.outputJson()).contains("TOOL_NOT_ALLOWED");
     }
 
     @Test

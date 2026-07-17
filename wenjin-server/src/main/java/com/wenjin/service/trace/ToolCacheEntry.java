@@ -1,7 +1,9 @@
 package com.wenjin.service.trace;
 
 /**
- * Phase 3 工具结果缓存条目占位（本期仅结构预留）。
+ * Per-run tool result cache entry (read-only tools only).
+ *
+ * @param payload normalized tool content returned to the model
  */
 public record ToolCacheEntry(String payload) {
 }

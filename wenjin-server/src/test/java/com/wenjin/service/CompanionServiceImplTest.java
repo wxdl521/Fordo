@@ -541,7 +541,7 @@ class CompanionServiceImplTest {
         assertThat(sink.toolResults).isEmpty();
         verify(aiClient, times(1)).completeWithTools(any(), any());
         verify(aiClient).streamMessages(any(), any());
-        verify(toolGovernor, never()).execute(any(), any(), any());
+        verify(toolGovernor, never()).execute(any(), any(), any(), any());
 
         ArgumentCaptor<List<Map<String, Object>>> streamMessagesCaptor = ArgumentCaptor.forClass(List.class);
         verify(aiClient).streamMessages(streamMessagesCaptor.capture(), any());
@@ -604,7 +604,7 @@ class CompanionServiceImplTest {
                 Map.of("type", "object", "properties", Map.of()))));
 
         PracticeStartVO card = practiceCard(901L, 1L, "KT01", "软件工程概述", "What is software engineering?");
-        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult("intent-start-practice", "start_practice", true,
                         "{\"sessionId\":901,\"questionCount\":2}", card));
         doAnswer(invocation -> {
@@ -620,7 +620,7 @@ class CompanionServiceImplTest {
         verify(aiClient, never()).completeWithTools(any(), any());
         ArgumentCaptor<CompanionAiClient.ToolCall> callCaptor =
                 ArgumentCaptor.forClass(CompanionAiClient.ToolCall.class);
-        verify(toolGovernor).execute(any(ToolContext.class), callCaptor.capture(), any(ToolExecutionState.class));
+        verify(toolGovernor).execute(any(ToolContext.class), callCaptor.capture(), any(ToolExecutionState.class), any());
         CompanionAiClient.ToolCall forced = callCaptor.getValue();
         assertEquals("intent-start-practice", forced.id());
         assertEquals("start_practice", forced.name());
@@ -663,7 +663,7 @@ class CompanionServiceImplTest {
         service.streamReply(conversationId, sink);
 
         verify(aiClient, times(1)).completeWithTools(any(), any());
-        verify(toolGovernor, never()).execute(any(), any(), any());
+        verify(toolGovernor, never()).execute(any(), any(), any(), any());
         assertThat(sink.practiceCards).isEmpty();
         assertEquals(List.of("软件工程概述是…"), sink.tokens);
     }
@@ -696,7 +696,7 @@ class CompanionServiceImplTest {
         service.streamReply(conversationId, sink);
 
         verify(aiClient, times(1)).completeWithTools(any(), any());
-        verify(toolGovernor, never()).execute(any(), any(), any());
+        verify(toolGovernor, never()).execute(any(), any(), any(), any());
         assertThat(sink.practiceCards).isEmpty();
         assertEquals(List.of("你可以自己练习一下"), sink.tokens);
     }
@@ -714,7 +714,7 @@ class CompanionServiceImplTest {
                 new CompanionAiClient.ToolCalls(List.of(
                         new CompanionAiClient.ToolCall("call-1", "query_mastery", "{}"))),
                 new CompanionAiClient.FinalText("answer after tool"));
-        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult("call-1", "query_mastery", true, "{\"items\":[]}"));
         doAnswer(invocation -> {
             Consumer<String> onToken = invocation.getArgument(1);
@@ -748,7 +748,7 @@ class CompanionServiceImplTest {
                 Map.of("type", "object", "properties", Map.of()))));
 
         PracticeStartVO card = practiceCard(901L, 12L, "KT12", "软件工程概述", "What is software engineering?");
-        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult("intent-start-practice", "start_practice", true, "{\"ok\":true}", card));
         doAnswer(invocation -> {
             Consumer<String> onToken = invocation.getArgument(1);
@@ -788,7 +788,7 @@ class CompanionServiceImplTest {
                 new CompanionAiClient.ToolCalls(List.of(
                         new CompanionAiClient.ToolCall("call-1", "start_practice", "{\"nodeCode\":\"KT12\"}"))),
                 new CompanionAiClient.FinalText("practice is ready"));
-        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult(
                         "call-1",
                         "start_practice",
@@ -831,7 +831,7 @@ class CompanionServiceImplTest {
                 new CompanionAiClient.ToolCalls(List.of(
                         new CompanionAiClient.ToolCall("call-1", "start_practice", "{\"nodeCode\":\"KT12\"}"))),
                 new CompanionAiClient.FinalText("practice is ready"));
-        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult(
                         "call-1",
                         "start_practice",
@@ -873,7 +873,7 @@ class CompanionServiceImplTest {
                 new CompanionAiClient.ToolCalls(List.of(
                         new CompanionAiClient.ToolCall("call-1", "query_mastery", "{\"nodeCode\":\"KT12\"}"))),
                 new CompanionAiClient.FinalText(""));
-        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult("call-1", "query_mastery", true, "{\"nodeCode\":\"KT12\",\"effectiveScore\":42}"));
         doAnswer(invocation -> {
             Consumer<String> onToken = invocation.getArgument(1);
@@ -899,7 +899,7 @@ class CompanionServiceImplTest {
 
         ArgumentCaptor<ToolContext> ctxCaptor = ArgumentCaptor.forClass(ToolContext.class);
         ArgumentCaptor<CompanionAiClient.ToolCall> callCaptor = ArgumentCaptor.forClass(CompanionAiClient.ToolCall.class);
-        verify(toolGovernor).execute(ctxCaptor.capture(), callCaptor.capture(), any(ToolExecutionState.class));
+        verify(toolGovernor).execute(ctxCaptor.capture(), callCaptor.capture(), any(ToolExecutionState.class), any());
         assertEquals(1L, ctxCaptor.getValue().studentId());
         assertEquals(10L, ctxCaptor.getValue().courseId());
         assertEquals("query_mastery", callCaptor.getValue().name());
@@ -936,7 +936,7 @@ class CompanionServiceImplTest {
         when(aiClient.completeWithTools(any(), any())).thenReturn(
                 new CompanionAiClient.ToolCalls(List.of(
                         new CompanionAiClient.ToolCall("call-1", "query_mastery", "{}"))));
-        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult("call-1", "query_mastery", true, "{\"items\":[]}"));
         doAnswer(invocation -> {
             Consumer<String> onToken = invocation.getArgument(1);
@@ -970,9 +970,9 @@ class CompanionServiceImplTest {
                 new CompanionAiClient.ToolCalls(List.of(
                         new CompanionAiClient.ToolCall("call-err", "query_mastery", "{}"))),
                 new CompanionAiClient.FinalText(""));
-        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult("call-err", "query_mastery", false,
-                        "{\"error\":\"tool_error\",\"message\":\"boom\"}"));
+                        "{\"ok\":false,\"code\":\"TOOL_INTERNAL\",\"message\":\"工具执行失败\",\"retryable\":true}"));
         doAnswer(invocation -> {
             Consumer<String> onToken = invocation.getArgument(1);
             onToken.accept("先从概念开始");
@@ -990,7 +990,7 @@ class CompanionServiceImplTest {
         assertThat(messages.get(messages.size() - 1))
                 .containsEntry("role", "tool")
                 .containsEntry("tool_call_id", "call-err")
-                .containsEntry("content", "{\"error\":\"tool_error\",\"message\":\"boom\"}");
+                .containsEntry("content", "{\"ok\":false,\"code\":\"TOOL_INTERNAL\",\"message\":\"工具执行失败\",\"retryable\":true}");
 
         ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
         verify(messageMapper).insert(messageCaptor.capture());
@@ -1027,7 +1027,7 @@ class CompanionServiceImplTest {
         assertThat(promptCaptor.getValue()).doesNotContain("## 工具使用");
         assertThat(promptCaptor.getValue()).contains("## 学生薄弱点");
         verify(aiClient, never()).streamMessages(any(), any());
-        verify(toolGovernor, never()).execute(any(), any(), any());
+        verify(toolGovernor, never()).execute(any(), any(), any(), any());
 
         ArgumentCaptor<CompanionMessage> messageCaptor = ArgumentCaptor.forClass(CompanionMessage.class);
         verify(messageMapper).insert(messageCaptor.capture());
@@ -1047,7 +1047,7 @@ class CompanionServiceImplTest {
                 new CompanionAiClient.ToolCalls(List.of(
                         new CompanionAiClient.ToolCall("call-1", "query_mastery", "{\"nodeCode\":\"KT12\"}"))))
                 .thenThrow(new IllegalStateException("second round boom"));
-        when(toolGovernor.execute(any(), any(), any())).thenReturn(
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult("call-1", "query_mastery", true,
                         "{\"nodeCode\":\"KT12\",\"effectiveScore\":42}"));
         doAnswer(invocation -> {

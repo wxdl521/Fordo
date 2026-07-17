@@ -5,13 +5,21 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.fasterxml.jackson.databind.node.TextNode;
 import com.wenjin.ai.CompanionAiClient;
 import com.wenjin.config.CompanionToolProperties;
+import com.wenjin.config.LimitsProperties;
+import com.wenjin.service.trace.ToolCacheEntry;
+import com.wenjin.service.trace.TraceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -28,21 +36,46 @@ import java.util.concurrent.TimeoutException;
 /**
  * Tool execution is governed cooperatively: timeouts return promptly, and interruption is
  * signaled to the running tool rather than forcing an external kill.
+ *
+ * <p>Order: resolve tool → parse/validate args (no budget) → cache hit (no budget)
+ * → tryConsume → execute. Unknown tools still consume budget (whitelist intercept).
  */
 @Component
 public class ToolGovernor {
 
     private static final Logger log = LoggerFactory.getLogger(ToolGovernor.class);
 
+    /**
+     * Read-only tools eligible for per-run result de-duplication.
+     * Includes future Task-12 names so the set is stable once tools land.
+     */
+    public static final Set<String> READ_CACHEABLE_TOOLS = Set.of(
+            "query_mastery",
+            "get_node_detail",
+            "get_review_queue",
+            "get_learning_frontier",
+            "trace_prerequisites");
+
+    private static final String TRUNCATION_MARKER = "[已截断]";
+
     private final Map<String, CompanionTool> registry;
     private final ObjectMapper objectMapper;
     private final CompanionToolProperties properties;
+    private final LimitsProperties limits;
 
     public ToolGovernor(List<CompanionTool> tools,
                         ObjectMapper objectMapper,
                         CompanionToolProperties properties) {
+        this(tools, objectMapper, properties, null);
+    }
+
+    public ToolGovernor(List<CompanionTool> tools,
+                        ObjectMapper objectMapper,
+                        CompanionToolProperties properties,
+                        LimitsProperties limits) {
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.properties = Objects.requireNonNull(properties, "properties");
+        this.limits = limits;
         Map<String, CompanionTool> map = new LinkedHashMap<>();
         if (tools != null) {
             for (CompanionTool tool : tools) {
@@ -54,9 +87,17 @@ public class ToolGovernor {
         this.registry = Map.copyOf(map);
     }
 
+    /** Backward-compatible entry: no per-run cache. */
     public ToolExecutionResult execute(ToolContext ctx,
                                        CompanionAiClient.ToolCall call,
                                        ToolExecutionState state) {
+        return execute(ctx, call, state, null);
+    }
+
+    public ToolExecutionResult execute(ToolContext ctx,
+                                       CompanionAiClient.ToolCall call,
+                                       ToolExecutionState state,
+                                       TraceContext traceCtx) {
         Objects.requireNonNull(call, "call");
         Objects.requireNonNull(state, "state");
         long started = System.nanoTime();
@@ -66,16 +107,17 @@ public class ToolGovernor {
         ToolExecutionResult result;
 
         CompanionTool tool = registry.get(toolName);
-        boolean sideEffecting = tool != null && tool.sideEffecting();
-        // 先解析是否副作用工具，再扣预算：为 start_practice 等预留槽位
-        if (!state.tryConsume(sideEffecting)) {
-            result = failed(toolCallId, toolName, "tool_budget_exceeded", "Tool call budget exceeded", true);
-            audit(ctx, toolName, argsJson, started, result);
-            return result;
-        }
-
         if (tool == null) {
-            result = failed(toolCallId, toolName, "unknown_tool", "Tool is not registered: " + toolName, true);
+            // Unknown tool: still consume budget (whitelist intercept), then GUARD.
+            if (!state.tryConsume(false)) {
+                result = failed(toolCallId, toolName,
+                        ToolErrorCodes.TOOL_BUDGET_EXCEEDED,
+                        "本轮工具调用次数已达上限");
+            } else {
+                result = failed(toolCallId, toolName,
+                        ToolErrorCodes.TOOL_NOT_ALLOWED,
+                        "工具未授权或不存在: " + toolName);
+            }
             audit(ctx, toolName, argsJson, started, result);
             return result;
         }
@@ -87,22 +129,113 @@ public class ToolGovernor {
                 args = objectMapper.createObjectNode();
             }
         } catch (JsonProcessingException e) {
-            result = failed(toolCallId, toolName, "invalid_arguments", "Tool arguments must be valid JSON", true);
-            audit(ctx, toolName, argsJson, started, result);
-            return result;
-        }
-        String validationError = validateArguments(tool, args);
-        if (validationError != null) {
-            result = failed(toolCallId, toolName, "invalid_arguments", validationError, true);
+            result = failed(toolCallId, toolName,
+                    ToolErrorCodes.TOOL_BAD_ARGS,
+                    "Tool arguments must be valid JSON");
             audit(ctx, toolName, argsJson, started, result);
             return result;
         }
 
-        result = tool.sideEffecting()
+        // ParamSpec first (no budget on failure), then schema whitelist as兜底.
+        String paramError = ToolParamValidator.validate(tool.params(), args);
+        if (paramError != null) {
+            result = failed(toolCallId, toolName, ToolErrorCodes.TOOL_BAD_ARGS, paramError);
+            audit(ctx, toolName, argsJson, started, result);
+            return result;
+        }
+        String schemaError = validateArguments(tool, args);
+        if (schemaError != null) {
+            result = failed(toolCallId, toolName, ToolErrorCodes.TOOL_BAD_ARGS, schemaError);
+            audit(ctx, toolName, argsJson, started, result);
+            return result;
+        }
+
+        // Read-only cache hit: return immediately without consuming budget.
+        String cacheKey = null;
+        if (isCacheable(toolName) && traceCtx != null) {
+            cacheKey = cacheKey(toolName, args);
+            ToolCacheEntry hit = traceCtx.toolCache().get(cacheKey);
+            if (hit != null && hit.payload() != null) {
+                result = new ToolExecutionResult(
+                        toolCallId, toolName, true, hit.payload(), null, false, true);
+                audit(ctx, toolName, argsJson, started, result);
+                return result;
+            }
+        }
+
+        boolean sideEffecting = tool.sideEffecting();
+        if (!state.tryConsume(sideEffecting)) {
+            result = failed(toolCallId, toolName,
+                    ToolErrorCodes.TOOL_BUDGET_EXCEEDED,
+                    "本轮工具调用次数已达上限");
+            audit(ctx, toolName, argsJson, started, result);
+            return result;
+        }
+
+        result = sideEffecting
                 ? executeInline(ctx, call, tool, args)
                 : executeWithTimeout(ctx, call, tool, args);
+
+        if (cacheKey != null && result != null && result.ok() && !result.cached()
+                && result.content() != null && traceCtx != null) {
+            traceCtx.toolCache().putIfAbsent(cacheKey, new ToolCacheEntry(result.content()));
+        }
+
         audit(ctx, toolName, argsJson, started, result);
         return result;
+    }
+
+    private static boolean isCacheable(String toolName) {
+        return toolName != null && READ_CACHEABLE_TOOLS.contains(toolName);
+    }
+
+    String cacheKey(String toolName, JsonNode args) {
+        return toolName + ":" + sha256(canonicalJson(args));
+    }
+
+    private String canonicalJson(JsonNode node) {
+        try {
+            return objectMapper.writeValueAsString(sortKeys(node == null
+                    ? objectMapper.createObjectNode()
+                    : node));
+        } catch (JsonProcessingException e) {
+            return "{}";
+        }
+    }
+
+    private JsonNode sortKeys(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return objectMapper.nullNode();
+        }
+        if (node.isObject()) {
+            ObjectNode out = objectMapper.createObjectNode();
+            List<String> names = new ArrayList<>();
+            node.fieldNames().forEachRemaining(names::add);
+            Collections.sort(names);
+            for (String name : names) {
+                out.set(name, sortKeys(node.get(name)));
+            }
+            return out;
+        }
+        if (node.isArray()) {
+            ArrayNode out = objectMapper.createArrayNode();
+            for (JsonNode child : node) {
+                out.add(sortKeys(child));
+            }
+            return out;
+        }
+        return node;
+    }
+
+    private static String sha256(String text) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(text.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 is required by the JRE; fall back to identity if somehow missing.
+            return Integer.toHexString(text.hashCode());
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -230,15 +363,23 @@ public class ToolGovernor {
             return normalizeResult(call, future.get(timeoutMs(), TimeUnit.MILLISECONDS));
         } catch (TimeoutException e) {
             future.cancel(true);
-            return failed(call.id(), call.name(), "tool_timeout", "Tool timed out", true);
+            return failed(call.id(), call.name(),
+                    ToolErrorCodes.TOOL_TIMEOUT,
+                    "工具调用超时，可换用其他方式回应");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return failed(call.id(), call.name(), "tool_interrupted", "Tool execution was interrupted", true);
+            log.warn("companion tool interrupted: {}", call.name());
+            return failed(call.id(), call.name(),
+                    ToolErrorCodes.TOOL_INTERNAL,
+                    "工具执行被中断");
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
-            String message = cause == null ? "Tool execution failed" : cause.getMessage();
+            log.warn("companion tool failed: {} — {}", call.name(),
+                    cause == null ? "unknown" : cause.toString());
             // Tool body started; internal failure stays TOOL_CALL (not GUARD)
-            return failed(call.id(), call.name(), "tool_error", message, false);
+            return failedUnguarded(call.id(), call.name(),
+                    ToolErrorCodes.TOOL_INTERNAL,
+                    "工具执行失败");
         } finally {
             executor.shutdownNow();
         }
@@ -251,22 +392,33 @@ public class ToolGovernor {
         try {
             return normalizeResult(call, tool.executeForGovernor(call.id(), ctx, args));
         } catch (Exception e) {
-            return failed(call.id(), call.name(), "tool_error", e.getMessage(), false);
+            log.warn("companion tool failed inline: {} — {}", call.name(), e.toString());
+            return failedUnguarded(call.id(), call.name(),
+                    ToolErrorCodes.TOOL_INTERNAL,
+                    "工具执行失败");
         }
     }
 
     private ToolExecutionResult normalizeResult(CompanionAiClient.ToolCall call, ToolExecutionResult result) {
         if (result == null) {
-            return failed(call.id(), call.name(), "tool_error", "Tool execution failed", false);
+            return failedUnguarded(call.id(), call.name(),
+                    ToolErrorCodes.TOOL_INTERNAL,
+                    "工具执行失败");
         }
         if (!result.ok()) {
-            // Post-execution tool failure: not a governor intercept
+            // Post-execution tool failure: not a governor intercept.
+            // If content is already an envelope keep it; otherwise wrap as internal.
+            String content = result.content();
+            if (content == null || content.isBlank() || !looksLikeErrorEnvelope(content)) {
+                content = errorContent(ToolErrorCodes.TOOL_INTERNAL, "工具执行失败");
+            }
             return new ToolExecutionResult(
                     result.toolCallId(),
                     result.toolName(),
                     false,
-                    result.content(),
+                    content,
                     null,
+                    false,
                     false);
         }
         return new ToolExecutionResult(
@@ -275,7 +427,18 @@ public class ToolGovernor {
                 true,
                 truncateSuccessfulContent(result.content()),
                 result.practiceCard(),
+                false,
                 false);
+    }
+
+    private boolean looksLikeErrorEnvelope(String content) {
+        try {
+            JsonNode node = objectMapper.readTree(content);
+            return node != null && node.isObject()
+                    && node.has("ok") && node.has("code");
+        } catch (JsonProcessingException e) {
+            return false;
+        }
     }
 
     private long timeoutMs() {
@@ -283,158 +446,56 @@ public class ToolGovernor {
         return Math.max(1, timeout);
     }
 
-    private ToolExecutionResult failed(String toolCallId,
-                                       String toolName,
-                                       String error,
-                                       String message,
-                                       boolean guarded) {
-        return new ToolExecutionResult(
-                toolCallId, toolName, false, errorContent(error, message), null, guarded);
+    private int maxResultChars() {
+        if (limits != null && limits.getTools() != null) {
+            return Math.max(0, limits.getTools().getMaxResultChars());
+        }
+        return Math.max(0, properties == null ? 2000 : properties.getMaxResultChars());
     }
 
-    private String errorContent(String error, String message) {
-        Map<String, String> body = new LinkedHashMap<>();
-        body.put("error", error);
+    private ToolExecutionResult failed(String toolCallId,
+                                       String toolName,
+                                       String code,
+                                       String message) {
+        return new ToolExecutionResult(
+                toolCallId, toolName, false, errorContent(code, message), null, true, false);
+    }
+
+    private ToolExecutionResult failedUnguarded(String toolCallId,
+                                                String toolName,
+                                                String code,
+                                                String message) {
+        return new ToolExecutionResult(
+                toolCallId, toolName, false, errorContent(code, message), null, false, false);
+    }
+
+    private String errorContent(String code, String message) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", false);
+        body.put("code", code == null ? ToolErrorCodes.TOOL_INTERNAL : code);
         body.put("message", message == null ? "" : message);
+        body.put("retryable", ToolErrorCodes.retryable(code));
         try {
             return objectMapper.writeValueAsString(body);
         } catch (JsonProcessingException e) {
-            return "{\"error\":\"tool_error\",\"message\":\"Failed to encode tool error\"}";
+            return "{\"ok\":false,\"code\":\"TOOL_INTERNAL\",\"message\":\"Failed to encode tool error\",\"retryable\":true}";
         }
     }
 
     private String truncateSuccessfulContent(String content) {
         String safe = content == null ? "" : content;
-        int max = properties == null ? 2000 : properties.getMaxResultChars();
-        max = Math.max(0, max);
+        int max = maxResultChars();
         if (safe.length() <= max) {
             return safe;
         }
-        return truncateJsonContent(safe, max);
-    }
-
-    private String truncateJsonContent(String content, int max) {
-        JsonNode parsed;
-        try {
-            parsed = objectMapper.readTree(content);
-        } catch (JsonProcessingException e) {
-            return fitFallbackContent(max);
+        if (max <= 0) {
+            return "";
         }
-
-        JsonNode truncated = addTruncatedFlag(parsed.deepCopy());
-        while (serialize(truncated).length() > max) {
-            if (trimLastArrayElement(truncated)) {
-                continue;
-            }
-            if (trimLongestStringValue(truncated, serialize(truncated).length() - max)) {
-                continue;
-            }
-            return fitFallbackContent(max);
+        if (max <= TRUNCATION_MARKER.length()) {
+            return TRUNCATION_MARKER.substring(0, max);
         }
-        return serialize(truncated);
-    }
-
-    private JsonNode addTruncatedFlag(JsonNode node) {
-        if (node instanceof ObjectNode objectNode) {
-            objectNode.put("truncated", true);
-            return objectNode;
-        }
-        ObjectNode wrapper = objectMapper.createObjectNode();
-        wrapper.put("truncated", true);
-        wrapper.set("result", node);
-        return wrapper;
-    }
-
-    private boolean trimLastArrayElement(JsonNode node) {
-        if (node instanceof ArrayNode arrayNode) {
-            if (!arrayNode.isEmpty()) {
-                arrayNode.remove(arrayNode.size() - 1);
-                return true;
-            }
-            return false;
-        }
-        if (node instanceof ObjectNode objectNode) {
-            for (JsonNode child : objectNode) {
-                if (trimLastArrayElement(child)) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        for (JsonNode child : node) {
-            if (trimLastArrayElement(child)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean trimLongestStringValue(JsonNode node, int overflow) {
-        TrimCandidate candidate = findLongestString(node);
-        if (candidate == null || candidate.value().isEmpty()) {
-            return false;
-        }
-        int delta = Math.max(1, overflow);
-        int newLength = Math.max(0, candidate.value().length() - delta);
-        candidate.replaceWith(candidate.value().substring(0, newLength));
-        return true;
-    }
-
-    private TrimCandidate findLongestString(JsonNode node) {
-        TrimCandidate best = null;
-        if (node instanceof ObjectNode objectNode) {
-            var fields = objectNode.fields();
-            while (fields.hasNext()) {
-                Map.Entry<String, JsonNode> entry = fields.next();
-                JsonNode child = entry.getValue();
-                if (child.isTextual()) {
-                    TrimCandidate candidate = TrimCandidate.forField(objectNode, entry.getKey(), child.asText());
-                    if (best == null || candidate.value().length() > best.value().length()) {
-                        best = candidate;
-                    }
-                    continue;
-                }
-                TrimCandidate nested = findLongestString(child);
-                if (nested != null && (best == null || nested.value().length() > best.value().length())) {
-                    best = nested;
-                }
-            }
-            return best;
-        }
-        if (node instanceof ArrayNode arrayNode) {
-            for (int i = 0; i < arrayNode.size(); i++) {
-                JsonNode child = arrayNode.get(i);
-                if (child.isTextual()) {
-                    TrimCandidate candidate = TrimCandidate.forIndex(arrayNode, i, child.asText());
-                    if (best == null || candidate.value().length() > best.value().length()) {
-                        best = candidate;
-                    }
-                    continue;
-                }
-                TrimCandidate nested = findLongestString(child);
-                if (nested != null && (best == null || nested.value().length() > best.value().length())) {
-                    best = nested;
-                }
-            }
-        }
-        return best;
-    }
-
-    private String fitFallbackContent(int max) {
-        for (String candidate : List.of("{\"truncated\":true}", "{}", "\"\"", "0", "")) {
-            if (candidate.length() <= max) {
-                return candidate;
-            }
-        }
-        return "";
-    }
-
-    private String serialize(JsonNode node) {
-        try {
-            return objectMapper.writeValueAsString(node);
-        } catch (JsonProcessingException e) {
-            return "{\"truncated\":true}";
-        }
+        int keep = max - TRUNCATION_MARKER.length();
+        return safe.substring(0, keep) + TRUNCATION_MARKER;
     }
 
     private void audit(ToolContext ctx,
@@ -445,13 +506,14 @@ public class ToolGovernor {
         long elapsedMs = (System.nanoTime() - started) / 1_000_000;
         Long studentId = ctx == null ? null : ctx.studentId();
         Long courseId = ctx == null ? null : ctx.courseId();
-        log.info("companion_tool uid={} courseId={} tool={} args={} elapsedMs={} ok={} result={}",
+        log.info("companion_tool uid={} courseId={} tool={} args={} elapsedMs={} ok={} cached={} result={}",
                 studentId,
                 courseId,
                 toolName,
                 summarize(argsJson, 160),
                 elapsedMs,
                 result.ok(),
+                result.cached(),
                 summarize(result.content(), 160));
     }
 
@@ -464,33 +526,5 @@ public class ToolGovernor {
             return normalized;
         }
         return normalized.substring(0, maxLength);
-    }
-
-    private sealed interface TrimCandidate permits FieldTrimCandidate, IndexTrimCandidate {
-        String value();
-
-        void replaceWith(String value);
-
-        static TrimCandidate forField(ObjectNode parent, String fieldName, String value) {
-            return new FieldTrimCandidate(parent, fieldName, value);
-        }
-
-        static TrimCandidate forIndex(ArrayNode parent, int index, String value) {
-            return new IndexTrimCandidate(parent, index, value);
-        }
-    }
-
-    private record FieldTrimCandidate(ObjectNode parent, String fieldName, String value) implements TrimCandidate {
-        @Override
-        public void replaceWith(String value) {
-            parent.put(fieldName, value);
-        }
-    }
-
-    private record IndexTrimCandidate(ArrayNode parent, int index, String value) implements TrimCandidate {
-        @Override
-        public void replaceWith(String value) {
-            parent.set(index, TextNode.valueOf(value));
-        }
     }
 }

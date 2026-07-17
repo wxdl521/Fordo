@@ -56,6 +56,13 @@ public class QueryMasteryTool implements CompanionTool {
     }
 
     @Override
+    public List<ToolParamSpec> params() {
+        return List.of(
+                ToolParamSpec.string("nodeCode", false, 32, ToolParamSpec.NODE_CODE_PATTERN),
+                ToolParamSpec.string("nodeName", false, 128, null));
+    }
+
+    @Override
     public Map<String, Object> schema() {
         Map<String, Object> parameters = new LinkedHashMap<>();
         parameters.put("type", "object");

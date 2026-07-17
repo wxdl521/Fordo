@@ -436,7 +436,7 @@ public class CompanionServiceImpl implements CompanionService {
         String toolName = call.name() == null ? "" : call.name();
         sink.toolStart(toolName, toolLabels.getOrDefault(toolName, toolName));
         long started = System.currentTimeMillis();
-        ToolExecutionResult result = toolGovernor.execute(context, call, state);
+        ToolExecutionResult result = toolGovernor.execute(context, call, state, traceCtx);
         recordToolStep(traceCtx, call, result, started);
         messages.add(toolMessage(result));
         sink.toolResult(toolName, result.ok());
@@ -729,8 +729,17 @@ public class CompanionServiceImpl implements CompanionService {
                 : call.name();
         String input = call == null ? null : call.argumentsJson();
         String output = result == null ? null : result.content();
-        int status = result != null && result.ok() ? AgentStepStatus.OK : AgentStepStatus.FAILED;
-        String errorCode = status == AgentStepStatus.OK ? null : "TOOL_FAILED";
+        int status;
+        if (result != null && result.cached()) {
+            status = AgentStepStatus.CACHED;
+        } else if (result != null && result.ok()) {
+            status = AgentStepStatus.OK;
+        } else {
+            status = AgentStepStatus.FAILED;
+        }
+        String errorCode = status == AgentStepStatus.FAILED
+                ? extractToolErrorCode(result)
+                : null;
         // Governor intercepts (budget/whitelist/args/timeout) → GUARD; actual execution → TOOL_CALL
         String stepType = result != null && result.guarded()
                 ? AgentStepType.GUARD
@@ -745,6 +754,27 @@ public class CompanionServiceImpl implements CompanionService {
                 0,
                 elapsedMs(startedMs),
                 errorCode));
+    }
+
+    /** Prefer envelope {@code code}; fall back to legacy TOOL_FAILED. */
+    private static String extractToolErrorCode(ToolExecutionResult result) {
+        if (result == null || result.content() == null || result.content().isBlank()) {
+            return "TOOL_FAILED";
+        }
+        String content = result.content();
+        // Lightweight extract without ObjectMapper dependency here.
+        int codeIdx = content.indexOf("\"code\"");
+        if (codeIdx < 0) {
+            return "TOOL_FAILED";
+        }
+        int colon = content.indexOf(':', codeIdx);
+        int firstQuote = content.indexOf('"', colon + 1);
+        int secondQuote = firstQuote < 0 ? -1 : content.indexOf('"', firstQuote + 1);
+        if (firstQuote < 0 || secondQuote < 0) {
+            return "TOOL_FAILED";
+        }
+        String code = content.substring(firstQuote + 1, secondQuote);
+        return code.isBlank() ? "TOOL_FAILED" : code;
     }
 
     private static String latestUserContent(List<CompanionMessage> history) {

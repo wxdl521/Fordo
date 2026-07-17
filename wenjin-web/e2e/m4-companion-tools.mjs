@@ -389,11 +389,11 @@ try {
     check('诱导模型连续调用超过预算后对话仍正常终答',
       hasAssistantReplySince(budgetRun.state, budgetRun.startIndex))
     const budgetAudit = await waitAuditLog(
-      '日志包含 tool_budget_exceeded 预算拦截',
-      (slice) => slice.includes('tool_budget_exceeded')
+      '日志包含 TOOL_BUDGET_EXCEEDED 预算拦截',
+      (slice) => slice.includes('TOOL_BUDGET_EXCEEDED')
     )
     if (serverLog) {
-      check('日志包含 tool_budget_exceeded 预算拦截', budgetAudit.includes('tool_budget_exceeded'), serverLog)
+      check('日志包含 TOOL_BUDGET_EXCEEDED 预算拦截', budgetAudit.includes('TOOL_BUDGET_EXCEEDED'), serverLog)
     }
 
     const invalidRun = await sendAndWaitDone(

@@ -15,7 +15,7 @@ describe('M4 e2e script contract', () => {
   it('covers every final acceptance lane', () => {
     const requiredMarkers = [
       '诱导模型连续调用超过预算',
-      'tool_budget_exceeded',
+      'TOOL_BUDGET_EXCEEDED',
       '图谱外节点注入',
       'M4_OUT_OF_GRAPH_NODE',
       'WJ_EXPECT_TOOLS_DISABLED',
