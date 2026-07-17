@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════
 --  问津 · 知识图谱驱动的个性化学习导航系统
---  本地空库重建快照（当前最终 DDL，含 V3–V9；共 23 张业务表）
+--  本地空库重建快照（当前最终 DDL，含 V3–V10；共 25 张业务表）
 --
 --  ⚠ 仅本地空库 / 会删数据 / 生产禁用
 --    · 本脚本含 DROP TABLE IF EXISTS，会清空目标库业务表数据。
---    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V9）。
+--    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V10）。
 --    · 新增版本化迁移（Vn）后，必须把最终 DDL 同步回本文件，保持本地快照一致。
 --    · 应用启动默认 spring.flyway.enabled=false（WENJIN_FLYWAY_ENABLED），
 --      普通应用账号只有 DML；发布流水线用 migrator 凭据单独跑迁移作业。
@@ -14,7 +14,8 @@
 --    2. 字符集统一 utf8mb4，存储引擎 InnoDB。
 --    3. 所有表、字段均带中文 COMMENT。
 --    4. V9 起建立命名物理外键与 sys_user.role CHECK；本地快照与 Flyway 最终态对齐。
---    5. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--    5. V10 增 agent_run / agent_step（无物理 FK，与迁移脚本一致）。
+--    6. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -445,5 +446,50 @@ CREATE TABLE `ai_job` (
     CONSTRAINT `fk_ai_job_owner` FOREIGN KEY (`owner_id`) REFERENCES `sys_user` (`id`),
     CONSTRAINT `fk_ai_job_course` FOREIGN KEY (`course_id`) REFERENCES `course` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 异步写作业（可恢复）【V7】';
+
+-- ───────────────────────────── 组：Agent 执行轨迹【V10】 ─────────────────────────────
+
+DROP TABLE IF EXISTS `agent_step`;
+DROP TABLE IF EXISTS `agent_run`;
+CREATE TABLE `agent_run` (
+    `id`                  BIGINT       NOT NULL AUTO_INCREMENT COMMENT '轨迹 run ID',
+    `request_id`          VARCHAR(64)  NULL COMMENT '关联 RequestIdFilter',
+    `student_id`          BIGINT       NOT NULL COMMENT '学生用户 ID',
+    `course_id`           BIGINT       NOT NULL COMMENT '课程 ID',
+    `conversation_id`     BIGINT       NULL COMMENT '关联伴侣会话（可空）',
+    `kind`                VARCHAR(32)  NOT NULL COMMENT 'COMPANION_CHAT/DIAGNOSTIC/PLAN_GENERATE/PLAN_REPLAN/...',
+    `status`              TINYINT      NOT NULL DEFAULT 0 COMMENT '0=RUNNING,1=SUCCEEDED,2=FAILED,3=DEGRADED,4=CANCELLED',
+    `model`               VARCHAR(64)  NULL COMMENT '模型标识',
+    `input_digest`        VARCHAR(200) NULL COMMENT '首条输入前 200 字，非全文',
+    `tokens_in`           INT          NOT NULL DEFAULT 0 COMMENT '输入 token 数',
+    `tokens_out`          INT          NOT NULL DEFAULT 0 COMMENT '输出 token 数',
+    `tokens_estimated`    TINYINT      NOT NULL DEFAULT 0 COMMENT '1=按 chars/2 估算',
+    `duration_ms`         INT          NULL COMMENT '总耗时毫秒',
+    `error_code`          VARCHAR(64)  NULL COMMENT '稳定错误码',
+    `cancel_requested_at` DATETIME     NULL COMMENT 'M10 转向/取消使用，本期只建列',
+    `created_at`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `finished_at`         DATETIME     NULL COMMENT '结束时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_run_student` (`student_id`, `course_id`, `created_at`),
+    KEY `idx_run_conversation` (`conversation_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 执行轨迹（run）【V10】';
+
+CREATE TABLE `agent_step` (
+    `id`          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '轨迹 step ID',
+    `run_id`      BIGINT      NOT NULL COMMENT '所属 agent_run.id',
+    `seq`         INT         NOT NULL COMMENT 'run 内序号',
+    `step_type`   VARCHAR(16) NOT NULL COMMENT 'LLM_CALL/TOOL_CALL/GUARD/DEGRADE/REFLECT/MEMORY/RETRIEVE',
+    `name`        VARCHAR(64) NOT NULL COMMENT '工具名或 phase1/phase2/...',
+    `status`      TINYINT     NOT NULL DEFAULT 0 COMMENT '0=OK,1=FAILED,2=SKIPPED,3=CACHED',
+    `input_json`  MEDIUMTEXT  NULL COMMENT '超 limits.trace.max-io-chars 截断并加 [truncated] 标记',
+    `output_json` MEDIUMTEXT  NULL COMMENT '输出 JSON（可截断）',
+    `tokens_in`   INT         NOT NULL DEFAULT 0 COMMENT '输入 token 数',
+    `tokens_out`  INT         NOT NULL DEFAULT 0 COMMENT '输出 token 数',
+    `duration_ms` INT         NULL COMMENT '步骤耗时毫秒',
+    `error_code`  VARCHAR(64) NULL COMMENT '稳定错误码',
+    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_step_seq` (`run_id`, `seq`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 执行轨迹（step）【V10】';
 
 SET FOREIGN_KEY_CHECKS = 1;
