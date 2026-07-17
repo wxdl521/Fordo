@@ -163,10 +163,16 @@ public class CompanionServiceImpl implements CompanionService {
 
         ConversationContextBuilder.BuiltContext ctx = contextBuilder.build(conversation, history);
         if (ctx.summaryUpdated()) {
-            conversation.setSummaryText(ctx.summaryText());
-            conversation.setSummaryThroughMessageId(ctx.summaryThroughMessageId());
-            conversation.setUpdatedAt(LocalDateTime.now());
-            conversationMapper.updateById(conversation);
+            int rows = conversationMapper.updateSummaryGuarded(
+                    conversationId, ctx.summaryText(), ctx.summaryThroughMessageId());
+            if (rows == 0) {
+                log.debug("skip summary write: watermark already advanced, conversationId={}, throughId={}",
+                        conversationId, ctx.summaryThroughMessageId());
+            } else {
+                // 本地实体与库对齐，供本 turn 后续逻辑使用；不得再整实体 updateById
+                conversation.setSummaryText(ctx.summaryText());
+                conversation.setSummaryThroughMessageId(ctx.summaryThroughMessageId());
+            }
         }
 
         List<CompanionTool> usableTools = usableTools();

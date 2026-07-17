@@ -46,6 +46,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -326,6 +329,7 @@ class CompanionServiceImplTest {
             return null;
         }).when(aiClient).stream(any(), historyCaptor.capture(), latestCaptor.capture(), any());
         when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+        when(conversationMapper.updateSummaryGuarded(eq(conversationId), anyString(), anyLong())).thenReturn(1);
 
         service.streamReply(conversationId, t -> { });
 
@@ -337,7 +341,39 @@ class CompanionServiceImplTest {
                         && m.content() != null
                         && m.content().contains("历史摘要"));
         assertThat(hasSummary).isTrue();
-        verify(conversationMapper).updateById(any(CompanionConversation.class));
+        // P0-1：摘要走守卫回写，禁止整实体 updateById（避免覆盖并发节点切换）
+        verify(conversationMapper).updateSummaryGuarded(eq(conversationId), anyString(), anyLong());
+        verify(conversationMapper, never()).updateById(any(CompanionConversation.class));
+    }
+
+    @Test
+    void streamReplyWhenSummaryWatermarkAlreadyAdvancedSkipsWriteAndContinues() {
+        Long conversationId = 303L;
+        List<CompanionMessage> history = new ArrayList<>();
+        for (int i = 1; i <= 100; i++) {
+            CompanionMessage m = userMessage("msg-" + i);
+            m.setId((long) i);
+            m.setRole(i % 2 == 1 ? ROLE_USER : ROLE_AI);
+            history.add(m);
+        }
+        stubConversationAndPrompt(conversationId, history);
+        configureTools(false, 2, 3, List.of());
+
+        when(conversationMapper.updateSummaryGuarded(eq(conversationId), anyString(), anyLong())).thenReturn(0);
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            onToken.accept("still-ok");
+            return null;
+        }).when(aiClient).stream(any(), any(), any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        StringBuilder streamed = new StringBuilder();
+        service.streamReply(conversationId, streamed::append);
+
+        assertEquals("still-ok", streamed.toString());
+        verify(conversationMapper).updateSummaryGuarded(eq(conversationId), anyString(), anyLong());
+        verify(conversationMapper, never()).updateById(any(CompanionConversation.class));
+        verify(messageMapper).insert(any(CompanionMessage.class));
     }
 
     @Test

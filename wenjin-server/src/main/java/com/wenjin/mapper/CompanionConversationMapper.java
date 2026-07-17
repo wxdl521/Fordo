@@ -5,11 +5,26 @@ import com.wenjin.entity.CompanionConversation;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.util.List;
 
 @Mapper
 public interface CompanionConversationMapper extends BaseMapper<CompanionConversation> {
+
+    /**
+     * 摘要字段条件回写：仅当 throughId 严格前进（或当前 watermark 为空）时更新，
+     * 避免与会话切换的整实体 updateById 并发时 lost-update 覆盖 node_code。
+     *
+     * @return 影响行数；0 表示 watermark 已被并发者推进，调用方应静默放弃本次回写
+     */
+    @Update("UPDATE companion_conversation SET summary_text = #{summaryText}, " +
+            "summary_through_message_id = #{throughId}, updated_at = NOW() " +
+            "WHERE id = #{id} AND (summary_through_message_id IS NULL " +
+            "OR summary_through_message_id < #{throughId})")
+    int updateSummaryGuarded(@Param("id") Long id,
+                             @Param("summaryText") String summaryText,
+                             @Param("throughId") Long throughId);
 
     /**
      * Keyset 分页：按 updated_at DESC, id DESC。
