@@ -19,4 +19,7 @@ public class FeatureFlagsProperties {
 
     /** AI 异步作业派发 */
     private boolean aiJobDispatchEnabled = true;
+
+    /** Agent 执行轨迹埋点（agent_run / agent_step） */
+    private boolean agentTraceEnabled = true;
 }

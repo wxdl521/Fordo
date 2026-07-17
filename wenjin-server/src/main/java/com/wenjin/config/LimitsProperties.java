@@ -14,6 +14,8 @@ public class LimitsProperties {
     private final Draft draft = new Draft();
     private final Image image = new Image();
     private final Document document = new Document();
+    private final Trace trace = new Trace();
+    private final Tools tools = new Tools();
 
     @Data
     public static class Companion {
@@ -60,5 +62,17 @@ public class LimitsProperties {
         private int maxTextChars = 200_000;
         /** 解压膨胀比上限（防 zip bomb） */
         private int maxDecompressRatio = 100;
+    }
+
+    @Data
+    public static class Trace {
+        /** agent_step 输入/输出最大字符；超出截断并追加 [truncated] */
+        private int maxIoChars = 8000;
+    }
+
+    @Data
+    public static class Tools {
+        /** 工具结果字符上限（Phase 3 tool cache 等） */
+        private int maxResultChars = 4000;
     }
 }

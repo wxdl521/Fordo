@@ -100,11 +100,16 @@ wenjin:
       max-pages: 200                             # PDF 页数上限
       max-text-chars: 200000                     # 抽取文本字符上限
       max-decompress-ratio: 100                  # 解压膨胀比上限
+    trace:
+      max-io-chars: 8000                         # agent_step I/O 截断阈值（超出加 [truncated]）
+    tools:
+      max-result-chars: 4000                     # 工具结果字符上限（Phase 3）
 
   features:                                      # 功能开关（开发/测试默认开；生产见 application-prod.yml）
     fixed-diagnostic-enabled: true
     graph-reconcile-enabled: true
     ai-job-dispatch-enabled: true
+    agent-trace-enabled: true                    # Agent 执行轨迹埋点
   jobs:                                          # AI 异步作业 worker
     poll-interval-ms: 2000                       # 领取轮询间隔
     heartbeat-interval-ms: 30000
