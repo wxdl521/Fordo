@@ -49,8 +49,11 @@ export function reviewAllQuestions(courseId, { status, conf, nodeCode, action })
 }
 
 // ── 学情看板 ──
-export function fetchDashboard(courseId) {
-  return http.get('/teacher/dashboard', { params: { courseId } })
+export function fetchDashboard(courseId, config = {}) {
+  return http.get('/teacher/dashboard', {
+    ...config,
+    params: { ...config.params, courseId }
+  })
 }
 
 // ── 课程管理（多课程切换）──

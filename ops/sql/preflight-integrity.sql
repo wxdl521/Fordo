@@ -2,6 +2,7 @@
 -- preflight-integrity.sql
 -- 图谱归档 / 主键差量更新上线前的完整性预检（只读 SELECT）。
 -- 在 migrator 或只读副本执行；任一条 count > 0 应人工评估后再切写路径。
+-- 本文件仅覆盖图谱专项；V9 前必须同时执行 security-role-audit.sql。
 --
 -- 约束矩阵（逻辑外键；Task 19 V9 前不建物理 FK）：
 --   course.id          ← kg_node.course_id, kg_edge.course_id, question.course_id,
@@ -15,6 +16,7 @@
 --                        answer_record.question_id, …
 --
 -- 归档语义：archived_at IS NULL = 生效；非 NULL = 软归档（主键保留，下游 FK 仍可指向）。
+-- archived_by_course=1 仅表示课程归档级联；独立归档必须保持 0。
 -- 差量导入键：节点 (course_id, node_code)；边 (course_id, from_node_id, to_node_id, relation_type)。
 -- ════════════════════════════════════════════════════════════════════════
 
@@ -94,3 +96,20 @@ FROM (
     GROUP BY course_id, from_node_id, to_node_id, relation_type
     HAVING c > 1
 ) t;
+
+-- 9) 课程级联归档来源标记必须与课程/图行状态一致
+SELECT 'invalid_node_archive_marker' AS check_id, COUNT(*) AS bad_count
+FROM kg_node n
+JOIN course c ON c.id = n.course_id
+WHERE n.archived_by_course NOT IN (0, 1)
+   OR (n.archived_by_course = 1 AND n.archived_at IS NULL)
+   OR (n.archived_by_course = 1 AND c.archived_at IS NULL)
+   OR (c.archived_at IS NOT NULL AND n.archived_at IS NULL);
+
+SELECT 'invalid_edge_archive_marker' AS check_id, COUNT(*) AS bad_count
+FROM kg_edge e
+JOIN course c ON c.id = e.course_id
+WHERE e.archived_by_course NOT IN (0, 1)
+   OR (e.archived_by_course = 1 AND e.archived_at IS NULL)
+   OR (e.archived_by_course = 1 AND c.archived_at IS NULL)
+   OR (c.archived_at IS NOT NULL AND e.archived_at IS NULL);

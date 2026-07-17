@@ -56,6 +56,17 @@
       </div>
     </div>
 
+    <!-- 提交中 -->
+    <div v-else-if="submitting" class="diag-center-state">
+      <span class="diag-loading-text">正在提交…</span>
+    </div>
+
+    <!-- 提交失败 -->
+    <div v-else-if="submitError" class="diag-center-state">
+      <div class="diag-error-msg">提交失败：{{ submitError }}</div>
+      <button class="diag-btn-acc" @click="submitAnswers">重新提交</button>
+    </div>
+
     <!-- 答题区 -->
     <div
       v-else-if="!done"
@@ -75,17 +86,6 @@
         @next="goNext"
         @skip="skip"
       />
-    </div>
-
-    <!-- 提交中 -->
-    <div v-else-if="submitting" class="diag-center-state">
-      <span class="diag-loading-text">正在提交…</span>
-    </div>
-
-    <!-- 提交失败 -->
-    <div v-else-if="submitError" class="diag-center-state">
-      <div class="diag-error-msg">提交失败：{{ submitError }}</div>
-      <button class="diag-btn-acc" @click="submitAnswers">重新提交</button>
     </div>
 
     <!-- 完成态：内联结果（可滚动，避免逐题列表把底部按钮顶出视口） -->
@@ -130,14 +130,21 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { fetchPaper, submitPaper } from '../api/diagnostic.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
+import { useSessionStore } from '../store/session.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 import QuestionAnswerCard from '../components/QuestionAnswerCard.vue'
 
 // ─── 常量 ──────────────────────────────────────────────────────────────────
 const { courseId } = useStudentCourse()
 const router = useRouter()
+const authSession = useSessionStore()
+if (!authSession.hydrated) authSession.hydrate()
+const { token: authToken, user: authUser } = storeToRefs(authSession)
+const authUserId = computed(() => authUser.value?.id ?? null)
 
 // 模式选择层：null=未选（显示两卡片）/ 'full'=完整卷（走下方既有流程）。
 // 选快速则直接跳转独立视图，不进入下方固定卷逻辑。
@@ -177,6 +184,57 @@ const done = ref(false)
 const submitting = ref(false)
 const submitError = ref('')
 const result = ref(null)  // SubmitResult: { total, correctCount, grades }
+const paperRequest = createLatestRequest()
+const submitRequest = createLatestRequest()
+let paperRevision = 0
+let paperOwner = null
+let disposed = false
+
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+}
+
+function captureOwner(id = courseId.value) {
+  return {
+    token: authToken.value,
+    userId: authUserId.value,
+    courseId: Number(id)
+  }
+}
+
+function isCurrentOwner(owner) {
+  return !disposed
+    && authToken.value === owner.token
+    && authUserId.value === owner.userId
+    && Number(courseId.value) === owner.courseId
+}
+
+function isCurrentLoad(request, owner) {
+  return request.isCurrent() && isCurrentOwner(owner)
+}
+
+function isCurrentPaper(owner, revision, token) {
+  return isCurrentOwner(owner)
+    && paperRequest.revision === revision
+    && paperRevision === revision
+    && paperOwner === owner
+    && sessionToken.value === token
+}
+
+function resetPaperState() {
+  questions.value = []
+  total.value = 0
+  sessionToken.value = null
+  paperRevision = 0
+  paperOwner = null
+  idx.value = 0
+  answers.value = {}
+  skipped.value = {}
+  done.value = false
+  submitting.value = false
+  submitError.value = ''
+  result.value = null
+}
 
 // ─── 计算属性 ───────────────────────────────────────────────────────────────
 const q = computed(() => questions.value[idx.value] || {})
@@ -205,7 +263,14 @@ const doneTitleSize = computed(() => (narrow.value ? '24px' : '30px'))
 
 // ─── 数据加载 ────────────────────────────────────────────────────────────────
 async function load() {
-  if (!courseId.value) {
+  if (disposed || mode.value !== 'full') return
+  const id = Number(courseId.value)
+  const owner = captureOwner(id)
+  const request = paperRequest.next()
+  submitRequest.cancel()
+  resetPaperState()
+  if (!(id > 0)) {
+    loading.value = false
     questions.value = []
     total.value = 0
     sessionToken.value = null
@@ -215,7 +280,8 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const paper = await fetchPaper(courseId.value)
+    const paper = await fetchPaper(id, { signal: request.signal })
+    if (!isCurrentLoad(request, owner)) return
     // 将后端 PaperQuestionVO 映射为组件内部格式，保留 questionId 和 optionKeys 用于提交
     questions.value = (paper.questions || []).map((pq) => ({
       questionId: pq.questionId,
@@ -226,11 +292,14 @@ async function load() {
     }))
     total.value = paper.total ?? questions.value.length
     sessionToken.value = paper.sessionToken || null
+    paperRevision = request.revision
+    paperOwner = owner
   } catch (e) {
+    if (!isCurrentLoad(request, owner) || isAbortError(e)) return
     error.value = e.message || '未知错误'
     sessionToken.value = null
   } finally {
-    loading.value = false
+    if (isCurrentLoad(request, owner)) loading.value = false
   }
 }
 
@@ -268,10 +337,13 @@ function finish() {
 
 // ─── 提交 ────────────────────────────────────────────────────────────────────
 async function submitAnswers() {
+  const owner = paperOwner
+  const revision = paperRevision
+  const token = sessionToken.value
   if (submitting.value) return   // 防重入：末题双击"跳过/完成"不会触发两次 POST
 
   // 缺少冻结令牌 → 强制重新组卷（不可用旧题集交卷）
-  if (!sessionToken.value) {
+  if (!owner || !token || !isCurrentPaper(owner, revision, token)) {
     submitError.value = '试卷会话已失效，请重新组卷后再提交'
     done.value = false
     await load()
@@ -279,15 +351,19 @@ async function submitAnswers() {
   }
 
   submitting.value = true
+  done.value = true
   submitError.value = ''
   result.value = null
+  const request = submitRequest.next()
+  const frozenQuestions = questions.value.map((question) => ({ ...question }))
+  const frozenAnswers = { ...answers.value }
 
   // 精确集合：提交冻结卷全部题目；跳过的 optionKey 为 null
   const payload = {
-    sessionToken: sessionToken.value,
-    courseId: courseId.value,
-    answers: questions.value.map((q, i) => {
-      const optIdx = answers.value[i]
+    sessionToken: token,
+    courseId: owner.courseId,
+    answers: frozenQuestions.map((q, i) => {
+      const optIdx = frozenAnswers[i]
       return {
         questionId: q.questionId,
         optionKey: typeof optIdx === 'number' ? q.optionKeys[optIdx] : null
@@ -296,12 +372,16 @@ async function submitAnswers() {
   }
 
   try {
-    result.value = await submitPaper(payload)
+    const submitted = await submitPaper(payload, { signal: request.signal })
+    if (!request.isCurrent() || !isCurrentPaper(owner, revision, token)) return
+    result.value = submitted
+    done.value = true
   } catch (e) {
+    if (!request.isCurrent() || !isCurrentPaper(owner, revision, token) || isAbortError(e)) return
     submitError.value = e.message || '未知错误'
-    done.value = false   // 回退到答题区，让用户可以重提
+    done.value = false
   } finally {
-    submitting.value = false
+    if (request.isCurrent() && isCurrentPaper(owner, revision, token)) submitting.value = false
   }
 }
 
@@ -318,8 +398,10 @@ function restart() {
   load()
 }
 
-// 无条件 load:courseId 为空时由 load 内部守卫给出选课引导(不静默回落课程1)
-watch(courseId, () => load(), { immediate: true })
+// 只有选择完整诊断后才组卷；快速诊断跳转不会创建固定卷会话。
+watch([mode, courseId, authToken, authUserId], ([nextMode]) => {
+  if (nextMode === 'full') load()
+}, { immediate: true })
 
 // ─── 生命周期 ────────────────────────────────────────────────────────────────
 onMounted(() => {
@@ -358,7 +440,11 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  paperRequest.cancel()
+  submitRequest.cancel()
   window.removeEventListener('resize', onResize)
+  if (window.__wjDiag?.load === load) delete window.__wjDiag
 })
 </script>
 

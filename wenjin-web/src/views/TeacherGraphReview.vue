@@ -139,7 +139,7 @@
 
         <div :style="sidebarBodyStyle">
           <!-- 待复核列表 -->
-          <div v-for="(edge, i) in pending" :key="edge.id" :style="cardStyle(i)">
+          <div v-for="edge in pending" :key="edge.id" :style="cardStyle()">
             <div :style="{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }">
               <span :style="typeTagStyle">{{ edge.type }}</span>
               <span :style="confTagStyle(edge)">置信度 {{ edge.confidence }}%</span>
@@ -478,7 +478,6 @@ import {
 import { renderGraphSvg } from '../utils/graphSvgRenderer.js'
 import { importGraphJson, importGraphExcel, extractGraphFromFile, fetchExtractionReviews } from '../api/admin.js'
 import { useJob } from '../composables/useJob.js'
-import { isJobSucceeded } from '../api/jobs.js'
 import { useRouter } from 'vue-router'
 import { useCourseStore } from '../store/course.js'
 import { createLatestRequest } from '../utils/latestRequest.js'
@@ -529,7 +528,6 @@ const {
 })
 
 const {
-  loading: importExcelJobLoading,
   progress: importExcelJobProgress,
   start: startImportExcelJob
 } = useJob({
@@ -1115,7 +1113,10 @@ async function submitUpdate() {
   const actionCourseId = Number(currentCourse.value?.id)
   if (!(actionCourseId > 0)) return
   try {
-    const { id, nodeCode, ...req } = editForm.value
+    const req = { ...editForm.value }
+    const id = req.id
+    delete req.id
+    delete req.nodeCode
     await updateNode(id, req)
     if (!isCurrentCourse(actionCourseId)) return
     closeEditForm()
@@ -1674,43 +1675,6 @@ const pageStyle = {
   color: 'var(--text)'
 }
 
-const headerStyle = {
-  height: '56px',
-  flexShrink: 0,
-  display: 'flex',
-  alignItems: 'center',
-  gap: '24px',
-  padding: '0 20px',
-  background: 'var(--panel)',
-  borderBottom: '1px solid var(--line)'
-}
-
-const titleStyle = {
-  display: 'flex',
-  alignItems: 'baseline',
-  gap: '12px'
-}
-
-const courseStyle = {
-  fontSize: '13px',
-  color: 'var(--text-mut)'
-}
-
-const navStyle = {
-  display: 'flex',
-  gap: '16px',
-  marginLeft: 'auto'
-}
-
-const linkStyle = {
-  fontSize: '13px',
-  color: 'var(--text-mut)',
-  textDecoration: 'none',
-  padding: '6px 12px',
-  borderRadius: '8px',
-  transition: 'color 0.2s, background 0.2s'
-}
-
 const statusBarStyle = {
   height: '44px',
   flexShrink: 0,
@@ -1847,7 +1811,7 @@ const sidebarBodyStyle = {
   gap: '10px'
 }
 
-function cardStyle(i) {
+function cardStyle() {
   return {
     background: 'var(--panel)',
     border: '1.5px solid var(--line)',

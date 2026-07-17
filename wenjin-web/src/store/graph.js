@@ -46,7 +46,7 @@ export const useGraphStore = defineStore('graph', {
   },
   actions: {
     /** 加载某课程图谱（登录学生的掌握度染色由服务端自动附加） */
-    async load(courseId) {
+    async load(courseId, config = {}) {
       const id = courseId != null && Number(courseId) > 0 ? Number(courseId) : null
       if (id == null) {
         latest.cancel()
@@ -59,7 +59,23 @@ export const useGraphStore = defineStore('graph', {
         return
       }
 
+      const ownerSignal = config?.signal
+      if (ownerSignal?.aborted) return
+
       const { signal, isCurrent } = latest.next()
+      if (ownerSignal) {
+        ownerSignal.addEventListener('abort', () => {
+          // A 的 owner 迟到 abort 时，若 B 已成为 latest，绝不能取消 B。
+          if (!isCurrent()) return
+          latest.cancel()
+          this.loading = false
+          this.error = ''
+          this.course = null
+          this.nodes = []
+          this.edges = []
+          this.loadedCourseId = null
+        }, { once: true })
+      }
       this.loading = true
       this.error = ''
       try {

@@ -1,8 +1,8 @@
 # Project Hardening — Phased Rollout, Monitoring & Safe Rollback
 
-> **Audience**: release owners / on-call.  
-> **Scope**: document the production execution path for project-hardening waves.  
-> **This runbook is executable documentation** — do not treat paste-only SQL as auto-remediation.  
+> **Audience**: release owners / on-call.<br>
+> **Scope**: document the production execution path for project-hardening waves.<br>
+> **This runbook is executable documentation** — do not treat paste-only SQL as auto-remediation.<br>
 > Related: [DEPLOYMENT.md](../../DEPLOYMENT.md), `ops/sql/*`, Flyway `V3`–`V9`.
 
 ---
@@ -15,7 +15,7 @@
 | Secrets | `SPRING_PROFILES_ACTIVE=prod`, non-default `WENJIN_AUTH_SECRET` |
 | DB roles | App account DML-only; migrator only for Flyway jobs |
 | Register | Public `/api/register` **must** force student (`role=2`); never re-open client-chosen role |
-| Audits | `ops/sql/security-role-audit.sql` + `ops/sql/preflight-integrity.sql` **all bad_count = 0** before V9 |
+| Audits | Before V9, both SQL audits have **all `bad_count = 0`**; non-zero `inventory_count` / `review_count` has a recorded review |
 | Flags (prod defaults) | `WENJIN_FEATURE_FIXED_DIAGNOSTIC=false`, `WENJIN_FEATURE_GRAPH_RECONCILE=false`, `WENJIN_FEATURE_AI_JOB_DISPATCH=false` until phase enables them |
 
 ---
@@ -67,7 +67,7 @@ Ship **one phase per change window** unless a dry-run proves combined safety. Pr
 | Version | Purpose |
 | --- | --- |
 | V3 | Fixed diagnostic session freeze + composite question key |
-| V4 | `archived_at` soft-archive on course/node/edge |
+| V4 | `archived_at` soft-archive plus `archived_by_course` provenance on node/edge |
 | V5 | Path concurrency guards (`active_guard`, `current_path_id`) |
 | V6 | `question.stem_hash` + unique `(course_id, stem_hash)` |
 | V7 | `ai_job` recoverable writes |
@@ -130,7 +130,7 @@ export WENJIN_FEATURE_GRAPH_RECONCILE=true
 ```
 
 1. Teacher graph import/reconcile on a canary course.
-2. Monitor archive vs identity-preserving updates (`archived_at`, stable `node_code`).
+2. Monitor archive vs identity-preserving updates (`archived_at`, stable `node_code`). Course archive must set `archived_by_course=1` only on rows that were active; independent node/edge archives remain `0`.
 3. Run `ops/sql/preflight-integrity.sql` after first production reconcile batch.
 
 **Rollback**: set `WENJIN_FEATURE_GRAPH_RECONCILE=false` first (no migrate rollback).
@@ -152,13 +152,13 @@ export WENJIN_FEATURE_FIXED_DIAGNOSTIC=true
 
 ### Phase H — V9 contract migration (**separate release**)
 
-> **Hard rule**: V9 is **not** bundled with V3–V8 expand in the same first production cut.  
-> Deploy only after audits are zero on production (or restored staging clone).
+> **Hard rule**: V9 is **not** bundled with V3–V8 expand in the same first production cut.<br>
+> Deploy only after every `bad_count` is zero and inventory/review conclusions are recorded on production (or a restored staging clone).
 
 1. Run read-only:
    - `ops/sql/security-role-audit.sql`
    - `ops/sql/preflight-integrity.sql`
-2. Any `bad_count > 0` → human ticket; optional `ops/sql/quarantine-orphans.sql` / manual DML; re-audit.
+2. Any `bad_count > 0` → human ticket; optional `ops/sql/quarantine-orphans.sql` / manual DML; re-audit. Non-zero `inventory_count` / `review_count` is non-blocking only after the review conclusion is recorded.
 3. Backup again.
 4. Migrator: apply **only** `V9__relational_integrity.sql` (Flyway pending version 9):
    ```bash
@@ -207,7 +207,7 @@ export WENJIN_FEATURE_AI_JOB_DISPATCH=true
 | HTTP 401/403/409/422 rate | nginx / app logs | Spike vs baseline after authz wave |
 | Flyway job exit code | CI/CD | ≠ 0 |
 | `flyway_schema_history.success` | SQL | any 0 for latest version |
-| Audit `bad_count` | `security-role-audit.sql` | > 0 before V9 / after graph reconcile |
+| Audit counts | `security-role-audit.sql` | any `bad_count > 0`; inventory/review result lacks a recorded conclusion |
 | Multi-active paths | audit query | > 0 (V5 should prevent new) |
 | Dup stem_hash | audit / V6 | > 0 |
 | AI job stuck RUNNING | `ai_job` | age > SLA |
@@ -259,7 +259,7 @@ SELECT role, COUNT(*) FROM sys_user GROUP BY role;
 | `ops/sql/security-role-audit.sql` | Pre-V9 / ongoing role & integrity audit (read-only) |
 | `ops/sql/preflight-integrity.sql` | Graph archive / orphan preflight |
 | `ops/sql/quarantine-orphans.sql` | Soft quarantine helpers (not auto-run) |
-| `ops/sql/post-migration-verification.sql` | Post-V9 FK / zero-orphan / flyway checks |
+| `ops/sql/post-migration-verification.sql` | Post-V9 FK / archive provenance / zero-orphan / Flyway checks |
 | `db/migration/V3`–`V8` | Expand |
 | `db/migration/V9__relational_integrity.sql` | Contract (separate release) |
 | `DEPLOYMENT.md` | Prod topology, migrator/app split, bootstrap admin |

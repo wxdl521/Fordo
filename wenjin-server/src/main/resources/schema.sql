@@ -75,10 +75,12 @@ CREATE TABLE `kg_node` (
     `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP                          COMMENT '创建时间',
     `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `archived_at` DATETIME     DEFAULT NULL            COMMENT '软归档时间；NULL=生效【V4】',
+    `archived_by_course` TINYINT NOT NULL DEFAULT 0 COMMENT '1=由课程归档级联；0=独立归档【V4】',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_course_code` (`course_id`, `node_code`) COMMENT '同一课程内业务ID唯一（对应导入校验：重复ID检测）',
     KEY `idx_course` (`course_id`),
     KEY `idx_node_course_active` (`course_id`, `archived_at`, `id`),
+    CONSTRAINT `chk_node_course_archive_marker` CHECK (`archived_by_course` IN (0, 1) AND (`archived_by_course` = 0 OR `archived_at` IS NOT NULL)),
     CONSTRAINT `fk_node_course` FOREIGN KEY (`course_id`) REFERENCES `course` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识点表（图谱节点）';
 
@@ -94,11 +96,13 @@ CREATE TABLE `kg_edge` (
     `created_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP                          COMMENT '创建时间',
     `updated_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `archived_at`   DATETIME     DEFAULT NULL            COMMENT '软归档时间；NULL=生效【V4】',
+    `archived_by_course` TINYINT NOT NULL DEFAULT 0 COMMENT '1=由课程归档级联；0=独立归档【V4】',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_edge` (`course_id`, `from_node_id`, `to_node_id`, `relation_type`) COMMENT '防重复边',
     KEY `idx_from` (`from_node_id`),
     KEY `idx_to` (`to_node_id`),
     KEY `idx_edge_course_active` (`course_id`, `archived_at`, `id`),
+    CONSTRAINT `chk_edge_course_archive_marker` CHECK (`archived_by_course` IN (0, 1) AND (`archived_by_course` = 0 OR `archived_at` IS NOT NULL)),
     CONSTRAINT `fk_edge_course` FOREIGN KEY (`course_id`) REFERENCES `course` (`id`),
     CONSTRAINT `fk_edge_from_node` FOREIGN KEY (`from_node_id`) REFERENCES `kg_node` (`id`),
     CONSTRAINT `fk_edge_to_node` FOREIGN KEY (`to_node_id`) REFERENCES `kg_node` (`id`)

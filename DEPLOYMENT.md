@@ -5,7 +5,7 @@
 
 本指南分两层：
 
-- **A. 仓库 / 配置加固** —— 在代码与配置层把项目变得「生产安全」，工作量约半天，绝大多数是配置，仅 CORS 一处需改代码。
+- **A. 仓库 / 配置加固** —— CORS 外部化、生产 profile、Actuator 与迁移门禁均已落地；发布时按第 2 节核对环境配置。
 - **B. 运维上线** —— 服务器、域名、HTTPS、nginx、生产 MySQL，依赖你的基础设施，本指南给出可照抄的示例。
 
 公开注册**只能**创建学生账号；教师与管理员不得通过 `/api/register` 自助开通（详见第 2.3.1 节）。
@@ -23,7 +23,7 @@
                                    Spring Boot 后端 (127.0.0.1:8080, profile=prod)
                                           │
                                           ▼
-                                     MySQL 8 (专用账号，最小权限)
+                                     MySQL 8.0.16+ (专用账号，最小权限)
 ```
 
 要点：前端构建为静态文件由 nginx 托管；`/api` 经反代到后端，**对外只暴露 nginx 443**，后端 8080 只监听本机；CORS 因此可彻底关闭（同源），或限定到前端域名。
@@ -35,7 +35,7 @@
 | # | 加固项 | 类型 | 状态 |
 |---|--------|------|------|
 | 2.1 | 令牌密钥 `WENJIN_AUTH_SECRET` + 启用 `prod` profile | 配置 | ☐ |
-| 2.2 | 收紧 CORS（写死 `*` → 限定域名 / 关闭） | **改代码** | ☐ |
+| 2.2 | 收紧 CORS（同源关闭跨域，或用 `WENJIN_CORS_ORIGINS` 限定域名） | 配置/架构 | ☐ |
 | 2.3 | 数据库专用账号 + 删除演示弱口令账号 | 配置/SQL | ☐ |
 | 2.3.1 | 角色模型：公开注册仅学生；首个 ADMIN 用一次性 bootstrap，其后用 ADMIN API / SQL 备份 | 运维/配置 | ☐ |
 | 2.4 | 日志降噪（关 debug、关 SQL 打印） | 配置 | ☐ |
@@ -57,29 +57,13 @@ export WENJIN_AUTH_SECRET="$(openssl rand -base64 48)"   # 强随机，妥善保
 
 > 令牌有效期 `wenjin.auth.ttl-seconds` 默认 604800（7 天），按需调整。
 
-### 2.2 收紧 CORS（唯一需改代码处）
+### 2.2 收紧 CORS（已配置化）
 
-**现状**：`wenjin-server/.../config/WebConfig.java` 写死 `allowedOriginPatterns("*")`，对生产过于宽松。
+**现状**：`WebConfig` 已读取 `wenjin.cors.allowed-origin-patterns`；开发环境默认 `*`，`application-prod.yml` 要求通过 `WENJIN_CORS_ORIGINS` 指定生产来源。
 
-**方案 A（推荐，零代码）**：前端与后端经 nginx 同源（都在 `https://你的域名` 下，`/api` 反代），浏览器不发跨域请求，CORS 规则不触发——无需改动，最安全。
+**同源部署（推荐）**：前端与后端经 nginx 同源（都在 `https://你的域名` 下，`/api` 反代），浏览器不发跨域请求，最简单也最安全。
 
-**方案 B（前后端分域时）**：把允许来源外部化为配置项。改 `WebConfig`：
-
-```java
-@org.springframework.beans.factory.annotation.Value("${wenjin.cors.allowed-origin-patterns:*}")
-private String corsAllowedOriginPatterns;   // 逗号分隔
-
-@Override
-public void addCorsMappings(CorsRegistry registry) {
-    registry.addMapping("/api/**")
-            .allowedOriginPatterns(corsAllowedOriginPatterns.split(","))
-            .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-            .allowedHeaders("*")
-            .allowCredentials(false);   // 令牌走 Authorization 头、不依赖 Cookie，关闭凭证更安全
-}
-```
-
-dev 默认仍为 `*`；prod 在 `application-prod.yml` 或环境变量里指定：
+**前后端分域**：将逗号分隔的可信来源写入环境变量，不需要修改 Java 代码：
 
 ```yaml
 wenjin:
@@ -87,7 +71,7 @@ wenjin:
     allowed-origin-patterns: ${WENJIN_CORS_ORIGINS:https://你的前端域名}
 ```
 
-> 改完补一个 `WebConfig` 的小测试（dev 默认 `*`、prod 取配置值），保持仓库测试习惯。
+令牌走 `Authorization` 头且不依赖 Cookie，服务端保持 `allowCredentials(false)`。禁止在生产把 `WENJIN_CORS_ORIGINS` 设为 `*`。
 
 ### 2.3 数据库账号分离（migrator / app）+ 受控迁移 + 演示弱口令
 
@@ -133,12 +117,12 @@ export DB_PASSWORD='足够强的随机密码_app'
 
 推荐步骤：
 
-1. **备份**（迁移前必做）  
+1. **备份**（迁移前必做）
    ```bash
    mysqldump -u root -p --single-transaction --routines --triggers wenjin \
      > "wenjin-backup-$(date +%Y%m%d%H%M%S).sql"
    ```
-2. **info**（确认待执行版本）  
+2. **info**（确认待执行版本）
    ```bash
    export DB_USER=wenjin_migrator
    export DB_PASSWORD='足够强的随机密码_migrator'
@@ -160,7 +144,8 @@ export DB_PASSWORD='足够强的随机密码_app'
    ```bash
    SPRING_FLYWAY_TARGET=8 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar --spring.main.web-application-type=none
    ```
-4. **校验并清零 V9 前审计**：`flyway info` 精确到 V8 Success；运行 `ops/sql/security-role-audit.sql` 与 `ops/sql/preflight-integrity.sql`。
+   V4 同时增加 `kg_node/kg_edge.archived_by_course` 与 CHECK 约束。启用图谱对账前必须确认两列存在且 `NOT NULL DEFAULT 0`；课程归档只标记当时活跃的图行，恢复课程不得复活此前独立归档的节点或边。
+4. **校验 V9 前审计**：`flyway info` 精确到 V8 Success；运行 `ops/sql/security-role-audit.sql` 与 `ops/sql/preflight-integrity.sql`。所有 `bad_count` 必须为 0；`inventory_count` / `review_count` 可非 0，但必须记录复核结论。
 5. **在独立发布窗口 migrate V9 contract only**
    ```bash
    SPRING_FLYWAY_TARGET=9 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar --spring.main.web-application-type=none
@@ -186,11 +171,11 @@ V5/V6 预检返回 `SQLSTATE 45000` 时，恢复顺序不可改变：
 
 #### V9 关系完整性（独立发布窗口）
 
-- **V3–V8** 为 expand（可与 wave-1 后端分波次上线）；**`V9__relational_integrity.sql` 必须单独发布**，不得与首次 expand 混在同一变更单强行合并，除非预发库审计已全零并书面确认。
-- V9 前必跑只读审计：`ops/sql/security-role-audit.sql`、`ops/sql/preflight-integrity.sql`（任一 `bad_count > 0` → 人工修复，禁止硬上）。
+- **V3–V8** 为 expand（可与 wave-1 后端分波次上线）；**`V9__relational_integrity.sql` 必须单独发布**，不得与首次 expand 混在同一变更单强行合并，除非预发库所有 `bad_count` 为 0、inventory/review 已留档并书面确认。
+- V9 前必跑只读审计：`ops/sql/security-role-audit.sql`、`ops/sql/preflight-integrity.sql`（任一 `bad_count > 0` → 人工修复，禁止硬上；非 0 的 `inventory_count` / `review_count` 只要求记录人工复核结论）。
 - V9 内含 `SIGNAL 45000` 预检 + 命名物理外键 + `course.teacher_id NOT NULL` + `sys_user.role CHECK`；失败即整次 migrate 失败。
 - `answer_record.session_id` 是按 `scene` 解释的多态逻辑兼容字段，可对应自适应诊断或练习会话，因此不物理绑定到单一 session 表；`fixed_diagnostic_session_id` 仍保留固定诊断物理外键。
-- V9 后验收：`ops/sql/post-migration-verification.sql`。
+- V9 后验收：`ops/sql/post-migration-verification.sql`（含归档来源列/CHECK 与标记一致性）。
 - **备份与还原**：每次 migrate（含 V9）前 `mysqldump`；V9 失败或验收不通过时，优先 **restore 迁移前备份**，禁止用 `DROP TABLE` / 重跑 `schema.sql` 回滚。功能回滚优先关 feature flags（见 runbook）。
 - 分阶段上线、观测与安全回滚细则见 **[docs/runbooks/project-hardening-rollout.md](docs/runbooks/project-hardening-rollout.md)**。
 
@@ -412,25 +397,29 @@ npm run build        # 产出 dist/
 ## 3. 建议清单（非阻断，但生产应有）
 
 - **HTTPS（强烈建议）**：令牌存于浏览器 `localStorage`，无 HTTPS 易被窃听 / 中间人。用 Let's Encrypt（certbot）签证书，nginx 终止 TLS。
-- **健康检查（actuator）**：当前未引入。加 `spring-boot-starter-actuator`，仅暴露 `/actuator/health` 供负载均衡 / 探活（配置见第 4 节）。该端点不在 `/api/**` 下，不受现有鉴权拦截器影响。
+- **健康检查（actuator）**：已引入 `spring-boot-starter-actuator`，且仅暴露 `/actuator/health` 供负载均衡 / 探活（配置见第 4 节）。该端点不在 `/api/**` 下，不受现有鉴权拦截器影响。
 - **令牌撤销 / 轮换**：当前令牌签发后 7 天内无法主动失效（无黑名单 / 版本号）。若有「强制下线 / 改密即失效」需求，需加一层（如随用户 `tokenVersion` 校验）——属增量功能，可推迟。
 - **数据库迁移与备份**：生产 schema **只走 Flyway**（`db/migration`，migrator 账号 + `WENJIN_FLYWAY_ENABLED=true` 作业）。`schema.sql` 仅本地空库重建，**禁止**对生产执行。配置定期 `mysqldump`；迁移前必备份（见 2.3）。**V9 关系完整性为独立发布**；审计与回滚见 [project-hardening-rollout.md](docs/runbooks/project-hardening-rollout.md)。
 - **限流 / 防滥用**：登录端点与 AI 调用端点可在 nginx 或应用层加限流。
 
 ---
 
-## 4. 需新增 / 改动的文件汇总（A 层加固）
+## 4. 已落地的 A 层加固配置
 
 | 动作 | 文件 | 说明 | 量 |
 |------|------|------|----|
-| 新增 | `wenjin-server/src/main/resources/application-prod.yml` | 生产覆盖：日志、SQL 关闭、CORS、actuator | 小 |
-| 改 | `wenjin-server/.../config/WebConfig.java` | CORS 来源外部化（若用方案 B）+ 测试 | 小 |
-| 改（可选） | `wenjin-server/pom.xml` | 加 `spring-boot-starter-actuator` | 极小 |
+| 已新增 | `wenjin-server/src/main/resources/application-prod.yml` | 生产覆盖：日志、SQL 关闭、CORS、actuator | 小 |
+| 已配置 | `wenjin-server/.../config/WebConfig.java` | CORS 来源外部化 + 测试 | 小 |
+| 已引入 | `wenjin-server/pom.xml` | `spring-boot-starter-actuator` | 极小 |
 | 运维 | Flyway migrator 作业 + app DML 账号 | 见 2.3；不跑 `data.sql` / 不跑生产 `schema.sql` | 中 |
 
 **`application-prod.yml` 参考全文**（profile 名即文件名后缀，`SPRING_PROFILES_ACTIVE=prod` 时自动合并覆盖 `application.yml`）：
 
 ```yaml
+# 裸机/nginx 部署默认仅监听本机；容器部署需显式设 SERVER_ADDRESS=0.0.0.0
+server:
+  address: ${SERVER_ADDRESS:127.0.0.1}
+
 # 仅写需要覆盖 application.yml 的项；其余沿用基线配置
 logging:
   level:
@@ -445,7 +434,7 @@ wenjin:
   cors:
     allowed-origin-patterns: ${WENJIN_CORS_ORIGINS:https://你的前端域名}
 
-# 仅在引入 actuator 后生效
+# Actuator 仅暴露无详情的健康检查
 management:
   endpoints:
     web:
@@ -456,14 +445,14 @@ management:
       show-details: never
 ```
 
-预计 A 层加固整体工作量：**约半天**（配置为主，CORS 改代码 + 测试是唯一代码改动）。
+上述加固已经落地；发布时只需注入生产环境变量并按本文验证。
 
 ---
 
 ## 5. 端到端部署步骤
 
 ### 5.1 服务器准备
-- JDK 21、MySQL 8、nginx；后端 8080 仅监听 `127.0.0.1`，对外只放 nginx 80/443。
+- JDK 21、MySQL 8.0.16+、nginx；后端 8080 仅监听 `127.0.0.1`，对外只放 nginx 80/443。8.0.16 是 CHECK 约束实际强制执行的最低版本，CI 使用 MySQL 8.4。
 
 ### 5.2 建库与迁移（生产：不导演示数据，禁止 schema.sql）
 ```bash
@@ -474,7 +463,7 @@ export DB_USER=wenjin_migrator
 export DB_PASSWORD='替换为 migrator 强密码'
 # 先只落到 V8（expand），绝不能在该阶段捎带 V9
 SPRING_FLYWAY_TARGET=8 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar --spring.main.web-application-type=none
-# 4) V9 前：mysql ... < ops/sql/security-role-audit.sql （bad_count 全 0）
+# 4) V9 前：执行两份 audit；bad_count 全 0，inventory/review 结果留档
 # 5) 独立窗口只落 V9（contract）
 SPRING_FLYWAY_TARGET=9 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar --spring.main.web-application-type=none
 # 6) V9 后：mysql ... < ops/sql/post-migration-verification.sql
@@ -485,7 +474,8 @@ SPRING_FLYWAY_TARGET=9 WENJIN_FLYWAY_ENABLED=true java -jar wenjin-server.jar --
 上述 non-web 迁移命令仍由一次性作业编排器负责在成功后终止/回收；不得作为持有 DDL 凭据的常驻应用运行。
 
 ### 5.3 配置环境变量（systemd 示例，见 5.5）
-至少：`SPRING_PROFILES_ACTIVE=prod`、`WENJIN_AUTH_SECRET`、`DB_USER`（app 账号）、`DB_PASSWORD`、`WENJIN_AI_API_KEY`、`WENJIN_AI_VISION_API_KEY`、`WENJIN_CORS_ORIGINS`。  
+至少：`SPRING_PROFILES_ACTIVE=prod`、`WENJIN_AUTH_SECRET`、`DB_USER`（app 账号）、`DB_PASSWORD`、`WENJIN_AI_API_KEY`、`WENJIN_AI_VISION_API_KEY`、`WENJIN_CORS_ORIGINS`。
+
 常驻进程**不要**设置 `WENJIN_FLYWAY_ENABLED=true`。
 
 ### 5.4 打包后端
@@ -609,6 +599,7 @@ process.
 | 变量 | 用途 | 默认 | 生产建议 |
 |------|------|------|----------|
 | `SPRING_PROFILES_ACTIVE` | 激活 profile | （无） | **`prod`（必设）** |
+| `SERVER_ADDRESS` | 后端监听地址（prod profile） | `127.0.0.1` | 裸机保持默认；容器内显式设 `0.0.0.0` 并仅通过受控 Service/Ingress 暴露 |
 | `WENJIN_AUTH_SECRET` | 令牌签名密钥 | `dev-secret-change-me-in-prod`（公开） | **强随机值（必设）** |
 | `DB_USER` / `DB_PASSWORD` | 数据库账号 | `root` / `root` | 专用账号 + 强密码 |
 | `WENJIN_CORS_ORIGINS` | 允许的前端来源 | `*` | 前端域名（或同源不开 CORS） |
@@ -626,7 +617,7 @@ process.
 
 ## 8. 小结
 
-- **代码/配置加固（A 层）**：约半天，按第 2、4 节做完即可让仓库「生产安全」，唯一代码改动是 CORS 外部化。
+- **代码/配置加固（A 层）**：仓库侧已落地；按第 2、4 节核对生产环境变量、账号和基础设施配置。
 - **运维上线（B 层）**：照第 5 节走，快慢取决于你的服务器/域名/证书是否就绪。
 - **角色开通**：公开注册仅学生（`role=2`）；首个 ADMIN 用 one-shot bootstrap（见 2.3.1），教师用 `PATCH /api/system-admin/users/{id}/role`；SQL 审计插入仍是有效备份。
 - **加固分阶段上线**：前端 non-2xx → wave-1 后端 → V3–V8 expand → flags-off smoke → sessionToken FE → graph reconcile / fixed diagnostic flags → **V9 独立 contract** → AI jobs；详见 [docs/runbooks/project-hardening-rollout.md](docs/runbooks/project-hardening-rollout.md)。

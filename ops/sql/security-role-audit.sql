@@ -1,7 +1,7 @@
 -- ════════════════════════════════════════════════════════════════════════
 -- security-role-audit.sql
 -- 上线前 / V9 前只读数据审计（SELECT only）。
--- 在 migrator 或只读副本执行。任一条 bad_count > 0 必须人工复核（本脚本不自动修复）。
+-- 在 migrator 或只读副本执行。任一条 bad_count > 0 都阻断 V9；inventory_count / review_count 仅需记录人工复核结论。
 --
 -- 覆盖：
 --   · 疑似公开注册产生的教师账号
@@ -16,18 +16,18 @@
 
 -- ── 1) 疑似公开注册教师（role=TEACHER 账号清单类；非零须人工确认开通路径）──
 -- 1a) 全部教师账号（基线盘点）
-SELECT 'teacher_accounts_inventory' AS check_id, COUNT(*) AS bad_count
+SELECT 'teacher_accounts_inventory' AS check_id, COUNT(*) AS inventory_count
 FROM sys_user u
 WHERE u.role = 1;
 
 -- 1b) 教师无任何名下课程（可能是自助提权探测 / 未完成开通）
-SELECT 'suspected_teacher_no_courses' AS check_id, COUNT(*) AS bad_count
+SELECT 'suspected_teacher_no_courses' AS check_id, COUNT(*) AS review_count
 FROM sys_user u
 WHERE u.role = 1
   AND NOT EXISTS (SELECT 1 FROM course c WHERE c.teacher_id = u.id AND c.archived_at IS NULL);
 
 -- 1c) 教师同时又有选课/作答学生活动（双身份异常）
-SELECT 'suspected_teacher_with_student_activity' AS check_id, COUNT(*) AS bad_count
+SELECT 'suspected_teacher_with_student_activity' AS check_id, COUNT(*) AS review_count
 FROM sys_user u
 WHERE u.role = 1
   AND (
@@ -38,8 +38,7 @@ WHERE u.role = 1
 -- ── 2) 课程 owner：NULL / 悬空 / 非 TEACHER(1)|ADMIN(3) ───────────────────
 SELECT 'course_owner_null' AS check_id, COUNT(*) AS bad_count
 FROM course c
-WHERE c.teacher_id IS NULL
-  AND c.archived_at IS NULL;
+WHERE c.teacher_id IS NULL;
 
 SELECT 'course_owner_dangling' AS check_id, COUNT(*) AS bad_count
 FROM course c
@@ -115,6 +114,21 @@ FROM student_mastery m
 LEFT JOIN kg_node n ON n.id = m.node_id
 WHERE n.id IS NULL;
 
+SELECT 'orphan_snapshot_student' AS check_id, COUNT(*) AS bad_count
+FROM mastery_snapshot s
+LEFT JOIN sys_user u ON u.id = s.student_id
+WHERE u.id IS NULL;
+
+SELECT 'orphan_snapshot_course' AS check_id, COUNT(*) AS bad_count
+FROM mastery_snapshot s
+LEFT JOIN course c ON c.id = s.course_id
+WHERE c.id IS NULL;
+
+SELECT 'orphan_snapshot_node' AS check_id, COUNT(*) AS bad_count
+FROM mastery_snapshot s
+LEFT JOIN kg_node n ON n.id = s.node_id
+WHERE n.id IS NULL;
+
 SELECT 'orphan_path_student' AS check_id, COUNT(*) AS bad_count
 FROM learning_path lp
 LEFT JOIN sys_user u ON u.id = lp.student_id
@@ -124,6 +138,12 @@ SELECT 'orphan_path_course' AS check_id, COUNT(*) AS bad_count
 FROM learning_path lp
 LEFT JOIN course c ON c.id = lp.course_id
 WHERE c.id IS NULL;
+
+SELECT 'orphan_path_target_node' AS check_id, COUNT(*) AS bad_count
+FROM learning_path lp
+LEFT JOIN kg_node n ON n.id = lp.target_node_id
+WHERE lp.target_node_id IS NOT NULL
+  AND n.id IS NULL;
 
 SELECT 'orphan_path_item_path' AS check_id, COUNT(*) AS bad_count
 FROM learning_path_item i
@@ -150,10 +170,52 @@ FROM practice_session ps
 LEFT JOIN kg_node n ON n.id = ps.node_id
 WHERE n.id IS NULL;
 
+SELECT 'orphan_practice_path_item' AS check_id, COUNT(*) AS bad_count
+FROM practice_session ps
+LEFT JOIN learning_path_item i ON i.id = ps.path_item_id
+WHERE ps.path_item_id IS NOT NULL
+  AND i.id IS NULL;
+
+SELECT 'orphan_adaptive_student' AS check_id, COUNT(*) AS bad_count
+FROM adaptive_diag_session ads
+LEFT JOIN sys_user u ON u.id = ads.student_id
+WHERE u.id IS NULL;
+
+SELECT 'orphan_adaptive_course' AS check_id, COUNT(*) AS bad_count
+FROM adaptive_diag_session ads
+LEFT JOIN course c ON c.id = ads.course_id
+WHERE c.id IS NULL;
+
+SELECT 'orphan_answer_student' AS check_id, COUNT(*) AS bad_count
+FROM answer_record ar
+LEFT JOIN sys_user u ON u.id = ar.student_id
+WHERE u.id IS NULL;
+
+SELECT 'orphan_answer_course' AS check_id, COUNT(*) AS bad_count
+FROM answer_record ar
+LEFT JOIN course c ON c.id = ar.course_id
+WHERE c.id IS NULL;
+
 SELECT 'orphan_answer_question' AS check_id, COUNT(*) AS bad_count
 FROM answer_record ar
 LEFT JOIN question q ON q.id = ar.question_id
 WHERE q.id IS NULL;
+
+SELECT 'orphan_answer_fixed_diag' AS check_id, COUNT(*) AS bad_count
+FROM answer_record ar
+LEFT JOIN diagnostic_session ds ON ds.id = ar.fixed_diagnostic_session_id
+WHERE ar.fixed_diagnostic_session_id IS NOT NULL
+  AND ds.id IS NULL;
+
+SELECT 'orphan_node_resource_node' AS check_id, COUNT(*) AS bad_count
+FROM node_resource nr
+LEFT JOIN kg_node n ON n.id = nr.node_id
+WHERE n.id IS NULL;
+
+SELECT 'orphan_node_resource_resource' AS check_id, COUNT(*) AS bad_count
+FROM node_resource nr
+LEFT JOIN resource r ON r.id = nr.resource_id
+WHERE r.id IS NULL;
 
 SELECT 'orphan_sc_student' AS check_id, COUNT(*) AS bad_count
 FROM student_course sc
@@ -196,6 +258,22 @@ FROM ai_job j
 LEFT JOIN course c ON c.id = j.course_id
 WHERE c.id IS NULL;
 
+SELECT 'orphan_extraction_course' AS check_id, COUNT(*) AS bad_count
+FROM extraction_review er
+LEFT JOIN course c ON c.id = er.course_id
+WHERE er.course_id IS NOT NULL
+  AND c.id IS NULL;
+
+SELECT 'orphan_diag_student' AS check_id, COUNT(*) AS bad_count
+FROM diagnostic_session ds
+LEFT JOIN sys_user u ON u.id = ds.student_id
+WHERE u.id IS NULL;
+
+SELECT 'orphan_diag_course' AS check_id, COUNT(*) AS bad_count
+FROM diagnostic_session ds
+LEFT JOIN course c ON c.id = ds.course_id
+WHERE c.id IS NULL;
+
 -- ── 5) 跨课程错配（question_node / mastery / path / practice）────────────
 SELECT 'cross_course_qn_mismatch' AS check_id, COUNT(*) AS bad_count
 FROM question_node qn
@@ -207,6 +285,11 @@ SELECT 'cross_course_mastery_node' AS check_id, COUNT(*) AS bad_count
 FROM student_mastery m
 JOIN kg_node n ON n.id = m.node_id
 WHERE m.course_id <> n.course_id;
+
+SELECT 'cross_course_snapshot_node' AS check_id, COUNT(*) AS bad_count
+FROM mastery_snapshot s
+JOIN kg_node n ON n.id = s.node_id
+WHERE s.course_id <> n.course_id;
 
 SELECT 'cross_course_path_item_node' AS check_id, COUNT(*) AS bad_count
 FROM learning_path_item i
@@ -225,10 +308,25 @@ FROM practice_session ps
 JOIN kg_node n ON n.id = ps.node_id
 WHERE ps.course_id <> n.course_id;
 
+SELECT 'practice_path_item_scope_mismatch' AS check_id, COUNT(*) AS bad_count
+FROM practice_session ps
+JOIN learning_path_item i ON i.id = ps.path_item_id
+JOIN learning_path lp ON lp.id = i.path_id
+WHERE ps.path_item_id IS NOT NULL
+  AND (ps.student_id <> lp.student_id
+    OR ps.course_id <> lp.course_id
+    OR ps.node_id <> i.node_id);
+
 SELECT 'cross_course_answer_question' AS check_id, COUNT(*) AS bad_count
 FROM answer_record ar
 JOIN question q ON q.id = ar.question_id
 WHERE ar.course_id <> q.course_id;
+
+SELECT 'answer_fixed_diag_scope_mismatch' AS check_id, COUNT(*) AS bad_count
+FROM answer_record ar
+JOIN diagnostic_session ds ON ds.id = ar.fixed_diagnostic_session_id
+WHERE ar.fixed_diagnostic_session_id IS NOT NULL
+  AND (ar.student_id <> ds.student_id OR ar.course_id <> ds.course_id);
 
 SELECT 'edge_node_course_mismatch' AS check_id, COUNT(*) AS bad_count
 FROM kg_edge e
@@ -287,5 +385,6 @@ FROM (
     HAVING c > 1
 ) t;
 
--- 说明：以上全部为只读审计。bad_count <> 0 时记录工单、按 quarantine-orphans.sql
--- 或专项 DML 修复后再跑 V9；禁止在未复核时强行 contract 迁移。
+-- 说明：以上全部为只读审计。每个 bad_count 必须为 0；inventory_count / review_count
+-- 可以非 0，但必须记录复核结论。阻断项按 quarantine-orphans.sql 或专项 DML
+-- 修复后再跑 V9；禁止在未复核时强行 contract 迁移。

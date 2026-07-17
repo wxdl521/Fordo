@@ -149,14 +149,27 @@ class TeacherCourseServiceImplTest {
         verify(courseMapper).updateById(cap.capture());
         assertThat(cap.getValue().getArchivedAt()).isNotNull();
         assertThat(cap.getValue().getStatus()).isZero();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<com.wenjin.entity.KgNode>> nodeUpdate =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper.class);
+        verify(nodeMapper).update(isNull(), nodeUpdate.capture());
+        assertThat(nodeUpdate.getValue().getSqlSet()).contains("archived_at", "archived_by_course");
+        assertThat(nodeUpdate.getValue().getSqlSegment()).contains("archived_at");
+        assertThat(nodeUpdate.getValue().getParamNameValuePairs().values()).contains(true);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<com.wenjin.entity.KgEdge>> edgeUpdate =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper.class);
+        verify(edgeMapper).update(isNull(), edgeUpdate.capture());
+        assertThat(edgeUpdate.getValue().getSqlSet()).contains("archived_at", "archived_by_course");
+        assertThat(edgeUpdate.getValue().getSqlSegment()).contains("archived_at");
+        assertThat(edgeUpdate.getValue().getParamNameValuePairs().values()).contains(true);
         verify(courseAccessService, times(2)).assertManageCourse(5L);
         InOrder order = org.mockito.Mockito.inOrder(courseAccessService, courseAccessMapper, courseMapper);
         order.verify(courseAccessService).assertManageCourse(5L);
         order.verify(courseAccessMapper).lockActiveCourse(5L);
         order.verify(courseAccessService).assertManageCourse(5L);
         order.verify(courseMapper).selectById(5L);
-        verify(nodeMapper).update(any(), any());
-        verify(edgeMapper).update(any(), any());
         verify(courseMapper, never()).deleteById(any(Long.class));
         verify(nodeMapper, never()).delete(any());
         verify(edgeMapper, never()).delete(any());
@@ -239,15 +252,17 @@ class TeacherCourseServiceImplTest {
         ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<com.wenjin.entity.KgNode>> nodeUpdate =
                 ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper.class);
         verify(nodeMapper).update(isNull(), nodeUpdate.capture());
-        assertThat(nodeUpdate.getValue().getSqlSet()).contains("archived_at");
-        assertThat(nodeUpdate.getValue().getParamNameValuePairs().values()).containsNull();
+        assertThat(nodeUpdate.getValue().getSqlSet()).contains("archived_at", "archived_by_course");
+        assertThat(nodeUpdate.getValue().getSqlSegment()).contains("archived_by_course");
+        assertThat(nodeUpdate.getValue().getParamNameValuePairs().values()).contains(false, true).containsNull();
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<com.wenjin.entity.KgEdge>> edgeUpdate =
                 ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper.class);
         verify(edgeMapper).update(isNull(), edgeUpdate.capture());
-        assertThat(edgeUpdate.getValue().getSqlSet()).contains("archived_at");
-        assertThat(edgeUpdate.getValue().getParamNameValuePairs().values()).containsNull();
+        assertThat(edgeUpdate.getValue().getSqlSet()).contains("archived_at", "archived_by_course");
+        assertThat(edgeUpdate.getValue().getSqlSegment()).contains("archived_by_course");
+        assertThat(edgeUpdate.getValue().getParamNameValuePairs().values()).contains(false, true).containsNull();
 
         assertThat(vo.getId()).isEqualTo(5L);
         assertThat(vo.getCode()).isEqualTo("C1");

@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.jdbc.datasource.init.ScriptUtils;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -71,22 +72,53 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     /** 空库跑完 V1…V9 后应有的业务表（V4–V6/V8–V9 为 ALTER；V7 增 ai_job）。 */
     private static final List<String> EXPECTED_TABLES_AFTER_ALL;
 
-    /** V9 合同迁移新增的命名外键（抽样 + 关键约束）。 */
-    private static final List<String> V9_EXPECTED_FKS = List.of(
+    /** V9 完成后必须存在的完整命名外键矩阵（V9 42 个 + V3 2 个 + V5 1 个）。 */
+    private static final List<String> EXPECTED_FKS_AFTER_V9 = List.of(
             "fk_course_teacher",
             "fk_node_course",
+            "fk_edge_course",
             "fk_edge_from_node",
+            "fk_edge_to_node",
             "fk_question_course",
+            "fk_option_question",
+            "fk_qn_question",
             "fk_qn_node",
+            "fk_mastery_student",
+            "fk_mastery_course",
             "fk_mastery_node",
+            "fk_snapshot_student",
+            "fk_snapshot_course",
+            "fk_snapshot_node",
+            "fk_path_student",
+            "fk_path_course",
+            "fk_path_target_node",
             "fk_path_item_path",
+            "fk_path_item_node",
+            "fk_practice_student",
+            "fk_practice_course",
             "fk_practice_node",
+            "fk_practice_path_item",
+            "fk_adaptive_student",
+            "fk_adaptive_course",
+            "fk_answer_student",
+            "fk_answer_course",
             "fk_answer_question",
+            "fk_answer_fixed_diag",
+            "fk_node_resource_node",
+            "fk_node_resource_resource",
             "fk_sc_student",
+            "fk_sc_course",
+            "fk_sc_current_path",
+            "fk_companion_student",
+            "fk_companion_course",
             "fk_companion_msg_conv",
+            "fk_extraction_course",
+            "fk_ai_job_owner",
             "fk_ai_job_course",
+            "fk_diag_student",
             "fk_diag_course",
-            "chk_sys_user_role"
+            "fk_dsq_session",
+            "fk_dsq_question_course"
     );
 
     static {
@@ -150,16 +182,19 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(checksumsAfterFirst.get("9")).isNotNull();
         assertThat(columnExists("companion_conversation", "summary_text")).isTrue();
         assertThat(columnExists("companion_conversation", "summary_through_message_id")).isTrue();
+        assertThat(columnExists("kg_node", "archived_by_course")).isTrue();
+        assertThat(columnExists("kg_edge", "archived_by_course")).isTrue();
+        assertThat(columnNullable("kg_node", "archived_by_course")).isFalse();
+        assertThat(columnNullable("kg_edge", "archived_by_course")).isFalse();
+        assertThat(constraintExists("kg_node", "chk_node_course_archive_marker")).isTrue();
+        assertThat(constraintExists("kg_edge", "chk_edge_course_archive_marker")).isTrue();
         assertThat(columnNullable("course", "teacher_id")).isFalse();
         assertThat(columnNullable("question", "stem_hash")).isFalse();
         assertThat(constraintExists("sys_user", "chk_sys_user_role")).isTrue();
         assertThat(constraintExists("course", "fk_course_teacher")).isTrue();
         assertThat(constraintExists("kg_node", "fk_node_course")).isTrue();
-        for (String name : V9_EXPECTED_FKS) {
-            assertThat(constraintNameExists(name))
-                    .as("expected constraint %s after V9", name)
-                    .isTrue();
-        }
+        assertThat(foreignKeyConstraintNames())
+                .containsExactlyInAnyOrderElementsOf(EXPECTED_FKS_AFTER_V9);
 
         MigrateResult second = flyway.migrate();
         assertThat(second.success).isTrue();
@@ -168,6 +203,25 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         Map<String, Integer> checksumsAfterSecond = successChecksums();
         assertThat(checksumsAfterSecond).isEqualTo(checksumsAfterFirst);
         assertThat(countSuccessHistoryRows()).isEqualTo(9);
+    }
+
+    @Test
+    @DisplayName("本地 schema.sql 可从空库重建最终结构并与归档/FK 契约一致")
+    void localSchemaSnapshot_buildsCurrentFinalSchema() throws Exception {
+        try (Connection conn = MYSQL.createConnection("")) {
+            ScriptUtils.executeSqlScript(conn, new ClassPathResource("schema.sql"));
+        }
+
+        assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
+        assertThat(columnExists("course", "archived_by_course")).isFalse();
+        assertThat(columnExists("kg_node", "archived_by_course")).isTrue();
+        assertThat(columnExists("kg_edge", "archived_by_course")).isTrue();
+        assertThat(columnNullable("kg_node", "archived_by_course")).isFalse();
+        assertThat(columnNullable("kg_edge", "archived_by_course")).isFalse();
+        assertThat(constraintExists("kg_node", "chk_node_course_archive_marker")).isTrue();
+        assertThat(constraintExists("kg_edge", "chk_edge_course_archive_marker")).isTrue();
+        assertThat(foreignKeyConstraintNames())
+                .containsExactlyInAnyOrderElementsOf(EXPECTED_FKS_AFTER_V9);
     }
 
     @Test
@@ -188,6 +242,10 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(history.keySet()).contains("2", "3", "4", "5", "6", "7", "8", "9");
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
         assertThat(columnExists("companion_conversation", "summary_text")).isTrue();
+        assertThat(columnExists("kg_node", "archived_by_course")).isTrue();
+        assertThat(columnExists("kg_edge", "archived_by_course")).isTrue();
+        assertThat(constraintExists("kg_node", "chk_node_course_archive_marker")).isTrue();
+        assertThat(constraintExists("kg_edge", "chk_edge_course_archive_marker")).isTrue();
         assertThat(constraintExists("course", "fk_course_teacher")).isTrue();
         assertThat(columnNullable("course", "teacher_id")).isFalse();
 
@@ -279,6 +337,128 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(successChecksums().keySet())
                 .containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
         assertThat(constraintExists("course", "fk_course_teacher")).isFalse();
+    }
+
+    @Test
+    @DisplayName("V9 遇到遗漏表孤儿时在第一条持久 DDL 前以 45000 中止")
+    void v9OrphanMasterySnapshot_failsBeforeFirstDdl() throws Exception {
+        createFlyway("8").migrate();
+        executeSql(
+                "INSERT INTO mastery_snapshot "
+                        + "(student_id, course_id, node_id, mastery_score, mastery_level) "
+                        + "VALUES (991, 992, 993, 50, 1)"
+        );
+
+        Throwable failure = catchThrowable(() -> createFlyway("9").migrate());
+
+        assertThat(failure).isNotNull();
+        assertThat(failure).hasStackTraceContaining(
+                "V9 precheck: orphan mastery_snapshot.student_id");
+        assertThat(sqlStateFromCauseChain(failure)).isEqualTo("45000");
+        assertThat(countRows("mastery_snapshot", "student_id = 991")).isEqualTo(1);
+        assertThat(columnNullable("course", "teacher_id")).isTrue();
+        assertThat(constraintExists("course", "fk_course_teacher")).isFalse();
+        assertThat(constraintExists("sys_user", "chk_sys_user_role")).isFalse();
+        assertThat(migrationHistoryRowExists("9", true)).isFalse();
+    }
+
+    @Test
+    @DisplayName("V9 遇到快照跨课程错配时在第一条持久 DDL 前以 45000 中止")
+    void v9CrossCourseMasterySnapshot_failsBeforeFirstDdl() throws Exception {
+        createFlyway("8").migrate();
+        executeSql(
+                "INSERT INTO sys_user (id, username, password, role, status) VALUES "
+                        + "(141, 'v9-scope-teacher', 'x', 1, 1), "
+                        + "(142, 'v9-scope-student', 'x', 2, 1)",
+                "INSERT INTO course (id, code, name, teacher_id) VALUES "
+                        + "(241, 'V9-SCOPE-A', 'scope A', 141), "
+                        + "(242, 'V9-SCOPE-B', 'scope B', 141)",
+                "INSERT INTO kg_node (id, course_id, node_code, name) "
+                        + "VALUES (341, 242, 'V9-SCOPE-N', 'scope node')",
+                "INSERT INTO mastery_snapshot "
+                        + "(student_id, course_id, node_id, mastery_score, mastery_level) "
+                        + "VALUES (142, 241, 341, 50, 1)"
+        );
+
+        Throwable failure = catchThrowable(() -> createFlyway("9").migrate());
+
+        assertThat(failure).isNotNull();
+        assertThat(failure).hasStackTraceContaining(
+                "V9 precheck: cross-course mastery_snapshot.node mismatch");
+        assertThat(sqlStateFromCauseChain(failure)).isEqualTo("45000");
+        assertThat(countRows("mastery_snapshot", "student_id = 142")).isEqualTo(1);
+        assertThat(columnNullable("course", "teacher_id")).isTrue();
+        assertThat(constraintExists("course", "fk_course_teacher")).isFalse();
+        assertThat(constraintExists("sys_user", "chk_sys_user_role")).isFalse();
+        assertThat(migrationHistoryRowExists("9", true)).isFalse();
+    }
+
+    @Test
+    @DisplayName("V9 遇到练习路径项作用域错配时在第一条持久 DDL 前以 45000 中止")
+    void v9PracticePathItemScopeMismatch_failsBeforeFirstDdl() throws Exception {
+        createFlyway("8").migrate();
+        executeSql(
+                "INSERT INTO sys_user (id, username, password, role, status) VALUES "
+                        + "(151, 'v9-practice-teacher', 'x', 1, 1), "
+                        + "(152, 'v9-path-student', 'x', 2, 1), "
+                        + "(153, 'v9-practice-student', 'x', 2, 1)",
+                "INSERT INTO course (id, code, name, teacher_id) "
+                        + "VALUES (251, 'V9-PRACTICE', 'practice scope', 151)",
+                "INSERT INTO kg_node (id, course_id, node_code, name) "
+                        + "VALUES (351, 251, 'V9-PRACTICE-N', 'practice node')",
+                "INSERT INTO learning_path (id, student_id, course_id, status) "
+                        + "VALUES (451, 152, 251, 1)",
+                "INSERT INTO learning_path_item (id, path_id, node_id, step_order) "
+                        + "VALUES (551, 451, 351, 1)",
+                "INSERT INTO practice_session "
+                        + "(id, student_id, course_id, node_id, path_item_id, question_ids) "
+                        + "VALUES (651, 153, 251, 351, 551, '1')"
+        );
+
+        Throwable failure = catchThrowable(() -> createFlyway("9").migrate());
+
+        assertThat(failure).isNotNull();
+        assertThat(failure).hasStackTraceContaining(
+                "V9 precheck: practice_session.path_item scope mismatch");
+        assertThat(sqlStateFromCauseChain(failure)).isEqualTo("45000");
+        assertThat(countRows("practice_session", "id = 651")).isEqualTo(1);
+        assertThat(columnNullable("course", "teacher_id")).isTrue();
+        assertThat(constraintExists("course", "fk_course_teacher")).isFalse();
+        assertThat(constraintExists("sys_user", "chk_sys_user_role")).isFalse();
+        assertThat(migrationHistoryRowExists("9", true)).isFalse();
+    }
+
+    @Test
+    @DisplayName("V9 遇到固定诊断作答作用域错配时在第一条持久 DDL 前以 45000 中止")
+    void v9FixedDiagnosticAnswerScopeMismatch_failsBeforeFirstDdl() throws Exception {
+        createFlyway("8").migrate();
+        executeSql(
+                "INSERT INTO sys_user (id, username, password, role, status) VALUES "
+                        + "(161, 'v9-answer-teacher', 'x', 1, 1), "
+                        + "(162, 'v9-session-student', 'x', 2, 1), "
+                        + "(163, 'v9-answer-student', 'x', 2, 1)",
+                "INSERT INTO course (id, code, name, teacher_id) "
+                        + "VALUES (261, 'V9-ANSWER', 'answer scope', 161)",
+                "INSERT INTO question (id, course_id, stem, stem_hash, type) "
+                        + "VALUES (361, 261, 'scope question', SHA2('scope question', 256), 1)",
+                "INSERT INTO diagnostic_session (id, token, student_id, course_id, status) "
+                        + "VALUES (461, '00000000-0000-0000-0000-000000000461', 162, 261, 0)",
+                "INSERT INTO answer_record "
+                        + "(id, student_id, course_id, question_id, scene, fixed_diagnostic_session_id) "
+                        + "VALUES (561, 163, 261, 361, 1, 461)"
+        );
+
+        Throwable failure = catchThrowable(() -> createFlyway("9").migrate());
+
+        assertThat(failure).isNotNull();
+        assertThat(failure).hasStackTraceContaining(
+                "V9 precheck: answer_record.fixed_diagnostic_session scope mismatch");
+        assertThat(sqlStateFromCauseChain(failure)).isEqualTo("45000");
+        assertThat(countRows("answer_record", "id = 561")).isEqualTo(1);
+        assertThat(columnNullable("course", "teacher_id")).isTrue();
+        assertThat(constraintExists("course", "fk_course_teacher")).isFalse();
+        assertThat(constraintExists("sys_user", "chk_sys_user_role")).isFalse();
+        assertThat(migrationHistoryRowExists("9", true)).isFalse();
     }
 
     @Test
@@ -512,15 +692,18 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         }
     }
 
-    private static boolean constraintNameExists(String constraintName) throws Exception {
+    private static Set<String> foreignKeyConstraintNames() throws Exception {
+        Set<String> names = new TreeSet<>();
         try (Connection conn = MYSQL.createConnection("");
-             var ps = conn.prepareStatement(
-                     "SELECT 1 FROM information_schema.table_constraints "
-                             + "WHERE constraint_schema = DATABASE() AND constraint_name = ?")) {
-            ps.setString(1, constraintName);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT constraint_name FROM information_schema.table_constraints "
+                             + "WHERE constraint_schema = DATABASE() "
+                             + "AND constraint_type = 'FOREIGN KEY'")) {
+            while (rs.next()) {
+                names.add(rs.getString(1));
             }
         }
+        return names;
     }
 }

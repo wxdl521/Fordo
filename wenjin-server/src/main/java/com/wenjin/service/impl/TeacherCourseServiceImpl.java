@@ -108,11 +108,13 @@ public class TeacherCourseServiceImpl implements TeacherCourseService {
         nodeMapper.update(null, new UpdateWrapper<KgNode>()
                 .eq("course_id", courseId)
                 .isNull("archived_at")
-                .set("archived_at", now));
+                .set("archived_at", now)
+                .set("archived_by_course", true));
         edgeMapper.update(null, new UpdateWrapper<KgEdge>()
                 .eq("course_id", courseId)
                 .isNull("archived_at")
-                .set("archived_at", now));
+                .set("archived_at", now)
+                .set("archived_by_course", true));
     }
 
     @Override
@@ -137,10 +139,14 @@ public class TeacherCourseServiceImpl implements TeacherCourseService {
         if (c.getArchivedAt() != null) {
             nodeMapper.update(null, new UpdateWrapper<KgNode>()
                     .eq("course_id", courseId)
-                    .set("archived_at", null));
+                    .eq("archived_by_course", true)
+                    .set("archived_at", null)
+                    .set("archived_by_course", false));
             edgeMapper.update(null, new UpdateWrapper<KgEdge>()
                     .eq("course_id", courseId)
-                    .set("archived_at", null));
+                    .eq("archived_by_course", true)
+                    .set("archived_at", null)
+                    .set("archived_by_course", false));
         }
 
         return new TeacherCourseVO(c.getId(), c.getCode(), c.getName(), false);

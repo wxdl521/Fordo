@@ -178,15 +178,17 @@
 
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { startPractice, submitPractice } from '../api/practice.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
+import { useSessionStore } from '../store/session.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 import QuestionAnswerCard from '../components/QuestionAnswerCard.vue'
 
 // ─── 路由 & 用户 ─────────────────────────────────────────────────────────────
 const route = useRoute()
-const router = useRouter()
 const { courseId } = useStudentCourse()
+const session = useSessionStore()
 
 // ─── 路由参数 ─────────────────────────────────────────────────────────────────
 const nodeId = computed(() => {
@@ -233,6 +235,10 @@ const skippedSet = ref({})
 /** PracticeSubmitVO */
 const submitResult = ref(null)
 const itemCompleted = ref(false)
+const startRequest = createLatestRequest()
+const submitRequest = createLatestRequest()
+let activeSessionContext = null
+let disposed = false
 
 // ─── T10: 掌握度动画状态 ──────────────────────────────────────────────────────
 /** 正在展示的掌握度数值（计数动画中间值） */
@@ -244,6 +250,73 @@ const masteryDelta = computed(() => {
   if (!submitResult.value) return 0
   return (submitResult.value.masteryAfter ?? 0) - (submitResult.value.masteryBefore ?? 0)
 })
+
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+}
+
+function captureOwner() {
+  return { token: session.token, userId: session.userId }
+}
+
+function hasValidOwner(owner) {
+  return Boolean(owner.token) && Number(owner.userId) > 0
+}
+
+function ownerMatches(owner) {
+  return hasValidOwner(owner)
+    && session.token === owner.token
+    && session.userId === owner.userId
+}
+
+function routeMatches(context) {
+  return Number(courseId.value) === context.courseId
+    && Number(nodeId.value) === context.nodeId
+    && pathItemId.value === context.pathItemId
+}
+
+function isCurrentStart(request, context) {
+  return !disposed
+    && request.isCurrent()
+    && ownerMatches(context.owner)
+    && routeMatches(context)
+}
+
+function isOwnedSession(context) {
+  return Boolean(context)
+    && !disposed
+    && activeSessionContext === context
+    && startRequest.revision === context.loadRevision
+    && sessionId.value === context.sessionId
+    && ownerMatches(context.owner)
+    && routeMatches(context)
+}
+
+function isCurrentSubmit(request, context) {
+  return request.isCurrent() && isOwnedSession(context)
+}
+
+function clearSessionData() {
+  activeSessionContext = null
+  sessionId.value = null
+  nodeInfo.value = null
+  questions.value = []
+  idx.value = 0
+  singleAnswers.value = {}
+  multiSelections.value = {}
+  textAnswers.value = {}
+  skippedSet.value = {}
+  submitResult.value = null
+  itemCompleted.value = false
+  displayedMastery.value = 0
+  barWidth.value = '0%'
+}
+
+function invalidateSession() {
+  startRequest.cancel()
+  submitRequest.cancel()
+  clearSessionData()
+}
 
 /**
  * 当 phase 切换到 'result' 时触发：
@@ -320,31 +393,48 @@ const topProgressPct = computed(() => {
 
 // ─── 会话启动 ─────────────────────────────────────────────────────────────────
 async function startSession() {
-  if (!nodeId.value) {
+  if (disposed) return
+  const context = {
+    owner: captureOwner(),
+    courseId: Number(courseId.value),
+    nodeId: Number(nodeId.value),
+    pathItemId: pathItemId.value
+  }
+  if (!(context.nodeId > 0)) {
+    invalidateSession()
     errorMsg.value = '缺少知识点 ID，请从学习路径页进入练习。'
     phase.value = 'error'
     return
   }
-  if (!courseId.value) {
+  if (!(context.courseId > 0)) {
+    invalidateSession()
     errorMsg.value = '请先选择一门课程。'
     phase.value = 'error'
     return
   }
+  if (!hasValidOwner(context.owner)) {
+    invalidateSession()
+    errorMsg.value = ''
+    phase.value = 'error'
+    return
+  }
+  const request = startRequest.next()
+  submitRequest.cancel()
+  clearSessionData()
   phase.value = 'loading'
   errorMsg.value = ''
   try {
     const vo = await startPractice({
-      courseId: courseId.value,
-      nodeId: nodeId.value,
-      pathItemId: pathItemId.value  // C1: 带 pathItemId，后端写入 session 供自动通过判定
-    })
+      courseId: context.courseId,
+      nodeId: context.nodeId,
+      pathItemId: context.pathItemId  // C1: 带 pathItemId，后端写入 session 供自动通过判定
+    }, { signal: request.signal })
+    if (!isCurrentStart(request, context)) return
     if (!vo || !vo.questions || vo.questions.length === 0) {
       phase.value = 'empty'
       return
     }
-    sessionId.value = vo.sessionId
-    nodeInfo.value = vo.node
-    questions.value = (vo.questions || []).map((pq) => ({
+    const nextQuestions = (vo.questions || []).map((pq) => ({
       questionId: pq.questionId,
       c: pq.chapter,
       q: pq.stem,
@@ -352,16 +442,17 @@ async function startSession() {
       optionKeys: (pq.options || []).map((opt) => opt.key),
       type: pq.type || 1
     }))
-    // 重置答题状态
-    idx.value = 0
-    singleAnswers.value = {}
-    multiSelections.value = {}
-    textAnswers.value = {}
-    skippedSet.value = {}
-    submitResult.value = null
-    itemCompleted.value = false
+    activeSessionContext = {
+      ...context,
+      loadRevision: request.revision,
+      sessionId: vo.sessionId
+    }
+    sessionId.value = vo.sessionId
+    nodeInfo.value = vo.node
+    questions.value = nextQuestions
     phase.value = 'answering'
   } catch (e) {
+    if (!isCurrentStart(request, context) || isAbortError(e)) return
     errorMsg.value = e.message || '组卷失败，请稍后重试。'
     phase.value = 'error'
   }
@@ -447,6 +538,8 @@ async function buildAndSubmit() {
 }
 
 async function doSubmit(answers) {
+  const context = activeSessionContext
+  if (!isOwnedSession(context)) return
   // 支持从 submitError 状态重试（传入 undefined 则重新构建）
   const list = Array.isArray(answers) ? answers : buildAnswerList()
   if (!list.length) {
@@ -454,16 +547,21 @@ async function doSubmit(answers) {
     phase.value = 'submitError'
     return
   }
+  const currentQuestionIds = new Set(questions.value.map((question) => Number(question.questionId)))
+  if (!list.every((answer) => currentQuestionIds.has(Number(answer.questionId)))) return
+  const request = submitRequest.next()
   phase.value = 'submitting'
   errorMsg.value = ''
   try {
-    const vo = await submitPractice(sessionId.value, {
+    const vo = await submitPractice(context.sessionId, {
       answers: list
-    })
+    }, { signal: request.signal })
+    if (!isCurrentSubmit(request, context)) return
     submitResult.value = vo
     itemCompleted.value = !!vo.itemCompleted
     phase.value = 'result'
   } catch (e) {
+    if (!isCurrentSubmit(request, context) || isAbortError(e)) return
     errorMsg.value = e.message || '提交失败，请稍后重试。'
     phase.value = 'submitError'
   }
@@ -493,10 +591,8 @@ function masteryColor(level) {
 
 // ─── 生命周期 ────────────────────────────────────────────────────────────────
 watch(
-  [nodeId, courseId],
-  ([nid, cid]) => {
-    if (nid && cid) startSession()
-  },
+  [nodeId, pathItemId, courseId, () => session.token, () => session.userId],
+  () => startSession(),
   { immediate: true }
 )
 
@@ -529,13 +625,18 @@ onMounted(() => {
       total, currentQ, isLast, hasSelection, currentSel, currentMultiSel, currentText,
       // T10 动画状态
       displayedMastery, barWidth, masteryDelta,
-      startSession, onPick, onTextInput, goNext, goPrev, onSkip, restartPractice
+      startSession, doSubmit, onPick, onTextInput, goNext, goPrev, onSkip, restartPractice
     }
   }
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  startRequest.cancel()
+  submitRequest.cancel()
+  activeSessionContext = null
   window.removeEventListener('resize', onResize)
+  if (typeof window !== 'undefined') delete window.__wjPractice
 })
 </script>
 

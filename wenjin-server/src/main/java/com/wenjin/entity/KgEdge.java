@@ -40,4 +40,7 @@ public class KgEdge {
 
     /** 软归档时间；NULL=生效 */
     private LocalDateTime archivedAt;
+
+    /** 是否由课程归档级联；独立归档必须为 false */
+    private Boolean archivedByCourse;
 }

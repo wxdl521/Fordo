@@ -194,12 +194,191 @@ BEGIN
             SET MESSAGE_TEXT = 'V9 precheck: orphan student_course.current_path_id';
     END IF;
 
+    SELECT COUNT(*) INTO v_cnt FROM mastery_snapshot s
+    LEFT JOIN sys_user u ON u.id = s.student_id WHERE u.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan mastery_snapshot.student_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM mastery_snapshot s
+    LEFT JOIN course c ON c.id = s.course_id WHERE c.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan mastery_snapshot.course_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM mastery_snapshot s
+    LEFT JOIN kg_node n ON n.id = s.node_id WHERE n.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan mastery_snapshot.node_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM learning_path lp
+    LEFT JOIN sys_user u ON u.id = lp.student_id WHERE u.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan learning_path.student_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM learning_path lp
+    LEFT JOIN course c ON c.id = lp.course_id WHERE c.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan learning_path.course_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM learning_path lp
+    LEFT JOIN kg_node n ON n.id = lp.target_node_id
+    WHERE lp.target_node_id IS NOT NULL AND n.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan learning_path.target_node_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM practice_session ps
+    LEFT JOIN sys_user u ON u.id = ps.student_id WHERE u.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan practice_session.student_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM practice_session ps
+    LEFT JOIN course c ON c.id = ps.course_id WHERE c.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan practice_session.course_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM practice_session ps
+    LEFT JOIN kg_node n ON n.id = ps.node_id WHERE n.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan practice_session.node_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM practice_session ps
+    LEFT JOIN learning_path_item i ON i.id = ps.path_item_id
+    WHERE ps.path_item_id IS NOT NULL AND i.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan practice_session.path_item_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM adaptive_diag_session ads
+    LEFT JOIN sys_user u ON u.id = ads.student_id WHERE u.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan adaptive_diag_session.student_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM adaptive_diag_session ads
+    LEFT JOIN course c ON c.id = ads.course_id WHERE c.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan adaptive_diag_session.course_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM answer_record ar
+    LEFT JOIN sys_user u ON u.id = ar.student_id WHERE u.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan answer_record.student_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM answer_record ar
+    LEFT JOIN course c ON c.id = ar.course_id WHERE c.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan answer_record.course_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM answer_record ar
+    LEFT JOIN question q ON q.id = ar.question_id WHERE q.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan answer_record.question_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM answer_record ar
+    LEFT JOIN diagnostic_session ds ON ds.id = ar.fixed_diagnostic_session_id
+    WHERE ar.fixed_diagnostic_session_id IS NOT NULL AND ds.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan answer_record.fixed_diagnostic_session_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM node_resource nr
+    LEFT JOIN kg_node n ON n.id = nr.node_id WHERE n.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan node_resource.node_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM node_resource nr
+    LEFT JOIN resource r ON r.id = nr.resource_id WHERE r.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan node_resource.resource_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM companion_conversation cc
+    LEFT JOIN sys_user u ON u.id = cc.student_id WHERE u.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan companion_conversation.student_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM companion_conversation cc
+    LEFT JOIN course c ON c.id = cc.course_id WHERE c.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan companion_conversation.course_id';
+    END IF;
+
     SELECT COUNT(*) INTO v_cnt FROM companion_message cm
     LEFT JOIN companion_conversation cc ON cc.id = cm.conversation_id
     WHERE cc.id IS NULL;
     IF v_cnt > 0 THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'V9 precheck: orphan companion_message.conversation_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM extraction_review er
+    LEFT JOIN course c ON c.id = er.course_id
+    WHERE er.course_id IS NOT NULL AND c.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan extraction_review.course_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM ai_job j
+    LEFT JOIN sys_user u ON u.id = j.owner_id WHERE u.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan ai_job.owner_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM ai_job j
+    LEFT JOIN course c ON c.id = j.course_id WHERE c.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan ai_job.course_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM diagnostic_session ds
+    LEFT JOIN sys_user u ON u.id = ds.student_id WHERE u.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan diagnostic_session.student_id';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM diagnostic_session ds
+    LEFT JOIN course c ON c.id = ds.course_id WHERE c.id IS NULL;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: orphan diagnostic_session.course_id';
     END IF;
 
     -- cross-course mismatches
@@ -220,6 +399,14 @@ BEGIN
             SET MESSAGE_TEXT = 'V9 precheck: cross-course mastery.node mismatch';
     END IF;
 
+    SELECT COUNT(*) INTO v_cnt FROM mastery_snapshot s
+    JOIN kg_node n ON n.id = s.node_id
+    WHERE s.course_id <> n.course_id;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: cross-course mastery_snapshot.node mismatch';
+    END IF;
+
     SELECT COUNT(*) INTO v_cnt FROM learning_path_item i
     JOIN learning_path lp ON lp.id = i.path_id
     JOIN kg_node n ON n.id = i.node_id
@@ -229,12 +416,33 @@ BEGIN
             SET MESSAGE_TEXT = 'V9 precheck: cross-course path_item.node mismatch';
     END IF;
 
+    SELECT COUNT(*) INTO v_cnt FROM learning_path lp
+    JOIN kg_node n ON n.id = lp.target_node_id
+    WHERE lp.target_node_id IS NOT NULL
+      AND lp.course_id <> n.course_id;
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: cross-course learning_path.target_node mismatch';
+    END IF;
+
     SELECT COUNT(*) INTO v_cnt FROM practice_session ps
     JOIN kg_node n ON n.id = ps.node_id
     WHERE ps.course_id <> n.course_id;
     IF v_cnt > 0 THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'V9 precheck: cross-course practice.node mismatch';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM practice_session ps
+    JOIN learning_path_item i ON i.id = ps.path_item_id
+    JOIN learning_path lp ON lp.id = i.path_id
+    WHERE ps.path_item_id IS NOT NULL
+      AND (ps.student_id <> lp.student_id
+        OR ps.course_id <> lp.course_id
+        OR ps.node_id <> i.node_id);
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: practice_session.path_item scope mismatch';
     END IF;
 
     SELECT COUNT(*) INTO v_cnt FROM kg_edge e
@@ -254,6 +462,24 @@ BEGIN
     IF v_cnt > 0 THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'V9 precheck: cross-course answer.question mismatch';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM answer_record ar
+    JOIN diagnostic_session ds ON ds.id = ar.fixed_diagnostic_session_id
+    WHERE ar.fixed_diagnostic_session_id IS NOT NULL
+      AND (ar.student_id <> ds.student_id OR ar.course_id <> ds.course_id);
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: answer_record.fixed_diagnostic_session scope mismatch';
+    END IF;
+
+    SELECT COUNT(*) INTO v_cnt FROM student_course sc
+    JOIN learning_path lp ON lp.id = sc.current_path_id
+    WHERE sc.current_path_id IS NOT NULL
+      AND (sc.student_id <> lp.student_id OR sc.course_id <> lp.course_id);
+    IF v_cnt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'V9 precheck: student_course.current_path mismatch';
     END IF;
 END$$
 

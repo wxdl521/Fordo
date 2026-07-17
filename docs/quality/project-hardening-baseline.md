@@ -104,11 +104,11 @@ Build emitted a Rollup/Vite warning: some chunks are larger than 500 kB after mi
 
 ## Schema / migration policy (baseline constraints)
 
-1. **`wenjin-server/src/main/resources/schema.sql` is a local-only destructive script.**  
+1. **`wenjin-server/src/main/resources/schema.sql` is a local-only destructive script.**
    It is designed for repeatable local bootstrap (`DROP IF EXISTS` then `CREATE`). It must not be used as the production schema evolution path.
 
-2. **Production must use incremental migrations only.**  
-   Apply changes via scripts under `wenjin-server/src/main/resources/migration/` (and any later approved migration process). Do not re-run full `schema.sql` against shared or production databases.
+2. **Production must use incremental migrations only.**
+   Apply changes via scripts under `wenjin-server/src/main/resources/db/migration/` (and any later approved migration process). Do not re-run full `schema.sql` against shared or production databases.
 
 ---
 

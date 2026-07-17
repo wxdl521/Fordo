@@ -169,7 +169,8 @@ public class GraphServiceImpl implements GraphService {
                         .set("bloom", row.getBloom())
                         .set("description", row.getDescription())
                         .set("node_note", row.getNodeNote())
-                        .set("archived_at", null));
+                        .set("archived_at", null)
+                        .set("archived_by_course", false));
                 codeToId.put(code, row.getId());
             }
         }
@@ -178,6 +179,7 @@ public class GraphServiceImpl implements GraphService {
         for (KgNode leftover : existing) {
             if (!seen.contains(leftover.getNodeCode()) && leftover.getArchivedAt() == null) {
                 leftover.setArchivedAt(now);
+                leftover.setArchivedByCourse(false);
                 nodeMapper.updateById(leftover);
             }
         }
@@ -194,6 +196,7 @@ public class GraphServiceImpl implements GraphService {
         node.setDescription(n.getDescription());
         node.setNodeNote(n.getNote());
         node.setArchivedAt(null);
+        node.setArchivedByCourse(false);
     }
 
     /**
@@ -227,6 +230,7 @@ public class GraphServiceImpl implements GraphService {
                     edge.setToNodeId(toId);
                     edge.setRelationType(typeCode);
                     edge.setRelationNote(item.getNote());
+                    edge.setArchivedByCourse(false);
                     edgeMapper.insert(edge);
                     // 防御：若校验漏掉同键重复，后续同键走更新而非二次 insert（避免 UK 500）
                     byKey.put(key, edge);
@@ -234,7 +238,8 @@ public class GraphServiceImpl implements GraphService {
                     edgeMapper.update(null, new UpdateWrapper<KgEdge>()
                             .eq("id", row.getId())
                             .set("relation_note", item.getNote())
-                            .set("archived_at", null));
+                            .set("archived_at", null)
+                            .set("archived_by_course", false));
                 }
                 edgeCount++;
             }
@@ -245,6 +250,7 @@ public class GraphServiceImpl implements GraphService {
             String key = edgeKey(leftover.getFromNodeId(), leftover.getToNodeId(), leftover.getRelationType());
             if (!seen.contains(key) && leftover.getArchivedAt() == null) {
                 leftover.setArchivedAt(now);
+                leftover.setArchivedByCourse(false);
                 edgeMapper.updateById(leftover);
             }
         }

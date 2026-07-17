@@ -44,7 +44,7 @@
 | 层 | 选型 |
 | --- | --- |
 | 前端 | Vue 3、Vite 5、Pinia、Vue Router、ECharts、axios、原生 fetch SSE |
-| 后端 | Spring Boot 3.3.5、Java 21、MyBatis-Plus、MySQL 8、Flyway（默认关闭） |
+| 后端 | Spring Boot 3.3.5、Java 21、MyBatis-Plus、MySQL 8.0.16+、Flyway（默认关闭） |
 | AI | OpenAI 兼容 `/chat/completions`，文本模型默认 DeepSeek，视觉模型默认 GLM，可用环境变量替换 |
 | 文档解析 | Apache POI、PDFBox |
 | 安全 | 自研 HMAC Bearer 令牌、BCrypt 密码、教师拦截器、学生资源归属校验 |
@@ -113,7 +113,7 @@ Set-Location wenjin-server
 
 - JDK 21
 - Node.js 18+ 或 20+
-- MySQL 8
+- MySQL 8.0.16+（CI / Testcontainers 使用 8.4）
 - 集成测试另需 Docker
 - Windows PowerShell，或能等价执行下列命令的终端
 

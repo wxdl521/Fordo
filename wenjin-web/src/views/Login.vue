@@ -34,7 +34,7 @@
           <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px', marginBottom: '12px' }">
             <button @click="handleDemoLogin" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' }">使用演示账号进入</button>
             <span :style="{ width: '1px', height: '12px', background: 'var(--line)' }"></span>
-            <button @click="step = 'register'; loginError = ''" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' }">没有账号？注册</button>
+            <button @click="showRegister" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' }">没有账号？注册</button>
           </div>
           <div v-if="loginError" :style="{ fontSize: '12.5px', color: '#e74c3c', textAlign: 'center', marginTop: '4px' }">{{ loginError }}</div>
         </div>
@@ -60,7 +60,7 @@
           <input v-model="regRealName" placeholder="请输入真实姓名" class="wj-input" :style="{ ...inputStyle, marginBottom: '20px' }" />
 
           <button @click="handleRegister" class="wj-btn-acc" :style="{ height: '46px', background: 'var(--acc)', border: 'none', borderRadius: '10px', color: '#FFFDF8', fontSize: '14.5px', fontWeight: 500, cursor: 'pointer', marginBottom: '16px' }">注 册</button>
-          <button @click="step = 'login'; regError = ''" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px', alignSelf: 'center' }">已有账号？登录</button>
+          <button @click="showLogin" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px', alignSelf: 'center' }">已有账号？登录</button>
           <div v-if="regError" :style="{ fontSize: '12.5px', color: '#e74c3c', textAlign: 'center', marginTop: '10px' }">{{ regError }}</div>
         </div>
       </div>
@@ -139,7 +139,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import { useViewport } from '../composables/useViewport.js'
@@ -147,6 +147,7 @@ import { login as apiLogin, register as apiRegister } from '../api/user.js'
 import { getMyCourses, getAvailableCourses, enroll } from '../api/course.js'
 import { useSessionStore } from '../store/session.js'
 import { useCourseStore } from '../store/course.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 
 const serif = "'Noto Serif SC', serif"
 const { width } = useViewport()
@@ -169,6 +170,42 @@ const regError = ref('')
 const courses = ref([])
 const availableCourses = ref([])
 const courseLoading = ref(false)
+const authRequest = createLatestRequest()
+const coursesRequest = createLatestRequest()
+let disposed = false
+
+function isAbortError(error) {
+  return error?.name === 'AbortError'
+    || error?.name === 'CanceledError'
+    || error?.code === 'ERR_CANCELED'
+}
+
+function beginAuthRequest() {
+  coursesRequest.cancel()
+  courseLoading.value = false
+  return authRequest.next()
+}
+
+function commitLogin(data, request) {
+  if (disposed || !request.isCurrent()) return false
+  session.setSession({ token: data.token, user: data.user })
+  session.resetRefreshGate()
+  step.value = 'course'
+  void loadCourses()
+  return true
+}
+
+function showRegister() {
+  authRequest.cancel()
+  loginError.value = ''
+  step.value = 'register'
+}
+
+function showLogin() {
+  authRequest.cancel()
+  regError.value = ''
+  step.value = 'login'
+}
 
 const displayName = computed(() => {
   if (currentUser.value && currentUser.value.realName) {
@@ -217,28 +254,32 @@ async function handleLogin() {
     loginError.value = '请输入用户名和密码'
     return
   }
+  const request = beginAuthRequest()
   try {
-    const data = await apiLogin({ username: sid.value, password: pwd.value })
-    session.setSession({ token: data.token, user: data.user })
-    session.resetRefreshGate()
-    step.value = 'course'
-    loadCourses()
+    const data = await apiLogin(
+      { username: sid.value, password: pwd.value },
+      { signal: request.signal }
+    )
+    commitLogin(data, request)
   } catch (e) {
+    if (disposed || !request.isCurrent() || isAbortError(e)) return
     loginError.value = e.message || '登录失败'
   }
 }
 
-function handleDemoLogin() {
-  apiLogin({ username: 'demo_student', password: 'demo' })
-    .then(data => {
-      session.setSession({ token: data.token, user: data.user })
-      session.resetRefreshGate()
-      step.value = 'course'
-      loadCourses()
-    })
-    .catch(e => {
-      loginError.value = e.message || '演示登录失败'
-    })
+async function handleDemoLogin() {
+  loginError.value = ''
+  const request = beginAuthRequest()
+  try {
+    const data = await apiLogin(
+      { username: 'demo_student', password: 'demo' },
+      { signal: request.signal }
+    )
+    commitLogin(data, request)
+  } catch (e) {
+    if (disposed || !request.isCurrent() || isAbortError(e)) return
+    loginError.value = e.message || '演示登录失败'
+  }
 }
 
 async function handleRegister() {
@@ -251,24 +292,30 @@ async function handleRegister() {
     regError.value = '两次密码输入不一致'
     return
   }
+  const request = beginAuthRequest()
   try {
     await apiRegister({
       username: regUsername.value,
       password: regPassword.value,
       realName: regRealName.value
-    })
+    }, { signal: request.signal })
+    if (disposed || !request.isCurrent()) return
     // 注册不发令牌，紧接着用同一凭据登录拿令牌（保持"注册即进入"的体验）
-    const data = await apiLogin({ username: regUsername.value, password: regPassword.value })
-    session.setSession({ token: data.token, user: data.user })
-    session.resetRefreshGate()
-    step.value = 'course'
-    loadCourses()
+    const data = await apiLogin(
+      { username: regUsername.value, password: regPassword.value },
+      { signal: request.signal }
+    )
+    commitLogin(data, request)
   } catch (e) {
+    if (disposed || !request.isCurrent() || isAbortError(e)) return
     regError.value = e.message || '注册失败'
   }
 }
 
 function handleLogout() {
+  authRequest.cancel()
+  coursesRequest.cancel()
+  courseLoading.value = false
   session.clearSession()
   session.resetRefreshGate()
   courses.value = []
@@ -279,22 +326,40 @@ function handleLogout() {
 }
 
 async function loadCourses() {
-  if (!currentUser.value) return
-  courseLoading.value = true
-  try {
-    courses.value = await getMyCourses()
-  } catch {
-    courses.value = []
-  }
-  try {
-    const all = await getAvailableCourses()
-    const enrolledIds = new Set((courses.value || []).map(c => c.courseId))
-    availableCourses.value = (all || []).filter(c => !enrolledIds.has(c.id))
-  } catch {
-    availableCourses.value = []
-  } finally {
+  const requestToken = session.token
+  const requestUserId = session.userId
+  if (disposed || !currentUser.value || !requestToken || !requestUserId) {
+    coursesRequest.cancel()
     courseLoading.value = false
+    return
   }
+  const request = coursesRequest.next()
+  const isCurrentOwner = () => !disposed
+    && request.isCurrent()
+    && session.token === requestToken
+    && session.userId === requestUserId
+  courseLoading.value = true
+  let nextCourses = []
+  let nextAvailableCourses = []
+  try {
+    nextCourses = await getMyCourses({ signal: request.signal })
+    if (!isCurrentOwner()) return
+  } catch (error) {
+    if (!isCurrentOwner() || isAbortError(error)) return
+  }
+  try {
+    const all = await getAvailableCourses({ signal: request.signal })
+    if (!isCurrentOwner()) return
+    const enrolledIds = new Set((nextCourses || []).map(c => c.courseId))
+    nextAvailableCourses = (all || []).filter(c => !enrolledIds.has(c.id))
+  } catch (error) {
+    if (!isCurrentOwner() || isAbortError(error)) return
+  } finally {
+    if (isCurrentOwner()) courseLoading.value = false
+  }
+  if (!isCurrentOwner()) return
+  courses.value = nextCourses
+  availableCourses.value = nextAvailableCourses
 }
 
 async function handleEnroll(courseId) {
@@ -316,10 +381,16 @@ onMounted(async () => {
   if (!session.hydrated) session.hydrate()
   if (!session.token) return
   const user = await session.refreshMe()
-  if (user) {
+  if (!disposed && user) {
     step.value = 'course'
-    loadCourses()
+    void loadCourses()
   }
+})
+
+onBeforeUnmount(() => {
+  disposed = true
+  authRequest.cancel()
+  coursesRequest.cancel()
 })
 </script>
 

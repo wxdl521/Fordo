@@ -184,6 +184,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
 
         // 软归档，不硬删
         edge.setArchivedAt(LocalDateTime.now());
+        edge.setArchivedByCourse(false);
         edgeMapper.updateById(edge);
     }
 
@@ -259,6 +260,7 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         edge.setToNodeId(target.getId());
         edge.setRelationType(relationType);
         edge.setRelationNote(req.getRelationNote());
+        edge.setArchivedByCourse(false);
         try {
             edgeMapper.insert(edge);
         } catch (DuplicateKeyException ex) {
@@ -410,12 +412,14 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
                     .set("is_key", hit.getIsKey())
                     .set("description", hit.getDescription())
                     .set("node_note", hit.getNodeNote())
-                    .set("archived_at", null));
+                    .set("archived_at", null)
+                    .set("archived_by_course", false));
             return hit.getId();
         }
 
         KgNode node = new KgNode();
         node.setCourseId(courseId);
+        node.setArchivedByCourse(false);
         applyRequest(node, req);
         nodeMapper.insert(node);
         return node.getId();
@@ -469,9 +473,11 @@ public class TeacherGraphServiceImpl implements TeacherGraphService {
         edgeMapper.update(null, new UpdateWrapper<KgEdge>()
                 .and(w -> w.eq("from_node_id", nodeId).or().eq("to_node_id", nodeId))
                 .isNull("archived_at")
-                .set("archived_at", now));
+                .set("archived_at", now)
+                .set("archived_by_course", false));
 
         node.setArchivedAt(now);
+        node.setArchivedByCourse(false);
         nodeMapper.updateById(node);
     }
 

@@ -1,12 +1,21 @@
 import { http } from './http.js'
 
+function post(url, body, config) {
+  return config && Object.keys(config).length > 0
+    ? http.post(url, body, config)
+    : http.post(url, body)
+}
+
 /**
  * 获取诊断试卷（答案已剥离；含冻结 sessionToken）
  * @param {number} courseId
  * @returns {Promise<PaperVO>} { courseId, sessionToken, total, questions: [{ questionId, stem, chapter, type, options: [{ key, text }] }] }
  */
-export function fetchPaper(courseId) {
-  return http.get('/diagnostic/paper', { params: { courseId } })
+export function fetchPaper(courseId, config = {}) {
+  return http.get('/diagnostic/paper', {
+    ...config,
+    params: { ...config.params, courseId }
+  })
 }
 
 /**
@@ -14,7 +23,7 @@ export function fetchPaper(courseId) {
  * @param {{ sessionToken: string, answers: Array<{ questionId: number, optionKey: string|null }>, courseId?: number }} payload
  * @returns {Promise<SubmitResult>} { total, correctCount, grades: [{ questionId, correct, correctKey }] }
  */
-export function submitPaper(payload) {
+export function submitPaper(payload, config = {}) {
   const body = {
     sessionToken: payload.sessionToken,
     answers: payload.answers
@@ -23,7 +32,7 @@ export function submitPaper(payload) {
   if (payload.courseId != null) {
     body.courseId = payload.courseId
   }
-  return http.post('/diagnostic/submit', body)
+  return post('/diagnostic/submit', body, config)
 }
 
 /**
@@ -31,8 +40,11 @@ export function submitPaper(payload) {
  * @param {number} courseId
  * @returns {Promise<DiagnosticResultVO>}
  */
-export function fetchResult(courseId) {
-  return http.get('/diagnostic/result', { params: { courseId } })
+export function fetchResult(courseId, config = {}) {
+  return http.get('/diagnostic/result', {
+    ...config,
+    params: { ...config.params, courseId }
+  })
 }
 
 /**
@@ -40,10 +52,10 @@ export function fetchResult(courseId) {
  * @param {{ courseId: number }} payload
  * @returns {Promise<AdaptiveVO>} { sessionId, done, probe|null, progress, summary|null, resultUrl|null }
  */
-export function startAdaptive(payload) {
+export function startAdaptive(payload, config = {}) {
   const body = { ...payload }
   delete body.studentId
-  return http.post('/diagnostic/adaptive/start', body)
+  return post('/diagnostic/adaptive/start', body, config)
 }
 
 /**
@@ -52,10 +64,10 @@ export function startAdaptive(payload) {
  * @param {{ answers: Array<{ questionId: number, studentAnswer: string }> }} payload
  * @returns {Promise<AdaptiveVO>} 结构同 startAdaptive
  */
-export function answerAdaptive(sessionId, payload) {
+export function answerAdaptive(sessionId, payload, config = {}) {
   const body = { ...payload }
   delete body.studentId
-  return http.post(`/diagnostic/adaptive/${sessionId}/answer`, body)
+  return post(`/diagnostic/adaptive/${sessionId}/answer`, body, config)
 }
 
 /**
@@ -64,10 +76,10 @@ export function answerAdaptive(sessionId, payload) {
  * @param {object} [payload]
  * @returns {Promise<AdaptiveVO>}
  */
-export function abandonAdaptive(sessionId, payload = {}) {
+export function abandonAdaptive(sessionId, payload = {}, config = {}) {
   const body = { ...payload }
   delete body.studentId
-  return http.post(`/diagnostic/adaptive/${sessionId}/abandon`, body)
+  return post(`/diagnostic/adaptive/${sessionId}/abandon`, body, config)
 }
 
 /**
@@ -75,6 +87,9 @@ export function abandonAdaptive(sessionId, payload = {}) {
  * @param {number} courseId
  * @returns {Promise<EvidenceVO|null>}
  */
-export function fetchEvidence(courseId) {
-  return http.get('/diagnostic/adaptive/evidence', { params: { courseId } })
+export function fetchEvidence(courseId, config = {}) {
+  return http.get('/diagnostic/adaptive/evidence', {
+    ...config,
+    params: { ...config.params, courseId }
+  })
 }

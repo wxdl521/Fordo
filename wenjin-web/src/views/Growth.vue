@@ -174,10 +174,11 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { fetchGrowth } from '../api/growth.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
 import { useSessionStore } from '../store/session.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 
 const { courseId } = useStudentCourse()
 const session = useSessionStore()
@@ -187,6 +188,28 @@ const studentId = computed(() => session.userId)
 const data = ref(null)
 const loading = ref(false)
 const error = ref(null)
+const loadRequest = createLatestRequest()
+let disposed = false
+
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+}
+
+function captureOwner() {
+  return { token: session.token, userId: session.userId }
+}
+
+function hasValidOwner(owner) {
+  return Boolean(owner.token) && Number(owner.userId) > 0
+}
+
+function isCurrentLoad(request, owner, id) {
+  return !disposed
+    && request.isCurrent()
+    && session.token === owner.token
+    && session.userId === owner.userId
+    && Number(courseId.value) === id
+}
 
 // 图例
 const legend = [
@@ -318,29 +341,49 @@ function fmtDate(dt) {
 
 // 方法：加载数据
 async function load() {
+  if (disposed) return
+  const owner = captureOwner()
+  const id = Number(courseId.value)
+  if (!hasValidOwner(owner) || !(id > 0)) {
+    loadRequest.cancel()
+    data.value = null
+    loading.value = false
+    error.value = hasValidOwner(owner) ? '请先从首页选择一门课程' : null
+    return
+  }
+  const request = loadRequest.next()
+  data.value = null
   loading.value = true
   error.value = null
   try {
-    if (!courseId.value) {
-      error.value = '请先从首页选择一门课程'
-      return
-    }
-    data.value = await fetchGrowth(courseId.value)
+    const nextData = await fetchGrowth(id, { signal: request.signal })
+    if (!isCurrentLoad(request, owner, id)) return
+    data.value = nextData
   } catch (e) {
+    if (!isCurrentLoad(request, owner, id) || isAbortError(e)) return
     error.value = e.message || '加载失败'
     console.error('Growth load error:', e)
   } finally {
-    loading.value = false
+    if (isCurrentLoad(request, owner, id)) loading.value = false
   }
 }
 
-// 无条件 load:courseId 为空时由 load 内部守卫给出选课引导(不静默回落课程1)
-watch(courseId, () => load(), { immediate: true })
+watch(
+  [courseId, () => session.token, () => session.userId],
+  () => load(),
+  { immediate: true }
+)
 
 onMounted(() => {
   if (typeof window !== 'undefined') {
     window.__wjGrowth = { data, load }
   }
+})
+
+onBeforeUnmount(() => {
+  disposed = true
+  loadRequest.cancel()
+  if (typeof window !== 'undefined') delete window.__wjGrowth
 })
 </script>
 

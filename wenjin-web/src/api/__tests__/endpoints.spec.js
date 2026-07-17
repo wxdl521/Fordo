@@ -133,6 +133,33 @@ describe('API endpoint contracts', () => {
     ])
   })
 
+  it('forwards cancellation config for login and course ownership requests', () => {
+    const signal = new AbortController().signal
+    const config = { signal }
+
+    user.register({ username: 'alice', password: 'secret', realName: 'Alice' }, config)
+    user.login({ username: 'alice', password: 'secret' }, config)
+    course.getMyCourses(config)
+    course.getAvailableCourses(config)
+
+    expect(http.post.mock.calls).toEqual([
+      ['/register', { username: 'alice', password: 'secret', realName: 'Alice' }, config],
+      ['/login', { username: 'alice', password: 'secret' }, config]
+    ])
+    expect(http.get.mock.calls).toEqual([
+      ['/course/my', config],
+      ['/course/available', config]
+    ])
+  })
+
+  it('forwards cancellation config when generating a learning path', () => {
+    const config = { signal: new AbortController().signal }
+
+    path.generatePath({ courseId: 8, studentId: 99 }, config)
+
+    expect(http.post).toHaveBeenCalledWith('/path/generate', { courseId: 8 }, config)
+  })
+
   it('maps graph and growth reads with their exact config shapes', () => {
     const signal = new AbortController().signal
     const graphConfig = { signal, headers: { 'X-Trace': 'graph' } }
@@ -203,6 +230,32 @@ describe('API endpoint contracts', () => {
     expect(startPayload.studentId).toBe(99)
     expect(answerPayload.studentId).toBe(99)
     expect(abandonPayload.studentId).toBe(99)
+  })
+
+  it('forwards cancellation config through every diagnostic request', () => {
+    const controller = new AbortController()
+    const config = { signal: controller.signal }
+    const answers = [{ questionId: 1, optionKey: 'A' }]
+
+    diagnostic.fetchPaper(8, config)
+    diagnostic.fetchResult(8, config)
+    diagnostic.fetchEvidence(8, config)
+    diagnostic.submitPaper({ sessionToken: 'session-1', answers, courseId: 8 }, config)
+    diagnostic.startAdaptive({ courseId: 8 }, config)
+    diagnostic.answerAdaptive('adaptive-1', { answers: [] }, config)
+    diagnostic.abandonAdaptive('adaptive-1', {}, config)
+
+    expect(http.get.mock.calls).toEqual([
+      ['/diagnostic/paper', { signal: controller.signal, params: { courseId: 8 } }],
+      ['/diagnostic/result', { signal: controller.signal, params: { courseId: 8 } }],
+      ['/diagnostic/adaptive/evidence', { signal: controller.signal, params: { courseId: 8 } }]
+    ])
+    expect(http.post.mock.calls).toEqual([
+      ['/diagnostic/submit', { sessionToken: 'session-1', answers, courseId: 8 }, config],
+      ['/diagnostic/adaptive/start', { courseId: 8 }, config],
+      ['/diagnostic/adaptive/adaptive-1/answer', { answers: [] }, config],
+      ['/diagnostic/adaptive/adaptive-1/abandon', {}, config]
+    ])
   })
 
   it('maps admin AI job dispatches and header defaults', () => {

@@ -6,6 +6,7 @@ import { nextTick } from 'vue'
 import Login from '../Login.vue'
 import * as userApi from '../../api/user.js'
 import * as courseApi from '../../api/course.js'
+import { useSessionStore } from '../../store/session.js'
 
 vi.mock('../../api/user.js', () => ({
   login: vi.fn(),
@@ -26,6 +27,27 @@ vi.mock('../../composables/useTheme.js', () => ({
     setPaper: vi.fn()
   })
 }))
+
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+function loginResult(token, id, realName) {
+  return {
+    token,
+    user: { id, username: `student-${id}`, realName, role: 2, status: 1 }
+  }
+}
+
+function buttonWithText(wrapper, text) {
+  return wrapper.findAll('button').find((button) => button.text().includes(text))
+}
 
 async function mountLogin() {
   const pinia = createPinia()
@@ -124,6 +146,112 @@ describe('Login registration security', () => {
     })
     expect(Object.keys(payload).sort()).toEqual(['password', 'realName', 'username'])
     expect(payload).not.toHaveProperty('role')
+    wrapper.unmount()
+  })
+
+  it('keeps the newest session when an older login succeeds late', async () => {
+    const staleLogin = deferred()
+    userApi.login
+      .mockImplementationOnce(() => staleLogin.promise)
+      .mockResolvedValueOnce(loginResult('token-b', 2, 'Student B'))
+
+    const wrapper = await mountLogin()
+    const inputs = wrapper.findAll('input')
+    await inputs[0].setValue('student-a')
+    await inputs[1].setValue('password-a')
+    await wrapper.find('.wj-btn-acc').trigger('click')
+    await buttonWithText(wrapper, '演示账号').trigger('click')
+    await flushPromises()
+
+    const session = useSessionStore()
+    expect(session.token).toBe('token-b')
+    expect(session.user.id).toBe(2)
+
+    staleLogin.resolve(loginResult('token-a', 1, 'Student A'))
+    await flushPromises()
+
+    expect(session.token).toBe('token-b')
+    expect(session.user.id).toBe(2)
+    wrapper.unmount()
+  })
+
+  it('does not revive a logged-out session from a late login success', async () => {
+    const staleLogin = deferred()
+    userApi.login
+      .mockImplementationOnce(() => staleLogin.promise)
+      .mockResolvedValueOnce(loginResult('token-b', 2, 'Student B'))
+
+    const wrapper = await mountLogin()
+    const inputs = wrapper.findAll('input')
+    await inputs[0].setValue('student-a')
+    await inputs[1].setValue('password-a')
+    await wrapper.find('.wj-btn-acc').trigger('click')
+    await buttonWithText(wrapper, '演示账号').trigger('click')
+    await flushPromises()
+    await buttonWithText(wrapper, '退出登录').trigger('click')
+
+    const session = useSessionStore()
+    expect(session.token).toBeNull()
+
+    staleLogin.resolve(loginResult('token-a', 1, 'Student A'))
+    await flushPromises()
+
+    expect(session.token).toBeNull()
+    expect(session.user).toBeNull()
+    expect(wrapper.text()).toContain('欢迎回来')
+    wrapper.unmount()
+  })
+
+  it('ignores stale course data and keeps the latest load pending', async () => {
+    const coursesA = deferred()
+    const coursesB = deferred()
+    userApi.login
+      .mockResolvedValueOnce(loginResult('token-a', 1, 'Student A'))
+      .mockResolvedValueOnce(loginResult('token-b', 2, 'Student B'))
+    courseApi.getMyCourses
+      .mockImplementationOnce(() => coursesA.promise)
+      .mockImplementationOnce(() => coursesB.promise)
+    courseApi.getAvailableCourses.mockResolvedValue([])
+
+    const wrapper = await mountLogin()
+    let inputs = wrapper.findAll('input')
+    await inputs[0].setValue('student-a')
+    await inputs[1].setValue('password-a')
+    await wrapper.find('.wj-btn-acc').trigger('click')
+    await flushPromises()
+    await buttonWithText(wrapper, '退出登录').trigger('click')
+
+    inputs = wrapper.findAll('input')
+    await inputs[0].setValue('student-b')
+    await inputs[1].setValue('password-b')
+    await wrapper.find('.wj-btn-acc').trigger('click')
+    await flushPromises()
+
+    coursesA.resolve([{
+      courseId: 101,
+      name: 'Course A',
+      masteredCount: 1,
+      weakCount: 0,
+      unlearnedCount: 0
+    }])
+    await flushPromises()
+
+    expect(courseApi.getAvailableCourses).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('加载中...')
+    expect(wrapper.text()).not.toContain('Course A')
+
+    coursesB.resolve([{
+      courseId: 202,
+      name: 'Course B',
+      masteredCount: 1,
+      weakCount: 0,
+      unlearnedCount: 0
+    }])
+    await flushPromises()
+
+    expect(courseApi.getAvailableCourses).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('Course B')
+    expect(wrapper.text()).not.toContain('Course A')
     wrapper.unmount()
   })
 })

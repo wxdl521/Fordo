@@ -9,6 +9,16 @@ vi.mock('../../api/user.js', () => ({
 
 import { me } from '../../api/user.js'
 
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
 describe('sessionStore', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -89,6 +99,42 @@ describe('sessionStore', () => {
     expect(gone).toBeNull()
     expect(session.token).toBeNull()
     expect(session.user).toBeNull()
+  })
+
+  it('refreshMe ignores a stale success after a replacement login', async () => {
+    const session = useSessionStore()
+    const pending = deferred()
+    session.setSession({ token: 'token-a', user: { id: 1, role: 2 } })
+    me.mockReturnValueOnce(pending.promise)
+
+    const refresh = session.refreshMe()
+    await vi.waitFor(() => expect(me).toHaveBeenCalledOnce())
+    session.setSession({ token: 'token-b', user: { id: 2, role: 1 } })
+    pending.resolve({ id: 1, role: 2, realName: 'old user' })
+
+    await expect(refresh).resolves.toBeNull()
+    expect(session.token).toBe('token-b')
+    expect(session.user).toEqual({ id: 2, role: 1 })
+    expect(localStorage.getItem(TOKEN_KEY)).toBe('token-b')
+    expect(JSON.parse(localStorage.getItem(USER_KEY))).toEqual({ id: 2, role: 1 })
+  })
+
+  it('refreshMe ignores a stale failure after a replacement login', async () => {
+    const session = useSessionStore()
+    const pending = deferred()
+    session.setSession({ token: 'token-a', user: { id: 1, role: 2 } })
+    me.mockReturnValueOnce(pending.promise)
+
+    const refresh = session.refreshMe()
+    await vi.waitFor(() => expect(me).toHaveBeenCalledOnce())
+    session.setSession({ token: 'token-b', user: { id: 2, role: 1 } })
+    pending.reject(new Error('stale unauthorized'))
+
+    await expect(refresh).resolves.toBeNull()
+    expect(session.token).toBe('token-b')
+    expect(session.user).toEqual({ id: 2, role: 1 })
+    expect(localStorage.getItem(TOKEN_KEY)).toBe('token-b')
+    expect(JSON.parse(localStorage.getItem(USER_KEY))).toEqual({ id: 2, role: 1 })
   })
 
   it('refreshMe with no token → null and clear', async () => {

@@ -108,12 +108,17 @@ export const useSessionStore = defineStore('session', {
       }
       // 动态 import 避免 store ↔ http 循环依赖
       const { me } = await import('../api/user.js')
+      const requestToken = this.token
+      if (!requestToken) return null
       try {
         const user = await me()
-        this.setSession({ token: this.token, user })
+        if (this.token !== requestToken) return null
+        this.setSession({ token: requestToken, user })
         return user
       } catch {
-        this.clearSession()
+        if (this.token === requestToken) {
+          this.clearSession()
+        }
         return null
       }
     },

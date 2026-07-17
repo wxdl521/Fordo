@@ -125,6 +125,66 @@ describe('graphStore', () => {
     expect(store.error).toBe('')
   })
 
+  it('lets the current B owner cancel its request and clear a stale committed A graph', async () => {
+    const pending = deferred()
+    const owner = new AbortController()
+    fetchGraph.mockReturnValueOnce(pending.promise)
+    const store = useGraphStore()
+    store.$patch({
+      course: { id: 1, name: 'Course A' },
+      nodes: [{ nodeCode: 'A' }],
+      edges: [{ source: 'A', target: 'A2' }],
+      loadedCourseId: 1
+    })
+
+    const loading = store.load(2, { signal: owner.signal })
+    const graphSignal = fetchGraph.mock.calls[0][1].signal
+    owner.abort()
+
+    expect(graphSignal.aborted).toBe(true)
+    expect(store.loading).toBe(false)
+    expect(store.loadedCourseId).toBeNull()
+    expect(store.nodes).toEqual([])
+
+    pending.resolve({
+      course: { id: 2, name: 'Late B' },
+      nodes: [{ nodeCode: 'LATE-B' }],
+      edges: []
+    })
+    await loading
+    expect(store.loadedCourseId).toBeNull()
+  })
+
+  it('does not let course A owner abort cancel the newer course B graph request', async () => {
+    const courseA = deferred()
+    const courseB = deferred()
+    const ownerA = new AbortController()
+    const ownerB = new AbortController()
+    fetchGraph
+      .mockReturnValueOnce(courseA.promise)
+      .mockReturnValueOnce(courseB.promise)
+    const store = useGraphStore()
+
+    const loadingA = store.load(1, { signal: ownerA.signal })
+    const loadingB = store.load(2, { signal: ownerB.signal })
+    const graphBSignal = fetchGraph.mock.calls[1][1].signal
+    ownerA.abort()
+
+    expect(graphBSignal.aborted).toBe(false)
+
+    courseB.resolve({
+      course: { id: 2, name: 'Course B' },
+      nodes: [{ nodeCode: 'B' }],
+      edges: []
+    })
+    await loadingB
+    courseA.resolve({ course: { id: 1 }, nodes: [{ nodeCode: 'A' }], edges: [] })
+    await loadingA
+
+    expect(store.loadedCourseId).toBe(2)
+    expect(store.nodes).toEqual([{ nodeCode: 'B' }])
+  })
+
   it('publishes an ordinary error from the current request', async () => {
     fetchGraph.mockRejectedValueOnce(new Error('graph unavailable'))
     const store = useGraphStore()

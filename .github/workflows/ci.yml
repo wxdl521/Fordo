@@ -26,7 +26,11 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
           else
-            git diff --check HEAD^..HEAD
+            before="${{ github.event.before }}"
+            if [[ "$before" =~ ^0+$ ]]; then
+              before="$(git hash-object -t tree /dev/null)"
+            fi
+            git diff --check "$before..${{ github.sha }}"
           fi
 
       - name: Set up JDK 21
@@ -77,7 +81,11 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
           else
-            git diff --check HEAD^..HEAD
+            before="${{ github.event.before }}"
+            if [[ "$before" =~ ^0+$ ]]; then
+              before="$(git hash-object -t tree /dev/null)"
+            fi
+            git diff --check "$before..${{ github.sha }}"
           fi
 
       - name: Set up Node 20
@@ -125,7 +133,11 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
           else
-            git diff --check HEAD^..HEAD
+            before="${{ github.event.before }}"
+            if [[ "$before" =~ ^0+$ ]]; then
+              before="$(git hash-object -t tree /dev/null)"
+            fi
+            git diff --check "$before..${{ github.sha }}"
           fi
 
       - name: Set up Node 20

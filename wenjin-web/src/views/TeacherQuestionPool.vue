@@ -430,18 +430,6 @@ const tabDefs = computed(() => {
 
 const list = computed(() => data.value?.items || [])
 
-const nodeOptions = computed(() => {
-  const nodes = []
-  const seen = new Set()
-  list.value.forEach(q => {
-    if (q.mainNodeCode && !seen.has(q.mainNodeCode)) {
-      seen.add(q.mainNodeCode)
-      nodes.push({ code: q.mainNodeCode, name: q.mainNodeName })
-    }
-  })
-  return nodes.sort((a, b) => a.name.localeCompare(b.name))
-})
-
 const checkedCount = computed(() => Object.values(checked.value).filter(Boolean).length)
 
 const allChecked = computed(() => {
@@ -1138,42 +1126,12 @@ const pageStyle = {
   padding: '0 0 48px'
 }
 
-const headerStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  padding: '16px 32px',
-  borderBottom: '1px solid var(--line)',
-  background: 'var(--panel)'
-}
-
-const titleStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '12px',
-  fontSize: '15px'
-}
-
 const courseStyle = {
   fontSize: '13px',
   color: 'var(--text-mut)',
   padding: '2px 10px',
   border: '1px solid var(--line)',
   borderRadius: '6px'
-}
-
-const navStyle = {
-  display: 'flex',
-  gap: '16px'
-}
-
-const linkStyle = {
-  color: 'var(--text-mut)',
-  textDecoration: 'none',
-  fontSize: '13px',
-  padding: '6px 12px',
-  borderRadius: '6px',
-  transition: 'color 0.2s, background-color 0.2s'
 }
 
 const toolbarStyle = {

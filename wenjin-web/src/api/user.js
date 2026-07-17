@@ -1,13 +1,15 @@
 import { http } from './http.js'
 
 /** 注册（公开注册仅学生；不接受/不提交 role，防止客户端提权） */
-export function register({ username, password, realName }) {
-  return http.post('/register', { username, password, realName })
+export function register({ username, password, realName }, config) {
+  const body = { username, password, realName }
+  return config ? http.post('/register', body, config) : http.post('/register', body)
 }
 
 /** 登录 */
-export function login({ username, password }) {
-  return http.post('/login', { username, password })
+export function login({ username, password }, config) {
+  const body = { username, password }
+  return config ? http.post('/login', body, config) : http.post('/login', body)
 }
 
 /**

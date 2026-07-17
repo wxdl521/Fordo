@@ -388,7 +388,6 @@ const panStart = ref({ x: 0, y: 0 })
 const panStartPan = ref({ x: 0, y: 0 })
 const draggingNode = ref(null)
 const dragOffset = ref({ x: 0, y: 0 })
-const dragStartPos = ref({ x: 0, y: 0 })
 const wasDragged = ref(false)
 const spaceHeld = ref(false)
 const dragTick = ref(0) // 拖拽时递增，强制 nodeList 重新计算
@@ -528,7 +527,7 @@ function onSvgPointerMove(e) {
 }
 
 // SVG pointer up
-function onSvgPointerUp(e) {
+function onSvgPointerUp() {
   if (isPanning.value) {
     isPanning.value = false
   }
@@ -701,7 +700,6 @@ const ROOT_NODES = computed(() => {
 
 const ROOT_EDGES = computed(() => {
   if (!data.value || !layout.value) return []
-  const nodeSet = new Set(ROOT_NODES.value)
   const edges = new Set()
   // BFS 从根节点出发，沿 inEdges 找到所有到最低分节点的路径
   const L = layout.value
