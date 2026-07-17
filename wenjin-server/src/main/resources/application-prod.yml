@@ -23,6 +23,7 @@ wenjin:
     graph-reconcile-enabled: ${WENJIN_FEATURE_GRAPH_RECONCILE:false}
     ai-job-dispatch-enabled: ${WENJIN_FEATURE_AI_JOB_DISPATCH:false}
     agent-trace-enabled: ${WENJIN_FEATURE_AGENT_TRACE:false}
+    eval-enabled: ${WENJIN_FEATURE_EVAL:false}
 
 # Actuator 仅暴露无详情的健康检查
 management:

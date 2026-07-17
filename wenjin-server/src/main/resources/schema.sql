@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════
 --  问津 · 知识图谱驱动的个性化学习导航系统
---  本地空库重建快照（当前最终 DDL，含 V3–V10；共 25 张业务表）
+--  本地空库重建快照（当前最终 DDL，含 V3–V11；共 27 张业务表）
 --
 --  ⚠ 仅本地空库 / 会删数据 / 生产禁用
 --    · 本脚本含 DROP TABLE IF EXISTS，会清空目标库业务表数据。
---    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V10）。
+--    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V11）。
 --    · 新增版本化迁移（Vn）后，必须把最终 DDL 同步回本文件，保持本地快照一致。
 --    · 应用启动默认 spring.flyway.enabled=false（WENJIN_FLYWAY_ENABLED），
 --      普通应用账号只有 DML；发布流水线用 migrator 凭据单独跑迁移作业。
@@ -15,7 +15,8 @@
 --    3. 所有表、字段均带中文 COMMENT。
 --    4. V9 起建立命名物理外键与 sys_user.role CHECK；本地快照与 Flyway 最终态对齐。
 --    5. V10 增 agent_run / agent_step（无物理 FK，与迁移脚本一致）。
---    6. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--    6. V11 增 eval_scenario / eval_case_result（评测场景与结果，无物理 FK）。
+--    7. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -491,5 +492,38 @@ CREATE TABLE `agent_step` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_step_seq` (`run_id`, `seq`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 执行轨迹（step）【V10】';
+
+-- ───────────────────────────── 组：评测场景与结果【V11】 ─────────────────────────────
+
+DROP TABLE IF EXISTS `eval_case_result`;
+DROP TABLE IF EXISTS `eval_scenario`;
+CREATE TABLE `eval_scenario` (
+    `id`              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '场景 ID',
+    `code`            VARCHAR(32)  NOT NULL COMMENT '场景编码（如 S01）',
+    `title`           VARCHAR(100) NOT NULL COMMENT '场景标题',
+    `persona_json`    TEXT         NOT NULL COMMENT '画像 JSON',
+    `script_json`     TEXT         NOT NULL COMMENT '脚本轮次 JSON',
+    `assertions_json` TEXT         NOT NULL COMMENT '硬断言 + judge 维度 JSON',
+    `status`          TINYINT      NOT NULL DEFAULT 1 COMMENT '0=DISABLED,1=ENABLED,2=PENDING',
+    `pending_reason`  VARCHAR(64)  NULL COMMENT '如 M9-reflection',
+    `created_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_scenario_code` (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评测场景【V11】';
+
+CREATE TABLE `eval_case_result` (
+    `id`           BIGINT      NOT NULL AUTO_INCREMENT COMMENT '结果 ID',
+    `batch_id`     VARCHAR(64) NOT NULL COMMENT '批次 ID',
+    `scenario_id`  BIGINT      NOT NULL COMMENT '关联 eval_scenario.id',
+    `mode`         TINYINT     NOT NULL COMMENT '0=REPLAY,1=LIVE',
+    `hard_pass`    TINYINT     NOT NULL COMMENT '硬断言是否通过',
+    `judge_json`   TEXT        NULL COMMENT '各维度分与理由',
+    `judge_model`  VARCHAR(64) NULL COMMENT 'judge 模型标识',
+    `passed`       TINYINT     NOT NULL COMMENT '综合是否通过',
+    `run_id`       BIGINT      NULL COMMENT '关联 agent_run.id（可空）',
+    `created_at`   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_result_batch` (`batch_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评测结果【V11】';
 
 SET FOREIGN_KEY_CHECKS = 1;

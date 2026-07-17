@@ -1,0 +1,27 @@
+{
+  "code": "S06",
+  "title": "practice 预算耗尽",
+  "status": "ENABLED",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": [],
+    "note": "stub — 预算上限内行为 + 超限被 GUARD"
+  },
+  "script": [
+    {"user": "连续给我出题练习吧"}
+  ],
+  "hard": {
+    "mustCallTools": [],
+    "mustNotCallTools": [],
+    "maxToolCalls": 8,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "tool_sanity", "desc": "工具选择与参数是否合理", "threshold": 3},
+      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+    ]
+  }
+}

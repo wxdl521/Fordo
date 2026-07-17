@@ -22,4 +22,7 @@ public class FeatureFlagsProperties {
 
     /** Agent 执行轨迹埋点（agent_run / agent_step） */
     private boolean agentTraceEnabled = true;
+
+    /** 评测套件 / runner（M6；关闭时 EvalSuite 整体 skip） */
+    private boolean evalEnabled = true;
 }

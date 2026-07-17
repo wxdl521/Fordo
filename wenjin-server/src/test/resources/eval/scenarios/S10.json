@@ -1,0 +1,26 @@
+{
+  "code": "S10",
+  "title": "超长输入截断",
+  "status": "ENABLED",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": [],
+    "note": "stub — 截断标记 + 行为正常"
+  },
+  "script": [
+    {"user": "这是一段超长输入占位，实际跑时由夹具生成超长文本"}
+  ],
+  "hard": {
+    "mustCallTools": [],
+    "mustNotCallTools": [],
+    "maxToolCalls": 4,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+    ]
+  }
+}

@@ -110,6 +110,7 @@ wenjin:
     graph-reconcile-enabled: true
     ai-job-dispatch-enabled: true
     agent-trace-enabled: true                    # Agent 执行轨迹埋点
+    eval-enabled: true                           # 评测套件（M6）
   jobs:                                          # AI 异步作业 worker
     poll-interval-ms: 2000                       # 领取轮询间隔
     heartbeat-interval-ms: 30000

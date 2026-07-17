@@ -1,0 +1,28 @@
+{
+  "code": "S12",
+  "title": "换策略重讲",
+  "status": "PENDING",
+  "pendingReason": "M9-reflection",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": [],
+    "note": "stub PENDING(M9) — probe 错 → 二讲策略不同"
+  },
+  "script": [
+    {"user": "还是不懂，换个讲法"}
+  ],
+  "hard": {
+    "mustCallTools": [],
+    "mustNotCallTools": [],
+    "maxToolCalls": 6,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "guidance", "desc": "引导而非直接给答案", "threshold": 3},
+      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+    ]
+  }
+}

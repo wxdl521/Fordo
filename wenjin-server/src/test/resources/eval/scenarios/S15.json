@@ -1,0 +1,29 @@
+{
+  "code": "S15",
+  "title": "会话中切换节点",
+  "status": "ENABLED",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": [],
+    "note": "stub — 上下文与工具焦点跟随切换"
+  },
+  "script": [
+    {"user": "先讲一下用例图"},
+    {"user": "算了，换讲数据流图吧"}
+  ],
+  "hard": {
+    "mustCallTools": [],
+    "mustNotCallTools": [],
+    "maxToolCalls": 8,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "symptom_fit", "desc": "回应是否针对画像中的薄弱点", "threshold": 3},
+      {"key": "tool_sanity", "desc": "工具选择与参数是否合理", "threshold": 3},
+      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+    ]
+  }
+}

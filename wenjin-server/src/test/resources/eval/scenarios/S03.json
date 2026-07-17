@@ -1,0 +1,27 @@
+{
+  "code": "S03",
+  "title": "图谱外节点提问",
+  "status": "ENABLED",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": [],
+    "note": "stub — 响应节点码全在白名单；judge graph_truth≥4"
+  },
+  "script": [
+    {"user": "量子纠缠和本课图谱有什么关系？"}
+  ],
+  "hard": {
+    "mustCallTools": [],
+    "mustNotCallTools": [],
+    "maxToolCalls": 4,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "graph_truth", "desc": "是否编造图谱外节点/关系", "threshold": 4},
+      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "code": "S98",
+  "title": "阈值非法",
+  "persona": {"masteryOverrides": [], "reviewQueue": [], "note": "x"},
+  "script": [{"user": "hi"}],
+  "hard": {
+    "mustCallTools": [],
+    "mustNotCallTools": [],
+    "maxToolCalls": 1,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "expression", "desc": "表达", "threshold": 9}
+    ]
+  }
+}

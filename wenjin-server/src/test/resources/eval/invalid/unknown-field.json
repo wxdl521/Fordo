@@ -1,0 +1,20 @@
+{
+  "code": "S96",
+  "title": "未知字段",
+  "persona": {"masteryOverrides": [], "reviewQueue": [], "note": "x"},
+  "script": [{"user": "hi"}],
+  "hard": {
+    "mustCallTools": [],
+    "mustNotCallTools": [],
+    "maxToolCalls": 1,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "expression", "desc": "表达", "threshold": 3}
+    ]
+  },
+  "extraField": "not-allowed"
+}

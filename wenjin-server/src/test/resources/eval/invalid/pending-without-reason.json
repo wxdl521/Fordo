@@ -1,0 +1,20 @@
+{
+  "code": "S97",
+  "title": "PENDING 无原因",
+  "status": "PENDING",
+  "persona": {"masteryOverrides": [], "reviewQueue": [], "note": "x"},
+  "script": [{"user": "hi"}],
+  "hard": {
+    "mustCallTools": [],
+    "mustNotCallTools": [],
+    "maxToolCalls": 1,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "expression", "desc": "表达", "threshold": 3}
+    ]
+  }
+}

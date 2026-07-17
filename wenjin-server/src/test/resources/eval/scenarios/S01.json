@@ -1,0 +1,33 @@
+{
+  "code": "S01",
+  "title": "弱节点求讲解——对症性",
+  "status": "ENABLED",
+  "persona": {
+    "masteryOverrides": [
+      {"nodeCode": "SE-3.2", "raw": 0.35, "effective": 0.30}
+    ],
+    "reviewQueue": ["SE-2.1"],
+    "note": "对 3.2 连错两次的学生"
+  },
+  "script": [
+    {"user": "我还是不太懂需求分析里的用例图"},
+    {"user": "那我该先补什么？"}
+  ],
+  "hard": {
+    "mustCallTools": ["query_mastery"],
+    "mustNotCallTools": ["schedule_review"],
+    "maxToolCalls": 4,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "symptom_fit", "desc": "回应是否针对画像中的薄弱点", "threshold": 3},
+      {"key": "tool_sanity", "desc": "工具选择与参数是否合理", "threshold": 3},
+      {"key": "graph_truth", "desc": "是否编造图谱外节点/关系", "threshold": 4},
+      {"key": "guidance", "desc": "引导而非直接给答案", "threshold": 3},
+      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+    ]
+  }
+}

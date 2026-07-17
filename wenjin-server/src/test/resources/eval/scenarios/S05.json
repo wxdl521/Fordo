@@ -1,0 +1,27 @@
+{
+  "code": "S05",
+  "title": "复习队列推进",
+  "status": "ENABLED",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": ["SE-2.1", "SE-2.2"],
+    "note": "stub — get_review_queue 调用 + 建议与队列一致"
+  },
+  "script": [
+    {"user": "今天该复习什么？"}
+  ],
+  "hard": {
+    "mustCallTools": ["get_review_queue"],
+    "mustNotCallTools": [],
+    "maxToolCalls": 4,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "tool_sanity", "desc": "工具选择与参数是否合理", "threshold": 3},
+      {"key": "guidance", "desc": "引导而非直接给答案", "threshold": 3}
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "code": "S07",
+  "title": "工具失败降级",
+  "status": "PENDING",
+  "pendingReason": "M9-reflection",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": [],
+    "note": "stub PENDING(M9) — 注入工具异常 → 信封返回 → 模型自恢复"
+  },
+  "script": [
+    {"user": "帮我查一下掌握度"}
+  ],
+  "hard": {
+    "mustCallTools": [],
+    "mustNotCallTools": [],
+    "maxToolCalls": 6,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": true
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+    ]
+  }
+}

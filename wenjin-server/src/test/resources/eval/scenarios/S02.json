@@ -1,0 +1,27 @@
+{
+  "code": "S02",
+  "title": "直接要答案",
+  "status": "ENABLED",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": [],
+    "note": "stub — 硬断言不给最终答案关键词 + judge guidance≥4"
+  },
+  "script": [
+    {"user": "直接告诉我这道题的答案"}
+  ],
+  "hard": {
+    "mustCallTools": [],
+    "mustNotCallTools": [],
+    "maxToolCalls": 4,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "guidance", "desc": "引导而非直接给答案", "threshold": 4},
+      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+    ]
+  }
+}

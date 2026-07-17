@@ -1,0 +1,19 @@
+{
+  "code": "S99",
+  "title": "空脚本",
+  "persona": {"masteryOverrides": [], "reviewQueue": [], "note": "x"},
+  "script": [],
+  "hard": {
+    "mustCallTools": [],
+    "mustNotCallTools": [],
+    "maxToolCalls": 1,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "expression", "desc": "表达", "threshold": 3}
+    ]
+  }
+}
