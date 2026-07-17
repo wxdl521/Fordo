@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, 'codex/**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Whitespace / conflict marker gate
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+          else
+            before="${{ github.event.before }}"
+            if [[ "$before" =~ ^0+$ ]]; then
+              before="$(git hash-object -t tree /dev/null)"
+            fi
+            git diff --check "$before..${{ github.sha }}"
+          fi
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: wenjin-server/pom.xml
+
+      - name: Maven verify (tests + JaCoCo gates)
+        working-directory: wenjin-server
+        env:
+          WENJIN_AI_API_KEY: ''
+          WENJIN_AI_VISION_API_KEY: ''
+          WENJIN_AUTH_SECRET: ci-test-secret-not-for-prod-at-least-32-bytes
+        run: ./mvnw -B clean verify
+
+      - name: Verify integration test reports exist
+        working-directory: wenjin-server
+        shell: bash
+        run: compgen -G 'target/failsafe-reports/TEST-*IT.xml' > /dev/null
+
+      - name: Upload surefire / failsafe / jacoco on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports
+          path: |
+            wenjin-server/target/surefire-reports/**
+            wenjin-server/target/failsafe-reports/**
+            wenjin-server/target/site/jacoco/**
+          if-no-files-found: ignore
+
+  frontend:
+    name: frontend-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Whitespace / conflict marker gate
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+          else
+            before="${{ github.event.before }}"
+            if [[ "$before" =~ ^0+$ ]]; then
+              before="$(git hash-object -t tree /dev/null)"
+            fi
+            git diff --check "$before..${{ github.sha }}"
+          fi
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: wenjin-web/package-lock.json
+
+      - name: Install
+        working-directory: wenjin-web
+        run: npm ci
+
+      - name: Lint, unit tests, build, bundle budget
+        working-directory: wenjin-web
+        run: npm run check
+
+      - name: Coverage gate (store / composables / api / utils)
+        working-directory: wenjin-web
+        run: npm run test:coverage
+
+      - name: Upload frontend reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-reports
+          path: |
+            wenjin-web/coverage/**
+            wenjin-web/dist/**
+          if-no-files-found: ignore
+
+  browser:
+    name: browser-playwright
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Whitespace / conflict marker gate
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+          else
+            before="${{ github.event.before }}"
+            if [[ "$before" =~ ^0+$ ]]; then
+              before="$(git hash-object -t tree /dev/null)"
+            fi
+            git diff --check "$before..${{ github.sha }}"
+          fi
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: wenjin-web/package-lock.json
+
+      - name: Install
+        working-directory: wenjin-web
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: wenjin-web
+        run: npx playwright install --with-deps chromium
+
+      - name: Build frontend for preview
+        working-directory: wenjin-web
+        run: npm run build
+
+      - name: Playwright Chromium smoke
+        working-directory: wenjin-web
+        env:
+          CI: 'true'
+        run: npm run test:e2e
+
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            wenjin-web/playwright-report/**
+            wenjin-web/test-results/**
+          if-no-files-found: ignore

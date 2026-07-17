@@ -9,7 +9,7 @@
         <button
           v-if="started && !done"
           class="ad-exit-btn"
-          :disabled="abandoning"
+          :disabled="abandoning || submitting"
           @click="onAbandon"
         >退出诊断</button>
         <router-link v-else :to="mapLink" class="ad-exit-btn">返回地图</router-link>
@@ -92,8 +92,8 @@
 
       <button
         class="ad-btn-acc ad-submit"
-        :class="{ active: canSubmit }"
-        :disabled="!canSubmit || submitting"
+        :class="{ active: canSubmit && !submitting && !abandoning }"
+        :disabled="!canSubmit || submitting || abandoning"
         @click="submitAnswer"
       >{{ submitting ? '提交中…' : '提交本轮' }}</button>
 
@@ -105,21 +105,21 @@
 
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { startAdaptive, answerAdaptive, abandonAdaptive } from '../api/diagnostic.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
+import { useSessionStore } from '../store/session.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 import AdaptiveProgressRing from '../components/AdaptiveProgressRing.vue'
 import AdaptiveProbeCard from '../components/AdaptiveProbeCard.vue'
 
 const { courseId } = useStudentCourse()
 const router = useRouter()
-
-// 当前登录用户（约定同 Diagnostic.vue：localStorage wj_user，缺省 demo=2）
-function readUser() {
-  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
-}
-const currentUser = readUser()
-const DEMO_STUDENT_ID = currentUser?.id || 2
+const authSession = useSessionStore()
+if (!authSession.hydrated) authSession.hydrate()
+const { token: authToken, user: authUser } = storeToRefs(authSession)
+const authUserId = computed(() => authUser.value?.id ?? null)
 
 const courseQuery = computed(() => (courseId.value ? { courseId: courseId.value } : {}))
 const mapLink = computed(() => ({ path: '/map', query: courseQuery.value }))
@@ -149,6 +149,60 @@ const submitting = ref(false)
 const submitError = ref('')
 const abandoning = ref(false)
 const noCourse = ref(false)
+const startRequest = createLatestRequest()
+const answerRequest = createLatestRequest()
+const abandonRequest = createLatestRequest()
+let activeStartRevision = 0
+let activeOwner = null
+let disposed = false
+
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+}
+
+function captureOwner(id = courseId.value) {
+  return {
+    token: authToken.value,
+    userId: authUserId.value,
+    courseId: Number(id)
+  }
+}
+
+function isCurrentOwner(owner) {
+  return !disposed
+    && authToken.value === owner.token
+    && authUserId.value === owner.userId
+    && Number(courseId.value) === owner.courseId
+}
+
+function isCurrentStart(request, owner) {
+  return request.isCurrent() && isCurrentOwner(owner)
+}
+
+function isCurrentAdaptive(owner, revision, adaptiveSessionId) {
+  return isCurrentOwner(owner)
+    && startRequest.revision === revision
+    && activeStartRevision === revision
+    && activeOwner === owner
+    && sessionId.value === adaptiveSessionId
+}
+
+function resetAdaptiveState() {
+  sessionId.value = null
+  activeStartRevision = 0
+  activeOwner = null
+  done.value = false
+  started.value = false
+  probe.value = null
+  progress.value = { tested: 0, inferred: 0, unknown: 0, budgetLeft: 0 }
+  summary.value = null
+  questions.value = []
+  for (const key of Object.keys(answers)) delete answers[key]
+  askedCount.value = 0
+  submitting.value = false
+  submitError.value = ''
+  abandoning.value = false
+}
 
 // ─── 计算属性 ───────────────────────────────────────────────────────────────
 // 只有当前探针每道题都已选答案时才可提交
@@ -187,69 +241,92 @@ function pick(qIndex, optIndex) {
 
 // ─── 开始 ────────────────────────────────────────────────────────────────────
 async function load() {
+  if (disposed) return
+  const id = Number(courseId.value)
+  const owner = captureOwner(id)
+  const request = startRequest.next()
+  answerRequest.cancel()
+  abandonRequest.cancel()
+  resetAdaptiveState()
   // 无条件调用、守卫落在此处（不静默回落课程1）
-  if (!courseId.value) {
+  if (!(id > 0)) {
     noCourse.value = true
-    started.value = false
+    loading.value = false
     return
   }
   noCourse.value = false
   loading.value = true
   error.value = ''
   submitError.value = ''
-  askedCount.value = 0
-  started.value = false
   try {
-    const resp = await startAdaptive({ studentId: DEMO_STUDENT_ID, courseId: courseId.value })
+    const resp = await startAdaptive({ courseId: id }, { signal: request.signal })
+    if (!isCurrentStart(request, owner)) return
     sessionId.value = resp.sessionId
+    activeStartRevision = request.revision
+    activeOwner = owner
     started.value = true
     applyResponse(resp)
   } catch (e) {
+    if (!isCurrentStart(request, owner) || isAbortError(e)) return
     error.value = e.message || '未知错误'
   } finally {
-    loading.value = false
+    if (isCurrentStart(request, owner)) loading.value = false
   }
 }
 
 // ─── 逐探针提交 ──────────────────────────────────────────────────────────────
 async function submitAnswer() {
-  if (submitting.value || !canSubmit.value) return   // 防重入 + 未答满不提交
+  const owner = activeOwner
+  const revision = activeStartRevision
+  const adaptiveSessionId = sessionId.value
+  if (!owner || adaptiveSessionId == null || !isCurrentAdaptive(owner, revision, adaptiveSessionId)) {
+    submitError.value = '\u8bca\u65ad\u4f1a\u8bdd\u5df2\u5931\u6548\uff0c\u8bf7\u91cd\u65b0\u5f00\u59cb'
+    return
+  }
+  if (submitting.value || abandoning.value || !canSubmit.value) return
   submitting.value = true
   submitError.value = ''
+  const request = answerRequest.next()
   const count = questions.value.length
   const payload = {
-    studentId: DEMO_STUDENT_ID,
     answers: questions.value.map((q, i) => ({
       questionId: q.questionId,
       studentAnswer: q.optionKeys[answers[i]]   // 与固定卷 optionKey 同格式（如 'A'）
     }))
   }
   try {
-    const resp = await answerAdaptive(sessionId.value, payload)
+    const resp = await answerAdaptive(adaptiveSessionId, payload, { signal: request.signal })
+    if (!request.isCurrent() || !isCurrentAdaptive(owner, revision, adaptiveSessionId)) return
     askedCount.value += count           // 仅成功时累计，重试不重复计
     applyResponse(resp)
   } catch (e) {
+    if (!request.isCurrent() || !isCurrentAdaptive(owner, revision, adaptiveSessionId) || isAbortError(e)) return
     submitError.value = e.message || '未知错误'
   } finally {
-    submitting.value = false
+    if (request.isCurrent() && isCurrentAdaptive(owner, revision, adaptiveSessionId)) submitting.value = false
   }
 }
 
 // ─── 退出（放弃会话） ─────────────────────────────────────────────────────────
 async function onAbandon() {
-  if (abandoning.value) return
+  if (abandoning.value || submitting.value) return
   if (typeof window !== 'undefined' &&
       !window.confirm('确定退出本次快速诊断吗？已答部分不再继续。')) return
+  const owner = activeOwner
+  const revision = activeStartRevision
+  const adaptiveSessionId = sessionId.value
+  if (!owner || adaptiveSessionId == null || !isCurrentAdaptive(owner, revision, adaptiveSessionId)) return
+  const request = abandonRequest.next()
   abandoning.value = true
   try {
-    if (sessionId.value != null) {
-      await abandonAdaptive(sessionId.value, { studentId: DEMO_STUDENT_ID })
-    }
+    await abandonAdaptive(adaptiveSessionId, {}, { signal: request.signal })
   } catch {
     // abandon 失败不阻塞离开（会话悬挂无害，M2 无续答）
   } finally {
-    abandoning.value = false
-    router.push(mapLink.value)
+    if (request.isCurrent() && isCurrentAdaptive(owner, revision, adaptiveSessionId)) {
+      abandoning.value = false
+      router.push({ path: '/map', query: { courseId: owner.courseId } })
+    }
   }
 }
 
@@ -260,7 +337,7 @@ function goResult() {
 }
 
 // 无条件 load：courseId 为空时由 load 内守卫给出选课引导
-watch(courseId, () => load(), { immediate: true })
+watch([courseId, authToken, authUserId], () => load(), { immediate: true })
 
 // ─── 生命周期 ────────────────────────────────────────────────────────────────
 onMounted(() => {
@@ -286,7 +363,12 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  startRequest.cancel()
+  answerRequest.cancel()
+  abandonRequest.cancel()
   window.removeEventListener('resize', onResize)
+  if (window.__wjAdaptive?.load === load) delete window.__wjAdaptive
 })
 </script>
 

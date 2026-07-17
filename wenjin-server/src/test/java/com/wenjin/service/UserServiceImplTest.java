@@ -9,6 +9,7 @@ import com.wenjin.dto.UserVO;
 import com.wenjin.entity.SysUser;
 import com.wenjin.mapper.SysUserMapper;
 import com.wenjin.security.TokenService;
+import com.wenjin.security.UserRole;
 import com.wenjin.service.impl.UserServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -47,16 +48,42 @@ class UserServiceImplTest {
         req.setUsername("newuser");
         req.setPassword("pass123");
         req.setRealName("新同学");
-        req.setRole(2);
 
         UserVO vo = service().register(req);
 
         assertThat(vo.getUsername()).isEqualTo("newuser");
+        assertThat(vo.getRole()).isEqualTo(UserRole.STUDENT.code());
         ArgumentCaptor<SysUser> captor = ArgumentCaptor.forClass(SysUser.class);
         verify(userMapper).insert(captor.capture());
         String stored = captor.getValue().getPassword();
         assertThat(stored).startsWith("$2");           // 落库是 bcrypt 哈希
         assertThat(encoder.matches("pass123", stored)).isTrue();
+        assertThat(captor.getValue().getRole()).isEqualTo(UserRole.STUDENT.code());
+    }
+
+    /**
+     * 公开注册不得根据客户端 role 提权：即使传入遗留字段 role=1（教师），落库仍为学生。
+     */
+    @Test
+    void register_legacyTeacherRole_isIgnoredAndStudentIsPersisted() {
+        when(userMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
+        when(userMapper.insert(any(SysUser.class))).thenAnswer(inv -> {
+            ((SysUser) inv.getArgument(0)).setId(11L);
+            return 1;
+        });
+
+        RegisterRequest req = new RegisterRequest();
+        req.setUsername("new_student");
+        req.setPassword("safe-password-123");
+        req.setRealName("新学生");
+        req.setIgnoredRole(1);
+
+        UserVO vo = service().register(req);
+
+        assertThat(vo.getRole()).isEqualTo(UserRole.STUDENT.code());
+        ArgumentCaptor<SysUser> captor = ArgumentCaptor.forClass(SysUser.class);
+        verify(userMapper).insert(captor.capture());
+        assertThat(captor.getValue().getRole()).isEqualTo(UserRole.STUDENT.code());
     }
 
     @Test
@@ -66,7 +93,6 @@ class UserServiceImplTest {
         req.setUsername("demo_student");
         req.setPassword("pass");
         req.setRealName("test");
-        req.setRole(2);
         assertThatThrownBy(() -> service().register(req))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("用户名已存在");

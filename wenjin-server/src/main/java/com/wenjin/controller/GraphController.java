@@ -1,14 +1,16 @@
 package com.wenjin.controller;
 
 import com.wenjin.common.Result;
-import com.wenjin.config.AccessGuard;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.GraphDataVO;
+import com.wenjin.security.CurrentPrincipal;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.GraphService;
+import jakarta.validation.constraints.Positive;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/graph")
+@Validated
 public class GraphController {
 
     private final GraphService graphService;
@@ -27,17 +30,21 @@ public class GraphController {
     }
 
     /**
-     * 查询某课程的全部节点与边；带 studentId 时按学情染色，否则统一 unlearned。
-     * GET /api/graph/{courseId}?studentId=
+     * 查询某课程的全部节点与边。
+     * <ul>
+     *   <li>匿名：已发布课程的公共图谱（统一 unlearned 染色）</li>
+     *   <li>登录学生：掌握度染色由 principal 自动附加（不可由请求者指定他人 studentId）</li>
+     * </ul>
+     * GET /api/graph/{courseId}
      */
     @GetMapping("/{courseId}")
-    public Result<GraphDataVO> getGraph(@PathVariable("courseId") Long courseId,
-                                        @RequestParam(value = "studentId", required = false) Long studentId) {
-        // studentId 为 null 表示匿名看图（统一 unlearned 染色），不校验归属
-        if (studentId != null) {
-            AccessGuard.assertSelf(studentId);
+    public Result<GraphDataVO> getGraph(@PathVariable("courseId") @Positive Long courseId) {
+        Long masteryStudentId = null;
+        CurrentPrincipal principal = CurrentUser.getPrincipal();
+        if (principal != null && principal.isStudent()) {
+            masteryStudentId = principal.userId();
         }
-        courseService.assertAccessibleByStudent(studentId, courseId);
-        return Result.ok(graphService.getGraph(courseId, studentId));
+        courseService.assertAccessibleByStudent(masteryStudentId, courseId);
+        return Result.ok(graphService.getGraph(courseId, masteryStudentId));
     }
 }

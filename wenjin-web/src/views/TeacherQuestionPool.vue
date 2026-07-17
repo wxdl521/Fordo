@@ -56,14 +56,14 @@
           </select>
           <input v-model.number="genCount" type="number" min="1" max="20" :disabled="batchLoading" :style="numInputStyle" />
           <button @click="handleGenerate" :disabled="genLoading || batchLoading || !genNodeCode || !courseId" :style="toolBtnStyle">
-            {{ genLoading ? '生成中…' : '生成' }}
+            {{ genLoading ? `生成中… ${genProgress || 0}%` : '生成' }}
           </button>
         </div>
         <div v-if="genResult" :style="toolResultStyle">
           生成 <strong>{{ genResult.generated }}</strong> 题 · 去重 <strong>{{ genResult.duplicated }}</strong> · 丢弃 <strong>{{ genResult.dropped }}</strong>
           <span v-if="genResult.message" :style="{ marginLeft: '8px', color: 'var(--text-mut)' }">{{ genResult.message }}</span>
         </div>
-        <div v-if="genError" :style="toolErrorStyle">{{ genError }}</div>
+        <div v-if="genError" role="alert" :style="toolErrorStyle">{{ genError }}</div>
 
         <div :style="toolDividerStyle"></div>
 
@@ -92,9 +92,13 @@
         <div v-if="batchResult && batchResult.failed.length > 0" :style="batchFailListStyle">
           <div v-for="f in batchResult.failed" :key="f.nodeCode">{{ f.nodeCode }} · {{ f.name }}：{{ f.error }}</div>
         </div>
-        <div v-if="batchError" :style="toolErrorStyle">{{ batchError }}</div>
+        <div v-if="batchError" role="alert" :style="toolErrorStyle">{{ batchError }}</div>
 
-        <div v-if="graphNodes.length === 0 && courseId" :style="toolErrorStyle">
+        <div v-if="graphNodesLoading" :style="toolResultStyle">图谱节点加载中…</div>
+        <div v-if="graphNodesError" data-testid="graph-nodes-error" role="alert" :style="toolErrorStyle">
+          {{ graphNodesError }}
+        </div>
+        <div v-if="!graphNodesLoading && !graphNodesError && graphNodes.length === 0 && courseId" :style="toolErrorStyle">
           当前课程暂无图谱节点，请先在「图谱审核」页导入或生成图谱。
         </div>
         <div v-if="!courseId" :style="toolErrorStyle">
@@ -117,15 +121,15 @@
             <span v-else>{{ importFile.name }}</span>
           </div>
           <input ref="importInput" type="file" accept=".json,.xlsx,.xls" @change="handleImportSelect" :style="{ display: 'none' }" />
-          <button @click="handleImportFile" :disabled="importLoading || !importFile" :style="toolBtnStyle">
-            {{ importLoading ? '导入中…' : '导入' }}
+          <button @click="handleImportFile" :disabled="importJobLoading || importLoading || !importFile" :style="toolBtnStyle">
+            {{ (importJobLoading || importLoading) ? `导入中… ${importJobProgress || 0}%` : '导入' }}
           </button>
         </div>
         <div v-if="importResult" :style="toolResultStyle">
           导入 <strong>{{ importResult.imported }}</strong> 题 · 跳过 <strong>{{ importResult.skipped }}</strong> 题
           <span v-if="importResult.aiCleaned" :style="{ marginLeft: '8px', color: 'var(--accent)' }">（AI 清洗）</span>
         </div>
-        <div v-if="importError" :style="toolErrorStyle">{{ importError }}</div>
+        <div v-if="importError" role="alert" :style="toolErrorStyle">{{ importError }}</div>
       </div>
 
       <!-- 标注 -->
@@ -134,12 +138,12 @@
         <textarea v-model="annotateJson" :style="textareaStyle" rows="6" spellcheck="false" placeholder="粘贴 AnnotateRequest JSON: { items: [{ stem, options }] }"></textarea>
         <div :style="toolRowStyle">
           <button @click="handleAnnotate" :disabled="annotateLoading" :style="toolBtnStyle">
-            {{ annotateLoading ? '标注中…' : '标注' }}
+            {{ annotateLoading ? `标注中… ${annotateProgress || 0}%` : '标注' }}
           </button>
           <span v-if="annotateResult" :style="toolResultStyle">
             标注 <strong>{{ annotateResult.length }}</strong> 题，落库 <strong>{{ annotateResult.filter(r => r.persisted).length }}</strong> 题
           </span>
-          <span v-if="annotateError" :style="toolErrorStyle">{{ annotateError }}</span>
+          <span v-if="annotateError" role="alert" :style="toolErrorStyle">{{ annotateError }}</span>
         </div>
       </div>
     </div>
@@ -154,7 +158,16 @@
 
     <!-- 全选行 -->
     <div v-if="tab === 0 && list.length > 0" :style="selectAllRowStyle">
-      <div @click="toggleAll" :style="checkboxStyle(allChecked)">
+      <div
+        role="checkbox"
+        tabindex="0"
+        :aria-checked="allChecked ? 'true' : 'false'"
+        aria-label="全选当前页"
+        @click="toggleAll"
+        @keydown.enter.prevent="toggleAll"
+        @keydown.space.prevent="toggleAll"
+        :style="checkboxStyle(allChecked)"
+      >
         {{ allChecked ? '✓' : '' }}
       </div>
       <span @click="toggleAll" :style="selectAllTextStyle">全选当前页</span>
@@ -163,7 +176,17 @@
     <!-- 题目列表 -->
     <div :style="listStyle">
       <div v-for="(q, idx) in list" :key="q.id" :style="cardStyle(idx, q)">
-        <div @click="toggleOne(q)" :style="checkboxStyle(checked[q.id], q.status !== 0)">
+        <div
+          role="checkbox"
+          :tabindex="q.status !== 0 ? -1 : 0"
+          :aria-checked="checked[q.id] ? 'true' : 'false'"
+          :aria-disabled="q.status !== 0 ? 'true' : 'false'"
+          :aria-label="`选择题目 ${q.id}`"
+          @click="toggleOne(q)"
+          @keydown.enter.prevent="q.status === 0 && toggleOne(q)"
+          @keydown.space.prevent="q.status === 0 && toggleOne(q)"
+          :style="checkboxStyle(checked[q.id], q.status !== 0)"
+        >
           {{ checked[q.id] ? '✓' : '' }}
         </div>
         <div :style="contentStyle">
@@ -202,8 +225,12 @@
       </div>
     </div>
 
+    <div v-if="loadError" data-testid="question-load-error" role="alert" :style="toolErrorStyle">
+      {{ loadError }}
+    </div>
+
     <!-- 空态 -->
-    <div v-if="!loading && list.length === 0" :style="emptyStyle">
+    <div v-if="!loading && !loadError && list.length === 0" :style="emptyStyle">
       <div :style="emptyTitleStyle">此处无题</div>
       <div :style="emptyDescStyle">当前筛选条件下没有题目。</div>
     </div>
@@ -221,13 +248,69 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { fetchQuestions, reviewQuestions, fetchTeacherGraph, reviewAllQuestions } from '../api/teacher.js'
 import { generateQuestions, annotateQuestions, importQuestionJson, importQuestionExcel } from '../api/admin.js'
 import { useTeacherCourse } from '../composables/useTeacherCourse.js'
+import { useJob } from '../composables/useJob.js'
+import { cancelJob, getJob, isJobSucceeded } from '../api/jobs.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 
 const { currentCourse, courseId } = useTeacherCourse()
 const optionKeys = ['A', 'B', 'C', 'D']
+
+/** 单节点 AI 出题作业 */
+const {
+  loading: genLoading,
+  progress: genProgress,
+  start: startGenJob
+} = useJob({
+  courseId,
+  onSuccess: (j) => {
+    genResult.value = j?.result || null
+    genError.value = ''
+    load()
+  },
+  onError: (e) => {
+    genError.value = e?.message || '出题失败'
+  }
+})
+
+/** 标注作业 */
+const {
+  loading: annotateLoading,
+  progress: annotateProgress,
+  start: startAnnotateJob
+} = useJob({
+  courseId,
+  onSuccess: (j) => {
+    annotateResult.value = j?.result || []
+    annotateError.value = ''
+    load()
+  },
+  onError: (e) => {
+    annotateError.value = e?.message || '标注失败'
+  }
+})
+
+/** Excel 导入作业 */
+const {
+  loading: importJobLoading,
+  progress: importJobProgress,
+  start: startImportJob
+} = useJob({
+  courseId,
+  onSuccess: (j) => {
+    importResult.value = j?.result || null
+    importError.value = ''
+    load()
+  },
+  onError: (e) => {
+    importError.value = e?.message || '导入失败'
+  }
+})
+
+
 
 // ── 状态 ──
 const tab = ref(0) // 0=待审 1=已通过 2=已驳回
@@ -238,6 +321,9 @@ const size = ref(20)
 const checked = ref({})
 const data = ref(null)
 const loading = ref(false)
+const loadError = ref('')
+const questionsRequest = createLatestRequest()
+let disposed = false
 
 const confOptions = [
   { value: '', label: '全部' },
@@ -249,9 +335,11 @@ const confOptions = [
 // ── 批量工具状态 ──
 const showTools = ref(false)
 const graphNodes = ref([]) // [{nodeCode, name, chapter}]
+const graphNodesLoading = ref(false)
+const graphNodesError = ref('')
+const graphNodesRequest = createLatestRequest()
 const genNodeCode = ref('')
 const genCount = ref(5)
-const genLoading = ref(false)
 const genError = ref('')
 const genResult = ref(null)
 const batchCountPerNode = ref(3)
@@ -259,18 +347,70 @@ const batchLoading = ref(false)
 const batchProgress = ref(null)
 const batchResult = ref(null)
 const batchError = ref('')
-let batchAbort = false
+let batchCancelRequested = false
+let batchCancelAccepted = false
+let batchCancelFailed = false
+let activeBatchJobId = null
+let activeBatchCancel = null
+let batchActionCourseId = null
+let batchRunSequence = 0
+let activeBatchRunToken = null
 const importLoading = ref(false)
 const importError = ref('')
 const importResult = ref(null)
 const importFile = ref(null)
 const importDrag = ref(false)
 const annotateJson = ref('{\n  "items": [\n    {\n      "stem": "题目内容",\n      "options": [\n        { "key": "A", "text": "选项A", "correct": true },\n        { "key": "B", "text": "选项B", "correct": false }\n      ]\n    }\n  ]\n}')
-const annotateLoading = ref(false)
 const annotateError = ref('')
 const annotateResult = ref(null)
 const approveAllLoading = ref(false)
 const approveAllMessage = ref('')
+
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+}
+
+function isActiveCourse(id) {
+  return !disposed && Number(courseId.value) === Number(id)
+}
+
+function isActiveBatchRun(id, runToken) {
+  return isActiveCourse(id)
+    && Number(batchActionCourseId) === Number(id)
+    && activeBatchRunToken === runToken
+}
+
+function invalidateBatchRun(expectedRunToken = null) {
+  if (expectedRunToken != null && activeBatchRunToken !== expectedRunToken) return false
+  batchRunSequence += 1
+  activeBatchRunToken = null
+  batchActionCourseId = null
+  activeBatchJobId = null
+  activeBatchCancel = null
+  return true
+}
+
+function resetCourseActionUiState() {
+  checked.value = {}
+  genResult.value = null
+  genError.value = ''
+  batchLoading.value = false
+  batchProgress.value = null
+  batchResult.value = null
+  batchError.value = ''
+  batchCancelRequested = false
+  batchCancelAccepted = false
+  batchCancelFailed = false
+  importLoading.value = false
+  importResult.value = null
+  importError.value = ''
+  importFile.value = null
+  importDrag.value = false
+  annotateResult.value = null
+  annotateError.value = ''
+  approveAllLoading.value = false
+  approveAllMessage.value = ''
+}
 
 // ── 计算属性 ──
 const pendingCount = computed(() => {
@@ -290,18 +430,6 @@ const tabDefs = computed(() => {
 
 const list = computed(() => data.value?.items || [])
 
-const nodeOptions = computed(() => {
-  const nodes = []
-  const seen = new Set()
-  list.value.forEach(q => {
-    if (q.mainNodeCode && !seen.has(q.mainNodeCode)) {
-      seen.add(q.mainNodeCode)
-      nodes.push({ code: q.mainNodeCode, name: q.mainNodeName })
-    }
-  })
-  return nodes.sort((a, b) => a.name.localeCompare(b.name))
-})
-
 const checkedCount = computed(() => Object.values(checked.value).filter(Boolean).length)
 
 const allChecked = computed(() => {
@@ -316,37 +444,60 @@ const totalPages = computed(() => {
 
 // ── 数据加载 ──
 async function load() {
-  if (!courseId.value) {
+  if (disposed) return
+  const id = Number(courseId.value)
+  if (!(id > 0)) {
+    questionsRequest.cancel()
     data.value = null
+    loading.value = false
+    loadError.value = ''
     return
   }
+  const params = {
+    courseId: id,
+    status: tab.value,
+    conf: conf.value || undefined,
+    nodeCode: nodeCode.value || undefined,
+    page: page.value,
+    size: size.value
+  }
+  const request = questionsRequest.next()
   loading.value = true
+  loadError.value = ''
+  data.value = null
   try {
-    const res = await fetchQuestions({
-      courseId: courseId.value,
-      status: tab.value,
-      conf: conf.value || undefined,
-      nodeCode: nodeCode.value || undefined,
-      page: page.value,
-      size: size.value
-    })
+    const res = await fetchQuestions(params, { signal: request.signal })
+    if (!request.isCurrent() || !isActiveCourse(id)) return
     data.value = res
   } catch (err) {
+    if (!request.isCurrent() || !isActiveCourse(id) || isAbortError(err)) return
     console.error('加载题目失败', err)
+    loadError.value = err?.message || '加载题目失败'
   } finally {
-    loading.value = false
+    if (request.isCurrent() && isActiveCourse(id)) loading.value = false
   }
 }
 
 // ── 加载图谱节点 ──
 async function loadGraphNodes() {
-  if (!courseId.value) {
+  if (disposed) return
+  const id = Number(courseId.value)
+  if (!(id > 0)) {
+    graphNodesRequest.cancel()
     graphNodes.value = []
     genNodeCode.value = ''
+    graphNodesLoading.value = false
+    graphNodesError.value = ''
     return
   }
+  const request = graphNodesRequest.next()
+  graphNodesLoading.value = true
+  graphNodesError.value = ''
+  graphNodes.value = []
+  genNodeCode.value = ''
   try {
-    const graph = await fetchTeacherGraph(courseId.value)
+    const graph = await fetchTeacherGraph(id, { signal: request.signal })
+    if (!request.isCurrent() || !isActiveCourse(id)) return
     graphNodes.value = (graph.nodes || []).sort((a, b) => a.nodeCode.localeCompare(b.nodeCode))
     if (graphNodes.value.length > 0) {
       const stillValid = graphNodes.value.some(n => n.nodeCode === genNodeCode.value)
@@ -355,9 +506,13 @@ async function loadGraphNodes() {
       genNodeCode.value = ''
     }
   } catch (err) {
+    if (!request.isCurrent() || !isActiveCourse(id) || isAbortError(err)) return
     console.error('加载图谱节点失败', err)
     graphNodes.value = []
     genNodeCode.value = ''
+    graphNodesError.value = err?.message || '加载图谱节点失败'
+  } finally {
+    if (request.isCurrent() && isActiveCourse(id)) graphNodesLoading.value = false
   }
 }
 
@@ -367,7 +522,13 @@ function clampCount(n, fallback = 5) {
   return Math.min(20, Math.max(1, Math.round(v)))
 }
 
-// ── AI 出题（单节点）──
+function createActionKey() {
+  return typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID().replace(/-/g, '')
+    : `k${Date.now()}${Math.random().toString(16).slice(2)}`
+}
+
+// ── AI 出题（单节点，可恢复 job）──
 async function handleGenerate() {
   if (!courseId.value) {
     genError.value = '请先在「图谱审核」页选择或新增课程'
@@ -377,16 +538,115 @@ async function handleGenerate() {
     genError.value = '请先选择知识点'
     return
   }
-  genLoading.value = true
   genError.value = ''
   genResult.value = null
+  const count = clampCount(genCount.value)
+  const node = genNodeCode.value
+  const cid = Number(courseId.value)
   try {
-    genResult.value = await generateQuestions(courseId.value, genNodeCode.value, clampCount(genCount.value))
-    await load()
+    await startGenJob(
+      (headers) => generateQuestions(cid, node, count, { headers }),
+      { courseId: cid }
+    )
   } catch (e) {
+    if (!isActiveCourse(cid)) return
     genError.value = e.message || '出题失败'
+  }
+}
+
+/**
+ * 等待单个 generate job 终态（批量串行用，不走共享 genJob 避免互相抢 epoch）
+ */
+async function waitGenerateJob(cid, runToken, node, count) {
+  const requestKey = createActionKey()
+  const created = await generateQuestions(cid, node, count, {
+    headers: { 'Idempotency-Key': requestKey }
+  })
+  if (!isActiveBatchRun(cid, runToken)) return null
+  if (created?.id == null) throw new Error('出题作业未返回 ID')
+
+  const jobId = created.id
+  activeBatchJobId = jobId
+  let latest = created
+  try {
+    if (batchCancelRequested && !batchCancelFailed) {
+      try {
+        latest = (await requestActiveBatchCancel(cid, runToken)) || latest
+        if (!isActiveBatchRun(cid, runToken)) return null
+      } catch (e) {
+        if (!isActiveBatchRun(cid, runToken)) return null
+        batchError.value = e?.message || '取消作业失败'
+      }
+    }
+
+    const deadline = Date.now() + 30 * 60 * 1000
+    while (Date.now() < deadline) {
+      if (!isActiveBatchRun(cid, runToken)) return null
+      if (isJobSucceeded(latest)) return latest.result || {}
+      if (latest.status === 4) {
+        if (batchCancelRequested && batchCancelAccepted) {
+          const cancelled = new Error('已取消')
+          cancelled.code = 'BATCH_CANCELLED'
+          throw cancelled
+        }
+        throw new Error(latest.errorCode || '出题失败')
+      }
+      if (latest.status === 3) {
+        throw new Error(latest.errorCode || '出题失败')
+      }
+
+      if (batchCancelRequested && !batchCancelAccepted && !batchCancelFailed) {
+        try {
+          latest = (await requestActiveBatchCancel(cid, runToken)) || latest
+          if (!isActiveBatchRun(cid, runToken)) return null
+          continue
+        } catch (e) {
+          if (!isActiveBatchRun(cid, runToken)) return null
+          batchError.value = e?.message || '取消作业失败'
+        }
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      if (!isActiveBatchRun(cid, runToken)) return null
+      latest = await getJob(jobId)
+      if (!isActiveBatchRun(cid, runToken)) return null
+    }
+    throw new Error('出题超时')
   } finally {
-    genLoading.value = false
+    if (isActiveBatchRun(cid, runToken) && activeBatchJobId === jobId) activeBatchJobId = null
+    if (isActiveBatchRun(cid, runToken) && activeBatchCancel?.id === jobId) activeBatchCancel = null
+  }
+}
+
+async function requestActiveBatchCancel(cid, runToken) {
+  if (!isActiveBatchRun(cid, runToken)) return null
+  const jobId = activeBatchJobId
+  if (jobId == null) return null
+  if (
+    activeBatchCancel?.id === jobId
+    && Number(activeBatchCancel.courseId) === Number(cid)
+    && activeBatchCancel.runToken === runToken
+  ) {
+    return activeBatchCancel.promise
+  }
+
+  const entry = {
+    id: jobId,
+    courseId: cid,
+    runToken,
+    promise: cancelJob(jobId)
+  }
+  activeBatchCancel = entry
+  try {
+    const updated = await entry.promise
+    if (!isActiveBatchRun(cid, runToken)) return updated
+    if (activeBatchJobId === jobId) batchCancelAccepted = true
+    return updated
+  } catch (e) {
+    if (isActiveBatchRun(cid, runToken) && activeBatchJobId === jobId) batchCancelFailed = true
+    throw e
+  } finally {
+    if (isActiveBatchRun(cid, runToken) && activeBatchCancel === entry) activeBatchCancel = null
   }
 }
 
@@ -401,23 +661,29 @@ async function handleBatchGenerate() {
     return
   }
 
+  const cid = Number(courseId.value)
+  const nodes = graphNodes.value.slice()
   const count = clampCount(batchCountPerNode.value, 3)
-  const total = graphNodes.value.length
+  const total = nodes.length
   if (!confirm(`将对全部 ${total} 个节点各生成 ${count} 道题，耗时可能较长，是否继续？`)) return
 
+  const runToken = ++batchRunSequence
+  activeBatchRunToken = runToken
+  batchActionCourseId = cid
   batchLoading.value = true
-  batchAbort = false
+  batchCancelRequested = false
+  batchCancelAccepted = false
+  batchCancelFailed = false
+  activeBatchJobId = null
+  activeBatchCancel = null
   batchError.value = ''
   batchResult.value = { generated: 0, dropped: 0, duplicated: 0, failed: [], cancelled: false }
   genResult.value = null
   genError.value = ''
-
-  for (let i = 0; i < graphNodes.value.length; i++) {
-    if (batchAbort) {
-      batchResult.value.cancelled = true
-      break
-    }
-    const node = graphNodes.value[i]
+  for (let i = 0; i < nodes.length; i++) {
+    if (!isActiveBatchRun(cid, runToken)) return
+    if (batchCancelRequested) break
+    const node = nodes[i]
     batchProgress.value = {
       index: i + 1,
       total,
@@ -425,11 +691,18 @@ async function handleBatchGenerate() {
       nodeName: node.name
     }
     try {
-      const res = await generateQuestions(courseId.value, node.nodeCode, count)
+      const res = await waitGenerateJob(cid, runToken, node.nodeCode, count)
+      if (!isActiveBatchRun(cid, runToken) || res == null) return
       batchResult.value.generated += res.generated || 0
       batchResult.value.dropped += res.dropped || 0
       batchResult.value.duplicated += res.duplicated || 0
+      if (batchCancelRequested) break
     } catch (e) {
+      if (!isActiveBatchRun(cid, runToken)) return
+      if (e?.code === 'BATCH_CANCELLED') {
+        batchResult.value.cancelled = true
+        break
+      }
       batchResult.value.failed.push({
         nodeCode: node.nodeCode,
         name: node.name,
@@ -438,13 +711,31 @@ async function handleBatchGenerate() {
     }
   }
 
+  if (!isActiveBatchRun(cid, runToken)) return
   batchProgress.value = null
   batchLoading.value = false
+  invalidateBatchRun(runToken)
   await load()
+  if (!isActiveCourse(cid)) return
 }
 
-function cancelBatchGenerate() {
-  batchAbort = true
+async function cancelBatchGenerate() {
+  const cid = Number(batchActionCourseId)
+  const runToken = activeBatchRunToken
+  if (!isActiveBatchRun(cid, runToken) || !batchLoading.value || batchCancelRequested) return
+  batchCancelRequested = true
+  if (activeBatchJobId == null) return
+
+  try {
+    const updated = await requestActiveBatchCancel(cid, runToken)
+    if (!isActiveBatchRun(cid, runToken)) return
+    if (updated?.status === 4 && batchResult.value) {
+      batchResult.value.cancelled = true
+    }
+  } catch (e) {
+    if (!isActiveBatchRun(cid, runToken)) return
+    batchError.value = e?.message || '取消作业失败'
+  }
 }
 
 // ── 导入题库 ──
@@ -461,27 +752,36 @@ function handleImportDrop(e) {
 
 async function handleImportFile() {
   if (!importFile.value) return
-  importLoading.value = true
+  const file = importFile.value
+  const cid = Number(courseId.value)
+  if (!isActiveCourse(cid)) return
   importError.value = ''
   importResult.value = null
+  const isExcel = /\.(xlsx?|xls)$/i.test(file.name)
   try {
-    const isExcel = /\.(xlsx?|xls)$/i.test(importFile.value.name)
     if (isExcel) {
-      importResult.value = await importQuestionExcel(courseId.value, importFile.value)
+      await startImportJob(
+        (headers) => importQuestionExcel(cid, file, { headers }),
+        { courseId: cid }
+      )
     } else {
-      importResult.value = await importQuestionJson(courseId.value, importFile.value)
+      importLoading.value = true
+      const result = await importQuestionJson(cid, file)
+      if (!isActiveCourse(cid)) return
+      importResult.value = result
+      await load()
+      if (!isActiveCourse(cid)) return
+      importLoading.value = false
     }
-    await load()
   } catch (e) {
+    if (!isActiveCourse(cid)) return
     importError.value = e.message || '导入失败'
-  } finally {
     importLoading.value = false
   }
 }
 
 // ── 标注 ──
 async function handleAnnotate() {
-  annotateLoading.value = true
   annotateError.value = ''
   annotateResult.value = null
   let parsed
@@ -489,16 +789,17 @@ async function handleAnnotate() {
     parsed = JSON.parse(annotateJson.value)
   } catch {
     annotateError.value = 'JSON 格式有误'
-    annotateLoading.value = false
     return
   }
+  const cid = Number(courseId.value)
   try {
-    annotateResult.value = await annotateQuestions(courseId.value, parsed)
-    await load()
+    await startAnnotateJob(
+      (headers) => annotateQuestions(cid, parsed, { headers }),
+      { courseId: cid }
+    )
   } catch (e) {
+    if (!isActiveCourse(cid)) return
     annotateError.value = e.message || '标注失败'
-  } finally {
-    annotateLoading.value = false
   }
 }
 
@@ -537,8 +838,11 @@ function clearChecked() {
 }
 
 async function review(ids, action) {
+  const id = Number(courseId.value)
+  if (disposed || !(id > 0)) return
   try {
-    await reviewQuestions(courseId.value, ids, action)
+    await reviewQuestions(id, ids, action)
+    if (!isActiveCourse(id)) return
     checked.value = {}
     await load()
   } catch (err) {
@@ -549,6 +853,7 @@ async function review(ids, action) {
 // T6: 服务端全量审批 — 单次请求，避免前端分页漂移漏审/重审
 async function handleApproveAll() {
   if (!courseId.value || pendingCount.value === 0) return
+  const cid = Number(courseId.value)
 
   const scope = hasReviewFilter.value ? '当前筛选条件下' : '全部'
   if (!confirm(`确定将${scope}的 ${pendingCount.value} 道待审核题目全部通过吗？`)) return
@@ -557,19 +862,22 @@ async function handleApproveAll() {
   approveAllMessage.value = ''
   try {
     // http 拦截器已剥 Result 信封，affected 直接是数字
-    const affected = await reviewAllQuestions(courseId.value, {
+    const affected = await reviewAllQuestions(cid, {
       status: 0,
       conf: conf.value || undefined,
       nodeCode: nodeCode.value || undefined,
       action: 'pass'
     })
+    if (!isActiveCourse(cid)) return
     checked.value = {}
     await load()
+    if (!isActiveCourse(cid)) return
     approveAllMessage.value = `已通过 ${affected} 题`
   } catch (e) {
+    if (!isActiveCourse(cid)) return
     approveAllMessage.value = e.message || '批量审批失败'
   } finally {
-    approveAllLoading.value = false
+    if (isActiveCourse(cid)) approveAllLoading.value = false
   }
 }
 
@@ -614,12 +922,22 @@ watch([tab, conf, nodeCode, page], () => {
   load()
 })
 
-watch(courseId, (id) => {
-  if (id) {
-    load()
-    loadGraphNodes()
+watch(courseId, (next, previous) => {
+  if (Number(next) !== Number(previous)) {
+    invalidateBatchRun()
+    resetCourseActionUiState()
   }
+  load()
+  loadGraphNodes()
 }, { immediate: true })
+
+onUnmounted(() => {
+  disposed = true
+  invalidateBatchRun()
+  questionsRequest.cancel()
+  graphNodesRequest.cancel()
+  if (window.__wjTeacherQuestions?.load === load) delete window.__wjTeacherQuestions
+})
 
 // ── DEV 钩子 ──
 if (import.meta.env.DEV) {
@@ -808,42 +1126,12 @@ const pageStyle = {
   padding: '0 0 48px'
 }
 
-const headerStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  padding: '16px 32px',
-  borderBottom: '1px solid var(--line)',
-  background: 'var(--panel)'
-}
-
-const titleStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '12px',
-  fontSize: '15px'
-}
-
 const courseStyle = {
   fontSize: '13px',
   color: 'var(--text-mut)',
   padding: '2px 10px',
   border: '1px solid var(--line)',
   borderRadius: '6px'
-}
-
-const navStyle = {
-  display: 'flex',
-  gap: '16px'
-}
-
-const linkStyle = {
-  color: 'var(--text-mut)',
-  textDecoration: 'none',
-  fontSize: '13px',
-  padding: '6px 12px',
-  borderRadius: '6px',
-  transition: 'color 0.2s, background-color 0.2s'
 }
 
 const toolbarStyle = {

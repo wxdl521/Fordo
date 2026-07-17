@@ -2,6 +2,7 @@ package com.wenjin.controller;
 
 import com.wenjin.common.Result;
 import com.wenjin.config.AccessGuard;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.PaperVO;
 import com.wenjin.dto.SubmitRequest;
@@ -9,6 +10,9 @@ import com.wenjin.dto.SubmitResult;
 import com.wenjin.service.CourseService;
 import com.wenjin.service.DiagnosticResultService;
 import com.wenjin.service.DiagnosticService;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -21,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/diagnostic")
+@Validated
 public class DiagnosticController {
 
     private final DiagnosticService diagnosticService;
@@ -40,32 +45,38 @@ public class DiagnosticController {
      * GET /api/diagnostic/paper?courseId={courseId}
      */
     @GetMapping("/paper")
-    public Result<PaperVO> paper(@RequestParam("courseId") Long courseId) {
+    public Result<PaperVO> paper(@RequestParam("courseId") @Positive Long courseId) {
+        CurrentUser.requireStudent();
         courseService.assertAccessibleByStudent(null, courseId);
         return Result.ok(diagnosticService.composePaper(courseId));
     }
 
     /**
-     * 学生交卷判分：逐题比对正确答案，落库 answer_record，返回得分明细。
+     * 学生交卷判分：按 sessionToken 绑定冻结会话，精确题集匹配后判分。
      * POST /api/diagnostic/submit
      */
     @PostMapping("/submit")
-    public Result<SubmitResult> submit(@RequestBody SubmitRequest req) {
-        // 交卷会写 answer_record / 掌握度——必须绑定本人，否则可替他人交卷污染其学情
-        AccessGuard.assertSelf(req.getStudentId());
-        courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
+    public Result<SubmitResult> submit(@Valid @RequestBody SubmitRequest req) {
+        // 身份一律从 principal 派生；可选 body.studentId 仅用于 AccessGuard 自检
+        long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
+        req.setStudentId(studentId);
+        // 课程访问：优先用 body.courseId；缺省时由 service 按会话 course_id 约束
+        if (req.getCourseId() != null) {
+            courseService.assertAccessibleByStudent(studentId, req.getCourseId());
+        }
         return Result.ok(diagnosticService.submit(req));
     }
 
     /**
      * 诊断回溯结果（自动选最下游薄弱点为卡点）。
-     * GET /api/diagnostic/result?studentId=&courseId=
+     * GET /api/diagnostic/result?courseId=  （可选兼容参数 studentId）
      */
     @GetMapping("/result")
-    public Result<DiagnosticResultVO> result(@RequestParam("studentId") Long studentId,
-                                             @RequestParam("courseId") Long courseId) {
-        AccessGuard.assertSelf(studentId);
-        courseService.assertAccessibleByStudent(studentId, courseId);
-        return Result.ok(diagnosticResultService.getResult(studentId, courseId));
+    public Result<DiagnosticResultVO> result(
+            @RequestParam(value = "studentId", required = false) Long studentId,
+            @RequestParam("courseId") @Positive Long courseId) {
+        long id = AccessGuard.requireSelfStudent(studentId);
+        courseService.assertAccessibleByStudent(id, courseId);
+        return Result.ok(diagnosticResultService.getResult(id, courseId));
     }
 }

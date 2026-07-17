@@ -1,17 +1,27 @@
 import { http } from './http.js'
 
 // ── 图谱审核 ──
-export function fetchTeacherGraph(courseId) {
-  return http.get('/teacher/graph', { params: { courseId } })
+export function fetchTeacherGraph(courseId, config = {}) {
+  return http.get('/teacher/graph', {
+    ...config,
+    params: { ...config.params, courseId }
+  })
 }
-export function fetchPendingEdges(courseId) {
-  return http.get('/teacher/graph/pending-edges', { params: { courseId } })
+export function fetchPendingEdges(courseId, config = {}) {
+  return http.get('/teacher/graph/pending-edges', {
+    ...config,
+    params: { ...config.params, courseId }
+  })
 }
 export function acceptEdge(id) {
   return http.post(`/teacher/graph/edges/${id}/accept`)
 }
 export function rejectEdge(id) {
   return http.post(`/teacher/graph/edges/${id}/reject`)
+}
+/** 创建边：body { sourceNodeCode, targetNodeCode, relationType 1..4, relationNote? } */
+export function createEdge(courseId, req) {
+  return http.post('/teacher/graph/edges', req, { params: { courseId } })
 }
 export function createNode(courseId, req) {
   return http.post('/teacher/graph/nodes', req, { params: { courseId } })
@@ -24,8 +34,11 @@ export function deleteNode(id) {
 }
 
 // ── 题目审核池 ──
-export function fetchQuestions({ courseId, status, nodeCode, conf, page, size }) {
-  return http.get('/teacher/questions', { params: { courseId, status, nodeCode, conf, page, size } })
+export function fetchQuestions({ courseId, status, nodeCode, conf, page, size }, config = {}) {
+  return http.get('/teacher/questions', {
+    ...config,
+    params: { ...config.params, courseId, status, nodeCode, conf, page, size }
+  })
 }
 export function reviewQuestions(courseId, ids, action) {
   return http.post('/teacher/questions/review', { ids, action }, { params: { courseId } })
@@ -36,13 +49,16 @@ export function reviewAllQuestions(courseId, { status, conf, nodeCode, action })
 }
 
 // ── 学情看板 ──
-export function fetchDashboard(courseId) {
-  return http.get('/teacher/dashboard', { params: { courseId } })
+export function fetchDashboard(courseId, config = {}) {
+  return http.get('/teacher/dashboard', {
+    ...config,
+    params: { ...config.params, courseId }
+  })
 }
 
 // ── 课程管理（多课程切换）──
-export function fetchTeacherCourses() {
-  return http.get('/teacher/courses')
+export function fetchTeacherCourses(config = {}) {
+  return http.get('/teacher/courses', config)
 }
 export function createTeacherCourse(name) {
   return http.post('/teacher/courses', { name })

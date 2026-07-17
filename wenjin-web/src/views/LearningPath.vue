@@ -67,22 +67,57 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { fetchCurrentPath, completeItem } from '../api/path.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
+import { useSessionStore } from '../store/session.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 
 const { courseId } = useStudentCourse()
+const session = useSessionStore()
 
-// 从 localStorage 读取当前登录用户
-function readUser() {
-  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
-}
-const currentUser = readUser()
-const DEMO_STUDENT_ID = currentUser?.id || 2
 const data = ref(null)
 const loading = ref(false)
 const error = ref('')
 const completingId = ref(null)
+const loadRequest = createLatestRequest()
+const completionRequest = createLatestRequest()
+let activePathContext = null
+let disposed = false
+
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+}
+
+function captureOwner() {
+  return { token: session.token, userId: session.userId }
+}
+
+function hasValidOwner(owner) {
+  return Boolean(owner.token) && Number(owner.userId) > 0
+}
+
+function isCurrentContext(request, owner, id) {
+  return !disposed
+    && request.isCurrent()
+    && session.token === owner.token
+    && session.userId === owner.userId
+    && Number(courseId.value) === id
+}
+
+function isActivePathContext(context) {
+  return Boolean(context)
+    && !disposed
+    && activePathContext === context
+    && loadRequest.revision === context.loadRevision
+    && session.token === context.owner.token
+    && session.userId === context.owner.userId
+    && Number(courseId.value) === context.courseId
+}
+
+function invalidateActivePath() {
+  activePathContext = null
+}
 
 function levelColor(level) {
   return level === 2 ? 'var(--ok)' : level === 1 ? 'var(--warn)' : 'var(--dim)'
@@ -130,41 +165,88 @@ function practiceLink(step) {
 }
 
 async function load() {
+  if (disposed) return false
+  invalidateActivePath()
+  const owner = captureOwner()
+  const id = Number(courseId.value)
+  if (!hasValidOwner(owner) || !(id > 0)) {
+    loadRequest.cancel()
+    data.value = null
+    loading.value = false
+    error.value = hasValidOwner(owner) ? '请先从首页选择一门课程' : ''
+    return false
+  }
+  const request = loadRequest.next()
+  data.value = null
   loading.value = true
   error.value = ''
   try {
-    if (!courseId.value) {
-      error.value = '请先从首页选择一门课程'
-      return
+    const nextData = await fetchCurrentPath(id, { signal: request.signal })
+    if (!isCurrentContext(request, owner, id)) return false
+    activePathContext = {
+      owner,
+      courseId: id,
+      loadRevision: request.revision,
+      pathId: nextData?.pathId ?? null,
+      itemIds: new Set(
+        (nextData?.steps || [])
+          .map((step) => Number(step.itemId))
+          .filter((itemId) => itemId > 0)
+      )
     }
-    data.value = await fetchCurrentPath(DEMO_STUDENT_ID, courseId.value)
+    data.value = nextData
+    return true
   } catch (e) {
+    if (!isCurrentContext(request, owner, id) || isAbortError(e)) return false
     error.value = e.message || '未知错误'
+    return false
   } finally {
-    loading.value = false
+    if (isCurrentContext(request, owner, id)) loading.value = false
   }
 }
 
 async function markDone(itemId) {
-  if (completingId.value) return
-  completingId.value = itemId
+  if (disposed || completingId.value) return
+  const context = activePathContext
+  const normalizedItemId = Number(itemId)
+  if (!isActivePathContext(context) || !context.itemIds.has(normalizedItemId)) return
+  const request = completionRequest.next()
+  completingId.value = normalizedItemId
   try {
-    await completeItem(itemId)
+    await completeItem(normalizedItemId, { signal: request.signal })
+    if (!request.isCurrent() || !isActivePathContext(context)) return
     await load()
   } catch (e) {
+    if (!request.isCurrent() || !isActivePathContext(context) || isAbortError(e)) return
     error.value = e.message || '未知错误'
   } finally {
-    completingId.value = null
+    if (isCurrentContext(request, context.owner, context.courseId)) completingId.value = null
   }
 }
 
-// 无条件 load:courseId 为空时由 load 内部守卫给出选课引导(不静默回落课程1)
-watch(courseId, () => load(), { immediate: true })
+watch(
+  [courseId, () => session.token, () => session.userId],
+  () => {
+    invalidateActivePath()
+    completionRequest.cancel()
+    completingId.value = null
+    load()
+  },
+  { immediate: true }
+)
 
 onMounted(() => {
   if (import.meta.env.DEV) {
     window.__wjPath = { data, loading, error, completingId, load, markDone }
   }
+})
+
+onBeforeUnmount(() => {
+  disposed = true
+  invalidateActivePath()
+  loadRequest.cancel()
+  completionRequest.cancel()
+  if (typeof window !== 'undefined') delete window.__wjPath
 })
 </script>
 

@@ -65,9 +65,11 @@ import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import ThemeToggle from './ThemeToggle.vue'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
+import { useSessionStore } from '../store/session.js'
 
 const router = useRouter()
 const route = useRoute()
+const session = useSessionStore()
 
 const serif = "'Noto Serif SC', serif"
 
@@ -80,7 +82,7 @@ const isTeacher = computed(() => route.path.startsWith('/teacher'))
 
 const { courseId: studentCourseId } = useStudentCourse()
 
-// 学生端导航（携带当前课程，避免误用默认课程 1）
+// 学生端导航（携带当前课程，无课则不带 courseId，禁止默认 1）
 const studentLinks = computed(() => {
   const query = studentCourseId.value ? { courseId: studentCourseId.value } : {}
   return [
@@ -129,10 +131,10 @@ const logoutBtnStyle = {
   flex: 'none'
 }
 
-// 退出登录
+// 退出登录：清会话 + 课程上下文
 function handleLogout() {
-  localStorage.removeItem('wj_user')
-  localStorage.removeItem('wj_token')
+  session.clearSession()
+  session.resetRefreshGate()
   router.push('/')
 }
 </script>

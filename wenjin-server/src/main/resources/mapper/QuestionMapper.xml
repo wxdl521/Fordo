@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.wenjin.mapper.QuestionMapper">
+
+    <sql id="teacherFilterJoins">
+        <if test="nodeCode != null and nodeCode != ''">
+            INNER JOIN question_node qn
+                ON qn.question_id = q.id
+               AND qn.weight = 1
+            INNER JOIN kg_node n
+                ON n.id = qn.node_id
+               AND n.course_id = q.course_id
+               AND n.archived_at IS NULL
+               AND n.node_code = #{nodeCode}
+        </if>
+    </sql>
+
+    <sql id="teacherFilterWhere">
+        q.course_id = #{courseId}
+        <if test="status != null">
+            AND q.status = #{status}
+        </if>
+        <if test="conf != null and conf != ''">
+            <choose>
+                <when test="conf == 'ge85'">
+                    AND q.confidence &gt;= 85
+                </when>
+                <when test="conf == 'mid'">
+                    AND q.confidence &gt;= 70 AND q.confidence &lt; 85
+                </when>
+                <when test="conf == 'lt70'">
+                    AND q.confidence &lt; 70
+                </when>
+            </choose>
+        </if>
+    </sql>
+
+    <select id="selectTeacherPage" resultType="com.wenjin.entity.Question">
+        SELECT
+            q.id,
+            q.course_id,
+            q.stem,
+            q.stem_hash,
+            q.type,
+            q.difficulty,
+            q.answer,
+            q.analysis,
+            q.source,
+            q.status,
+            q.confidence,
+            q.created_at,
+            q.updated_at
+        FROM question q
+        <include refid="teacherFilterJoins"/>
+        WHERE
+        <include refid="teacherFilterWhere"/>
+        ORDER BY (q.confidence IS NULL) ASC, q.confidence DESC, q.id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countTeacherFiltered" resultType="long">
+        SELECT COUNT(DISTINCT q.id)
+        FROM question q
+        <include refid="teacherFilterJoins"/>
+        WHERE
+        <include refid="teacherFilterWhere"/>
+    </select>
+
+    <select id="countGroupedByStatus" resultType="com.wenjin.dto.QuestionStatusCount">
+        SELECT status AS status, COUNT(*) AS count
+        FROM question
+        WHERE course_id = #{courseId}
+        GROUP BY status
+    </select>
+
+    <update id="updateStatusByFilter">
+        UPDATE question q
+        <if test="nodeCode != null and nodeCode != ''">
+            INNER JOIN question_node qn
+                ON qn.question_id = q.id
+               AND qn.weight = 1
+            INNER JOIN kg_node n
+                ON n.id = qn.node_id
+               AND n.course_id = q.course_id
+               AND n.archived_at IS NULL
+               AND n.node_code = #{nodeCode}
+        </if>
+        SET q.status = #{targetStatus}
+        WHERE
+        <include refid="teacherFilterWhere"/>
+    </update>
+
+    <select id="selectIdsByFilter" resultType="long">
+        SELECT DISTINCT q.id
+        FROM question q
+        <include refid="teacherFilterJoins"/>
+        WHERE
+        <include refid="teacherFilterWhere"/>
+        ORDER BY q.id ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="updateStatusByIds">
+        UPDATE question
+        SET status = #{targetStatus}
+        WHERE course_id = #{courseId}
+          AND id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </update>
+
+</mapper>

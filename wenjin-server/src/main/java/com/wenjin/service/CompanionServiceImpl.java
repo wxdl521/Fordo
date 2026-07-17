@@ -6,6 +6,7 @@ import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.CompanionToolProperties;
 import com.wenjin.config.CurrentUser;
+import com.wenjin.config.LimitsProperties;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
@@ -27,6 +28,7 @@ import com.wenjin.service.companion.ToolExecutionResult;
 import com.wenjin.service.companion.ToolExecutionState;
 import com.wenjin.service.companion.ToolGovernor;
 import com.wenjin.support.CompanionFinalTextSanitizer;
+import com.wenjin.support.ConversationContextBuilder;
 import com.wenjin.support.PracticeIntent;
 import com.wenjin.support.PracticeIntentDetector;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +40,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,6 +66,8 @@ public class CompanionServiceImpl implements CompanionService {
     private final CompanionAiClient aiClient;
     private final MasteryDecayCalculator decayCalculator;
     private final CourseService courseService;
+    private final ConversationContextBuilder contextBuilder;
+    private final LimitsProperties limits;
 
     @Autowired(required = false)
     private ToolGovernor toolGovernor;
@@ -84,6 +89,11 @@ public class CompanionServiceImpl implements CompanionService {
         }
         if (req.getMessage() == null || req.getMessage().trim().isEmpty()) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "消息内容不能为空");
+        }
+        int maxInput = limits.getCompanion().getMaxInputChars();
+        if (req.getMessage().length() > maxInput) {
+            throw new BusinessException(ResultCode.PAYLOAD_TOO_LARGE,
+                    "消息长度超限：" + req.getMessage().length() + " > " + maxInput);
         }
 
         Long conversationId = req.getConversationId();
@@ -139,12 +149,24 @@ public class CompanionServiceImpl implements CompanionService {
             throw new BusinessException(ResultCode.NOT_FOUND, "会话不存在: " + conversationId);
         }
 
-        List<CompanionMessage> history = messageMapper.selectList(
-                new LambdaQueryWrapper<CompanionMessage>()
-                        .eq(CompanionMessage::getConversationId, conversationId)
-                        .orderByAsc(CompanionMessage::getCreatedAt));
-        if (history.isEmpty()) {
+        List<CompanionMessage> history = messageMapper.selectAllByConversationAsc(conversationId);
+        if (history == null || history.isEmpty()) {
+            // 兼容未启用自定义 SQL 的测试 stub：回退 LambdaQueryWrapper
+            history = messageMapper.selectList(
+                    new LambdaQueryWrapper<CompanionMessage>()
+                            .eq(CompanionMessage::getConversationId, conversationId)
+                            .orderByAsc(CompanionMessage::getId));
+        }
+        if (history == null || history.isEmpty()) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "会话无历史消息");
+        }
+
+        ConversationContextBuilder.BuiltContext ctx = contextBuilder.build(conversation, history);
+        if (ctx.summaryUpdated()) {
+            conversation.setSummaryText(ctx.summaryText());
+            conversation.setSummaryThroughMessageId(ctx.summaryThroughMessageId());
+            conversation.setUpdatedAt(LocalDateTime.now());
+            conversationMapper.updateById(conversation);
         }
 
         List<CompanionTool> usableTools = usableTools();
@@ -156,21 +178,21 @@ public class CompanionServiceImpl implements CompanionService {
                 toolOrchestrationAvailable);
 
         if (!toolOrchestrationAvailable) {
-            streamWithLegacyPath(conversationId, systemPrompt, history, sink);
+            streamWithLegacyPath(conversationId, systemPrompt, ctx, sink);
             return;
         }
 
-        streamWithTools(conversationId, conversation, systemPrompt, history, usableTools, sink);
+        streamWithTools(conversationId, conversation, systemPrompt, history, ctx, usableTools, sink);
     }
 
     @Override
-    public List<CompanionConversationVO> listConversations(Long studentId, Long courseId) {
-        List<CompanionConversation> conversations = conversationMapper.selectList(
-                new LambdaQueryWrapper<CompanionConversation>()
-                        .eq(CompanionConversation::getStudentId, studentId)
-                        .eq(CompanionConversation::getCourseId, courseId)
-                        .orderByDesc(CompanionConversation::getUpdatedAt));
-
+    public List<CompanionConversationVO> listConversations(Long studentId, Long courseId, Long beforeId, Integer limit) {
+        int lim = contextBuilder.clampListLimit(limit);
+        List<CompanionConversation> conversations = conversationMapper.selectKeysetByStudentCourse(
+                studentId, courseId, beforeId, lim);
+        if (conversations == null) {
+            conversations = List.of();
+        }
         return conversations.stream().map(conversation -> {
             CompanionConversationVO vo = new CompanionConversationVO();
             vo.setId(conversation.getId());
@@ -182,14 +204,17 @@ public class CompanionServiceImpl implements CompanionService {
     }
 
     @Override
-    public List<CompanionMessageVO> getMessages(Long conversationId) {
+    public List<CompanionMessageVO> getMessages(Long conversationId, Long beforeId, Integer limit) {
         assertConversationOwner(conversationId);
-        List<CompanionMessage> messages = messageMapper.selectList(
-                new LambdaQueryWrapper<CompanionMessage>()
-                        .eq(CompanionMessage::getConversationId, conversationId)
-                        .orderByAsc(CompanionMessage::getCreatedAt));
-
-        return messages.stream().map(message -> {
+        int lim = contextBuilder.clampListLimit(limit);
+        List<CompanionMessage> messages = messageMapper.selectKeysetByConversation(conversationId, beforeId, lim);
+        if (messages == null) {
+            messages = List.of();
+        }
+        // keyset 按 id DESC 取出，展示时反转为时间正序
+        List<CompanionMessage> chronological = new ArrayList<>(messages);
+        Collections.reverse(chronological);
+        return chronological.stream().map(message -> {
             CompanionMessageVO vo = new CompanionMessageVO();
             vo.setRole(message.getRole() == ROLE_USER ? "user" : "ai");
             vo.setContent(message.getContent());
@@ -209,21 +234,48 @@ public class CompanionServiceImpl implements CompanionService {
 
     private void streamWithLegacyPath(Long conversationId,
                                       String systemPrompt,
-                                      List<CompanionMessage> history,
+                                      ConversationContextBuilder.BuiltContext ctx,
                                       CompanionStreamSink sink) {
-        List<CompanionAiClient.ChatMsg> historyMsgs = new ArrayList<>();
-        for (int i = 0; i < history.size() - 1; i++) {
-            CompanionMessage message = history.get(i);
-            historyMsgs.add(new CompanionAiClient.ChatMsg(toRole(message), message.getContent()));
-        }
-
-        String latestUserMessage = history.get(history.size() - 1).getContent();
+        ConversationContextBuilder.LegacyPrompt prompt = contextBuilder.toLegacyPrompt(ctx);
         StringBuilder fullReply = new StringBuilder();
-        aiClient.stream(systemPrompt, historyMsgs, latestUserMessage, token -> {
-            fullReply.append(token);
-            sink.token(token);
-        });
+        int maxOut = limits.getCompanion().getMaxAiOutputChars();
+        aiClient.stream(systemPrompt, prompt.history(), prompt.latestUserMessage(),
+                truncatingTokenConsumer(fullReply, sink, maxOut));
         saveAiMessage(conversationId, fullReply.toString());
+    }
+
+    private Consumer<String> truncatingTokenConsumer(StringBuilder fullReply,
+                                                     CompanionStreamSink sink,
+                                                     int maxOut) {
+        final boolean[] done = {false};
+        return token -> {
+            if (done[0] || token == null) {
+                return;
+            }
+            if (fullReply.length() >= maxOut) {
+                done[0] = true;
+                return;
+            }
+            int room = maxOut - fullReply.length();
+            if (token.length() <= room) {
+                fullReply.append(token);
+                sink.token(token);
+                if (fullReply.length() >= maxOut) {
+                    String notice = contextBuilder.outputTruncationNotice();
+                    fullReply.append(notice);
+                    sink.token(notice);
+                    done[0] = true;
+                }
+            } else {
+                String piece = token.substring(0, room);
+                fullReply.append(piece);
+                sink.token(piece);
+                String notice = contextBuilder.outputTruncationNotice();
+                fullReply.append(notice);
+                sink.token(notice);
+                done[0] = true;
+            }
+        };
     }
 
     private static final String FALLBACK_AFTER_PRACTICE =
@@ -235,9 +287,10 @@ public class CompanionServiceImpl implements CompanionService {
                                  CompanionConversation conversation,
                                  String systemPrompt,
                                  List<CompanionMessage> history,
+                                 ConversationContextBuilder.BuiltContext ctx,
                                  List<CompanionTool> tools,
                                  CompanionStreamSink sink) {
-        List<Map<String, Object>> messages = buildMessages(systemPrompt, history);
+        List<Map<String, Object>> messages = contextBuilder.toToolMessages(systemPrompt, ctx);
         List<Map<String, Object>> toolSchemas = tools.stream().map(CompanionTool::schema).toList();
         Map<String, String> toolLabels = buildToolLabels(tools);
         ToolExecutionState state = new ToolExecutionState(maxToolCalls());
@@ -266,7 +319,7 @@ public class CompanionServiceImpl implements CompanionService {
                             practiceStarted, sink);
                     return;
                 }
-                streamWithLegacyPath(conversationId, fallbackPrompt, history, sink);
+                streamWithLegacyPath(conversationId, fallbackPrompt, ctx, sink);
                 return;
             }
             if (outcome instanceof CompanionAiClient.FinalText) {
@@ -356,7 +409,8 @@ public class CompanionServiceImpl implements CompanionService {
         }
         List<KgNode> allNodes = nodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>()
-                        .eq(KgNode::getCourseId, courseId));
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt));
         if (allNodes == null || allNodes.isEmpty()) {
             return List.of();
         }
@@ -411,10 +465,14 @@ public class CompanionServiceImpl implements CompanionService {
                                      boolean practiceStarted,
                                      CompanionStreamSink sink) {
         StringBuilder fullReply = new StringBuilder();
-        aiClient.streamMessages(messages, fullReply::append);
+        int maxOut = limits.getCompanion().getMaxAiOutputChars();
+        aiClient.streamMessages(messages, token -> contextBuilder.appendOutputToken(fullReply, token, maxOut));
+        boolean hitCap = fullReply.length() >= maxOut;
         String clean = CompanionFinalTextSanitizer.sanitize(fullReply.toString());
         if (clean.isEmpty()) {
             clean = practiceStarted ? FALLBACK_AFTER_PRACTICE : FALLBACK_AFTER_TOOLS;
+        } else if (hitCap && !clean.contains("回复已截断")) {
+            clean = clean + contextBuilder.outputTruncationNotice();
         }
         sink.token(clean);
         saveAiMessage(conversationId, clean);
@@ -546,7 +604,8 @@ public class CompanionServiceImpl implements CompanionService {
             KgNode node = nodeMapper.selectOne(
                     new LambdaQueryWrapper<KgNode>()
                             .eq(KgNode::getCourseId, req.getCourseId())
-                            .eq(KgNode::getNodeCode, req.getNodeCode()));
+                            .eq(KgNode::getNodeCode, req.getNodeCode())
+                            .isNull(KgNode::getArchivedAt));
             if (node != null) {
                 return node.getName() + "：" + truncated;
             }
@@ -587,7 +646,8 @@ public class CompanionServiceImpl implements CompanionService {
                                              boolean includeWeakPoints) {
         List<KgNode> allNodes = nodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>()
-                        .eq(KgNode::getCourseId, courseId));
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt));
         List<String> whitelist = allNodes.stream().map(CompanionServiceImpl::nodePromptLabel).collect(Collectors.toList());
 
         LearningPathVO path = null;
@@ -617,7 +677,8 @@ public class CompanionServiceImpl implements CompanionService {
             KgNode focusNode = nodeMapper.selectOne(
                     new LambdaQueryWrapper<KgNode>()
                             .eq(KgNode::getCourseId, courseId)
-                            .eq(KgNode::getNodeCode, focusNodeCode));
+                            .eq(KgNode::getNodeCode, focusNodeCode)
+                            .isNull(KgNode::getArchivedAt));
             if (focusNode != null) {
                 focusNodeName = focusNode.getName();
             }
@@ -648,8 +709,10 @@ public class CompanionServiceImpl implements CompanionService {
         }
 
         List<Long> nodeIds = weakMasteries.stream().map(StudentMastery::getNodeId).toList();
+        // 归档节点不进入弱掌握上下文，避免 AI 推荐已下线知识点
         Map<Long, KgNode> nodeMap = nodeMapper.selectBatchIds(nodeIds).stream()
                 .filter(Objects::nonNull)
+                .filter(node -> node.getArchivedAt() == null)
                 .collect(Collectors.toMap(KgNode::getId, node -> node, (left, right) -> left));
 
         return weakMasteries.stream()

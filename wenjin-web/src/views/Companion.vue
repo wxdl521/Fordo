@@ -16,11 +16,16 @@
           :key="conv.id"
           class="cp-conv-item"
           :class="{ active: conv.id === conversationId }"
+          role="button"
+          tabindex="0"
+          :aria-current="conv.id === conversationId ? 'true' : undefined"
           @click="openConversation(conv.id)"
+          @keydown.enter.prevent="openConversation(conv.id)"
+          @keydown.space.prevent="openConversation(conv.id)"
         >
           <div class="cp-conv-title">{{ conv.title || '新对话' }}</div>
           <div class="cp-conv-meta">{{ formatTime(conv.createdAt) }}</div>
-          <button class="cp-conv-del" title="删除对话" @click.stop="handleDelete(conv.id)">×</button>
+          <button type="button" class="cp-conv-del" title="删除对话" aria-label="删除对话" @click.stop="handleDelete(conv.id)">×</button>
         </div>
 
         <div v-if="!conversations.length" class="cp-conv-empty">暂无对话</div>
@@ -43,7 +48,7 @@
         </div>
       </div>
 
-      <div v-else ref="scrollEl" class="cp-messages">
+      <div v-else ref="scrollEl" class="cp-messages" aria-live="polite" aria-relevant="additions text">
         <template v-for="(msg, index) in msgs" :key="index">
         <div
           v-if="shouldRenderMessage(msg)"
@@ -91,7 +96,7 @@
                 <div v-if="msg.phase === 'submitting'" class="cp-practice-note">
                   正在提交本次作答…
                 </div>
-                <div v-else-if="msg.submitError" class="cp-practice-note is-error">
+                <div v-else-if="msg.submitError" class="cp-practice-note is-error" role="alert">
                   {{ msg.submitError }}
                 </div>
               </div>
@@ -177,11 +182,12 @@
         <textarea
           v-model="input"
           class="cp-input"
+          aria-label="消息"
           placeholder="输入你的问题…"
           rows="1"
           @keydown="onKey"
         ></textarea>
-        <button class="cp-btn-send" :disabled="!hasText || typing" @click="sendText">
+        <button class="cp-btn-send" aria-label="发送消息" :disabled="!canSend" @click="sendText">
           <svg v-if="!typing" width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
             <path
               d="M16 2L8 10M16 2l-6 14-2-6-6-2 14-6z"
@@ -199,14 +205,21 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import QuestionAnswerCard from '../components/QuestionAnswerCard.vue'
-import { listConversations, fetchConversation, deleteConversation, chatStream } from '../api/companion.js'
+import {
+  listConversations,
+  fetchConversation,
+  deleteConversation,
+  chatStream,
+  isAbortError
+} from '../api/companion.js'
 import { submitPractice } from '../api/practice.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
 import { buildCompanionChatPayload, readCompanionNodeCode } from '../utils/companionContext.js'
 import { createDebouncedPersist } from '../utils/companionPersistence.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 import {
   appendAssistantToken,
   applyToolResult,
@@ -218,29 +231,49 @@ import {
   normalizeConversationMessage,
   restoreTypedMessagesFromSnapshot
 } from '../utils/companionMessages.js'
+import { useSessionStore } from '../store/session.js'
 
 const route = useRoute()
 const router = useRouter()
 const { courseId } = useStudentCourse()
-
-function readUser() {
-  try {
-    return JSON.parse(localStorage.getItem('wj_user'))
-  } catch {
-    return null
-  }
-}
-
-const STUDENT_ID = readUser()?.id || 2
+const session = useSessionStore()
+/** 本地草稿键用；无身份时用 0（禁止 || 2 演示回落） */
+const studentId = computed(() => session.userId)
 
 const msgs = ref([])
 const input = ref('')
 const typing = ref(false)
 const conversationId = ref(null)
+const conversationLoadingTarget = ref(null)
 const conversations = ref([])
 const ctxNodeCode = ref(null)
 const scrollEl = ref(null)
 let snapshotPersist
+
+/** 三闸：列表 / 详情 / SSE，各自 abort + isCurrent 防迟到写 */
+const conversationListGate = createLatestRequest()
+const conversationDetailGate = createLatestRequest()
+const streamGate = createLatestRequest()
+
+function cancelAllCompanionRequests() {
+  conversationListGate.cancel()
+  conversationDetailGate.cancel()
+  streamGate.cancel()
+}
+
+/**
+ * 课程切换 / 新对话 / 卸载统一清理顺序：
+ * flush snapshot → cancel all → clear state（再由调用方 load list）
+ */
+function resetCompanionSessionState() {
+  snapshotPersist?.flush()
+  cancelAllCompanionRequests()
+  conversationId.value = null
+  conversationLoadingTarget.value = null
+  msgs.value = []
+  input.value = ''
+  typing.value = false
+}
 
 const starters = computed(() => [
   '我在“数组”这里卡住了，应该先补哪一部分？',
@@ -249,6 +282,7 @@ const starters = computed(() => [
 ])
 
 const hasText = computed(() => input.value.trim().length > 0)
+const canSend = computed(() => hasText.value && !typing.value && conversationLoadingTarget.value === null)
 
 /** Index of assistant in the current turn only (stop at user). */
 function currentTurnAssistantIdx(list = msgs.value) {
@@ -347,7 +381,7 @@ function lockPractice(message) {
 
 function currentSnapshotKey(targetConversationId = conversationId.value) {
   if (!courseId.value || !targetConversationId) return null
-  return conversationSnapshotKey(STUDENT_ID, courseId.value, targetConversationId)
+  return conversationSnapshotKey(studentId.value ?? 0, courseId.value, targetConversationId)
 }
 
 function readConversationSnapshot(targetConversationId) {
@@ -476,7 +510,6 @@ async function submitPracticeMessage(message) {
 
   try {
     const result = await submitPractice(message.card.sessionId, {
-      studentId: STUDENT_ID,
       answers
     })
     message.submitResult = result
@@ -537,43 +570,67 @@ function formatDelta(delta) {
 }
 
 async function loadConversations() {
+  if (!courseId.value) return
+  const { signal, isCurrent } = conversationListGate.next()
   try {
-    if (!courseId.value) return
-    const data = await listConversations(STUDENT_ID, courseId.value)
+    const data = await listConversations(courseId.value, { signal })
+    if (!isCurrent()) return
     conversations.value = data || []
   } catch (error) {
+    if (!isCurrent() || isAbortError(error)) return
     console.error('Failed to load conversations:', error)
   }
 }
 
 async function openConversation(id) {
   snapshotPersist.flush()
-  conversationId.value = id
+  // 打开另一会话时取消进行中的 SSE，避免 token 写到错误会话
+  streamGate.cancel()
+  typing.value = false
+  const { signal, isCurrent } = conversationDetailGate.next()
+  conversationLoadingTarget.value = id
   try {
-    const conversation = await fetchConversation(id)
+    const conversation = await fetchConversation(id, { signal })
+    if (!isCurrent()) return
     const serverMessages = (Array.isArray(conversation) ? conversation : (conversation?.messages || []))
       .map(normalizeConversationMessage)
+
+    // The previous conversation remains interactive while this request is pending.
+    // Persist its last edits before reading and committing the target snapshot.
+    snapshotPersist.flush()
+    if (!isCurrent()) return
     const snapshot = readConversationSnapshot(id)
     const restored = restoreTypedMessagesFromSnapshot(serverMessages, snapshot)
 
-    msgs.value = restored.messages
     if (!restored.usedSnapshot && snapshot) {
       clearConversationSnapshot(id)
     }
 
+    if (!isCurrent()) return
+    conversationId.value = id
+    msgs.value = restored.messages
+
     await nextTick()
+    if (!isCurrent()) return
     scrollToEnd()
   } catch (error) {
+    if (!isCurrent() || isAbortError(error)) return
     console.error('Failed to fetch conversation:', error)
-    msgs.value = []
+  } finally {
+    if (isCurrent()) conversationLoadingTarget.value = null
   }
 }
 
 function newChat() {
+  // flush → cancel stream/detail → clear state（列表保留，属同课程）
   snapshotPersist.flush()
+  streamGate.cancel()
+  conversationDetailGate.cancel()
   conversationId.value = null
+  conversationLoadingTarget.value = null
   msgs.value = []
   input.value = ''
+  typing.value = false
 }
 
 function clearContextNodeCode() {
@@ -583,15 +640,30 @@ function clearContextNodeCode() {
 }
 
 async function handleDelete(id) {
+  if (conversationLoadingTarget.value === id) {
+    conversationDetailGate.cancel()
+    conversationLoadingTarget.value = null
+  }
   try {
     await deleteConversation(id)
     clearConversationSnapshot(id)
-    if (conversationId.value === id) {
+    const deletingCurrent = conversationId.value === id
+    const deletingLoadingTarget = conversationLoadingTarget.value === id
+    if (deletingCurrent) {
+      streamGate.cancel()
+    }
+    if (deletingCurrent || deletingLoadingTarget) {
+      conversationDetailGate.cancel()
+      conversationLoadingTarget.value = null
+    }
+    if (deletingCurrent) {
       conversationId.value = null
       msgs.value = []
+      typing.value = false
     }
     await loadConversations()
   } catch (error) {
+    if (isAbortError(error)) return
     console.error('删除会话失败:', error)
   }
 }
@@ -606,8 +678,8 @@ function sendStarter(starter) {
 }
 
 async function sendText() {
+  if (!canSend.value) return
   const text = input.value.trim()
-  if (!text || typing.value) return
 
   // Do not pre-push empty assistant — tools/practice must land before final AI reply.
   msgs.value.push({ role: 'user', content: text })
@@ -618,16 +690,20 @@ async function sendText() {
   scrollToEnd()
 
   const payload = buildCompanionChatPayload({
-    studentId: STUDENT_ID,
     courseId: courseId.value,
     conversationId: conversationId.value,
     nodeCode: ctxNodeCode.value,
     message: text
   })
 
+  const { signal, isCurrent } = streamGate.next()
+  /** 避免 onError + catch 双写错误气泡 */
+  let errorReported = false
+
   try {
     await chatStream(payload, {
       onMeta: async (meta) => {
+        if (!isCurrent()) return
         if (meta?.conversationId && !conversationId.value) {
           conversationId.value = meta.conversationId
           snapshotPersist.flush()
@@ -635,28 +711,36 @@ async function sendText() {
         }
       },
       onToolStart: (event) => {
+        if (!isCurrent()) return
         msgs.value.push(createToolMessage(event))
         scrollToEnd()
       },
       onToolResult: (event) => {
+        if (!isCurrent()) return
         msgs.value = applyToolResult(msgs.value, event)
         scrollToEnd()
       },
       onPracticeCard: (event) => {
+        if (!isCurrent()) return
         msgs.value.push(createPracticeMessage(event))
         scrollToEnd()
       },
       onToken: (token) => {
+        if (!isCurrent()) return
         appendToAssistant(token)
         scrollToEnd()
       },
       onDone: async () => {
+        if (!isCurrent()) return
         typing.value = false
         snapshotPersist.flush()
         await loadConversations()
         scrollToEnd()
       },
       onError: (message) => {
+        if (!isCurrent()) return
+        if (errorReported) return
+        errorReported = true
         typing.value = false
         snapshotPersist.flush()
         const idx = currentTurnAssistantIdx()
@@ -664,8 +748,18 @@ async function sendText() {
         appendToAssistant(`${prefix}[错误] ${message}`)
         scrollToEnd()
       }
-    })
+    }, { signal })
   } catch (error) {
+    // Abort（新对话/切课/卸载）不是网络错误，不写消息
+    if (!isCurrent() || isAbortError(error)) {
+      if (isCurrent()) typing.value = false
+      return
+    }
+    if (errorReported) {
+      if (isCurrent()) typing.value = false
+      return
+    }
+    errorReported = true
     typing.value = false
     snapshotPersist.flush()
     const idx = currentTurnAssistantIdx()
@@ -703,6 +797,9 @@ function formatTime(value) {
 }
 
 watch(courseId, (value) => {
+  // flush → cancel all → clear state → load list for new course
+  resetCompanionSessionState()
+  conversations.value = []
   if (value) loadConversations()
 }, { immediate: true })
 
@@ -721,17 +818,33 @@ onMounted(() => {
       input,
       typing,
       conversationId,
+      conversationLoadingTarget,
       conversations,
       ctxNodeCode,
       scrollEl,
+      canSend,
       loadConversations,
       openConversation,
       newChat,
       sendText,
       submitPracticeMessage,
       persistTypedSnapshot,
-      clearConversationSnapshot
+      clearConversationSnapshot,
+      conversationListGate,
+      conversationDetailGate,
+      streamGate,
+      cancelAllCompanionRequests,
+      resetCompanionSessionState
     }
+  }
+})
+
+onUnmounted(() => {
+  // flush → cancel all in-flight list/detail/SSE
+  snapshotPersist?.flush()
+  cancelAllCompanionRequests()
+  if (import.meta.env.DEV && window.__wjCompanion) {
+    delete window.__wjCompanion
   }
 })
 </script>

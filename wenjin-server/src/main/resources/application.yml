@@ -11,13 +11,21 @@ spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     # 数据库名 wenjin，请先用 schema.sql 建库建表（见根目录 README）
-    url: jdbc:mysql://localhost:3306/wenjin?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    # useAffectedRows=true：INSERT … ON DUPLICATE KEY 时 1=新插入 / 0=无变化（掌握度 insertEnsure 冷启动判定依赖）
+    url: jdbc:mysql://localhost:3306/wenjin?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&useAffectedRows=true
     username: ${DB_USER:root}     # 可用环境变量 DB_USER 覆盖
     password: ${DB_PASSWORD:root} # 可用环境变量 DB_PASSWORD 覆盖
-  # 不让应用自动执行 DDL：schema.sql 由开发者手动执行一次，避免每次启动清库（详见 README）
+  # 不让应用自动执行 DDL（schema.sql 仅本地重建快照，生产禁用）
   sql:
     init:
       mode: never
+  # Flyway 默认关闭：普通应用账号只有 DML；发布流水线用 migrator 凭据设 WENJIN_FLYWAY_ENABLED=true 跑一次迁移
+  flyway:
+    enabled: ${WENJIN_FLYWAY_ENABLED:false}
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 2
+    validate-on-migrate: true
   servlet:
     multipart:
       max-file-size: 10MB
@@ -59,7 +67,46 @@ wenjin:
       timeout-ms: 5000
       max-result-chars: 2000
       intent-routing-enabled: true  # 练习意图路由：自然语言要题时强制 start_practice
+  limits:                                        # 资源预算（会话上下文 / 草稿 / 图片 / 文档）
+    companion:
+      max-input-chars: 4000                      # 单条用户输入上限
+      max-ai-output-chars: 16000                 # 单轮 AI 输出累计上限（超出截断）
+      max-context-chars: 32000                   # 送入模型的摘要+近窗总字符
+      max-recent-messages: 20                    # 近窗保留最新消息条数
+      list-default-limit: 30                     # 会话/消息列表默认 limit
+      list-max-limit: 100                        # 会话/消息列表 limit 上限
+    draft:
+      max-total: 100                             # 全局草稿上限
+      max-per-user: 10                           # 单教师草稿上限
+      max-nodes: 2000                            # 单草稿节点数上限
+      max-edges: 5000                            # 单草稿边数上限
+      ttl-minutes: 30                            # 草稿 TTL
+      purge-interval-ms: 60000                   # 定时清理间隔
+      max-bytes: 8000000                         # 单草稿字节估算上限
+    image:
+      max-dimension: 10000                       # 任一边像素上限
+      max-pixels: 40000000                       # 总像素上限（40M）
+      max-predicted-tiles: 12                    # 预测切片数上限
+      target-width: 1600
+      tile-height: 2200
+      tile-overlap: 120
+    document:
+      max-pages: 200                             # PDF 页数上限
+      max-text-chars: 200000                     # 抽取文本字符上限
+      max-decompress-ratio: 100                  # 解压膨胀比上限
 
+  features:                                      # 功能开关（开发/测试默认开；生产见 application-prod.yml）
+    fixed-diagnostic-enabled: true
+    graph-reconcile-enabled: true
+    ai-job-dispatch-enabled: true
+  jobs:                                          # AI 异步作业 worker
+    poll-interval-ms: 2000                       # 领取轮询间隔
+    heartbeat-interval-ms: 30000
+    heartbeat-threads: 1
+    payload-dir: ${WENJIN_JOB_PAYLOAD_DIR:./data/ai-job-payloads}
+    payload-retention-hours: 168
+    payload-cleanup-interval-ms: 3600000
+    payload-cleanup-batch-size: 100
   diagnostic:                                    # 入口诊断组卷（T6）
     paper-size: 25                               # 诊断试卷目标题数（分层抽样上限）
     adaptive:                                     # 图引导自适应诊断（M2）
@@ -82,6 +129,11 @@ wenjin:
   auth:                                          # 令牌认证配置
     secret: ${WENJIN_AUTH_SECRET:dev-secret-change-me-in-prod}
     ttl-seconds: 604800                          # 令牌有效期 7 天
+  bootstrap:                                     # 一次性首个 ADMIN 引导（见 DEPLOYMENT.md 2.3.1）；生产禁止常开
+    admin:
+      enabled: ${WENJIN_BOOTSTRAP_ADMIN_ENABLED:false}
+      username: ${WENJIN_BOOTSTRAP_ADMIN_USERNAME:}
+      password: ${WENJIN_BOOTSTRAP_ADMIN_PASSWORD:}
 
 logging:
   level:

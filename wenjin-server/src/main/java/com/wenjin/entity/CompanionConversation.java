@@ -27,6 +27,12 @@ public class CompanionConversation {
     /** 发起时的图谱节点上下文 node_code（可空） */
     private String nodeCode;
 
+    /** 历史消息滚动摘要（送入模型） */
+    private String summaryText;
+
+    /** 摘要覆盖到的最后一条消息 id（含） */
+    private Long summaryThroughMessageId;
+
     /** 创建时间 */
     private LocalDateTime createdAt;
 

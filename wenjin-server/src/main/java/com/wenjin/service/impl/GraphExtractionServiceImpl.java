@@ -4,10 +4,13 @@ import com.wenjin.ai.ImageToMarkdownAiClient;
 import com.wenjin.ai.SyllabusGraphAiClient;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.config.LimitsProperties;
 import com.wenjin.dto.GraphImportRequest;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.GraphExtractionService;
 import com.wenjin.support.DocumentTextExtractor;
 import com.wenjin.support.ImagePreprocessor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -25,15 +28,32 @@ public class GraphExtractionServiceImpl implements GraphExtractionService {
     private final ImageToMarkdownAiClient imageToMarkdownAiClient;
     private final SyllabusGraphAiClient syllabusGraphAiClient;
     private final DocumentTextExtractor documentTextExtractor;
+    private final CourseAccessService courseAccessService;
+    private final LimitsProperties limits;
 
+    @Autowired
     public GraphExtractionServiceImpl(ImagePreprocessor imagePreprocessor,
                                       ImageToMarkdownAiClient imageToMarkdownAiClient,
                                       SyllabusGraphAiClient syllabusGraphAiClient,
-                                      DocumentTextExtractor documentTextExtractor) {
+                                      DocumentTextExtractor documentTextExtractor,
+                                      CourseAccessService courseAccessService,
+                                      LimitsProperties limits) {
         this.imagePreprocessor = imagePreprocessor;
         this.imageToMarkdownAiClient = imageToMarkdownAiClient;
         this.syllabusGraphAiClient = syllabusGraphAiClient;
         this.documentTextExtractor = documentTextExtractor;
+        this.courseAccessService = courseAccessService;
+        this.limits = limits == null ? new LimitsProperties() : limits;
+    }
+
+    /** 兼容旧测试构造（默认限额）。 */
+    public GraphExtractionServiceImpl(ImagePreprocessor imagePreprocessor,
+                                      ImageToMarkdownAiClient imageToMarkdownAiClient,
+                                      SyllabusGraphAiClient syllabusGraphAiClient,
+                                      DocumentTextExtractor documentTextExtractor,
+                                      CourseAccessService courseAccessService) {
+        this(imagePreprocessor, imageToMarkdownAiClient, syllabusGraphAiClient,
+                documentTextExtractor, courseAccessService, new LimitsProperties());
     }
 
     @Override
@@ -44,6 +64,8 @@ public class GraphExtractionServiceImpl implements GraphExtractionService {
         if (file == null || file.isEmpty()) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "上传文件不能为空");
         }
+        // 归属优先：避免对无权课程做 AI 抽取
+        courseAccessService.assertManageCourseCode(courseCode);
         String ext = extension(file.getOriginalFilename());
         String text;
         if (IMAGE_EXT.contains(ext)) {
@@ -53,7 +75,7 @@ public class GraphExtractionServiceImpl implements GraphExtractionService {
             } catch (IOException e) {
                 throw new BusinessException(ResultCode.BAD_REQUEST, "读取图片失败：" + e.getMessage());
             }
-            // 竖长文档会被切成多片(保持宽度可读),逐片转写后拼接;短图即单片。
+            int maxText = limits.getDocument().getMaxTextChars();
             StringBuilder sb = new StringBuilder();
             for (byte[] tile : imagePreprocessor.compressTiles(raw)) {
                 String md = imageToMarkdownAiClient.toMarkdown(tile);
@@ -62,6 +84,10 @@ public class GraphExtractionServiceImpl implements GraphExtractionService {
                         sb.append("\n\n");
                     }
                     sb.append(md.trim());
+                    if (sb.length() > maxText) {
+                        throw new BusinessException(ResultCode.PAYLOAD_TOO_LARGE,
+                                "OCR 累计文本超限：" + sb.length() + " > " + maxText);
+                    }
                 }
             }
             text = sb.toString();

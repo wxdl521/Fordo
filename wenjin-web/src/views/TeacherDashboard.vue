@@ -21,7 +21,7 @@
         <div ref="chartEl" class="chart"></div>
 
         <div v-if="loading" class="overlay">加载中…</div>
-        <div v-else-if="error" class="overlay err">{{ error }}</div>
+        <div v-else-if="error" class="overlay err" role="alert">{{ error }}</div>
 
         <!-- 图例 -->
         <div class="legend">
@@ -80,7 +80,12 @@
             :key="item.nodeCode"
             class="ranking-item"
             :class="{ selected: selectedCode === item.nodeCode }"
+            role="button"
+            tabindex="0"
+            :aria-pressed="selectedCode === item.nodeCode ? 'true' : 'false'"
             @click="selectNode(item.nodeCode)"
+            @keydown.enter.prevent="selectNode(item.nodeCode)"
+            @keydown.space.prevent="selectNode(item.nodeCode)"
           >
             <div class="item-header">
               <span class="rank" :class="{ top: index < 3 }">{{ String(index + 1).padStart(2, '0') }}</span>
@@ -104,12 +109,15 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
-import * as echarts from 'echarts'
+import { initChart, disposeChart, graphAriaOption } from '../utils/echartsGraph.js'
 import { fetchDashboard } from '../api/teacher.js'
 import { useGraphStore } from '../store/graph.js'
 import { useTeacherCourse } from '../composables/useTeacherCourse.js'
+import { useSessionStore } from '../store/session.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 
 const { courseId } = useTeacherCourse()
+const session = useSessionStore()
 
 const store = useGraphStore()
 const chartEl = ref(null)
@@ -117,16 +125,54 @@ const dashboard = ref(null)
 const loading = ref(true)
 const error = ref('')
 const selectedCode = ref(null)
+const graphNodes = ref([])
+const graphEdges = ref([])
+const graphCourseId = ref(null)
+const dashboardRequest = createLatestRequest()
 
 let chart = null
 let statByCode = new Map() // nodeCode -> NodeStat
+let disposed = false
+
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+}
+
+function captureOwner() {
+  return { token: session.token, userId: session.userId }
+}
+
+function hasValidOwner(owner) {
+  return Boolean(owner.token) && Number(owner.userId) > 0
+}
+
+function isCurrentDashboard(request, owner, id) {
+  return !disposed
+    && request.isCurrent()
+    && session.token === owner.token
+    && session.userId === owner.userId
+    && Number(courseId.value) === id
+}
+
+function clearDashboardState() {
+  dashboard.value = null
+  selectedCode.value = null
+  graphNodes.value = []
+  graphEdges.value = []
+  graphCourseId.value = null
+  statByCode.clear()
+  if (chart) {
+    disposeChart(chart)
+    chart = null
+  }
+}
 
 // 构建节点统计映射
 function buildStatMap(nodes) {
   statByCode.clear()
-  nodes.forEach(node => {
+  for (const node of nodes || []) {
     statByCode.set(node.nodeCode, node)
-  })
+  }
 }
 
 // 当前选中节点的统计数据
@@ -165,7 +211,7 @@ function backTrace(startCode) {
     chain.push(code)
 
     // 找所有指向当前节点的前置边（target=code, type='前置'）
-    const edges = store.edges.filter(e => e.target === code && e.type === '前置')
+    const edges = graphEdges.value.filter(e => e.target === code && e.type === '前置')
     edges.forEach(e => {
       if (!visited.has(e.source)) {
         queue.push(e.source)
@@ -215,16 +261,18 @@ function readColors() {
 
 // 渲染 ECharts 图表
 function renderChart() {
-  if (!dashboard.value || !store.nodes.length) return
+  if (!dashboard.value
+      || graphCourseId.value !== Number(courseId.value)
+      || !graphNodes.value.length) return
 
   const colors = readColors()
 
   if (!chart) {
-    chart = echarts.init(chartEl.value)
+    chart = initChart(chartEl.value)
   }
 
   // 构建节点数据
-  const nodeData = store.nodes.map(n => {
+  const nodeData = graphNodes.value.map(n => {
     const stat = statByCode.get(n.nodeCode)
     let color = colors.unlearned
 
@@ -246,7 +294,7 @@ function renderChart() {
   })
 
   // 构建边数据（仅使用前置边）
-  const edgeData = store.edges
+  const edgeData = graphEdges.value
     .filter(e => e.type === '前置')
     .map(e => ({
       source: e.source,
@@ -264,6 +312,7 @@ function renderChart() {
 
   const option = {
     backgroundColor: 'transparent',
+    ...graphAriaOption,
     tooltip: {
       formatter: (p) => (p.dataType === 'node' ? p.data.name : '')
     },
@@ -389,40 +438,55 @@ function onResize() {
 
 // 加载数据
 async function loadData() {
-  if (!courseId.value) {
+  if (disposed) return
+  const owner = captureOwner()
+  const id = Number(courseId.value)
+  if (!hasValidOwner(owner) || !(id > 0)) {
+    dashboardRequest.cancel()
     loading.value = false
-    dashboard.value = null
+    error.value = ''
+    clearDashboardState()
     return
   }
+  const request = dashboardRequest.next()
   loading.value = true
   error.value = ''
+  clearDashboardState()
 
   try {
-    // 并行加载图谱结构和聚合数据
-    await Promise.all([
-      store.load(courseId.value),
-      fetchDashboard(courseId.value).then(data => {
-        dashboard.value = data
-        buildStatMap(data.nodes)
-      })
+    const [, nextDashboard] = await Promise.all([
+      store.load(id, { signal: request.signal }),
+      fetchDashboard(id, { signal: request.signal })
     ])
+    if (!isCurrentDashboard(request, owner, id)) return
+    if (store.error || Number(store.loadedCourseId) !== id) {
+      throw new Error(store.error || '图谱加载失败，请稍后重试。')
+    }
+    graphNodes.value = (store.nodes || []).map((node) => ({ ...node }))
+    graphEdges.value = (store.edges || []).map((edge) => ({ ...edge }))
+    graphCourseId.value = id
+    dashboard.value = nextDashboard
+    buildStatMap(nextDashboard?.nodes)
   } catch (e) {
+    if (!isCurrentDashboard(request, owner, id) || isAbortError(e)) return
     error.value = e.message || '加载失败'
   } finally {
-    loading.value = false
+    if (isCurrentDashboard(request, owner, id)) loading.value = false
   }
 }
 
 // 监听数据变化
-watch([() => dashboard.value, () => store.nodes], () => {
-  if (dashboard.value && store.nodes.length > 0) {
+watch([() => dashboard.value, graphNodes], () => {
+  if (dashboard.value && graphNodes.value.length > 0) {
     renderChart()
   }
 })
 
-watch(courseId, (id) => {
-  if (id) loadData()
-}, { immediate: true })
+watch(
+  [courseId, () => session.token, () => session.userId],
+  () => loadData(),
+  { immediate: true }
+)
 
 onMounted(() => {
   window.addEventListener('resize', onResize)
@@ -440,9 +504,12 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  dashboardRequest.cancel()
   window.removeEventListener('resize', onResize)
+  if (typeof window !== 'undefined') delete window.__wjTeacherDashboard
   if (chart) {
-    chart.dispose()
+    disposeChart(chart)
     chart = null
   }
 })

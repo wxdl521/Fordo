@@ -8,60 +8,77 @@
           <div :style="progressBarStyle"></div>
         </div>
         <span>{{ progressText }}</span>
-        <button @click="toggleLinkMode" :style="linkMode ? linkBtnActiveStyle : linkBtnStyle">连线模式</button>
+        <button
+          ref="linkModeToggleRef"
+          type="button"
+          data-testid="link-mode-toggle"
+          :aria-pressed="linkMode"
+          @click="toggleLinkMode"
+          @keydown="onLinkModeKeydown"
+          :style="linkMode ? linkBtnActiveStyle : linkBtnStyle"
+        >连线模式</button>
         <!-- 课程切换下拉（自定义，样式与下方两个菜单一致） -->
         <div :style="dropdownWrapStyle">
           <button data-testid="course-switch" @click.stop="currentCourse && toggleMenu('switch')"
-                  :disabled="!currentCourse" :style="courseSwitchBtnStyle">
+                  :disabled="!currentCourse" :style="courseSwitchBtnStyle"
+                  :aria-haspopup="true" :aria-expanded="openMenu === 'switch'" aria-controls="menu-switch">
             <span :style="courseSwitchNameStyle">{{ currentCourse?.name || '（暂无课程）' }}</span>
             <span v-if="currentCourse" :style="{ marginLeft: '8px', fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
-                     color: currentCourse.published ? 'var(--ok, #2e7d32)' : 'var(--mut)',
+                     color: currentCourse.published ? 'var(--ink)' : 'var(--mut)',
                      background: currentCourse.published ? 'var(--okSoft, #eaf5ea)' : 'transparent',
                      border: currentCourse.published ? 'none' : '1px solid var(--line)' }">
               {{ currentCourse.published ? '已发布' : '未发布' }}
             </span>
             <span :style="{ opacity: 0.7 }">▾</span>
           </button>
-          <div v-if="openMenu === 'switch'" data-testid="course-menu"
+          <div v-if="openMenu === 'switch'" id="menu-switch" data-testid="course-menu" role="menu"
                :style="{ ...dropdownMenuStyle, left: 0, right: 'auto', maxHeight: '320px', overflowY: 'auto' }" @click.stop>
-            <div v-for="c in courses" :key="c.id"
+            <button type="button" v-for="c in courses" :key="c.id" role="menuitem"
                  :style="c.id === currentCourse?.id ? dropdownItemActiveStyle : dropdownItemStyle"
-                 @click="pickCourse(c.id)">{{ c.name }}</div>
-            <div v-if="courses.length === 0" :style="dropdownItemDisabledStyle">（暂无课程）</div>
+                 @click="pickCourse(c.id)" @keydown.enter.prevent="pickCourse(c.id)">{{ c.name }}</button>
+            <div v-if="courses.length === 0" role="menuitem" :style="dropdownItemDisabledStyle">（暂无课程）</div>
           </div>
         </div>
 
         <!-- 课程管理下拉：新增 / 删除 -->
         <div :style="dropdownWrapStyle">
-          <button @click.stop="toggleMenu('course')" :style="importBtnHeaderStyle">课程管理 ▾</button>
-          <div v-if="openMenu === 'course'" :style="dropdownMenuStyle" @click.stop>
-            <div :style="dropdownItemStyle" @click="menuAction('addCourse')">+ 新增课程</div>
-            <div :style="currentCourse ? dropdownItemStyle : dropdownItemDisabledStyle"
+          <button type="button" @click.stop="toggleMenu('course')" :style="importBtnHeaderStyle"
+                  :aria-haspopup="true" :aria-expanded="openMenu === 'course'" aria-controls="menu-course">课程管理 ▾</button>
+          <div v-if="openMenu === 'course'" id="menu-course" role="menu" :style="dropdownMenuStyle" @click.stop>
+            <button type="button" role="menuitem" :style="dropdownItemStyle" @click="menuAction('addCourse')">+ 新增课程</button>
+            <button type="button" role="menuitem"
+                 :style="currentCourse ? dropdownItemStyle : dropdownItemDisabledStyle"
                  data-testid="course-publish-toggle"
+                 :disabled="!currentCourse"
                  @click="currentCourse && menuAction('togglePublish')">
               {{ currentCourse?.published ? '下架（对学生隐藏）' : '发布（学生可见）' }}
-            </div>
-            <div :style="currentCourse ? dropdownItemStyle : dropdownItemDisabledStyle"
-                 @click="currentCourse && menuAction('removeCourse')">删除当前课程</div>
+            </button>
+            <button type="button" role="menuitem"
+                 :style="currentCourse ? dropdownItemStyle : dropdownItemDisabledStyle"
+                 :disabled="!currentCourse"
+                 @click="currentCourse && menuAction('removeCourse')">删除当前课程</button>
           </div>
         </div>
 
         <!-- 图谱操作下拉：导入 / 抽取 / 预览 / 历史 -->
         <div :style="dropdownWrapStyle">
-          <button @click.stop="toggleMenu('graph')" :style="importBtnHeaderStyle">图谱操作 ▾</button>
-          <div v-if="openMenu === 'graph'" :style="dropdownMenuStyle" @click.stop>
-            <div :style="dropdownItemStyle" @click="menuAction('import')">导入图谱</div>
-            <div :style="dropdownItemStyle" @click="menuAction('syllabus')">从课程标准生成</div>
-            <div :style="dropdownItemStyle" @click="menuAction('preview')">生成预览图</div>
-            <div :style="dropdownItemStyle" @click="menuAction('history')">抽取历史</div>
+          <button type="button" @click.stop="toggleMenu('graph')" :style="importBtnHeaderStyle"
+                  :aria-haspopup="true" :aria-expanded="openMenu === 'graph'" aria-controls="menu-graph">图谱操作 ▾</button>
+          <div v-if="openMenu === 'graph'" id="menu-graph" role="menu" :style="dropdownMenuStyle" @click.stop>
+            <button type="button" role="menuitem" :style="dropdownItemStyle" @click="menuAction('import')">导入图谱</button>
+            <button type="button" role="menuitem" :style="dropdownItemStyle" @click="menuAction('syllabus')">从课程标准生成</button>
+            <button type="button" role="menuitem" :style="dropdownItemStyle" @click="menuAction('preview')">生成预览图</button>
+            <button type="button" role="menuitem" :style="dropdownItemStyle" @click="menuAction('history')">抽取历史</button>
           </div>
         </div>
 
         <!-- 隐藏文件输入：常驻于工具栏，菜单关闭后仍可被 menuAction('syllabus') 触发 -->
         <input ref="syllabusInput" type="file" accept="image/png,image/jpeg,image/webp,image/bmp,.pdf,.docx"
                style="display:none" @change="handleSyllabusImage" />
-        <span v-if="syllabusBusy" :style="{ fontSize: '13px', color: 'var(--text-mut)' }">识别中…</span>
-        <span v-if="syllabusError" :style="{ fontSize: '13px', color: 'var(--accent)' }">{{ syllabusError }}</span>
+        <span v-if="syllabusBusy || extractJobLoading" :style="{ fontSize: '13px', color: 'var(--text-mut)' }">
+          识别中… {{ extractJobProgress || 0 }}%
+        </span>
+        <span v-if="syllabusError" role="alert" :style="{ fontSize: '13px', color: 'var(--accent)' }">{{ syllabusError }}</span>
       </div>
     </div>
 
@@ -71,7 +88,7 @@
       <div :style="{ ...canvasWrapStyle, cursor: linkMode ? 'crosshair' : 'default' }">
         <div ref="chartEl" :style="chartStyle"></div>
         <div v-if="loading" :style="overlayStyle">加载中…</div>
-        <div v-else-if="error" :style="{ ...overlayStyle, color: 'var(--accent)' }">
+        <div v-else-if="error" role="alert" :style="{ ...overlayStyle, color: 'var(--accent)' }">
           加载失败：{{ error }}
           <button @click="reload" :style="retryBtnStyle">重试</button>
         </div>
@@ -86,6 +103,26 @@
         <!-- 操作提示 -->
         <div :style="hintStyle">
           <button @click="showNodeForm = true" :style="addNodeBtnStyle">+ 新增节点</button>
+          <div
+            v-if="linkMode"
+            role="group"
+            aria-label="选择连线端点"
+            data-testid="link-node-picker"
+            :style="linkNodePickerStyle"
+          >
+            <button
+              v-for="node in graph?.nodes || []"
+              :key="node.nodeCode"
+              type="button"
+              :data-testid="`link-node-${node.nodeCode}`"
+              :data-node-code="node.nodeCode"
+              :aria-pressed="linkSource?.nodeCode === node.nodeCode"
+              :aria-label="linkNodeAriaLabel(node)"
+              :style="linkNodeButtonStyle(node)"
+              @click="selectLinkNode(node, $event.currentTarget)"
+              @keydown="onLinkNodeKeydown($event, node)"
+            >{{ node.name }}（{{ node.nodeCode }}）</button>
+          </div>
           <span v-if="linkMode" :style="{ fontSize: '11.5px', color: 'var(--accent)', fontWeight: 500 }">
             {{ linkSource ? `已选起点：${linkSource.name}，请点击终点节点` : '请点击起点节点' }} · Esc 取消
           </span>
@@ -102,11 +139,11 @@
 
         <div :style="sidebarBodyStyle">
           <!-- 待复核列表 -->
-          <div v-for="(edge, i) in pending" :key="edge.id" :style="cardStyle(i)">
+          <div v-for="edge in pending" :key="edge.id" :style="cardStyle()">
             <div :style="{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }">
               <span :style="typeTagStyle">{{ edge.type }}</span>
               <span :style="confTagStyle(edge)">置信度 {{ edge.confidence }}%</span>
-              <span :style="{ marginLeft: 'auto', fontSize: '11px', color: 'var(--text-mut)', opacity: 0.7 }">ID-{{ edge.id }}</span>
+              <span :style="{ marginLeft: 'auto', fontSize: '11px', color: 'var(--text-mut)' }">ID-{{ edge.id }}</span>
             </div>
             <div :style="{ display: 'flex', alignItems: 'center', gap: '9px', fontSize: '13.5px', fontWeight: 500, marginBottom: '9px' }">
               <span>{{ edge.fromName }}</span>
@@ -129,11 +166,11 @@
     </div>
 
     <!-- 新增节点表单 -->
-    <div v-if="showNodeForm" :style="modalOverlayStyle" @click.self="showNodeForm = false">
-      <div :style="modalStyle">
+    <div v-if="showNodeForm" :style="modalOverlayStyle" @click.self="closeNodeForm" @keydown="onDialogKeydown($event, closeNodeForm)">
+      <div ref="nodeFormDialogRef" role="dialog" aria-modal="true" aria-label="新增节点" :style="modalStyle">
         <div :style="modalHeadStyle">
           <h3 :style="{ margin: 0, fontSize: '15px' }">新增节点</h3>
-          <button @click="showNodeForm = false" :style="closeBtnStyle">×</button>
+          <button type="button" @click="closeNodeForm" :style="closeBtnStyle" aria-label="关闭">×</button>
         </div>
         <div :style="modalBodyStyle">
           <div :style="formRowStyle">
@@ -166,18 +203,18 @@
           </div>
         </div>
         <div :style="modalFooterStyle">
-          <button @click="submitCreate" :style="submitBtnStyle">创建</button>
-          <button @click="showNodeForm = false" :style="cancelBtnStyle">取消</button>
+          <button type="button" @click="submitCreate" :style="submitBtnStyle">创建</button>
+          <button type="button" @click="closeNodeForm" :style="cancelBtnStyle">取消</button>
         </div>
       </div>
     </div>
 
     <!-- 编辑/删除节点表单 -->
-    <div v-if="showEditForm" :style="modalOverlayStyle" @click.self="showEditForm = false">
-      <div :style="modalStyle">
+    <div v-if="showEditForm" :style="modalOverlayStyle" @click.self="closeEditForm" @keydown="onDialogKeydown($event, closeEditForm)">
+      <div ref="editFormDialogRef" role="dialog" aria-modal="true" aria-label="编辑节点" :style="modalStyle">
         <div :style="modalHeadStyle">
           <h3 :style="{ margin: 0, fontSize: '15px' }">编辑节点</h3>
-          <button @click="showEditForm = false" :style="closeBtnStyle">×</button>
+          <button type="button" @click="closeEditForm" :style="closeBtnStyle" aria-label="关闭">×</button>
         </div>
         <div :style="modalBodyStyle">
           <div :style="formRowStyle">
@@ -210,19 +247,19 @@
           </div>
         </div>
         <div :style="modalFooterStyle">
-          <button @click="submitUpdate" :style="submitBtnStyle">保存</button>
-          <button @click="confirmDelete" :style="deleteBtnStyle">删除</button>
-          <button @click="showEditForm = false" :style="cancelBtnStyle">取消</button>
+          <button type="button" @click="submitUpdate" :style="submitBtnStyle">保存</button>
+          <button type="button" @click="confirmDelete" :style="deleteBtnStyle">删除</button>
+          <button type="button" @click="closeEditForm" :style="cancelBtnStyle">取消</button>
         </div>
       </div>
     </div>
 
     <!-- 新增课程弹窗 -->
-    <div v-if="showCourseForm" :style="modalOverlayStyle" @click.self="showCourseForm = false">
-      <div :style="modalStyle">
+    <div v-if="showCourseForm" :style="modalOverlayStyle" @click.self="closeCourseForm" @keydown="onDialogKeydown($event, closeCourseForm)">
+      <div ref="courseFormDialogRef" role="dialog" aria-modal="true" aria-label="新增课程" :style="modalStyle">
         <div :style="modalHeadStyle">
           <h3 :style="{ margin: 0, fontSize: '15px' }">新增课程</h3>
-          <button @click="showCourseForm = false" :style="closeBtnStyle">×</button>
+          <button type="button" @click="closeCourseForm" :style="closeBtnStyle" aria-label="关闭">×</button>
         </div>
         <div :style="modalBodyStyle">
           <div :style="formRowStyle">
@@ -233,18 +270,18 @@
           <div :style="{ fontSize: '12px', color: 'var(--text-mut)' }">课程编码将自动生成，可直接导入/抽取课程标准。</div>
         </div>
         <div :style="modalFooterStyle">
-          <button @click="addCourse" :style="submitBtnStyle">创建</button>
-          <button @click="showCourseForm = false" :style="cancelBtnStyle">取消</button>
+          <button type="button" @click="addCourse" :style="submitBtnStyle">创建</button>
+          <button type="button" @click="closeCourseForm" :style="cancelBtnStyle">取消</button>
         </div>
       </div>
     </div>
 
     <!-- 导入图谱弹窗 -->
-    <div v-if="showImportModal" :style="modalOverlayStyle" @click.self="closeImportModal">
-      <div :style="importModalStyle">
+    <div v-if="showImportModal" :style="modalOverlayStyle" @click.self="closeImportModal" @keydown="onDialogKeydown($event, closeImportModal)">
+      <div ref="importDialogRef" role="dialog" aria-modal="true" aria-label="导入知识图谱" :style="importModalStyle">
         <div :style="modalHeadStyle">
           <h3 :style="{ margin: 0, fontSize: '15px' }">导入知识图谱</h3>
-          <button @click="closeImportModal" :style="closeBtnStyle">×</button>
+          <button type="button" @click="closeImportModal" :style="closeBtnStyle" aria-label="关闭">×</button>
         </div>
         <div :style="modalBodyStyle">
           <!-- 上传区域 -->
@@ -292,13 +329,13 @@
           </div>
 
           <!-- 错误信息 -->
-          <div v-if="importError" :style="importErrorBoxStyle">
+          <div v-if="importError" role="alert" :style="importErrorBoxStyle">
             <div :style="{ fontSize: '14px', fontWeight: 500, color: 'var(--accent)', marginBottom: '8px' }">导入失败</div>
             <div :style="{ fontSize: '13px', color: 'var(--text-mut)', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }">{{ importError }}</div>
           </div>
         </div>
         <div :style="modalFooterStyle">
-          <button v-if="!importUploading" @click="closeImportModal" :style="cancelBtnStyle">
+          <button type="button" v-if="!importUploading" @click="closeImportModal" :style="cancelBtnStyle">
             {{ importResult || importError ? '关闭' : '取消' }}
           </button>
         </div>
@@ -306,11 +343,11 @@
     </div>
 
     <!-- 预览图弹窗 -->
-    <div v-if="showPreview" :style="modalOverlayStyle" @click.self="closePreview">
-      <div :style="previewModalStyle">
+    <div v-if="showPreview" :style="modalOverlayStyle" @click.self="closePreview" @keydown="onDialogKeydown($event, closePreview)">
+      <div ref="previewDialogRef" role="dialog" aria-modal="true" aria-label="知识图谱预览图" :style="previewModalStyle">
         <div :style="modalHeadStyle">
           <h3 :style="{ margin: 0, fontSize: '15px' }">知识图谱预览图</h3>
-          <button @click="closePreview" :style="closeBtnStyle">×</button>
+          <button type="button" @click="closePreview" :style="closeBtnStyle" aria-label="关闭">×</button>
         </div>
         <div :style="previewBodyStyle">
           <div v-if="previewSvg" :style="previewCanvasStyle" v-html="previewSvg"></div>
@@ -329,24 +366,68 @@
     <!-- 右键菜单 -->
     <div
       v-if="contextMenu.visible"
+      ref="contextMenuRef"
+      role="menu"
+      :aria-label="`${contextMenu.node?.name || '节点'}操作`"
       :style="contextMenuStyle(contextMenu.x, contextMenu.y)"
       @click.stop
+      @keydown="onMenuNavigationKeydown"
     >
-      <div :style="ctxMenuItemStyle" @click="ctxEdit">编辑</div>
-      <div :style="{ ...ctxMenuItemStyle, color: 'var(--weak)' }" @click="ctxDelete">删除</div>
-      <div :style="ctxMenuItemStyle" @click="contextMenu.visible = false">取消</div>
+      <button ref="contextMenuFirstRef" type="button" role="menuitem" :style="menuButtonStyle" @click="ctxEdit">编辑</button>
+      <button type="button" role="menuitem" :style="{ ...menuButtonStyle, color: 'var(--weak)' }" @click="ctxDelete">删除</button>
+      <button type="button" role="menuitem" :style="menuButtonStyle" @click="closeContextMenu(true)">取消</button>
     </div>
 
     <!-- 边类型选择弹窗 -->
     <div
       v-if="edgeTypePopup.visible"
+      ref="edgeTypePopupRef"
+      data-testid="edge-type-popup"
+      role="menu"
+      aria-labelledby="edge-type-popup-label"
       :style="contextMenuStyle(edgeTypePopup.x, edgeTypePopup.y)"
       @click.stop
+      @keydown.esc.prevent.stop="closeEdgeTypePopup()"
+      @keydown="onMenuNavigationKeydown"
     >
-      <div :style="{ ...ctxMenuItemStyle, fontSize: '11px', color: 'var(--text-mut)', cursor: 'default' }">选择边类型</div>
-      <div :style="ctxMenuItemStyle" @click="confirmEdgeType('前置')">前置</div>
-      <div :style="ctxMenuItemStyle" @click="confirmEdgeType('包含')">包含</div>
-      <div :style="ctxMenuItemStyle" @click="confirmEdgeType('相关')">相关</div>
+      <div id="edge-type-popup-label" role="presentation" :style="{ ...ctxMenuItemStyle, fontSize: '11px', color: 'var(--text-mut)', cursor: 'default' }">
+        选择边类型
+        <template v-if="edgeTypePopup.source && edgeTypePopup.target">
+          · {{ edgeTypePopup.source }} → {{ edgeTypePopup.target }}
+        </template>
+      </div>
+      <div v-if="edgeError" role="alert" data-testid="edge-error" :style="{ ...ctxMenuItemStyle, color: 'var(--accent)', cursor: 'default', whiteSpace: 'normal', maxWidth: '240px' }">
+        {{ edgeError }}
+      </div>
+      <button
+        ref="edgeTypeFirstRef"
+        type="button"
+        role="menuitem"
+        :aria-disabled="edgeSaving"
+        :style="edgeTypeItemStyle"
+        data-testid="edge-type-prereq"
+        @click="confirmEdgeType('前置')"
+        @keydown="onEdgeTypeKeydown($event, '前置')"
+      >前置</button>
+      <button
+        type="button"
+        role="menuitem"
+        :aria-disabled="edgeSaving"
+        :style="edgeTypeItemStyle"
+        data-testid="edge-type-contains"
+        @click="confirmEdgeType('包含')"
+        @keydown="onEdgeTypeKeydown($event, '包含')"
+      >包含</button>
+      <button
+        type="button"
+        role="menuitem"
+        :aria-disabled="edgeSaving"
+        :style="edgeTypeItemStyle"
+        data-testid="edge-type-related"
+        @click="confirmEdgeType('相关')"
+        @keydown="onEdgeTypeKeydown($event, '相关')"
+      >相关</button>
+      <div v-if="edgeSaving" role="status" aria-live="polite" :style="{ ...ctxMenuItemStyle, color: 'var(--text-mut)', cursor: 'default' }">保存中…</div>
     </div>
 
     <!-- 抽取历史弹层 -->
@@ -378,13 +459,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import * as echarts from 'echarts'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { initChart, disposeChart, graphAriaOption } from '../utils/echartsGraph.js'
 import {
   fetchTeacherGraph,
   fetchPendingEdges,
   acceptEdge,
   rejectEdge,
+  createEdge,
   createNode,
   updateNode,
   deleteNode,
@@ -395,16 +477,80 @@ import {
 } from '../api/teacher.js'
 import { renderGraphSvg } from '../utils/graphSvgRenderer.js'
 import { importGraphJson, importGraphExcel, extractGraphFromFile, fetchExtractionReviews } from '../api/admin.js'
+import { useJob } from '../composables/useJob.js'
 import { useRouter } from 'vue-router'
+import { useCourseStore } from '../store/course.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 
 const router = useRouter()
+const courseStore = useCourseStore()
+if (!courseStore.hydrated) courseStore.hydrate()
 
-// ── 多课程切换 ──
-const LS_KEY = 'wj.teacher.currentCourseId'
+// 多课程切换：两个异步 job 共享同一个响应式课程边界。
 const courses = ref([])
 const currentCourse = ref(null) // { id, code, name }
+const currentCourseId = computed(() => currentCourse.value?.id ?? null)
+let extractActionCourse = null
+let importActionCourse = null
+
+function sameCourse(actionCourse) {
+  if (!actionCourse || currentCourse.value?.id == null) return false
+  return !disposed && Number(actionCourse.id) === Number(currentCourse.value.id)
+}
+
+const {
+  loading: extractJobLoading,
+  progress: extractJobProgress,
+  start: startExtractJob
+} = useJob({
+  courseId: currentCourseId,
+  onSuccess: (j) => {
+    const actionCourse = extractActionCourse
+    if (!sameCourse(actionCourse)) return
+    const draftId = j?.result?.draftId
+    if (draftId) {
+      router.push({
+        path: '/teacher/graph-extract-review',
+        query: { draftId, courseCode: actionCourse.code }
+      })
+    } else {
+      syllabusError.value = '抽取完成但未返回草稿 ID'
+    }
+    syllabusBusy.value = false
+    extractActionCourse = null
+  },
+  onError: (e) => {
+    if (!sameCourse(extractActionCourse)) return
+    syllabusError.value = e?.message || '识别失败'
+    syllabusBusy.value = false
+    extractActionCourse = null
+  }
+})
+
+const {
+  progress: importExcelJobProgress,
+  start: startImportExcelJob
+} = useJob({
+  courseId: currentCourseId,
+  onSuccess: (j) => {
+    if (!sameCourse(importActionCourse)) return
+    importResult.value = j?.result || {}
+    importProgress.value = 100
+    importUploading.value = false
+    importActionCourse = null
+    reload()
+  },
+  onError: (e) => {
+    if (!sameCourse(importActionCourse)) return
+    importError.value = e?.message || '导入失败，请检查文件格式和内容'
+    importUploading.value = false
+    importActionCourse = null
+  }
+})
+
 const showCourseForm = ref(false)
 const newCourseName = ref('')
+
 
 // ── 工具栏下拉菜单（课程管理 / 图谱操作）──
 const openMenu = ref(null)          // 'course' | 'graph' | null
@@ -442,19 +588,73 @@ function closeDropdowns() {
 const chartEl = ref(null)
 const graph = ref(null)
 const pending = ref([])
-const loading = ref(true)
-const error = ref(null)
+const graphLoading = ref(true)
+const pendingLoading = ref(true)
+const graphError = ref(null)
+const pendingError = ref(null)
+const loading = computed(() => graphLoading.value || pendingLoading.value)
+const error = computed(() => graphError.value || pendingError.value)
 const showNodeForm = ref(false)
 const showEditForm = ref(false)
 const processed = ref(0)
+const graphRequest = createLatestRequest()
+const pendingRequest = createLatestRequest()
+const historyRequest = createLatestRequest()
+const coursesRequest = createLatestRequest()
+let disposed = false
+
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+}
+
+function isCurrentCourse(courseId) {
+  return !disposed && Number(currentCourse.value?.id) === Number(courseId)
+}
 
 // ── 连线模式 ──
 const linkMode = ref(false)
+const linkModeToggleRef = ref(null)
 const linkSource = ref(null) // { nodeCode, name }
-const edgeTypePopup = ref({ visible: false, x: 0, y: 0 })
+const edgeTypePopup = ref({ visible: false, x: 0, y: 0, source: null, target: null })
+const edgeSaving = ref(false)
+const edgeError = ref(null)
+const edgeTypePopupRef = ref(null)
+const edgeTypeFirstRef = ref(null)
+let edgeTypeReturnFocus = null
+
+function resetEdgeActionState() {
+  linkMode.value = false
+  linkSource.value = null
+  edgeTypePopup.value = { visible: false, x: 0, y: 0, source: null, target: null }
+  edgeSaving.value = false
+  edgeError.value = null
+  edgeTypeReturnFocus = null
+}
+
+function resetCourseActionOwnership() {
+  historyRequest.cancel()
+  reviews.value = []
+  resetEdgeActionState()
+  extractActionCourse = null
+  importActionCourse = null
+  syllabusBusy.value = false
+  importUploading.value = false
+}
+
+/** 中文关系标签 → 数据库编码 1..4 */
+const RELATION_TYPE_CODE = { '前置': 1, '包含': 2, '相关': 3, '应用': 4 }
+
+const edgeTypeItemStyle = computed(() => ({
+  ...menuButtonStyle,
+  opacity: edgeSaving.value ? 0.5 : 1,
+  cursor: edgeSaving.value ? 'wait' : 'pointer'
+}))
 
 // ── 右键菜单 ──
 const contextMenu = ref({ visible: false, x: 0, y: 0, node: null })
+const contextMenuRef = ref(null)
+const contextMenuFirstRef = ref(null)
+let contextMenuReturnFocus = null
 
 // ── 导入状态 ──
 const showImportModal = ref(false)
@@ -475,9 +675,21 @@ const showHistory = ref(false)
 const reviews = ref([])
 async function openHistory() {
   if (!currentCourse.value) return
+  const actionCourse = {
+    id: Number(currentCourse.value.id),
+    code: currentCourse.value.code
+  }
+  const request = historyRequest.next()
   showHistory.value = true
-  try { reviews.value = await fetchExtractionReviews(currentCourse.value.code) }
-  catch { reviews.value = [] }
+  reviews.value = []
+  try {
+    const result = await fetchExtractionReviews(actionCourse.code, { signal: request.signal })
+    if (!request.isCurrent() || !isCurrentCourse(actionCourse.id)) return
+    reviews.value = result
+  } catch (err) {
+    if (!request.isCurrent() || !isCurrentCourse(actionCourse.id) || isAbortError(err)) return
+    reviews.value = []
+  }
 }
 function histPct(v) { return v == null ? '—' : (Number(v) * 100).toFixed(1) + '%' }
 
@@ -537,25 +749,51 @@ function readColors() {
 }
 
 async function loadCourses(preferId) {
-  const list = await fetchTeacherCourses()
-  courses.value = Array.isArray(list) ? list : []
-  if (courses.value.length === 0) {
-    currentCourse.value = null
-    graph.value = { nodes: [], edges: [] }
-    pending.value = []
-    if (chart) chart.clear()
-    return
+  if (disposed) return false
+  const request = coursesRequest.next()
+  try {
+    const list = await fetchTeacherCourses({ signal: request.signal })
+    if (!request.isCurrent() || disposed) return false
+    courses.value = Array.isArray(list) ? list : []
+    courseStore.setTeacherCourses(courses.value)
+    if (courses.value.length === 0) {
+      resetCourseActionOwnership()
+      graphRequest.cancel()
+      pendingRequest.cancel()
+      currentCourse.value = null
+      courseStore.setTeacherCourseId(null)
+      graph.value = { nodes: [], edges: [] }
+      pending.value = []
+      processed.value = 0
+      graphLoading.value = false
+      pendingLoading.value = false
+      graphError.value = null
+      pendingError.value = null
+      if (chart) chart.clear()
+      return true
+    }
+    const saved = preferId ?? courseStore.teacherCourseId
+    const previousCourseId = Number(currentCourse.value?.id)
+    const nextCourse = courses.value.find(c => c.id === saved) || courses.value[0]
+    if (Number(nextCourse.id) !== previousCourseId) {
+      resetCourseActionOwnership()
+    }
+    currentCourse.value = nextCourse
+    courseStore.setTeacherCourseId(currentCourse.value.id)
+    return true
+  } catch (err) {
+    if (!request.isCurrent() || disposed || isAbortError(err)) return false
+    throw err
   }
-  const saved = preferId ?? Number(localStorage.getItem(LS_KEY))
-  currentCourse.value = courses.value.find(c => c.id === saved) || courses.value[0]
-  localStorage.setItem(LS_KEY, String(currentCourse.value.id))
 }
 
 async function switchCourse(id) {
   const c = courses.value.find(x => x.id === Number(id))
   if (!c || (currentCourse.value && c.id === currentCourse.value.id)) return
+  coursesRequest.cancel()
+  resetCourseActionOwnership()
   currentCourse.value = c
-  localStorage.setItem(LS_KEY, String(c.id))
+  courseStore.setTeacherCourseId(c.id)
   await reload()
 }
 
@@ -564,70 +802,120 @@ async function addCourse() {
   if (!name) { alert('请输入课程名'); return }
   try {
     const created = await createTeacherCourse(name)
+    if (disposed) return
     showCourseForm.value = false
     newCourseName.value = ''
-    await loadCourses(created.id)
+    const loaded = await loadCourses(created.id)
+    if (!loaded || disposed) return
     await reload()
   } catch (e) {
+    if (disposed) return
     alert('新增失败：' + (e.message || '网络错误'))
   }
 }
 
 async function removeCourse() {
   if (!currentCourse.value) return
-  if (!confirm(`确定删除课程「${currentCourse.value.name}」及其全部图谱节点与边吗？此操作不可撤销。`)) return
+  const actionCourseId = Number(currentCourse.value.id)
+  const actionCourseName = currentCourse.value.name
+  if (!confirm(`确定删除课程「${actionCourseName}」及其全部图谱节点与边吗？此操作不可撤销。`)) return
   try {
-    await deleteTeacherCourse(currentCourse.value.id)
-    await loadCourses()        // 切到列表里下一门或空态
-    if (currentCourse.value) await reload()
+    await deleteTeacherCourse(actionCourseId)
+    if (disposed) return
+    const shouldReloadSelection = isCurrentCourse(actionCourseId)
+    const loaded = await loadCourses() // 切到列表里下一门或空态
+    if (!loaded || disposed) return
+    if (shouldReloadSelection && currentCourse.value) await reload()
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     alert('删除失败：' + (e.message || '网络错误'))
   }
 }
 
 async function togglePublish() {
   if (!currentCourse.value) return
+  const actionCourseId = Number(currentCourse.value.id)
   const next = !currentCourse.value.published
   try {
-    await setTeacherCourseStatus(currentCourse.value.id, next)
-    await loadCourses(currentCourse.value.id)
+    await setTeacherCourseStatus(actionCourseId, next)
+    if (!isCurrentCourse(actionCourseId)) return
+    await loadCourses(actionCourseId)
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     alert(e.message || '操作失败')
   }
 }
 
 async function reload() {
-  if (!currentCourse.value) { loading.value = false; return }
-  loading.value = true
-  error.value = null
-  try {
-    const [g, p] = await Promise.all([
-      fetchTeacherGraph(currentCourse.value.id),
-      fetchPendingEdges(currentCourse.value.id)
-    ])
-
-    // 提取 .data（接口返回 Result 信封）
-    graph.value = g.data || g
-    pending.value = p.data || p
-
-    // 计算已处理数（根据初始待复核边总数）
-    const initialTotal = (graph.value.edges || []).filter(e => e.pending !== false).length
-    processed.value = Math.max(0, initialTotal - pending.value.length)
-
-    renderChart()
-  } catch (e) {
-    console.error('加载失败', e)
-    error.value = e.message || '网络错误'
-  } finally {
-    loading.value = false
+  if (disposed) return
+  const courseId = Number(currentCourse.value?.id)
+  if (!(courseId > 0)) {
+    graphRequest.cancel()
+    pendingRequest.cancel()
+    graphLoading.value = false
+    pendingLoading.value = false
+    graphError.value = null
+    pendingError.value = null
+    graph.value = { nodes: [], edges: [] }
+    pending.value = []
+    processed.value = 0
+    return
   }
+
+  const graphRun = graphRequest.next()
+  const pendingRun = pendingRequest.next()
+  graphLoading.value = true
+  pendingLoading.value = true
+  graphError.value = null
+  pendingError.value = null
+  graph.value = { nodes: [], edges: [] }
+  pending.value = []
+  processed.value = 0
+
+  const loadGraph = async () => {
+    try {
+      const result = await fetchTeacherGraph(courseId, { signal: graphRun.signal })
+      if (!graphRun.isCurrent() || !isCurrentCourse(courseId)) return false
+      graph.value = result.data || result
+      renderChart()
+      return true
+    } catch (err) {
+      if (!graphRun.isCurrent() || !isCurrentCourse(courseId) || isAbortError(err)) return false
+      console.error('加载图谱失败', err)
+      graphError.value = err.message || '网络错误'
+      return false
+    } finally {
+      if (graphRun.isCurrent() && isCurrentCourse(courseId)) graphLoading.value = false
+    }
+  }
+
+  const loadPending = async () => {
+    try {
+      const result = await fetchPendingEdges(courseId, { signal: pendingRun.signal })
+      if (!pendingRun.isCurrent() || !isCurrentCourse(courseId)) return false
+      pending.value = result.data || result
+      return true
+    } catch (err) {
+      if (!pendingRun.isCurrent() || !isCurrentCourse(courseId) || isAbortError(err)) return false
+      console.error('加载待复核边失败', err)
+      pendingError.value = err.message || '网络错误'
+      return false
+    } finally {
+      if (pendingRun.isCurrent() && isCurrentCourse(courseId)) pendingLoading.value = false
+    }
+  }
+
+  const [graphApplied, pendingApplied] = await Promise.all([loadGraph(), loadPending()])
+  if (!graphApplied || !pendingApplied || !isCurrentCourse(courseId)) return
+  const initialTotal = (graph.value.edges || []).filter(e => e.pending !== false).length
+  processed.value = Math.max(0, initialTotal - pending.value.length)
 }
 
 function renderChart() {
   if (!graph.value || !chartEl.value) return
 
   readColors()
-  if (!chart) chart = echarts.init(chartEl.value)
+  if (!chart) chart = initChart(chartEl.value)
 
   const nodes = (graph.value.nodes || []).map(n => ({
     id: n.nodeCode,
@@ -680,6 +968,7 @@ function renderChart() {
 
   const option = {
     backgroundColor: 'transparent',
+    ...graphAriaOption,
     tooltip: {
       formatter: (p) => {
         if (p.dataType === 'node') {
@@ -747,7 +1036,9 @@ function renderChart() {
     const e = params.event?.event || params.event
     const x = e?.clientX || e?.offsetX || 200
     const y = e?.clientY || e?.offsetY || 200
+    contextMenuReturnFocus = document.activeElement
     contextMenu.value = { visible: true, x, y, node: params.data._raw }
+    nextTick(() => contextMenuFirstRef.value?.focus())
   })
 }
 
@@ -766,20 +1057,28 @@ function openEditForm(node) {
 }
 
 async function accept(id) {
+  const actionCourseId = Number(currentCourse.value?.id)
+  if (!(actionCourseId > 0)) return
   try {
     await acceptEdge(id)
+    if (!isCurrentCourse(actionCourseId)) return
     await reload()
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     console.error('采纳失败', e)
     alert('操作失败：' + (e.message || '网络错误'))
   }
 }
 
 async function reject(id) {
+  const actionCourseId = Number(currentCourse.value?.id)
+  if (!(actionCourseId > 0)) return
   try {
     await rejectEdge(id)
+    if (!isCurrentCourse(actionCourseId)) return
     await reload()
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     console.error('驳回失败', e)
     alert('操作失败：' + (e.message || '网络错误'))
   }
@@ -790,12 +1089,17 @@ async function submitCreate() {
     alert('节点编码和名称为必填项')
     return
   }
+  const actionCourseId = Number(currentCourse.value?.id)
+  if (!(actionCourseId > 0)) return
+  const payload = { ...nodeForm.value }
   try {
-    await createNode(currentCourse.value.id, nodeForm.value)
-    showNodeForm.value = false
+    await createNode(actionCourseId, payload)
+    if (!isCurrentCourse(actionCourseId)) return
+    closeNodeForm()
     nodeForm.value = { nodeCode: '', name: '', chapter: '', difficulty: 3, isKey: false, description: '', note: '', x: null, y: null }
     await reload()
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     console.error('创建失败', e)
     alert('创建失败：' + (e.message || '网络错误'))
   }
@@ -806,24 +1110,37 @@ async function submitUpdate() {
     alert('名称为必填项')
     return
   }
+  const actionCourseId = Number(currentCourse.value?.id)
+  if (!(actionCourseId > 0)) return
   try {
-    const { id, nodeCode, ...req } = editForm.value
+    const req = { ...editForm.value }
+    const id = req.id
+    delete req.id
+    delete req.nodeCode
     await updateNode(id, req)
-    showEditForm.value = false
+    if (!isCurrentCourse(actionCourseId)) return
+    closeEditForm()
     await reload()
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     console.error('更新失败', e)
     alert('更新失败：' + (e.message || '网络错误'))
   }
 }
 
 async function confirmDelete() {
-  if (!confirm(`确定删除节点「${editForm.value.name}」吗？此操作不可撤销。`)) return
+  const actionCourseId = Number(currentCourse.value?.id)
+  if (!(actionCourseId > 0)) return
+  const nodeId = editForm.value.id
+  const nodeName = editForm.value.name
+  if (!confirm(`确定删除节点「${nodeName}」吗？此操作不可撤销。`)) return
   try {
-    await deleteNode(editForm.value.id)
-    showEditForm.value = false
+    await deleteNode(nodeId)
+    if (!isCurrentCourse(actionCourseId)) return
+    closeEditForm()
     await reload()
   } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
     console.error('删除失败', e)
     alert('删除失败：' + (e.message || '网络错误'))
   }
@@ -840,10 +1157,25 @@ function toggleLinkMode() {
 }
 
 function exitLinkMode() {
-  linkMode.value = false
-  linkSource.value = null
-  edgeTypePopup.value = { visible: false, x: 0, y: 0 }
+  resetEdgeActionState()
   highlightLinkSource() // 清除高亮
+  nextTick(() => linkModeToggleRef.value?.focus())
+}
+
+function isActivationKey(e) {
+  return e.key === 'Enter' || e.key === ' ' || e.key === 'Space' || e.key === 'Spacebar'
+}
+
+function onLinkModeKeydown(e) {
+  if (!isActivationKey(e)) return
+  e.preventDefault()
+  toggleLinkMode()
+}
+
+function onLinkNodeKeydown(e, node) {
+  if (!isActivationKey(e)) return
+  e.preventDefault()
+  selectLinkNode(node, e.currentTarget)
 }
 
 function highlightLinkSource() {
@@ -864,12 +1196,13 @@ function highlightLinkSource() {
   chart.setOption({ series: [{ data: nodes }] }, { replaceMerge: ['series'] })
 }
 
-function selectLinkNode(rawNode) {
+function selectLinkNode(rawNode, returnFocus = null) {
   if (!linkSource.value) {
     linkSource.value = { nodeCode: rawNode.nodeCode, name: rawNode.name }
     highlightLinkSource()
   } else if (rawNode.nodeCode !== linkSource.value.nodeCode) {
     // 第二个节点：显示边类型选择弹窗
+    edgeTypeReturnFocus = returnFocus
     edgeTypePopup.value = {
       visible: true,
       x: 200,
@@ -877,27 +1210,99 @@ function selectLinkNode(rawNode) {
       source: linkSource.value.nodeCode,
       target: rawNode.nodeCode
     }
+    nextTick(() => edgeTypeFirstRef.value?.focus())
   }
 }
 
-function confirmEdgeType(type) {
+function closeEdgeTypePopup(restore = true) {
+  if (edgeSaving.value) return
+  const focusTarget = edgeTypeReturnFocus
+  edgeTypePopup.value = { visible: false, x: 0, y: 0, source: null, target: null }
+  edgeError.value = null
+  edgeTypeReturnFocus = null
+  if (restore && focusTarget && typeof focusTarget.focus === 'function') {
+    nextTick(() => focusTarget.focus())
+  }
+}
+
+function onEdgeTypeKeydown(e, type) {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    closeEdgeTypePopup()
+    return
+  }
+  if (!isActivationKey(e)) return
+  e.preventDefault()
+  e.stopPropagation()
+  confirmEdgeType(type)
+}
+
+function onMenuNavigationKeydown(e) {
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
+  const items = Array.from(e.currentTarget.querySelectorAll('button[role="menuitem"]'))
+    .filter((item) => item.getAttribute('aria-disabled') !== 'true' && !item.disabled)
+  if (!items.length) return
+  e.preventDefault()
+  const current = Math.max(0, items.indexOf(document.activeElement))
+  let next = current
+  if (e.key === 'Home') next = 0
+  else if (e.key === 'End') next = items.length - 1
+  else if (e.key === 'ArrowDown') next = (current + 1) % items.length
+  else next = (current - 1 + items.length) % items.length
+  items[next].focus()
+}
+
+async function confirmEdgeType(type) {
+  if (edgeSaving.value) return
   const src = edgeTypePopup.value.source
   const tgt = edgeTypePopup.value.target
-  edgeTypePopup.value = { visible: false, x: 0, y: 0 }
-  // TODO: POST /api/teacher/graph/edges
-  alert(`连线功能待后端接口支持\n${src} → [${type}] → ${tgt}`)
-  exitLinkMode()
+  if (!src || !tgt || !currentCourse.value) return
+  const actionCourseId = Number(currentCourse.value.id)
+
+  const relationType = RELATION_TYPE_CODE[type]
+  if (!relationType) {
+    edgeError.value = '未知关系类型: ' + type
+    return
+  }
+
+  edgeError.value = null
+  edgeSaving.value = true
+  try {
+    await createEdge(actionCourseId, {
+      sourceNodeCode: src,
+      targetNodeCode: tgt,
+      relationType
+    })
+    if (!isCurrentCourse(actionCourseId)) return
+    edgeTypePopup.value = { visible: false, x: 0, y: 0, source: null, target: null }
+    exitLinkMode()
+    await reload()
+  } catch (e) {
+    if (!isCurrentCourse(actionCourseId)) return
+    // 409 等失败：保留端点与弹窗，内联展示错误
+    edgeError.value = e?.message || '创建边失败'
+    edgeTypePopup.value = {
+      visible: true,
+      x: edgeTypePopup.value.x || 200,
+      y: edgeTypePopup.value.y || 200,
+      source: src,
+      target: tgt
+    }
+  } finally {
+    if (isCurrentCourse(actionCourseId)) edgeSaving.value = false
+  }
 }
 
 // ── 右键菜单 ──
 function ctxEdit() {
   if (contextMenu.value.node) openEditForm(contextMenu.value.node)
-  contextMenu.value = { visible: false, x: 0, y: 0, node: null }
+  closeContextMenu(false)
 }
 
 function ctxDelete() {
   const node = contextMenu.value.node
-  contextMenu.value = { visible: false, x: 0, y: 0, node: null }
+  closeContextMenu(false)
   if (!node) return
   editForm.value = {
     id: node.id,
@@ -912,17 +1317,38 @@ function ctxDelete() {
   confirmDelete()
 }
 
+function closeContextMenu(restore = false) {
+  const focusTarget = contextMenuReturnFocus
+  contextMenu.value = { visible: false, x: 0, y: 0, node: null }
+  contextMenuReturnFocus = null
+  if (restore && focusTarget && typeof focusTarget.focus === 'function') {
+    nextTick(() => focusTarget.focus())
+  }
+}
+
 // ── 键盘事件 ──
-function closeMenus() {
-  if (contextMenu.value.visible) contextMenu.value = { visible: false, x: 0, y: 0, node: null }
-  if (edgeTypePopup.value.visible) edgeTypePopup.value = { visible: false, x: 0, y: 0 }
+function closeMenus(e) {
+  const target = e?.target
+  if (contextMenuRef.value?.contains(target) || edgeTypePopupRef.value?.contains(target)) return
+  if (contextMenu.value.visible) closeContextMenu(false)
+  if (edgeTypePopup.value.visible && !edgeSaving.value) closeEdgeTypePopup(false)
 }
 
 function handleKeydown(e) {
   if (e.key === 'Escape') {
     if (openMenu.value) { openMenu.value = null; return }
-    if (edgeTypePopup.value.visible) { edgeTypePopup.value = { visible: false, x: 0, y: 0 }; return }
-    if (contextMenu.value.visible) { contextMenu.value = { visible: false, x: 0, y: 0, node: null }; return }
+    if (edgeTypePopup.value.visible && !edgeSaving.value) {
+      e.preventDefault()
+      closeEdgeTypePopup()
+      return
+    }
+    if (contextMenu.value.visible) { e.preventDefault(); closeContextMenu(true); return }
+    if (showNodeForm.value) { closeNodeForm(); return }
+    if (showEditForm.value) { closeEditForm(); return }
+    if (showCourseForm.value) { closeCourseForm(); return }
+    if (showImportModal.value) { closeImportModal(); return }
+    if (showPreview.value) { closePreview(); return }
+    if (showHistory.value) { showHistory.value = false; return }
     if (linkMode.value) { exitLinkMode(); return }
   }
   if ((e.key === 'Delete' || e.key === 'Backspace') && showEditForm.value) {
@@ -932,6 +1358,84 @@ function handleKeydown(e) {
     confirmDelete()
   }
 }
+
+// ── Dialog a11y: focus trap + restore previous focus on Esc/close ──
+const nodeFormDialogRef = ref(null)
+const editFormDialogRef = ref(null)
+const courseFormDialogRef = ref(null)
+const importDialogRef = ref(null)
+const previewDialogRef = ref(null)
+let dialogPrevFocus = null
+
+const FOCUSABLE_SEL = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+function getFocusable(container) {
+  if (!container) return []
+  return Array.from(container.querySelectorAll(FOCUSABLE_SEL))
+    .filter((el) => el.offsetParent !== null || el === document.activeElement)
+}
+
+function onDialogKeydown(e, closeFn) {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    closeFn()
+    return
+  }
+  if (e.key !== 'Tab') return
+  const root = e.currentTarget?.querySelector?.('[role="dialog"]') || e.currentTarget
+  const list = getFocusable(root)
+  if (!list.length) return
+  const first = list[0]
+  const last = list[list.length - 1]
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
+function rememberFocus() {
+  dialogPrevFocus = document.activeElement
+}
+
+function restoreFocus() {
+  const el = dialogPrevFocus
+  dialogPrevFocus = null
+  if (el && typeof el.focus === 'function') {
+    try { el.focus() } catch (_) { /* element may be gone */ }
+  }
+}
+
+function focusDialog(refObj) {
+  nextTick(() => {
+    const root = refObj?.value
+    if (!root) return
+    const list = getFocusable(root)
+    ;(list[0] || root).focus?.()
+  })
+}
+
+function closeNodeForm() {
+  showNodeForm.value = false
+  restoreFocus()
+}
+function closeEditForm() {
+  showEditForm.value = false
+  restoreFocus()
+}
+function closeCourseForm() {
+  showCourseForm.value = false
+  restoreFocus()
+}
+
+watch(showNodeForm, (v) => { if (v) { rememberFocus(); focusDialog(nodeFormDialogRef) } })
+watch(showEditForm, (v) => { if (v) { rememberFocus(); focusDialog(editFormDialogRef) } })
+watch(showCourseForm, (v) => { if (v) { rememberFocus(); focusDialog(courseFormDialogRef) } })
+watch(showImportModal, (v) => { if (v) { rememberFocus(); focusDialog(importDialogRef) } })
+watch(showPreview, (v) => { if (v) { rememberFocus(); focusDialog(previewDialogRef) } })
 
 
 // ── 预览图：AI 生成，失败兜底 ──
@@ -961,6 +1465,7 @@ function openPreview() {
 function closePreview() {
   showPreview.value = false
   previewSvg.value = ''
+  restoreFocus()
 }
 
 function downloadPreview() {
@@ -976,23 +1481,30 @@ function downloadPreview() {
   URL.revokeObjectURL(url)
 }
 
-// ── 课程标准图片抽取 ──
+// ── 课程标准图片抽取（异步 job）──
 async function handleSyllabusImage(event) {
   const file = event.target.files && event.target.files[0]
   event.target.value = ''
   if (!file) return
-  const courseCode = currentCourse.value?.code
-  if (!courseCode) { alert('请先选择或新增课程'); return }
-  if (syllabusBusy.value) return
+  const actionCourse = currentCourse.value
+    ? { id: currentCourse.value.id, code: currentCourse.value.code }
+    : null
+  if (!actionCourse?.code) { alert('请先选择或新增课程'); return }
+  if (syllabusBusy.value || extractJobLoading.value) return
   syllabusError.value = ''
   syllabusBusy.value = true
+  extractActionCourse = actionCourse
   try {
-    const { draftId } = await extractGraphFromFile(courseCode, file)
-    router.push({ path: '/teacher/graph-extract-review', query: { draftId, courseCode } })
+    await startExtractJob(
+      (headers) => extractGraphFromFile(actionCourse.code, file, { headers }),
+      { courseId: actionCourse.id }
+    )
   } catch (e) {
-    syllabusError.value = e.message || '识别失败'
-  } finally {
-    syllabusBusy.value = false
+    if (sameCourse(actionCourse)) {
+      syllabusError.value = e.message || '识别失败'
+      syllabusBusy.value = false
+      extractActionCourse = null
+    }
   }
 }
 
@@ -1005,6 +1517,7 @@ function closeImportModal() {
   importError.value = null
   importProgress.value = 0
   isDragging.value = false
+  restoreFocus()
 }
 
 function onFileDrop(e) {
@@ -1028,8 +1541,10 @@ async function doImport(file) {
     return
   }
 
-  const courseCode = currentCourse.value?.code
-  if (!courseCode) {
+  const actionCourse = currentCourse.value
+    ? { id: currentCourse.value.id, code: currentCourse.value.code }
+    : null
+  if (!actionCourse?.code) {
     importError.value = '请先选择或新增课程'
     return
   }
@@ -1041,25 +1556,45 @@ async function doImport(file) {
   importError.value = null
 
   try {
-    let res
     if (isJson) {
       const text = await file.text()
+      if (!sameCourse(actionCourse)) return
       const data = JSON.parse(text)
       importProgress.value = 50
-      res = await importGraphJson(courseCode, data)
+      const res = await importGraphJson(actionCourse.code, data)
+      if (!sameCourse(actionCourse)) return
+      importProgress.value = 100
+      importResult.value = res || {}
+      await reload()
+      if (!sameCourse(actionCourse)) return
+      importUploading.value = false
     } else {
-      res = await importGraphExcel(courseCode, file, (e) => {
-        if (e.total) importProgress.value = Math.round((e.loaded / e.total) * 100)
-      })
+      importActionCourse = actionCourse
+      await startImportExcelJob(
+        (headers) =>
+          importGraphExcel(actionCourse.code, file, {
+            headers,
+            onUploadProgress: (e) => {
+              if (sameCourse(actionCourse) && e.total) {
+                importProgress.value = Math.min(40, Math.round((e.loaded / e.total) * 40))
+              }
+            }
+          }),
+        { courseId: actionCourse.id }
+      )
+      if (!sameCourse(actionCourse)) return
+      // 轮询中进度由 job 驱动；上传完成先显示 40+
+      if (importExcelJobProgress.value > 0) {
+        importProgress.value = Math.max(importProgress.value, importExcelJobProgress.value)
+      }
     }
-    importProgress.value = 100
-    importResult.value = res || {}
-    await reload()
   } catch (e) {
     console.error('导入失败', e)
-    importError.value = e.message || '导入失败，请检查文件格式和内容'
-  } finally {
-    importUploading.value = false
+    if (sameCourse(actionCourse)) {
+      importError.value = e.message || '导入失败，请检查文件格式和内容'
+      importUploading.value = false
+      importActionCourse = null
+    }
   }
 }
 
@@ -1070,19 +1605,44 @@ function onResize() {
 onMounted(async () => {
   readColors()
   await loadCourses()
+  if (disposed) return
   await reload()
+  if (disposed) return
   window.addEventListener('resize', onResize)
   window.addEventListener('keydown', handleKeydown)
   document.addEventListener('click', closeMenus, true)
   document.addEventListener('click', closeDropdowns)
 
-  if (import.meta.env.DEV) {
+  if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
     window.__wjTeacherGraph = {
       reload,
       accept: acceptEdge,
       reject: rejectEdge,
+      createEdge: confirmEdgeType,
+      confirmEdgeType,
+      exitLinkMode,
       openImport: () => { showImportModal.value = true },
-      state: () => ({ pending: pending.value, edges: graph.value?.edges }),
+      state: () => ({
+        pending: pending.value,
+        edges: graph.value?.edges,
+        linkMode: linkMode.value,
+        linkSource: linkSource.value,
+        edgeTypePopup: edgeTypePopup.value,
+        edgeSaving: edgeSaving.value,
+        edgeError: edgeError.value
+      }),
+      setLinkEndpoints: (source, target) => {
+        linkMode.value = true
+        linkSource.value = source ? { nodeCode: source, name: source } : null
+        edgeTypePopup.value = {
+          visible: true,
+          x: 200,
+          y: 200,
+          source: source || null,
+          target: target || null
+        }
+        edgeError.value = null
+      },
       openPreview: () => { openPreview() },
       switchCourse,
       addCourse: () => { showCourseForm.value = true },
@@ -1091,11 +1651,17 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  coursesRequest.cancel()
+  graphRequest.cancel()
+  pendingRequest.cancel()
+  historyRequest.cancel()
   window.removeEventListener('resize', onResize)
   window.removeEventListener('keydown', handleKeydown)
   document.removeEventListener('click', closeMenus, true)
   document.removeEventListener('click', closeDropdowns)
-  if (chart) chart.dispose()
+  if (window.__wjTeacherGraph?.reload === reload) delete window.__wjTeacherGraph
+  if (chart) disposeChart(chart)
 })
 
 // ── 样式 ──
@@ -1107,43 +1673,6 @@ const pageStyle = {
   overflow: 'hidden',
   background: 'var(--bg)',
   color: 'var(--text)'
-}
-
-const headerStyle = {
-  height: '56px',
-  flexShrink: 0,
-  display: 'flex',
-  alignItems: 'center',
-  gap: '24px',
-  padding: '0 20px',
-  background: 'var(--panel)',
-  borderBottom: '1px solid var(--line)'
-}
-
-const titleStyle = {
-  display: 'flex',
-  alignItems: 'baseline',
-  gap: '12px'
-}
-
-const courseStyle = {
-  fontSize: '13px',
-  color: 'var(--text-mut)'
-}
-
-const navStyle = {
-  display: 'flex',
-  gap: '16px',
-  marginLeft: 'auto'
-}
-
-const linkStyle = {
-  fontSize: '13px',
-  color: 'var(--text-mut)',
-  textDecoration: 'none',
-  padding: '6px 12px',
-  borderRadius: '8px',
-  transition: 'color 0.2s, background 0.2s'
 }
 
 const statusBarStyle = {
@@ -1282,7 +1811,7 @@ const sidebarBodyStyle = {
   gap: '10px'
 }
 
-function cardStyle(i) {
+function cardStyle() {
   return {
     background: 'var(--panel)',
     border: '1.5px solid var(--line)',
@@ -1502,6 +2031,12 @@ const dropdownMenuStyle = {
 }
 
 const dropdownItemStyle = {
+  display: 'block',
+  width: '100%',
+  textAlign: 'left',
+  background: 'transparent',
+  border: 'none',
+  fontFamily: 'inherit',
   padding: '8px 16px',
   fontSize: '13px',
   color: 'var(--text)',
@@ -1646,6 +2181,43 @@ const linkBtnActiveStyle = {
   fontWeight: 500
 }
 
+const linkNodePickerStyle = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  justifyContent: 'flex-end',
+  gap: '6px',
+  width: 'min(360px, calc(100vw - 48px))',
+  maxHeight: '132px',
+  overflowY: 'auto',
+  padding: '8px',
+  background: 'var(--panel)',
+  border: '1px solid var(--line)',
+  borderRadius: '8px',
+  boxSizing: 'border-box'
+}
+
+function linkNodeAriaLabel(node) {
+  if (linkSource.value?.nodeCode === node.nodeCode) return `${node.name}，已选为起点`
+  return linkSource.value ? `${node.name}，选为终点` : `${node.name}，选为起点`
+}
+
+function linkNodeButtonStyle(node) {
+  const selected = linkSource.value?.nodeCode === node.nodeCode
+  return {
+    maxWidth: '100%',
+    padding: '6px 9px',
+    color: selected ? '#fff' : 'var(--text)',
+    background: selected ? 'var(--accent)' : 'transparent',
+    border: `1px solid ${selected ? 'var(--accent)' : 'var(--line)'}`,
+    borderRadius: '6px',
+    fontFamily: 'inherit',
+    fontSize: '12px',
+    textAlign: 'left',
+    overflowWrap: 'anywhere',
+    cursor: 'pointer'
+  }
+}
+
 // ── 右键菜单 / 边类型弹窗 ──
 function contextMenuStyle(x, y) {
   return {
@@ -1668,5 +2240,15 @@ const ctxMenuItemStyle = {
   color: 'var(--text)',
   cursor: 'pointer',
   transition: 'background 0.15s'
+}
+
+const menuButtonStyle = {
+  ...ctxMenuItemStyle,
+  display: 'block',
+  width: '100%',
+  border: 'none',
+  background: 'transparent',
+  fontFamily: 'inherit',
+  textAlign: 'left'
 }
 </script>

@@ -1,5 +1,6 @@
 package com.wenjin.dto;
 
+import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
 /**
@@ -14,5 +15,6 @@ public class ReviewAllRequest {
     /** 知识点过滤（主考点 nodeCode，null=不限）*/
     private String nodeCode;
     /** 审核动作（pass 或 reject，必填）*/
+    @NotBlank(message = "action 不能为空")
     private String action;
 }

@@ -60,7 +60,9 @@ public class GraphQueryServiceImpl implements GraphQueryService {
         // 逆邻接：toNodeId -> [fromNodeId...]，仅取「前置」边
         Map<Long, List<Long>> reverse = new HashMap<>();
         for (KgEdge e : edgeMapper.selectList(
-                new LambdaQueryWrapper<KgEdge>().eq(KgEdge::getCourseId, courseId))) {
+                new LambdaQueryWrapper<KgEdge>()
+                        .eq(KgEdge::getCourseId, courseId)
+                        .isNull(KgEdge::getArchivedAt))) {
             if (e.getRelationType() == null
                     || e.getRelationType() != RelationType.PREREQUISITE.getCode()) {
                 continue;
@@ -112,6 +114,8 @@ public class GraphQueryServiceImpl implements GraphQueryService {
 
     private List<KgNode> listNodes(Long courseId) {
         return nodeMapper.selectList(
-                new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId));
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt));
     }
 }

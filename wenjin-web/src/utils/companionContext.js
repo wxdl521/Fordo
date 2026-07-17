@@ -6,9 +6,9 @@ export function readCompanionNodeCode(queryValue) {
   return normalized || null
 }
 
-export function buildCompanionChatPayload({ studentId, courseId, conversationId, nodeCode, message }) {
+/** 构建伴侣对话请求体；studentId 不发送，由服务端 principal 派生 */
+export function buildCompanionChatPayload({ courseId, conversationId, nodeCode, message }) {
   const payload = {
-    studentId,
     courseId,
     message
   }

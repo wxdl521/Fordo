@@ -10,6 +10,7 @@ import com.wenjin.dto.UserVO;
 import com.wenjin.entity.SysUser;
 import com.wenjin.mapper.SysUserMapper;
 import com.wenjin.security.TokenService;
+import com.wenjin.security.UserRole;
 import com.wenjin.service.UserService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -44,7 +45,8 @@ public class UserServiceImpl implements UserService {
         user.setUsername(request.getUsername());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setRealName(request.getRealName());
-        user.setRole(request.getRole());
+        // 公开注册无条件学生：忽略客户端遗留 role / ignoredRole，杜绝自助提权
+        user.setRole(UserRole.STUDENT.code());
         user.setStatus(1);
         userMapper.insert(user);
 

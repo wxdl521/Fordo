@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /**
@@ -14,9 +15,8 @@ import java.util.Arrays;
  *
  * <p>规则：
  * <ul>
- *   <li>生产 profile（prod）+ 默认开发密钥 → 抛出 {@link IllegalStateException}，中止启动。</li>
- *   <li>非生产环境 + 默认开发密钥 → 打印 WARN 日志，正常启动（开发/单测勿阻断）。</li>
- *   <li>自定义密钥（无论哪个 profile）→ 不做任何处理。</li>
+ *   <li>非 dev/test profile：拒绝默认值、空值、UTF-8 长度小于 32 字节的密钥。</li>
+ *   <li>仅当存在 profile 且全部为 dev/test 时：默认开发密钥仅 WARN，不阻断启动。</li>
  * </ul>
  * </p>
  *
@@ -27,6 +27,9 @@ import java.util.Arrays;
 public class AuthSecretGuard {
 
     private static final Logger log = LoggerFactory.getLogger(AuthSecretGuard.class);
+
+    /** 生产/非开发环境最低密钥 UTF-8 字节长度。 */
+    static final int MIN_SECRET_UTF8_BYTES = 32;
 
     /** 注入当前密钥，与 TokenService 保持同一占位符 + 同一默认值。 */
     @Value("${wenjin.auth.secret:" + TokenService.DEFAULT_DEV_SECRET + "}")
@@ -49,23 +52,43 @@ public class AuthSecretGuard {
      *
      * @param secret         当前注入的签名密钥
      * @param activeProfiles 当前激活的 Spring profile 数组
-     * @throws IllegalStateException 生产 profile（prod）下使用了默认开发密钥
+     * @throws IllegalStateException 非 dev/test 下密钥不合规
      */
     static void enforce(String secret, String[] activeProfiles) {
-        if (!TokenService.DEFAULT_DEV_SECRET.equals(secret)) {
-            // 自定义密钥，安全无需干预
+        boolean relaxed = isDevOrTest(activeProfiles);
+        if (relaxed) {
+            if (TokenService.DEFAULT_DEV_SECRET.equals(secret)) {
+                log.warn("*** 安全警告 *** 当前使用默认开发密钥（DEFAULT_DEV_SECRET），"
+                        + "此密钥已公开在代码仓库，严禁在生产环境使用！"
+                        + "生产部署请通过环境变量 WENJIN_AUTH_SECRET 设置自定义密钥。");
+            }
             return;
         }
-        boolean isProd = Arrays.asList(activeProfiles).contains("prod");
-        if (isProd) {
-            // 生产环境使用公开默认密钥属于严重安全漏洞，必须中止启动
+
+        if (secret == null || secret.isEmpty()) {
             throw new IllegalStateException(
-                    "生产环境（prod profile）禁止使用默认开发密钥！" +
-                    "请设置环境变量 WENJIN_AUTH_SECRET 为足够随机的长字符串后重新启动。");
+                    "非开发/测试环境禁止使用空签名密钥！"
+                            + "请设置环境变量 WENJIN_AUTH_SECRET（至少 32 字节 UTF-8）。");
         }
-        // 非生产环境：告警提示开发者，但不阻断启动
-        log.warn("*** 安全警告 *** 当前使用默认开发密钥（DEFAULT_DEV_SECRET），" +
-                 "此密钥已公开在代码仓库，严禁在生产环境使用！" +
-                 "生产部署请通过环境变量 WENJIN_AUTH_SECRET 设置自定义密钥。");
+        if (TokenService.DEFAULT_DEV_SECRET.equals(secret)) {
+            throw new IllegalStateException(
+                    "生产环境（非 dev/test profile）禁止使用默认开发密钥！"
+                            + "请设置环境变量 WENJIN_AUTH_SECRET 为足够随机的长字符串后重新启动。");
+        }
+        int utf8Len = secret.getBytes(StandardCharsets.UTF_8).length;
+        if (utf8Len < MIN_SECRET_UTF8_BYTES) {
+            throw new IllegalStateException(
+                    "非开发/测试环境签名密钥 UTF-8 长度必须 ≥ " + MIN_SECRET_UTF8_BYTES
+                            + " 字节，当前为 " + utf8Len + "。"
+                            + "请设置环境变量 WENJIN_AUTH_SECRET。");
+        }
+    }
+
+    /** 存在 profile 且全部为 dev/test 时视为开发/测试，放宽密钥约束。 */
+    private static boolean isDevOrTest(String[] activeProfiles) {
+        return activeProfiles != null
+                && activeProfiles.length > 0
+                && Arrays.stream(activeProfiles)
+                .allMatch(p -> "dev".equals(p) || "test".equals(p));
     }
 }

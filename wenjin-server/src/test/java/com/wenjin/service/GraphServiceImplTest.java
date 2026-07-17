@@ -2,6 +2,7 @@ package com.wenjin.service;
 
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.dto.GraphDataVO;
 import com.wenjin.dto.GraphImportRequest;
 import com.wenjin.dto.GraphImportResult;
@@ -10,19 +11,26 @@ import com.wenjin.entity.Course;
 import com.wenjin.entity.KgEdge;
 import com.wenjin.entity.KgNode;
 import com.wenjin.entity.StudentMastery;
+import com.wenjin.mapper.CourseAccessMapper;
 import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.security.CourseAccessService;
+import com.wenjin.security.CourseMutationLock;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.impl.GraphServiceImpl;
+import org.apache.ibatis.annotations.Options;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -33,6 +41,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -40,8 +50,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * GraphServiceImpl 单元测试：用 Mockito 隔离数据库依赖，覆盖
- * 校验（重复ID / 孤立边 / 非法关系类型 / 前置环）、导入全量替换映射、查询 VO 映射。
+ * GraphServiceImpl 单元测试：校验、差量对账保主键、查询 VO 映射。
  */
 @ExtendWith(MockitoExtension.class)
 class GraphServiceImplTest {
@@ -50,12 +59,13 @@ class GraphServiceImplTest {
     @Mock KgNodeMapper nodeMapper;
     @Mock KgEdgeMapper edgeMapper;
     @Mock StudentMasteryMapper studentMasteryMapper;
+    @Mock CourseAccessService courseAccessService;
+    @Mock CourseMutationLock courseMutationLock;
 
     private GraphServiceImpl service() {
-        return serviceWithDecay(true);
+        return serviceWithDecay(true, true);
     }
 
-    /** 小工厂：构建真实 MasteryDecayCalculator 并注入服务，避免在每个用例重复 setField。 */
     private MasteryDecayCalculator calculator(boolean enabled) {
         MasteryDecayCalculator calc = new MasteryDecayCalculator();
         ReflectionTestUtils.setField(calc, "enabled", enabled);
@@ -66,11 +76,15 @@ class GraphServiceImplTest {
         return calc;
     }
 
-    private GraphServiceImpl serviceWithDecay(boolean decayEnabled) {
-        return new GraphServiceImpl(courseMapper, nodeMapper, edgeMapper, studentMasteryMapper, calculator(decayEnabled));
+    private GraphServiceImpl serviceWithDecay(boolean decayEnabled, boolean reconcileEnabled) {
+        lenient().when(courseAccessService.assertManageCourseCode(anyString())).thenReturn(1L);
+        FeatureFlagsProperties flags = new FeatureFlagsProperties();
+        flags.setGraphReconcileEnabled(reconcileEnabled);
+        return new GraphServiceImpl(courseMapper, nodeMapper, edgeMapper, studentMasteryMapper,
+                calculator(decayEnabled), courseAccessService, courseMutationLock, flags);
     }
 
-    // ───────── 校验类（校验先于落库，无需 stub mapper） ─────────
+    // ───────── 校验类 ─────────
 
     @Test
     @DisplayName("nodes 为空时按参数错误拒绝")
@@ -84,6 +98,79 @@ class GraphServiceImplTest {
     }
 
     @Test
+    @DisplayName("特性关闭 → import 503")
+    void import_featureDisabled_503() {
+        GraphImportRequest req = req(List.of(node("KT01", "A")), List.of());
+        assertThatThrownBy(() -> serviceWithDecay(true, false).importGraph("C1", req))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
+        verifyNoInteractions(courseMutationLock, courseMapper, nodeMapper, edgeMapper,
+                studentMasteryMapper, courseAccessService);
+    }
+
+    @Test
+    @DisplayName("import 先锁定课程，再读取课程、节点、边快照并写入")
+    void import_locksCourseBeforeGraphReadsAndWrites() {
+        Course course = course(1L, "C1", "course-one");
+        when(courseMapper.selectById(1L)).thenReturn(course);
+        when(nodeMapper.selectList(any())).thenReturn(List.of());
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
+        when(nodeMapper.insert(any(KgNode.class))).thenAnswer(invocation -> {
+            invocation.getArgument(0, KgNode.class).setId(10L);
+            return 1;
+        });
+
+        service().importGraph("C1", req(List.of(node("KT01", "A")), List.of()));
+
+        InOrder order = org.mockito.Mockito.inOrder(
+                courseAccessService, courseMutationLock, courseMapper, nodeMapper, edgeMapper);
+        order.verify(courseAccessService).assertManageCourseCode("C1");
+        order.verify(courseMutationLock).lockActive(1L);
+        order.verify(courseAccessService).assertManageCourse(1L);
+        order.verify(courseMapper).selectById(1L);
+        order.verify(nodeMapper).selectList(any());
+        order.verify(nodeMapper).insert(any(KgNode.class));
+        order.verify(edgeMapper).selectList(any());
+    }
+
+    @Test
+    @DisplayName("课程行锁找不到生效课程时抛 NOT_FOUND")
+    void courseMutationLock_missingActiveCourse_404() {
+        CourseAccessMapper accessMapper = org.mockito.Mockito.mock(CourseAccessMapper.class);
+        when(accessMapper.lockActiveCourse(99L)).thenReturn(null);
+
+        assertThatThrownBy(() -> new CourseMutationLock(accessMapper).lockActive(99L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(ResultCode.NOT_FOUND.getCode());
+    }
+
+    @Test
+    @DisplayName("课程行锁查询强制清空 SqlSession 缓存，确保锁后复授权重新查库")
+    void courseMutationLock_queryFlushesAuthCache() throws NoSuchMethodException {
+        Options options = CourseAccessMapper.class
+                .getMethod("lockActiveCourse", Long.class)
+                .getAnnotation(Options.class);
+
+        assertThat(options).isNotNull();
+        assertThat(options.useCache()).isFalse();
+        assertThat(options.flushCache()).isEqualTo(Options.FlushCachePolicy.TRUE);
+    }
+
+    @Test
+    @DisplayName("图谱导入使用 READ_COMMITTED，锁等待后读取最新已提交快照")
+    void import_usesReadCommittedTransaction() throws NoSuchMethodException {
+        Transactional tx = GraphServiceImpl.class
+                .getMethod("importGraph", String.class, GraphImportRequest.class)
+                .getAnnotation(Transactional.class);
+
+        assertThat(tx).isNotNull();
+        assertThat(tx.isolation()).isEqualTo(Isolation.READ_COMMITTED);
+        assertThat(tx.rollbackFor()).contains(Exception.class);
+    }
+
+    @Test
     @DisplayName("节点 ID 重复被拒，明细含 DUPLICATE_NODE_ID")
     void rejectsDuplicateNodeId() {
         GraphImportRequest req = req(
@@ -92,6 +179,18 @@ class GraphServiceImplTest {
         GraphValidateResult vr = expectValidateFail(req);
         assertThat(categories(vr)).contains("DUPLICATE_NODE_ID");
         assertThat(messages(vr)).anyMatch(m -> m.contains("KT01"));
+    }
+
+    @Test
+    @DisplayName("同 payload 边业务键重复被拒，明细含 DUPLICATE_EDGE（避免 UK 500）")
+    void rejectsDuplicateEdgesInSameImport() {
+        GraphImportRequest req = req(
+                List.of(node("KT01", "A"), node("KT02", "B")),
+                List.of(edge("KT01", "KT02", "前置"),
+                        edge("KT01", "KT02", "前置")));
+        GraphValidateResult vr = expectValidateFail(req);
+        assertThat(categories(vr)).contains("DUPLICATE_EDGE");
+        assertThat(messages(vr)).anyMatch(m -> m.contains("KT01") && m.contains("KT02"));
     }
 
     @Test
@@ -140,16 +239,17 @@ class GraphServiceImplTest {
     }
 
     @Test
-    @DisplayName("多节点多类型边的合法 DAG 不报环，整图落库")
+    @DisplayName("多节点多类型边的合法 DAG 落库（首导 insert）")
     void validDagWithMixedEdgesImports() {
         Course course = course(1L, "C1", "课程一");
-        when(courseMapper.selectOne(any())).thenReturn(course);
+        when(courseMapper.selectById(1L)).thenReturn(course);
+        when(nodeMapper.selectList(any())).thenReturn(List.of());
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
         when(nodeMapper.insert(any(KgNode.class))).thenAnswer(inv -> {
             KgNode n = inv.getArgument(0);
-            n.setId(Long.parseLong(n.getNodeCode().substring(2))); // KT01->1, KT02->2, KT03->3
+            n.setId(Long.parseLong(n.getNodeCode().substring(2)));
             return 1;
         });
-        // 链：KT01->KT02->KT03 前置（合法 DAG）；KT01->KT03 相关；KT02 包含 KT03
         GraphImportRequest req = req(
                 List.of(node("KT01", "A"), node("KT02", "B"), node("KT03", "C")),
                 List.of(edge("KT01", "KT02", "前置"),
@@ -161,6 +261,8 @@ class GraphServiceImplTest {
 
         assertThat(result.getNodeCount()).isEqualTo(3);
         assertThat(result.getEdgeCount()).isEqualTo(4);
+        verify(nodeMapper, never()).delete(any());
+        verify(edgeMapper, never()).delete(any());
     }
 
     @Test
@@ -177,13 +279,14 @@ class GraphServiceImplTest {
     @DisplayName("非前置边（包含）反向不算环，应通过校验并落库")
     void containsEdgeReverseIsNotCycle() {
         Course course = course(1L, "C1", "课程一");
-        when(courseMapper.selectOne(any())).thenReturn(course);
+        when(courseMapper.selectById(1L)).thenReturn(course);
+        when(nodeMapper.selectList(any())).thenReturn(List.of());
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
         when(nodeMapper.insert(any(KgNode.class))).thenAnswer(inv -> {
             KgNode n = inv.getArgument(0);
             n.setId("KT01".equals(n.getNodeCode()) ? 10L : 11L);
             return 1;
         });
-        // KT01->KT02 前置；KT02->KT01 包含（包含不参与环检测）
         GraphImportRequest req = req(
                 List.of(node("KT01", "A"), node("KT02", "B")),
                 List.of(edge("KT01", "KT02", "前置"), edge("KT02", "KT01", "包含")));
@@ -191,20 +294,103 @@ class GraphServiceImplTest {
         GraphImportResult result = service().importGraph("C1", req);
 
         assertThat(result.getEdgeCount()).isEqualTo(2);
+        verify(nodeMapper, never()).delete(any());
     }
 
-    // ───────── 导入落库：全量替换 + 编码→主键映射 + 关系类型编码 ─────────
+    // ───────── 差量对账：保主键 / 归档 / 幂等 ─────────
 
     @Test
-    @DisplayName("导入对已存在课程先删边再删点（全量替换），并正确映射边端点与关系编码")
-    void importFullReplaceAndMapping() {
+    @DisplayName("同 node_code 重导入保留 kg_node.id，更新可变字段，不 delete")
+    void reimportSameNodeCodeKeepsId() {
         Course course = course(1L, "C1", "课程一");
-        when(courseMapper.selectOne(any())).thenReturn(course);
-        when(nodeMapper.insert(any(KgNode.class))).thenAnswer(inv -> {
-            KgNode n = inv.getArgument(0);
-            n.setId("KT01".equals(n.getNodeCode()) ? 10L : 11L);
-            return 1;
-        });
+        when(courseMapper.selectById(1L)).thenReturn(course);
+
+        KgNode existing = kgNode(10L, "KT01", "旧名", true, 4);
+        existing.setCourseId(1L);
+        when(nodeMapper.selectList(any())).thenReturn(List.of(existing));
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
+        when(nodeMapper.update(any(), any())).thenReturn(1);
+
+        GraphImportRequest.NodeItem updated = node("KT01", "新名");
+        updated.setDifficulty(5);
+        GraphImportRequest req = req(List.of(updated), List.of());
+
+        GraphImportResult result = service().importGraph("C1", req);
+
+        assertThat(result.getNodeCount()).isEqualTo(1);
+        verify(nodeMapper, never()).insert(any(KgNode.class));
+        verify(nodeMapper, never()).delete(any());
+        verify(nodeMapper, never()).deleteById(any(Long.class));
+        verify(nodeMapper).update(any(), any());
+    }
+
+    @Test
+    @DisplayName("导入移除的节点被归档而非硬删")
+    void removedNodesAreArchivedNotDeleted() {
+        Course course = course(1L, "C1", "课程一");
+        when(courseMapper.selectById(1L)).thenReturn(course);
+
+        KgNode keep = kgNode(10L, "KT01", "A", false, 2);
+        keep.setCourseId(1L);
+        KgNode drop = kgNode(11L, "KT02", "B", false, 2);
+        drop.setCourseId(1L);
+        when(nodeMapper.selectList(any())).thenReturn(List.of(keep, drop));
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
+        when(nodeMapper.update(any(), any())).thenReturn(1);
+        when(nodeMapper.updateById(any(KgNode.class))).thenReturn(1);
+
+        GraphImportRequest req = req(List.of(node("KT01", "A-new")), List.of());
+        service().importGraph("C1", req);
+
+        ArgumentCaptor<KgNode> archiveCap = ArgumentCaptor.forClass(KgNode.class);
+        verify(nodeMapper).updateById(archiveCap.capture());
+        assertThat(archiveCap.getValue().getId()).isEqualTo(11L);
+        assertThat(archiveCap.getValue().getArchivedAt()).isNotNull();
+        verify(nodeMapper, never()).delete(any());
+        verify(nodeMapper, never()).deleteById(any(Long.class));
+    }
+
+    @Test
+    @DisplayName("已归档节点在重导入时解除归档（清 archived_at）")
+    void reappearingArchivedNodeIsRestored() {
+        Course course = course(1L, "C1", "课程一");
+        when(courseMapper.selectById(1L)).thenReturn(course);
+
+        KgNode archived = kgNode(10L, "KT01", "旧", false, 1);
+        archived.setCourseId(1L);
+        archived.setArchivedAt(LocalDateTime.now().minusDays(1));
+        when(nodeMapper.selectList(any())).thenReturn(List.of(archived));
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
+        when(nodeMapper.update(any(), any())).thenReturn(1);
+
+        service().importGraph("C1", req(List.of(node("KT01", "恢复")), List.of()));
+
+        verify(nodeMapper).update(any(), any());
+        verify(nodeMapper, never()).insert(any(KgNode.class));
+    }
+
+    @Test
+    @DisplayName("边按 (from,to,type) 对账：已有边更新不清删，多余边归档")
+    void edgeReconcilePreservesIdentity() {
+        Course course = course(1L, "C1", "课程一");
+        when(courseMapper.selectById(1L)).thenReturn(course);
+
+        KgNode n1 = kgNode(10L, "KT01", "A", false, 1);
+        n1.setCourseId(1L);
+        KgNode n2 = kgNode(11L, "KT02", "B", false, 1);
+        n2.setCourseId(1L);
+        when(nodeMapper.selectList(any())).thenReturn(List.of(n1, n2));
+        when(nodeMapper.update(any(), any())).thenReturn(1);
+
+        KgEdge keep = kgEdge(10L, 11L, 1);
+        keep.setId(100L);
+        keep.setCourseId(1L);
+        KgEdge drop = kgEdge(11L, 10L, 3);
+        drop.setId(101L);
+        drop.setCourseId(1L);
+        when(edgeMapper.selectList(any())).thenReturn(List.of(keep, drop));
+        when(edgeMapper.update(any(), any())).thenReturn(1);
+        when(edgeMapper.updateById(any(KgEdge.class))).thenReturn(1);
 
         GraphImportRequest req = req(
                 List.of(node("KT01", "A"), node("KT02", "B")),
@@ -212,36 +398,63 @@ class GraphServiceImplTest {
 
         GraphImportResult result = service().importGraph("C1", req);
 
-        // 结果摘要
-        assertThat(result.getCourseId()).isEqualTo(1L);
-        assertThat(result.getNodeCount()).isEqualTo(2);
         assertThat(result.getEdgeCount()).isEqualTo(1);
-
-        // 全量替换：边、点各删一次
-        verify(edgeMapper, times(1)).delete(any());
-        verify(nodeMapper, times(1)).delete(any());
-
-        // 边映射：from=KT01(10) to=KT02(11) 关系=前置(1) 课程=1
-        ArgumentCaptor<KgEdge> edgeCaptor = ArgumentCaptor.forClass(KgEdge.class);
-        verify(edgeMapper, times(1)).insert(edgeCaptor.capture());
-        KgEdge saved = edgeCaptor.getValue();
-        assertThat(saved.getFromNodeId()).isEqualTo(10L);
-        assertThat(saved.getToNodeId()).isEqualTo(11L);
-        assertThat(saved.getRelationType()).isEqualTo(1);
-        assertThat(saved.getCourseId()).isEqualTo(1L);
+        verify(edgeMapper, never()).insert(any(KgEdge.class));
+        verify(edgeMapper, never()).delete(any());
+        ArgumentCaptor<KgEdge> edgeCap = ArgumentCaptor.forClass(KgEdge.class);
+        verify(edgeMapper).updateById(edgeCap.capture());
+        assertThat(edgeCap.getValue().getId()).isEqualTo(101L);
+        assertThat(edgeCap.getValue().getArchivedAt()).isNotNull();
     }
 
     @Test
-    @DisplayName("is_key=true 的节点落库为 1，缺省难度补 1")
+    @DisplayName("幂等重导入：相同载荷不 insert 新节点/边")
+    void idempotentReimportNoInserts() {
+        Course course = course(1L, "C1", "课程一");
+        when(courseMapper.selectById(1L)).thenReturn(course);
+
+        KgNode n1 = kgNode(10L, "KT01", "A", false, 3);
+        n1.setCourseId(1L);
+        KgNode n2 = kgNode(11L, "KT02", "B", false, 3);
+        n2.setCourseId(1L);
+        when(nodeMapper.selectList(any())).thenReturn(List.of(n1, n2));
+        when(nodeMapper.update(any(), any())).thenReturn(1);
+
+        KgEdge e = kgEdge(10L, 11L, 1);
+        e.setId(50L);
+        e.setCourseId(1L);
+        when(edgeMapper.selectList(any())).thenReturn(List.of(e));
+        when(edgeMapper.update(any(), any())).thenReturn(1);
+
+        GraphImportRequest req = req(
+                List.of(node("KT01", "A"), node("KT02", "B")),
+                List.of(edge("KT01", "KT02", "前置")));
+
+        service().importGraph("C1", req);
+
+        verify(nodeMapper, never()).insert(any(KgNode.class));
+        verify(edgeMapper, never()).insert(any(KgEdge.class));
+        verify(nodeMapper, never()).delete(any());
+        verify(edgeMapper, never()).delete(any());
+    }
+
+    @Test
+    @DisplayName("首导：is_key=true 落库为 1，缺省难度补 1")
     void nodeKeyAndDifficultyMapping() {
         Course course = course(1L, "C1", "课程一");
-        when(courseMapper.selectOne(any())).thenReturn(course);
+        when(courseMapper.selectById(1L)).thenReturn(course);
+        when(nodeMapper.selectList(any())).thenReturn(List.of());
+        when(edgeMapper.selectList(any())).thenReturn(List.of());
         ArgumentCaptor<KgNode> nodeCaptor = ArgumentCaptor.forClass(KgNode.class);
-        when(nodeMapper.insert(nodeCaptor.capture())).thenReturn(1);
+        when(nodeMapper.insert(nodeCaptor.capture())).thenAnswer(inv -> {
+            KgNode n = inv.getArgument(0);
+            n.setId(1L);
+            return 1;
+        });
 
         GraphImportRequest.NodeItem key = node("KT01", "重点");
         key.setIsKey(true);
-        key.setDifficulty(null); // 缺省难度
+        key.setDifficulty(null);
         GraphImportRequest req = req(List.of(key), List.of());
 
         service().importGraph("C1", req);
@@ -277,6 +490,18 @@ class GraphServiceImplTest {
         assertThat(e.getSource()).isEqualTo("KT01");
         assertThat(e.getTarget()).isEqualTo("KT02");
         assertThat(e.getType()).isEqualTo("前置");
+    }
+
+    @Test
+    @DisplayName("归档课程查询抛 NOT_FOUND")
+    void getGraphArchivedCourseNotFound() {
+        Course c = course(1L, "C1", "课程一");
+        c.setArchivedAt(LocalDateTime.now());
+        when(courseMapper.selectById(1L)).thenReturn(c);
+        assertThatThrownBy(() -> service().getGraph(1L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(ResultCode.NOT_FOUND.getCode());
     }
 
     @Test
@@ -323,7 +548,7 @@ class GraphServiceImplTest {
         sm.setUpdatedAt(LocalDateTime.now().minusDays(40));
         when(studentMasteryMapper.selectList(any())).thenReturn(List.of(sm));
 
-        GraphDataVO vo = serviceWithDecay(false).getGraph(1L, 2L);
+        GraphDataVO vo = serviceWithDecay(false, true).getGraph(1L, 2L);
 
         GraphDataVO.NodeVO node = vo.getNodes().get(0);
         assertThat(node.getRawScore()).isEqualTo(88.0);
@@ -352,12 +577,12 @@ class GraphServiceImplTest {
 
         GraphDataVO vo = service().getGraph(1L, 2L);
 
-        GraphDataVO.NodeVO first = vo.getNodes().get(0);   // KT01 有掌握行
+        GraphDataVO.NodeVO first = vo.getNodes().get(0);
         assertThat(first.getNodeCode()).isEqualTo("KT01");
         assertThat(first.getMastery()).isEqualTo("mastered");
         assertThat(first.getMasteryScore()).isEqualTo(80.0);
 
-        GraphDataVO.NodeVO second = vo.getNodes().get(1);  // KT02 无掌握行
+        GraphDataVO.NodeVO second = vo.getNodes().get(1);
         assertThat(second.getMastery()).isEqualTo("unlearned");
         assertThat(second.getMasteryScore()).isNull();
     }
@@ -461,7 +686,7 @@ class GraphServiceImplTest {
         return e;
     }
 
-    // ─────────── decaying 字段四场景（Task 3 TDD）───────────
+    // ─────────── decaying 字段 ───────────
 
     @Test
     @DisplayName("decaying: 回拨 40 天高分行 → decaying == true")
@@ -518,7 +743,7 @@ class GraphServiceImplTest {
         sm.setUpdatedAt(LocalDateTime.now().minusDays(40));
         when(studentMasteryMapper.selectList(any())).thenReturn(List.of(sm));
 
-        GraphDataVO vo = serviceWithDecay(false).getGraph(1L, 2L);
+        GraphDataVO vo = serviceWithDecay(false, true).getGraph(1L, 2L);
 
         assertThat(vo.getNodes().get(0).getDecaying()).isFalse();
     }
@@ -541,7 +766,6 @@ class GraphServiceImplTest {
     @Test
     @DisplayName("getGraph 过滤待复核边（学生侧不可见）")
     void getGraphExcludesPendingEdges() {
-        // Given
         Course course = course(1L, "C1", "课程一");
         when(courseMapper.selectById(1L)).thenReturn(course);
 
@@ -557,10 +781,8 @@ class GraphServiceImplTest {
 
         when(edgeMapper.selectList(any())).thenReturn(List.of(e1, e2));
 
-        // When
         GraphDataVO result = service().getGraph(1L, null);
 
-        // Then
         assertThat(result.getEdges()).hasSize(1);
         assertThat(result.getEdges().get(0).getSource()).isEqualTo("N2");
         assertThat(result.getEdges().get(0).getTarget()).isEqualTo("N1");

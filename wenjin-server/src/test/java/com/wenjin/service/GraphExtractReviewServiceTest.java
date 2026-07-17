@@ -1,33 +1,78 @@
 package com.wenjin.service;
 
+import com.wenjin.common.BusinessException;
+import com.wenjin.common.ResultCode;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.ExtractCommitResult;
 import com.wenjin.dto.GraphExtractDraftResponse;
 import com.wenjin.dto.GraphImportRequest;
 import com.wenjin.dto.GraphImportResult;
 import com.wenjin.entity.ExtractionReview;
 import com.wenjin.mapper.ExtractionReviewMapper;
+import com.wenjin.security.CourseAccessService;
+import com.wenjin.security.CurrentPrincipal;
+import com.wenjin.security.UserRole;
 import com.wenjin.support.GraphDraftStore;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class GraphExtractReviewServiceTest {
+
+    private static final long TEACHER_A = 11L;
 
     private final GraphExtractionService extraction = mock(GraphExtractionService.class);
     private final GraphDraftStore store = new GraphDraftStore(); // 真实内存store,验证存取
     private final ExtractionMetricsCalculator calc = new ExtractionMetricsCalculator();
     private final GraphService graphService = mock(GraphService.class);
     private final ExtractionReviewMapper mapper = mock(ExtractionReviewMapper.class);
+    private final CourseAccessService courseAccessService = mock(CourseAccessService.class);
 
     private final GraphExtractReviewService svc =
-            new GraphExtractReviewService(extraction, store, calc, graphService, mapper);
+            new GraphExtractReviewService(extraction, store, calc, graphService, mapper, courseAccessService);
+
+    {
+        // 默认放行课程归属；跨租户用例会单独 stub
+        lenient().when(courseAccessService.assertManageCourseCode(anyString())).thenReturn(1L);
+    }
+
+    @BeforeEach
+    void loginTeacherA() {
+        CurrentUser.set(new CurrentPrincipal(TEACHER_A, UserRole.TEACHER));
+    }
+
+    @AfterEach
+    void clearUser() {
+        CurrentUser.clear();
+    }
+
+    @Test
+    void commit_usesReadCommittedTransactionForNestedGraphImport() throws NoSuchMethodException {
+        Transactional tx = GraphExtractReviewService.class
+                .getMethod("commit", String.class, GraphImportRequest.class)
+                .getAnnotation(Transactional.class);
+
+        assertThat(tx).isNotNull();
+        assertThat(tx.isolation()).isEqualTo(Isolation.READ_COMMITTED);
+    }
 
     @Test
     void extractAndStash_storesAndReturnsDraftId() {
@@ -52,7 +97,7 @@ class GraphExtractReviewServiceTest {
         ai.getNodes().add(a);
         ai.getNodes().add(b);
         ai.setEdges(new java.util.ArrayList<>());
-        String id = store.save("C1", ai);
+        String id = store.save(TEACHER_A, "C1", ai);
 
         // 最终:保留 A,删 B
         GraphImportRequest fin = new GraphImportRequest();
@@ -73,5 +118,32 @@ class GraphExtractReviewServiceTest {
         assertEquals("C1", cap.getValue().getCourseCode());
         assertEquals(7L, cap.getValue().getCourseId());
         assertEquals(1, cap.getValue().getNodeKeptCount());
+    }
+
+    @Test
+    @DisplayName("teacher A cannot history teacher B courseCode → 404")
+    void history_otherTeacherCourseCode_404() {
+        doThrow(new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage()))
+                .when(courseAccessService).assertManageCourseCode("B_COURSE");
+
+        assertThatThrownBy(() -> svc.history("B_COURSE"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(404);
+
+        verify(mapper, never()).selectList(any());
+    }
+
+    @Test
+    @DisplayName("teacher A cannot getDraft of teacher B's draft → 404")
+    void getDraft_otherTeacherCourse_404() {
+        GraphImportRequest draft = new GraphImportRequest();
+        // 属主是 teacher B
+        String draftId = store.save(99L, "B_COURSE", draft);
+
+        assertThatThrownBy(() -> svc.getDraft(draftId))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(404);
     }
 }

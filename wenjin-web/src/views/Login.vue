@@ -34,7 +34,7 @@
           <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px', marginBottom: '12px' }">
             <button @click="handleDemoLogin" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' }">使用演示账号进入</button>
             <span :style="{ width: '1px', height: '12px', background: 'var(--line)' }"></span>
-            <button @click="step = 'register'; loginError = ''" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' }">没有账号？注册</button>
+            <button @click="showRegister" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' }">没有账号？注册</button>
           </div>
           <div v-if="loginError" :style="{ fontSize: '12.5px', color: '#e74c3c', textAlign: 'center', marginTop: '4px' }">{{ loginError }}</div>
         </div>
@@ -57,16 +57,10 @@
           <input v-model="regConfirm" type="password" placeholder="请再次输入密码" class="wj-input" :style="inputStyle" />
 
           <label :style="{ fontSize: '12px', color: 'var(--mut)', marginBottom: '7px' }">真实姓名</label>
-          <input v-model="regRealName" placeholder="请输入真实姓名" class="wj-input" :style="inputStyle" />
-
-          <label :style="{ fontSize: '12px', color: 'var(--mut)', marginBottom: '7px' }">角色</label>
-          <div :style="{ display: 'flex', gap: '10px', marginBottom: '20px' }">
-            <button @click="regRole = 2" :style="regRole === 2 ? roleBtnActive : roleBtnInactive" class="wj-role-btn">学生</button>
-            <button @click="regRole = 1" :style="regRole === 1 ? roleBtnActive : roleBtnInactive" class="wj-role-btn">教师</button>
-          </div>
+          <input v-model="regRealName" placeholder="请输入真实姓名" class="wj-input" :style="{ ...inputStyle, marginBottom: '20px' }" />
 
           <button @click="handleRegister" class="wj-btn-acc" :style="{ height: '46px', background: 'var(--acc)', border: 'none', borderRadius: '10px', color: '#FFFDF8', fontSize: '14.5px', fontWeight: 500, cursor: 'pointer', marginBottom: '16px' }">注 册</button>
-          <button @click="step = 'login'; regError = ''" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px', alignSelf: 'center' }">已有账号？登录</button>
+          <button @click="showLogin" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px', alignSelf: 'center' }">已有账号？登录</button>
           <div v-if="regError" :style="{ fontSize: '12.5px', color: '#e74c3c', textAlign: 'center', marginTop: '10px' }">{{ regError }}</div>
         </div>
       </div>
@@ -99,9 +93,9 @@
                 <div :style="{ height: '100%', width: masteryPercent(c) + '%', background: 'var(--ok)', borderRadius: '99px' }"></div>
               </div>
               <div :style="{ display: 'flex', alignItems: 'center', gap: '12px' }">
-                <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" :to="{ path: '/map', query: { courseId: c.courseId } }" class="wj-btn-acc" :style="{ height: '40px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', padding: '0 24px', background: 'var(--acc)', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, textDecoration: 'none' }">进入课程</router-link>
-                <router-link v-else :to="{ path: '/diagnostic', query: { courseId: c.courseId } }" class="wj-hover-card2" :style="{ height: '40px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', padding: '0 20px', border: '1px solid var(--line)', borderRadius: '9px', color: 'var(--ink)', fontSize: '13px', textDecoration: 'none' }">开始入口诊断</router-link>
-                <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" :to="{ path: '/growth', query: { courseId: c.courseId } }" class="wj-underline" :style="{ fontSize: '12.5px', color: 'var(--mut)', textDecoration: 'underline', textUnderlineOffset: '3px' }">成长档案</router-link>
+                <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" :to="{ path: '/map', query: { courseId: c.courseId } }" @click="rememberStudentCourse(c.courseId)" class="wj-btn-acc" :style="{ height: '40px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', padding: '0 24px', background: 'var(--acc)', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, textDecoration: 'none' }">进入课程</router-link>
+                <router-link v-else :to="{ path: '/diagnostic', query: { courseId: c.courseId } }" @click="rememberStudentCourse(c.courseId)" class="wj-hover-card2" :style="{ height: '40px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', padding: '0 20px', border: '1px solid var(--line)', borderRadius: '9px', color: 'var(--ink)', fontSize: '13px', textDecoration: 'none' }">开始入口诊断</router-link>
+                <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" :to="{ path: '/growth', query: { courseId: c.courseId } }" @click="rememberStudentCourse(c.courseId)" class="wj-underline" :style="{ fontSize: '12.5px', color: 'var(--mut)', textDecoration: 'underline', textUnderlineOffset: '3px' }">成长档案</router-link>
               </div>
             </div>
           </template>
@@ -145,14 +139,21 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { storeToRefs } from 'pinia'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import { useViewport } from '../composables/useViewport.js'
 import { login as apiLogin, register as apiRegister } from '../api/user.js'
 import { getMyCourses, getAvailableCourses, enroll } from '../api/course.js'
+import { useSessionStore } from '../store/session.js'
+import { useCourseStore } from '../store/course.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 
 const serif = "'Noto Serif SC', serif"
 const { width } = useViewport()
+const session = useSessionStore()
+const courseStore = useCourseStore()
+const { user: currentUser } = storeToRefs(session)
 
 const step = ref('login')
 const sid = ref('')
@@ -164,14 +165,47 @@ const regUsername = ref('')
 const regPassword = ref('')
 const regConfirm = ref('')
 const regRealName = ref('')
-const regRole = ref(2)
 const regError = ref('')
 
-// 登录后存储的用户信息
-const currentUser = ref(null)
 const courses = ref([])
 const availableCourses = ref([])
 const courseLoading = ref(false)
+const authRequest = createLatestRequest()
+const coursesRequest = createLatestRequest()
+let disposed = false
+
+function isAbortError(error) {
+  return error?.name === 'AbortError'
+    || error?.name === 'CanceledError'
+    || error?.code === 'ERR_CANCELED'
+}
+
+function beginAuthRequest() {
+  coursesRequest.cancel()
+  courseLoading.value = false
+  return authRequest.next()
+}
+
+function commitLogin(data, request) {
+  if (disposed || !request.isCurrent()) return false
+  session.setSession({ token: data.token, user: data.user })
+  session.resetRefreshGate()
+  step.value = 'course'
+  void loadCourses()
+  return true
+}
+
+function showRegister() {
+  authRequest.cancel()
+  loginError.value = ''
+  step.value = 'register'
+}
+
+function showLogin() {
+  authRequest.cancel()
+  regError.value = ''
+  step.value = 'login'
+}
 
 const displayName = computed(() => {
   if (currentUser.value && currentUser.value.realName) {
@@ -180,8 +214,9 @@ const displayName = computed(() => {
   return '同学'
 })
 
-// 是否教师（role === 1）——决定课程页是否显示「进入教师端」入口
-const isTeacher = computed(() => currentUser.value && currentUser.value.role === 1)
+// 是否教师/管理员（role 1 或 3）——决定课程页是否显示「进入教师端」入口
+const isTeacher = computed(() => session.isTeacher)
+
 
 function masteryPercent(c) {
   const total = c.masteredCount + c.weakCount + c.unlearnedCount
@@ -213,58 +248,38 @@ const courseCard = {
   transition: 'background-color 0.35s, border-color 0.2s, transform 0.25s ease, box-shadow 0.25s ease'
 }
 
-const roleBtnBase = {
-  flex: 1,
-  height: '40px',
-  borderRadius: '10px',
-  fontSize: '14px',
-  fontWeight: 500,
-  cursor: 'pointer',
-  transition: 'all 0.18s'
-}
-const roleBtnActive = {
-  ...roleBtnBase,
-  background: 'var(--acc)',
-  border: '1px solid var(--acc)',
-  color: '#FFFDF8'
-}
-const roleBtnInactive = {
-  ...roleBtnBase,
-  background: 'transparent',
-  border: '1px solid var(--line)',
-  color: 'var(--mut)'
-}
-
 async function handleLogin() {
   loginError.value = ''
   if (!sid.value || !pwd.value) {
     loginError.value = '请输入用户名和密码'
     return
   }
+  const request = beginAuthRequest()
   try {
-    const data = await apiLogin({ username: sid.value, password: pwd.value })
-    currentUser.value = data.user
-    localStorage.setItem('wj_token', data.token)
-    localStorage.setItem('wj_user', JSON.stringify(data.user))
-    step.value = 'course'
-    loadCourses()
+    const data = await apiLogin(
+      { username: sid.value, password: pwd.value },
+      { signal: request.signal }
+    )
+    commitLogin(data, request)
   } catch (e) {
+    if (disposed || !request.isCurrent() || isAbortError(e)) return
     loginError.value = e.message || '登录失败'
   }
 }
 
-function handleDemoLogin() {
-  apiLogin({ username: 'demo_student', password: 'demo' })
-    .then(data => {
-      currentUser.value = data.user
-      localStorage.setItem('wj_token', data.token)
-      localStorage.setItem('wj_user', JSON.stringify(data.user))
-      step.value = 'course'
-      loadCourses()
-    })
-    .catch(e => {
-      loginError.value = e.message || '演示登录失败'
-    })
+async function handleDemoLogin() {
+  loginError.value = ''
+  const request = beginAuthRequest()
+  try {
+    const data = await apiLogin(
+      { username: 'demo_student', password: 'demo' },
+      { signal: request.signal }
+    )
+    commitLogin(data, request)
+  } catch (e) {
+    if (disposed || !request.isCurrent() || isAbortError(e)) return
+    loginError.value = e.message || '演示登录失败'
+  }
 }
 
 async function handleRegister() {
@@ -277,73 +292,105 @@ async function handleRegister() {
     regError.value = '两次密码输入不一致'
     return
   }
+  const request = beginAuthRequest()
   try {
     await apiRegister({
       username: regUsername.value,
       password: regPassword.value,
-      realName: regRealName.value,
-      role: regRole.value
-    })
+      realName: regRealName.value
+    }, { signal: request.signal })
+    if (disposed || !request.isCurrent()) return
     // 注册不发令牌，紧接着用同一凭据登录拿令牌（保持"注册即进入"的体验）
-    const data = await apiLogin({ username: regUsername.value, password: regPassword.value })
-    currentUser.value = data.user
-    localStorage.setItem('wj_token', data.token)
-    localStorage.setItem('wj_user', JSON.stringify(data.user))
-    step.value = 'course'
-    loadCourses()
+    const data = await apiLogin(
+      { username: regUsername.value, password: regPassword.value },
+      { signal: request.signal }
+    )
+    commitLogin(data, request)
   } catch (e) {
+    if (disposed || !request.isCurrent() || isAbortError(e)) return
     regError.value = e.message || '注册失败'
   }
 }
 
 function handleLogout() {
-  currentUser.value = null
+  authRequest.cancel()
+  coursesRequest.cancel()
+  courseLoading.value = false
+  session.clearSession()
+  session.resetRefreshGate()
   courses.value = []
-  localStorage.removeItem('wj_token')
-  localStorage.removeItem('wj_user')
+  availableCourses.value = []
   sid.value = ''
   pwd.value = ''
   step.value = 'login'
 }
 
 async function loadCourses() {
-  if (!currentUser.value) return
-  courseLoading.value = true
-  try {
-    courses.value = await getMyCourses(currentUser.value.id)
-  } catch {
-    courses.value = []
-  }
-  try {
-    const all = await getAvailableCourses()
-    const enrolledIds = new Set((courses.value || []).map(c => c.courseId))
-    availableCourses.value = (all || []).filter(c => !enrolledIds.has(c.id))
-  } catch {
-    availableCourses.value = []
-  } finally {
+  const requestToken = session.token
+  const requestUserId = session.userId
+  if (disposed || !currentUser.value || !requestToken || !requestUserId) {
+    coursesRequest.cancel()
     courseLoading.value = false
+    return
   }
+  const request = coursesRequest.next()
+  const isCurrentOwner = () => !disposed
+    && request.isCurrent()
+    && session.token === requestToken
+    && session.userId === requestUserId
+  courseLoading.value = true
+  let nextCourses = []
+  let nextAvailableCourses = []
+  try {
+    nextCourses = await getMyCourses({ signal: request.signal })
+    if (!isCurrentOwner()) return
+  } catch (error) {
+    if (!isCurrentOwner() || isAbortError(error)) return
+  }
+  try {
+    const all = await getAvailableCourses({ signal: request.signal })
+    if (!isCurrentOwner()) return
+    const enrolledIds = new Set((nextCourses || []).map(c => c.courseId))
+    nextAvailableCourses = (all || []).filter(c => !enrolledIds.has(c.id))
+  } catch (error) {
+    if (!isCurrentOwner() || isAbortError(error)) return
+  } finally {
+    if (isCurrentOwner()) courseLoading.value = false
+  }
+  if (!isCurrentOwner()) return
+  courses.value = nextCourses
+  availableCourses.value = nextAvailableCourses
 }
 
 async function handleEnroll(courseId) {
   if (!currentUser.value) return
   try {
-    await enroll(currentUser.value.id, courseId)
+    await enroll(courseId)
     await loadCourses()
   } catch (e) {
     alert(e.message || '选课失败')
   }
 }
 
-onMounted(() => {
-  const saved = localStorage.getItem('wj_user')
-  if (saved) {
-    try {
-      currentUser.value = JSON.parse(saved)
-      step.value = 'course'
-      loadCourses()
-    } catch { /* ignore */ }
+/** 进入某课前记住 studentCourseId（供地图/诊断等页共享） */
+function rememberStudentCourse(courseId) {
+  courseStore.setStudentCourseId(courseId)
+}
+
+onMounted(async () => {
+  if (!session.hydrated) session.hydrate()
+  if (!session.token) return
+  const user = await session.refreshMe()
+  if (!disposed && user) {
+    step.value = 'course'
+    void loadCourses()
   }
+})
+
+onBeforeUnmount(() => {
+  disposed = true
+  authRequest.cancel()
+  coursesRequest.cancel()
 })
 </script>
 
@@ -355,8 +402,5 @@ onMounted(() => {
   transform: translateY(-2px);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.07);
   border-color: var(--mut);
-}
-.wj-role-btn:hover {
-  opacity: 0.85;
 }
 </style>

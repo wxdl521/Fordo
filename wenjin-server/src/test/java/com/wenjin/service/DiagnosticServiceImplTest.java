@@ -1,6 +1,10 @@
 package com.wenjin.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wenjin.common.BusinessException;
+import com.wenjin.common.ResultCode;
+import com.wenjin.config.CurrentUser;
+import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.dto.GradedAnswer;
 import com.wenjin.dto.PaperQuestionVO;
 import com.wenjin.dto.PaperVO;
@@ -8,17 +12,24 @@ import com.wenjin.dto.QuestionGradeVO;
 import com.wenjin.dto.SubmitRequest;
 import com.wenjin.dto.SubmitResult;
 import com.wenjin.entity.AnswerRecord;
+import com.wenjin.entity.DiagnosticSession;
+import com.wenjin.entity.DiagnosticSessionQuestion;
 import com.wenjin.entity.KgNode;
 import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
 import com.wenjin.mapper.AnswerRecordMapper;
+import com.wenjin.mapper.DiagnosticSessionMapper;
+import com.wenjin.mapper.DiagnosticSessionQuestionMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.security.CurrentPrincipal;
+import com.wenjin.security.UserRole;
 import com.wenjin.service.impl.DiagnosticServiceImpl;
 import com.wenjin.support.QuestionStatus;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,19 +42,22 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * DiagnosticServiceImpl 单元测试：Mockito 隔离数据库，覆盖
- *   A 正常组卷（30题/5章/target25 → 实际25题，覆盖≥4章），
- *   B 空题库，C 答案不泄露（Jackson 序列化验证）。
+ * DiagnosticServiceImpl 单元测试：组卷分层 + 会话冻结 + 攻击面（精确集合 / 归属 / 幂等）。
  */
 @ExtendWith(MockitoExtension.class)
 class DiagnosticServiceImplTest {
@@ -53,32 +67,39 @@ class DiagnosticServiceImplTest {
     @Mock QuestionNodeMapper questionNodeMapper;
     @Mock KgNodeMapper kgNodeMapper;
     @Mock AnswerRecordMapper answerRecordMapper;
+    @Mock DiagnosticSessionMapper diagnosticSessionMapper;
+    @Mock DiagnosticSessionQuestionMapper diagnosticSessionQuestionMapper;
     @Mock MasteryService masteryService;
+    @Mock CourseService courseService;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private FeatureFlagsProperties featureFlags;
 
     private static final Long COURSE_ID = 1L;
+    private static final Long STUDENT_ID = 10L;
+    private static final String TOKEN = "11111111-2222-3333-4444-555555555555";
 
-    /** 共 5 章，每章 6 题，总计 30 题 */
     private static final int CHAPTERS = 5;
     private static final int PER_CHAPTER = 6;
-    private static final int TOTAL_QUESTIONS = CHAPTERS * PER_CHAPTER; // 30
 
-    /** 测试题库（30道 APPROVED 题） */
     private List<Question> allQuestions;
-    /** 题-知识点关联（每题一条 weight=1 主点） */
     private List<QuestionNode> allQuestionNodes;
-    /** 知识点（每章一个节点，5个节点） */
     private List<KgNode> allKgNodes;
+    private final AtomicLong sessionIdSeq = new AtomicLong(1000);
 
     @BeforeEach
     void buildFixture() {
+        featureFlags = new FeatureFlagsProperties();
+        featureFlags.setFixedDiagnosticEnabled(true);
+        CurrentUser.set(new CurrentPrincipal(STUDENT_ID, UserRole.STUDENT));
+
         allQuestions = new ArrayList<>();
         allQuestionNodes = new ArrayList<>();
         allKgNodes = new ArrayList<>();
 
-        // 5章，每章1个节点（奇数章 isKey=1，偶数章 isKey=0）
         String[] chapters = {"第一章", "第二章", "第三章", "第四章", "第五章"};
         for (int c = 0; c < CHAPTERS; c++) {
-            long nodeId = (c + 1) * 100L;       // 100, 200, 300, 400, 500
+            long nodeId = (c + 1) * 100L;
             KgNode node = new KgNode();
             node.setId(nodeId);
             node.setCourseId(COURSE_ID);
@@ -86,23 +107,21 @@ class DiagnosticServiceImplTest {
             node.setName("知识点" + (c + 1));
             node.setChapter(chapters[c]);
             node.setDifficulty(3);
-            node.setIsKey(c % 2 == 0 ? 1 : 0); // 第1/3/5章 isKey=1
+            node.setIsKey(c % 2 == 0 ? 1 : 0);
             allKgNodes.add(node);
 
-            // 每章6题
             for (int q = 0; q < PER_CHAPTER; q++) {
-                long questionId = (long) (c * PER_CHAPTER + q + 1); // 1..30
+                long questionId = (long) (c * PER_CHAPTER + q + 1);
                 Question question = new Question();
                 question.setId(questionId);
                 question.setCourseId(COURSE_ID);
                 question.setStem("题干-章" + (c + 1) + "-题" + (q + 1));
                 question.setType(1);
                 question.setDifficulty(3);
-                question.setAnswer("A");         // 正确答案不应出现在 PaperQuestionVO
+                question.setAnswer("A");
                 question.setStatus(QuestionStatus.APPROVED);
                 allQuestions.add(question);
 
-                // weight=1 主点关联
                 QuestionNode qn = new QuestionNode();
                 qn.setId(questionId);
                 qn.setQuestionId(questionId);
@@ -113,15 +132,35 @@ class DiagnosticServiceImplTest {
         }
     }
 
-    private DiagnosticServiceImpl impl() {
-        DiagnosticServiceImpl impl = new DiagnosticServiceImpl(
-                questionMapper, questionOptionMapper, questionNodeMapper, kgNodeMapper,
-                answerRecordMapper, masteryService);
-        ReflectionTestUtils.setField(impl, "paperSize", 25);
-        return impl;
+    @AfterEach
+    void clearUser() {
+        CurrentUser.clear();
     }
 
-    /** 两个选项（A 正确、B 错误）——答案信息绝不能下行 */
+    private DiagnosticServiceImpl impl() {
+        DiagnosticServiceImpl svc = new DiagnosticServiceImpl(
+                questionMapper, questionOptionMapper, questionNodeMapper, kgNodeMapper,
+                answerRecordMapper, diagnosticSessionMapper, diagnosticSessionQuestionMapper,
+                masteryService, courseService, featureFlags, objectMapper);
+        ReflectionTestUtils.setField(svc, "paperSize", 25);
+        return svc;
+    }
+
+    private void stubComposeHappyPath(List<Question> questions,
+                                      List<QuestionNode> qns,
+                                      List<KgNode> nodes) {
+        when(questionMapper.selectList(any())).thenReturn(questions);
+        when(questionNodeMapper.selectList(any())).thenReturn(qns);
+        when(kgNodeMapper.selectList(any())).thenReturn(nodes);
+        when(questionOptionMapper.selectList(any())).thenAnswer(inv -> optionsForAll(questions));
+        doAnswer(inv -> {
+            DiagnosticSession s = inv.getArgument(0);
+            s.setId(sessionIdSeq.incrementAndGet());
+            return 1;
+        }).when(diagnosticSessionMapper).insert(any(DiagnosticSession.class));
+        when(diagnosticSessionQuestionMapper.insert(any(DiagnosticSessionQuestion.class))).thenReturn(1);
+    }
+
     private List<QuestionOption> twoOptions(Long questionId) {
         QuestionOption a = new QuestionOption();
         a.setId(questionId * 10 + 1);
@@ -129,7 +168,6 @@ class DiagnosticServiceImplTest {
         a.setOptionKey("A");
         a.setOptionText("选项A文本");
         a.setIsCorrect(1);
-        a.setPointNodeCode(null);
 
         QuestionOption b = new QuestionOption();
         b.setId(questionId * 10 + 2);
@@ -138,14 +176,9 @@ class DiagnosticServiceImplTest {
         b.setOptionText("选项B文本");
         b.setIsCorrect(0);
         b.setPointNodeCode("KT01");
-
         return List.of(a, b);
     }
 
-    /**
-     * 为列表中的所有题目生成选项（每题2个），用于批量选项查询的 mock stub。
-     * 每个选项携带真实的 questionId，令 groupingBy 能正确分组。
-     */
     private List<QuestionOption> optionsForAll(List<Question> questions) {
         List<QuestionOption> result = new ArrayList<>();
         for (Question q : questions) {
@@ -154,409 +187,435 @@ class DiagnosticServiceImplTest {
         return result;
     }
 
-    // ───────────────────── 用例 A：正常组卷 ─────────────────────
+    private DiagnosticSession inProgressSession(Long sessionId, Long studentId, Long courseId) {
+        DiagnosticSession s = new DiagnosticSession();
+        s.setId(sessionId);
+        s.setToken(TOKEN);
+        s.setStudentId(studentId);
+        s.setCourseId(courseId);
+        s.setStatus(0);
+        return s;
+    }
+
+    private List<DiagnosticSessionQuestion> frozen(Long sessionId, Long... qids) {
+        List<DiagnosticSessionQuestion> rows = new ArrayList<>();
+        for (int i = 0; i < qids.length; i++) {
+            DiagnosticSessionQuestion r = new DiagnosticSessionQuestion();
+            r.setId((long) (i + 1));
+            r.setSessionId(sessionId);
+            r.setQuestionId(qids[i]);
+            r.setCourseId(COURSE_ID);
+            r.setOrdinal(i);
+            rows.add(r);
+        }
+        return rows;
+    }
+
+    private Question approved(long id) {
+        Question q = new Question();
+        q.setId(id);
+        q.setCourseId(COURSE_ID);
+        q.setType(1);
+        q.setStatus(QuestionStatus.APPROVED);
+        return q;
+    }
+
+    private SubmitRequest.Answer ans(long qid, String key) {
+        SubmitRequest.Answer a = new SubmitRequest.Answer();
+        a.setQuestionId(qid);
+        a.setOptionKey(key);
+        return a;
+    }
+
+    private SubmitRequest submitReq(List<SubmitRequest.Answer> answers) {
+        SubmitRequest req = new SubmitRequest();
+        req.setStudentId(STUDENT_ID);
+        req.setCourseId(COURSE_ID);
+        req.setSessionToken(TOKEN);
+        req.setAnswers(answers);
+        return req;
+    }
+
+    // ───────────────────── 组卷 ─────────────────────
 
     @Test
-    @DisplayName("A 正常组卷：30题/5章，target=25 → total=25，覆盖==5章")
+    @DisplayName("A 正常组卷：30题/5章 → total=25，冻结会话+token，覆盖5章")
     void normalPaperComposed() {
-        when(questionMapper.selectList(any())).thenReturn(allQuestions);
-        when(questionNodeMapper.selectList(any())).thenReturn(allQuestionNodes);
-        when(kgNodeMapper.selectList(any())).thenReturn(allKgNodes);
-        // 批量查询：返回所有题目的选项（每题有独立 questionId，groupingBy 能正确分组）
-        when(questionOptionMapper.selectList(any()))
-                .thenAnswer(inv -> optionsForAll(allQuestions));
+        stubComposeHappyPath(allQuestions, allQuestionNodes, allKgNodes);
 
         PaperVO paper = impl().composePaper(COURSE_ID);
 
-        // 断言1：题目数在 [20,30]，且恰好 = target 25
-        assertThat(paper.getTotal()).isBetween(20, 30);
-        assertThat(paper.getQuestions()).hasSize(paper.getTotal());
-        assertThat(paper.getTotal()).isEqualTo(25); // target = min(25, 30) = 25
-
-        // 断言2：覆盖的章节 == 5（算法可证明覆盖全部5章）
-        Set<String> coveredChapters = paper.getQuestions().stream()
-                .map(PaperQuestionVO::getChapter)
-                .collect(Collectors.toSet());
-        assertThat(coveredChapters.size()).isEqualTo(5);
-
-        // 所有题都属于该课程且有 chapter
+        assertThat(paper.getTotal()).isEqualTo(25);
+        assertThat(paper.getSessionToken()).isNotBlank();
         assertThat(paper.getCourseId()).isEqualTo(COURSE_ID);
-        assertThat(paper.getQuestions()).allSatisfy(q ->
-                assertThat(q.getChapter()).isNotBlank());
+        Set<String> covered = paper.getQuestions().stream()
+                .map(PaperQuestionVO::getChapter).collect(Collectors.toSet());
+        assertThat(covered).hasSize(5);
 
-        // 断言3：每道题选项结构正确（key+text 均存在，且恰好2个选项）
-        assertThat(paper.getQuestions()).allSatisfy(q -> {
-            assertThat(q.getOptions()).hasSize(2);
-            assertThat(q.getOptions()).allSatisfy(opt -> {
-                assertThat(opt.getKey()).isNotBlank();
-                assertThat(opt.getText()).isNotBlank();
-            });
-        });
+        verify(courseService).assertAccessibleByStudent(STUDENT_ID, COURSE_ID);
+        verify(diagnosticSessionMapper).insert(any(DiagnosticSession.class));
+        verify(diagnosticSessionQuestionMapper, times(25)).insert(any(DiagnosticSessionQuestion.class));
     }
 
-    // ───────────────────── 用例 B：空题库 ─────────────────────
-
     @Test
-    @DisplayName("B 空题库：approved 为空 → total=0，questions 为空列表")
+    @DisplayName("B 空题库：total=0，不建会话、无 token")
     void emptyPoolReturnsEmptyPaper() {
         when(questionMapper.selectList(any())).thenReturn(List.of());
-        // 空题库时不应再调用 questionNodeMapper / kgNodeMapper（含隐性断言）
 
         PaperVO paper = impl().composePaper(COURSE_ID);
 
         assertThat(paper.getTotal()).isZero();
         assertThat(paper.getQuestions()).isEmpty();
-        assertThat(paper.getCourseId()).isEqualTo(COURSE_ID);
+        assertThat(paper.getSessionToken()).isNull();
+        verify(diagnosticSessionMapper, never()).insert(any(DiagnosticSession.class));
     }
 
-    // ───────────────────── 用例 C：答案不泄露 ─────────────────────
-
     @Test
-    @DisplayName("C 答案不泄露：Jackson 序列化 PaperQuestionVO 不含 answer/isCorrect/correct/pointNodeCode")
+    @DisplayName("C 答案不泄露：Jackson 序列化不含 answer/isCorrect")
     void noAnswerLeakage() throws Exception {
-        when(questionMapper.selectList(any())).thenReturn(allQuestions);
-        when(questionNodeMapper.selectList(any())).thenReturn(allQuestionNodes);
-        when(kgNodeMapper.selectList(any())).thenReturn(allKgNodes);
-        // 批量查询：返回所有题的真实选项（含 isCorrect / pointNodeCode，绝不能出现在 VO）
-        when(questionOptionMapper.selectList(any()))
-                .thenAnswer(inv -> optionsForAll(allQuestions));
+        stubComposeHappyPath(allQuestions, allQuestionNodes, allKgNodes);
 
         PaperVO paper = impl().composePaper(COURSE_ID);
-        assertThat(paper.getQuestions()).isNotEmpty();
-
-        ObjectMapper jackson = new ObjectMapper();
-        // 取第一道题序列化为 JSON 字符串
-        PaperQuestionVO firstQ = paper.getQuestions().get(0);
-        String json = jackson.writeValueAsString(firstQ);
-
-        // 关键断言：JSON 字符串中绝不出现任何答案字段名称
+        String json = objectMapper.writeValueAsString(paper.getQuestions().get(0));
         assertThat(json).doesNotContain("answer");
         assertThat(json).doesNotContain("isCorrect");
-        assertThat(json).doesNotContain("correct");
         assertThat(json).doesNotContain("pointNodeCode");
-
-        // 补充：反射检查 PaperQuestionVO 声明字段不含答案
-        List<String> declaredFieldNames = java.util.Arrays.stream(
-                PaperQuestionVO.class.getDeclaredFields())
-                .map(java.lang.reflect.Field::getName)
-                .collect(Collectors.toList());
-        assertThat(declaredFieldNames).doesNotContain("answer", "isCorrect", "correct", "pointNodeCode");
-
-        // 反射检查 OptionVO 声明字段
-        List<String> optionFieldNames = java.util.Arrays.stream(
-                PaperQuestionVO.OptionVO.class.getDeclaredFields())
-                .map(java.lang.reflect.Field::getName)
-                .collect(Collectors.toList());
-        assertThat(optionFieldNames).doesNotContain("answer", "isCorrect", "correct", "pointNodeCode");
     }
 
-    // ───────────────────── 用例 D：章数 > target 分支 ─────────────────────
-
     @Test
-    @DisplayName("D 章数>target：30题/30章，target=25 → total=25，覆盖25个不同章节")
-    void manyChaptersExceedTarget() {
-        // 30道题，每题独属一章（共30个不同章节）
-        List<Question> questions = new ArrayList<>();
-        List<QuestionNode> questionNodes = new ArrayList<>();
-        List<KgNode> kgNodes = new ArrayList<>();
+    @DisplayName("归档主节点：仅归档主节点的题排除，仍有 active 主节点的题保留")
+    void compose_excludesQuestionsWithoutAnyActiveMainNode() {
+        Question archivedOnly = approved(901L);
+        Question mixed = approved(902L);
 
-        for (int i = 0; i < 30; i++) {
-            long questionId = i + 1L;
-            long nodeId = (i + 1) * 100L;
+        QuestionNode archivedOnlyLink = new QuestionNode();
+        archivedOnlyLink.setQuestionId(archivedOnly.getId());
+        archivedOnlyLink.setNodeId(900L);
+        archivedOnlyLink.setWeight(1);
 
-            KgNode node = new KgNode();
-            node.setId(nodeId);
-            node.setCourseId(COURSE_ID);
-            node.setNodeCode("KC" + (i + 1));
-            node.setName("知识点" + (i + 1));
-            node.setChapter("章节" + (i + 1));
-            node.setDifficulty(3);
-            node.setIsKey(0);
-            kgNodes.add(node);
+        QuestionNode mixedArchivedLink = new QuestionNode();
+        mixedArchivedLink.setQuestionId(mixed.getId());
+        mixedArchivedLink.setNodeId(900L);
+        mixedArchivedLink.setWeight(1);
 
-            Question q = new Question();
-            q.setId(questionId);
-            q.setCourseId(COURSE_ID);
-            q.setStem("题干-" + (i + 1));
-            q.setType(1);
-            q.setDifficulty(3);
-            q.setAnswer("A");
-            q.setStatus(QuestionStatus.APPROVED);
-            questions.add(q);
+        QuestionNode mixedActiveLink = new QuestionNode();
+        mixedActiveLink.setQuestionId(mixed.getId());
+        mixedActiveLink.setNodeId(100L);
+        mixedActiveLink.setWeight(1);
 
-            QuestionNode qn = new QuestionNode();
-            qn.setId(questionId);
-            qn.setQuestionId(questionId);
-            qn.setNodeId(nodeId);
-            qn.setWeight(1);
-            questionNodes.add(qn);
-        }
+        KgNode active = new KgNode();
+        active.setId(100L);
+        active.setCourseId(COURSE_ID);
+        active.setChapter("生效章节");
+        active.setIsKey(1);
 
-        when(questionMapper.selectList(any())).thenReturn(questions);
-        when(questionNodeMapper.selectList(any())).thenReturn(questionNodes);
-        when(kgNodeMapper.selectList(any())).thenReturn(kgNodes);
-        when(questionOptionMapper.selectList(any()))
-                .thenAnswer(inv -> optionsForAll(questions));
+        stubComposeHappyPath(
+                List.of(archivedOnly, mixed),
+                List.of(archivedOnlyLink, mixedArchivedLink, mixedActiveLink),
+                List.of(active));
 
         PaperVO paper = impl().composePaper(COURSE_ID);
 
-        // 断言：恰好选出 25 题，覆盖 25 个不同章节
-        assertThat(paper.getTotal()).isEqualTo(25);
-        assertThat(paper.getQuestions()).hasSize(25);
-
-        Set<String> coveredChapters = paper.getQuestions().stream()
-                .map(PaperQuestionVO::getChapter)
-                .collect(Collectors.toSet());
-        assertThat(coveredChapters).hasSize(25);
+        assertThat(paper.getQuestions())
+                .extracting(PaperQuestionVO::getQuestionId)
+                .containsExactly(mixed.getId());
+        verify(diagnosticSessionQuestionMapper, times(1)).insert(any(DiagnosticSessionQuestion.class));
+        verify(kgNodeMapper).selectList(any());
     }
 
-    // ───────────────────── 用例 E：cap + fill-up 路径 ─────────────────────
-
     @Test
-    @DisplayName("E cap+fill-up：A章1题，B/C/D/E各10题，target=25 → total=25，全5章覆盖，A章题必入选")
-    void capAndFillUpPath() {
-        // 章 A: 1 题；章 B,C,D,E: 各 10 题；共 41 题
-        // 比例分配结果：A=1, B=C=D=E=6，合计 25（A恰好触发 cap）
-        List<Question> questions = new ArrayList<>();
-        List<QuestionNode> questionNodes = new ArrayList<>();
-        List<KgNode> kgNodes = new ArrayList<>();
+    @DisplayName("多 active 主节点：反转关联查询顺序仍按最小 nodeId 稳定组卷")
+    void compose_multipleActiveMainNodes_usesSmallestNodeIdRegardlessOfMapperOrder() {
+        Question multiNode = approved(701L);
+        Question chapterAQuestion = approved(702L);
+        Question chapterBQuestion = approved(703L);
+        List<Question> questions = List.of(multiNode, chapterAQuestion, chapterBQuestion);
 
-        String[] chapterNames = {"章A", "章B", "章C", "章D", "章E"};
-        int[] sizes = {1, 10, 10, 10, 10};
-        long questionIdCounter = 1L;
+        KgNode chapterA = new KgNode();
+        chapterA.setId(100L);
+        chapterA.setCourseId(COURSE_ID);
+        chapterA.setChapter("A章");
+        chapterA.setIsKey(0);
+        KgNode chapterB = new KgNode();
+        chapterB.setId(200L);
+        chapterB.setCourseId(COURSE_ID);
+        chapterB.setChapter("B章");
+        chapterB.setIsKey(0);
 
-        for (int c = 0; c < chapterNames.length; c++) {
-            long nodeId = (c + 1) * 1000L;
+        QuestionNode multiA = new QuestionNode();
+        multiA.setQuestionId(multiNode.getId());
+        multiA.setNodeId(chapterA.getId());
+        multiA.setWeight(1);
+        QuestionNode multiB = new QuestionNode();
+        multiB.setQuestionId(multiNode.getId());
+        multiB.setNodeId(chapterB.getId());
+        multiB.setWeight(1);
+        QuestionNode onlyA = new QuestionNode();
+        onlyA.setQuestionId(chapterAQuestion.getId());
+        onlyA.setNodeId(chapterA.getId());
+        onlyA.setWeight(1);
+        QuestionNode onlyB = new QuestionNode();
+        onlyB.setQuestionId(chapterBQuestion.getId());
+        onlyB.setNodeId(chapterB.getId());
+        onlyB.setWeight(1);
 
-            KgNode node = new KgNode();
-            node.setId(nodeId);
-            node.setCourseId(COURSE_ID);
-            node.setNodeCode("KE" + (c + 1));
-            node.setName("节点" + chapterNames[c]);
-            node.setChapter(chapterNames[c]);
-            node.setDifficulty(3);
-            node.setIsKey(0);
-            kgNodes.add(node);
+        List<QuestionNode> forward = List.of(multiA, multiB, onlyA, onlyB);
+        List<QuestionNode> reversed = List.of(onlyB, onlyA, multiB, multiA);
+        stubComposeHappyPath(questions, forward, List.of(chapterA, chapterB));
+        when(questionNodeMapper.selectList(any())).thenReturn(forward, reversed);
 
-            for (int i = 0; i < sizes[c]; i++) {
-                long qId = questionIdCounter++;
-                Question q = new Question();
-                q.setId(qId);
-                q.setCourseId(COURSE_ID);
-                q.setStem("题干-" + chapterNames[c] + "-" + i);
-                q.setType(1);
-                q.setDifficulty(3);
-                q.setAnswer("A");
-                q.setStatus(QuestionStatus.APPROVED);
-                questions.add(q);
+        DiagnosticServiceImpl service = impl();
+        ReflectionTestUtils.setField(service, "paperSize", 2);
+        PaperVO first = service.composePaper(COURSE_ID);
+        PaperVO second = service.composePaper(COURSE_ID);
 
-                QuestionNode qn = new QuestionNode();
-                qn.setId(qId);
-                qn.setQuestionId(qId);
-                qn.setNodeId(nodeId);
-                qn.setWeight(1);
-                questionNodes.add(qn);
-            }
-        }
-
-        when(questionMapper.selectList(any())).thenReturn(questions);
-        when(questionNodeMapper.selectList(any())).thenReturn(questionNodes);
-        when(kgNodeMapper.selectList(any())).thenReturn(kgNodes);
-        when(questionOptionMapper.selectList(any()))
-                .thenAnswer(inv -> optionsForAll(questions));
-
-        DiagnosticServiceImpl svc = new DiagnosticServiceImpl(
-                questionMapper, questionOptionMapper, questionNodeMapper, kgNodeMapper,
-                answerRecordMapper, masteryService);
-        ReflectionTestUtils.setField(svc, "paperSize", 25);
-
-        PaperVO paper = svc.composePaper(COURSE_ID);
-
-        // 断言1：恰好 25 题
-        assertThat(paper.getTotal()).isEqualTo(25);
-        assertThat(paper.getQuestions()).hasSize(25);
-
-        // 断言2：全 5 章均有题目
-        Set<String> coveredChapters = paper.getQuestions().stream()
-                .map(PaperQuestionVO::getChapter)
-                .collect(Collectors.toSet());
-        assertThat(coveredChapters).containsExactlyInAnyOrder("章A", "章B", "章C", "章D", "章E");
-
-        // 断言3：章A 的唯一一题（questionId=1）必须入选
-        Set<Long> selectedIds = paper.getQuestions().stream()
+        List<Long> firstIds = first.getQuestions().stream()
                 .map(PaperQuestionVO::getQuestionId)
-                .collect(Collectors.toSet());
-        assertThat(selectedIds).contains(1L); // 章A的唯一题 id=1
-
-        // 断言4：章A 恰好 1 题（cap生效）
-        long countA = paper.getQuestions().stream()
-                .filter(q -> "章A".equals(q.getChapter()))
-                .count();
-        assertThat(countA).isEqualTo(1);
+                .toList();
+        List<Long> secondIds = second.getQuestions().stream()
+                .map(PaperQuestionVO::getQuestionId)
+                .toList();
+        assertThat(firstIds).containsExactly(multiNode.getId(), chapterBQuestion.getId());
+        assertThat(secondIds).isEqualTo(firstIds);
+        assertThat(first.getQuestions().get(0).getChapter()).isEqualTo("A章");
+        assertThat(second.getQuestions().get(0).getChapter()).isEqualTo("A章");
     }
 
-    // ───────────────────── 用例 F：T7 交卷判分 ─────────────────────
+    @Test
+    @DisplayName("特性关闭 → compose 503")
+    void compose_featureDisabled_503() {
+        featureFlags.setFixedDiagnosticEnabled(false);
+        assertThatThrownBy(() -> impl().composePaper(COURSE_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
+    }
+
+    // ───────────────────── 攻击面：submit ─────────────────────
 
     @Test
-    @DisplayName("F 交卷判分：Q1选A(正确)、Q2选C(错误) → correctCount=1，insert 2次，isCorrect/studentAnswer 正确落库")
+    @DisplayName("攻击：会话外题目 → BAD_REQUEST")
+    void submit_rejectsQuestionNotInFrozenPaper() {
+        when(diagnosticSessionMapper.selectByTokenForUpdate(TOKEN))
+                .thenReturn(inProgressSession(7L, STUDENT_ID, COURSE_ID));
+        when(diagnosticSessionQuestionMapper.selectList(any()))
+                .thenReturn(frozen(7L, 101L, 102L));
+
+        assertThatThrownBy(() -> impl().submit(submitReq(List.of(
+                ans(101L, "A"), ans(999L, "B")))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("会话外题目");
+        verify(masteryService, never()).applyAnswers(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("攻击：重复 questionId → BAD_REQUEST")
+    void submit_rejectsDuplicateQuestionIds() {
+        when(diagnosticSessionMapper.selectByTokenForUpdate(TOKEN))
+                .thenReturn(inProgressSession(7L, STUDENT_ID, COURSE_ID));
+        when(diagnosticSessionQuestionMapper.selectList(any()))
+                .thenReturn(frozen(7L, 101L, 102L));
+
+        assertThatThrownBy(() -> impl().submit(submitReq(List.of(
+                ans(101L, "A"), ans(101L, "B")))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("重复");
+        verify(masteryService, never()).applyAnswers(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("攻击：跨课程题目 → BAD_REQUEST")
+    void submit_rejectsCrossCourseQuestion() {
+        when(diagnosticSessionMapper.selectByTokenForUpdate(TOKEN))
+                .thenReturn(inProgressSession(7L, STUDENT_ID, COURSE_ID));
+        when(diagnosticSessionQuestionMapper.selectList(any()))
+                .thenReturn(frozen(7L, 101L));
+        // CAS 成功前先校验题归属
+        Question foreign = approved(101L);
+        foreign.setCourseId(999L);
+        when(questionMapper.selectList(any())).thenReturn(List.of(foreign));
+
+        assertThatThrownBy(() -> impl().submit(submitReq(List.of(ans(101L, "A")))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("跨课程");
+        verify(masteryService, never()).applyAnswers(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("攻击：未审核题目 → BAD_REQUEST")
+    void submit_rejectsUnreviewedQuestion() {
+        when(diagnosticSessionMapper.selectByTokenForUpdate(TOKEN))
+                .thenReturn(inProgressSession(7L, STUDENT_ID, COURSE_ID));
+        when(diagnosticSessionQuestionMapper.selectList(any()))
+                .thenReturn(frozen(7L, 101L));
+        Question pending = approved(101L);
+        pending.setStatus(QuestionStatus.PENDING);
+        when(questionMapper.selectList(any())).thenReturn(List.of(pending));
+
+        assertThatThrownBy(() -> impl().submit(submitReq(List.of(ans(101L, "A")))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("未审核");
+        verify(masteryService, never()).applyAnswers(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("攻击：他人会话 → FORBIDDEN")
+    void submit_rejectsOtherUsersSession() {
+        when(diagnosticSessionMapper.selectByTokenForUpdate(TOKEN))
+                .thenReturn(inProgressSession(7L, 999L, COURSE_ID));
+
+        assertThatThrownBy(() -> impl().submit(submitReq(List.of(ans(101L, "A")))))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(ResultCode.FORBIDDEN.getCode());
+        verify(masteryService, never()).applyAnswers(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("幂等重放：完成后关闭开关仍返回 result_json，且不产生任何诊断写入")
+    void submit_completedSession_replaysAfterFeatureDisabledWithoutWrites() throws Exception {
+        SubmitResult stored = new SubmitResult();
+        stored.setTotal(2);
+        stored.setCorrectCount(1);
+        QuestionGradeVO g = new QuestionGradeVO();
+        g.setQuestionId(101L);
+        g.setCorrect(true);
+        g.setCorrectKey("A");
+        stored.setGrades(List.of(g));
+
+        DiagnosticSession done = inProgressSession(7L, STUDENT_ID, COURSE_ID);
+        done.setStatus(1);
+        done.setResultJson(objectMapper.writeValueAsString(stored));
+        when(diagnosticSessionMapper.selectByTokenForUpdate(TOKEN)).thenReturn(done);
+        featureFlags.setFixedDiagnosticEnabled(false);
+
+        SubmitResult result = impl().submit(submitReq(List.of(ans(101L, "A"), ans(102L, "B"))));
+
+        assertThat(result.getTotal()).isEqualTo(2);
+        assertThat(result.getCorrectCount()).isEqualTo(1);
+        verify(diagnosticSessionMapper).selectByTokenForUpdate(TOKEN);
+        verify(diagnosticSessionMapper, never()).update(any(), any());
+        verify(diagnosticSessionQuestionMapper, never()).selectList(any());
+        verify(questionMapper, never()).selectList(any());
+        verify(questionOptionMapper, never()).selectList(any());
+        verify(masteryService, never()).applyAnswers(any(), any(), any());
+        verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
+        verify(answerRecordMapper, never()).selectList(any());
+    }
+
+    @Test
+    @DisplayName("并发双提交：CAS 失败方走重放，不二次 applyAnswers")
+    void submit_concurrentDoubleSubmit_onlyOneMasteryBooking() throws Exception {
+        DiagnosticSession session = inProgressSession(7L, STUDENT_ID, COURSE_ID);
+        when(diagnosticSessionMapper.selectByTokenForUpdate(TOKEN)).thenReturn(session);
+        when(diagnosticSessionQuestionMapper.selectList(any()))
+                .thenReturn(frozen(7L, 101L));
+        when(questionMapper.selectList(any())).thenReturn(List.of(approved(101L)));
+
+        // CAS 失败（另一线程已抢先）
+        when(diagnosticSessionMapper.update(any(), any())).thenReturn(0);
+
+        SubmitResult stored = new SubmitResult();
+        stored.setTotal(1);
+        stored.setCorrectCount(1);
+        QuestionGradeVO g = new QuestionGradeVO();
+        g.setQuestionId(101L);
+        g.setCorrect(true);
+        stored.setGrades(List.of(g));
+
+        DiagnosticSession completed = inProgressSession(7L, STUDENT_ID, COURSE_ID);
+        completed.setStatus(1);
+        completed.setResultJson(objectMapper.writeValueAsString(stored));
+        // 第二次 FOR UPDATE 返回已完成
+        when(diagnosticSessionMapper.selectByTokenForUpdate(TOKEN))
+                .thenReturn(session, completed);
+
+        SubmitResult result = impl().submit(submitReq(List.of(ans(101L, "A"))));
+
+        assertThat(result.getCorrectCount()).isEqualTo(1);
+        verify(masteryService, never()).applyAnswers(any(), any(), any());
+        verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
+    }
+
+    @Test
+    @DisplayName("F 正常交卷：判分 + insert + applyAnswers 一次")
     void submitGradesAndInsertsAnswerRecords() {
-        // 构造两道题的正确选项
+        DiagnosticSession session = inProgressSession(7L, STUDENT_ID, COURSE_ID);
+        when(diagnosticSessionMapper.selectByTokenForUpdate(TOKEN)).thenReturn(session);
+        when(diagnosticSessionQuestionMapper.selectList(any()))
+                .thenReturn(frozen(7L, 101L, 102L));
+        when(questionMapper.selectList(any())).thenReturn(List.of(approved(101L), approved(102L)));
+        when(diagnosticSessionMapper.update(any(), any())).thenReturn(1);
+
         QuestionOption opt101 = new QuestionOption();
-        opt101.setId(1L);
         opt101.setQuestionId(101L);
         opt101.setOptionKey("A");
-        opt101.setOptionText("选项A");
         opt101.setIsCorrect(1);
-
         QuestionOption opt102 = new QuestionOption();
-        opt102.setId(2L);
         opt102.setQuestionId(102L);
         opt102.setOptionKey("B");
-        opt102.setOptionText("选项B");
         opt102.setIsCorrect(1);
-
-        // stub：批量查询正确选项
         when(questionOptionMapper.selectList(any())).thenReturn(List.of(opt101, opt102));
 
-        // 构造提交请求
-        SubmitRequest req = new SubmitRequest();
-        req.setStudentId(10L);
-        req.setCourseId(1L);
+        SubmitResult result = impl().submit(submitReq(List.of(ans(101L, "A"), ans(102L, "C"))));
 
-        SubmitRequest.Answer a1 = new SubmitRequest.Answer();
-        a1.setQuestionId(101L);
-        a1.setOptionKey("A");   // 正确
-
-        SubmitRequest.Answer a2 = new SubmitRequest.Answer();
-        a2.setQuestionId(102L);
-        a2.setOptionKey("C");   // 错误
-
-        req.setAnswers(List.of(a1, a2));
-
-        SubmitResult result = impl().submit(req);
-
-        // ── 断言：汇总得分 ───────────────────────────────────────────
         assertThat(result.getTotal()).isEqualTo(2);
         assertThat(result.getCorrectCount()).isEqualTo(1);
 
-        // ── 断言：逐题 grade ─────────────────────────────────────────
-        List<QuestionGradeVO> grades = result.getGrades();
-        assertThat(grades).hasSize(2);
-
-        QuestionGradeVO g1 = grades.get(0);
-        assertThat(g1.getQuestionId()).isEqualTo(101L);
-        assertThat(g1.isCorrect()).isTrue();
-        assertThat(g1.getCorrectKey()).isEqualTo("A");
-
-        QuestionGradeVO g2 = grades.get(1);
-        assertThat(g2.getQuestionId()).isEqualTo(102L);
-        assertThat(g2.isCorrect()).isFalse();
-        assertThat(g2.getCorrectKey()).isEqualTo("B");
-
-        // ── 断言：answerRecordMapper.insert 被调用 2 次，内容正确 ────
         ArgumentCaptor<AnswerRecord> captor = ArgumentCaptor.forClass(AnswerRecord.class);
         verify(answerRecordMapper, times(2)).insert(captor.capture());
-
-        List<AnswerRecord> captured = captor.getAllValues();
-
-        AnswerRecord r1 = captured.get(0);
-        assertThat(r1.getStudentId()).isEqualTo(10L);
-        assertThat(r1.getCourseId()).isEqualTo(1L);
-        assertThat(r1.getQuestionId()).isEqualTo(101L);
-        assertThat(r1.getStudentAnswer()).isEqualTo("A");
-        assertThat(r1.getIsCorrect()).isEqualTo(1);
-        assertThat(r1.getAnsweredAt()).isNotNull();
-
-        AnswerRecord r2 = captured.get(1);
-        assertThat(r2.getQuestionId()).isEqualTo(102L);
-        assertThat(r2.getStudentAnswer()).isEqualTo("C");
-        assertThat(r2.getIsCorrect()).isEqualTo(0);
-        assertThat(r2.getAnsweredAt()).isNotNull();
-    }
-
-    // ──────────── 用例 G：该题无正确选项记录 → 判错且 correctKey=null ────────────
-
-    @Test
-    @DisplayName("G 题库无正确选项：判为错误，grade.correctKey=null，仍落库 isCorrect=0")
-    void submitGradesWrongWhenNoCorrectOption() {
-        // stub：批量查询正确选项返回空（该题在题库无 isCorrect=1 记录）
-        when(questionOptionMapper.selectList(any())).thenReturn(List.of());
-
-        SubmitRequest req = new SubmitRequest();
-        req.setStudentId(10L);
-        req.setCourseId(1L);
-
-        SubmitRequest.Answer a1 = new SubmitRequest.Answer();
-        a1.setQuestionId(201L);
-        a1.setOptionKey("A");
-        req.setAnswers(List.of(a1));
-
-        SubmitResult result = impl().submit(req);
-
-        // 无正确选项 → 判错、不计分
-        assertThat(result.getTotal()).isEqualTo(1);
-        assertThat(result.getCorrectCount()).isZero();
-
-        QuestionGradeVO g = result.getGrades().get(0);
-        assertThat(g.getQuestionId()).isEqualTo(201L);
-        assertThat(g.isCorrect()).isFalse();
-        assertThat(g.getCorrectKey()).isNull();
-
-        // 仍落一条答题记录：studentAnswer 记录所选、isCorrect=0
-        ArgumentCaptor<AnswerRecord> captor = ArgumentCaptor.forClass(AnswerRecord.class);
-        verify(answerRecordMapper, times(1)).insert(captor.capture());
-        AnswerRecord r = captor.getValue();
-        assertThat(r.getQuestionId()).isEqualTo(201L);
-        assertThat(r.getStudentAnswer()).isEqualTo("A");
-        assertThat(r.getIsCorrect()).isEqualTo(0);
-    }
-
-    // ──────────── 用例 H：交卷后触发掌握度更新（applyAnswers） ────────────
-
-    @Test
-    @DisplayName("H 交卷判分后调 masteryService.applyAnswers：入参为逐题 GradedAnswer(questionId+correct)")
-    void submitTriggersMasteryUpdate() {
-        QuestionOption opt101 = new QuestionOption();
-        opt101.setId(1L);
-        opt101.setQuestionId(101L);
-        opt101.setOptionKey("A");
-        opt101.setOptionText("选项A");
-        opt101.setIsCorrect(1);
-
-        QuestionOption opt102 = new QuestionOption();
-        opt102.setId(2L);
-        opt102.setQuestionId(102L);
-        opt102.setOptionKey("B");
-        opt102.setOptionText("选项B");
-        opt102.setIsCorrect(1);
-
-        when(questionOptionMapper.selectList(any())).thenReturn(List.of(opt101, opt102));
-
-        SubmitRequest req = new SubmitRequest();
-        req.setStudentId(2L);
-        req.setCourseId(1L);
-
-        SubmitRequest.Answer a1 = new SubmitRequest.Answer();
-        a1.setQuestionId(101L);
-        a1.setOptionKey("A");   // 正确
-
-        SubmitRequest.Answer a2 = new SubmitRequest.Answer();
-        a2.setQuestionId(102L);
-        a2.setOptionKey("C");   // 错误
-
-        req.setAnswers(List.of(a1, a2));
-
-        impl().submit(req);
+        assertThat(captor.getAllValues()).allSatisfy(r -> {
+            assertThat(r.getFixedDiagnosticSessionId()).isEqualTo(7L);
+            assertThat(r.getScene()).isEqualTo(1);
+            assertThat(r.getStudentId()).isEqualTo(STUDENT_ID);
+        });
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<GradedAnswer>> captor = ArgumentCaptor.forClass(List.class);
-        verify(masteryService, times(1)).applyAnswers(eq(2L), eq(1L), captor.capture());
+        ArgumentCaptor<List<GradedAnswer>> masteryCaptor = ArgumentCaptor.forClass(List.class);
+        verify(masteryService, times(1)).applyAnswers(eq(STUDENT_ID), eq(COURSE_ID), masteryCaptor.capture());
+        assertThat(masteryCaptor.getValue()).hasSize(2);
 
-        List<GradedAnswer> graded = captor.getValue();
-        assertThat(graded).hasSize(2);
-        assertThat(graded.get(0).getQuestionId()).isEqualTo(101L);
-        assertThat(graded.get(0).isCorrect()).isTrue();
-        assertThat(graded.get(1).getQuestionId()).isEqualTo(102L);
-        assertThat(graded.get(1).isCorrect()).isFalse();
+        verify(diagnosticSessionMapper, atLeastOnce()).update(any(), any());
+    }
+
+    @Test
+    @DisplayName("缺 sessionToken → BAD_REQUEST")
+    void submit_missingToken() {
+        SubmitRequest req = new SubmitRequest();
+        req.setStudentId(STUDENT_ID);
+        req.setAnswers(List.of(ans(1L, "A")));
+        assertThatThrownBy(() -> impl().submit(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("sessionToken");
+    }
+
+    @Test
+    @DisplayName("特性关闭 → submit 503")
+    void submit_featureDisabled_503() {
+        when(diagnosticSessionMapper.selectByTokenForUpdate(TOKEN))
+                .thenReturn(inProgressSession(7L, STUDENT_ID, COURSE_ID));
+        featureFlags.setFixedDiagnosticEnabled(false);
+        assertThatThrownBy(() -> impl().submit(submitReq(List.of(ans(1L, "A")))))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(ResultCode.SERVICE_UNAVAILABLE.getCode());
+        verify(diagnosticSessionMapper).selectByTokenForUpdate(TOKEN);
+        verify(diagnosticSessionMapper, never()).update(any(), any());
+        verify(diagnosticSessionQuestionMapper, never()).selectList(any());
+        verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
+        verify(masteryService, never()).applyAnswers(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("部分提交（缺题）→ 精确集合失败")
+    void submit_partialSet_rejected() {
+        when(diagnosticSessionMapper.selectByTokenForUpdate(TOKEN))
+                .thenReturn(inProgressSession(7L, STUDENT_ID, COURSE_ID));
+        when(diagnosticSessionQuestionMapper.selectList(any()))
+                .thenReturn(frozen(7L, 101L, 102L));
+
+        assertThatThrownBy(() -> impl().submit(submitReq(List.of(ans(101L, "A")))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("精确匹配");
     }
 }

@@ -1,5 +1,9 @@
 package com.wenjin.dto;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.util.List;
@@ -17,6 +21,9 @@ public class PracticeSubmitRequest {
     private Long studentId;
 
     /** 作答列表 */
+    @NotNull(message = "answers 不能为空")
+    @Size(min = 1, max = 100, message = "answers 数量须在 1-100 之间")
+    @Valid
     private List<AnswerItem> answers;
 
     /** 单题作答 */
@@ -24,6 +31,8 @@ public class PracticeSubmitRequest {
     public static class AnswerItem {
 
         /** 题目 ID */
+        @NotNull(message = "questionId 不能为空")
+        @Positive(message = "questionId 必须为正数")
         private Long questionId;
 
         /**

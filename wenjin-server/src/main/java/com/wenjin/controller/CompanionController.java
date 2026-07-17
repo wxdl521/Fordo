@@ -10,9 +10,12 @@ import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.service.CompanionService;
 import com.wenjin.service.CourseService;
 import jakarta.annotation.PreDestroy;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -34,6 +37,7 @@ import java.util.concurrent.TimeUnit;
  */
 @RestController
 @RequestMapping("/api/companion")
+@Validated
 public class CompanionController {
 
     private static final Logger log = LoggerFactory.getLogger(CompanionController.class);
@@ -70,14 +74,15 @@ public class CompanionController {
      * 事件流：meta{conversationId} → token{t} ... → done{} | error{message}
      */
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter chat(@RequestBody CompanionChatRequest req) {
+    public SseEmitter chat(@Valid @RequestBody CompanionChatRequest req) {
         // 必须在请求线程（此处）校验——CurrentUser 是 ThreadLocal，进入 executor 后不可见
-        AccessGuard.assertSelf(req.getStudentId());
-        courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
+        long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
+        req.setStudentId(studentId);
+        courseService.assertAccessibleByStudent(studentId, req.getCourseId());
         SseEmitter emitter = new SseEmitter(180_000L); // 3 minutes timeout
 
         // 在请求线程取出身份，透传给虚拟线程（ThreadLocal 不跨线程）
-        final Long uid = CurrentUser.get();
+        final Long uid = studentId;
 
         executor.execute(() -> {
             // 把请求线程的身份注入当前虚拟线程；finally 保证清理（虚拟线程每任务新建，清理是好习惯）
@@ -141,24 +146,30 @@ public class CompanionController {
 
     /**
      * 查询学生的所有会话（按更新时间倒序）。
-     * GET /api/companion/conversations?studentId=&courseId=
+     * GET /api/companion/conversations?courseId=  （可选兼容参数 studentId）
      */
     @GetMapping("/conversations")
     public Result<List<CompanionConversationVO>> listConversations(
-            @RequestParam("studentId") Long studentId,
-            @RequestParam("courseId") Long courseId) {
-        AccessGuard.assertSelf(studentId);
-        courseService.assertAccessibleByStudent(studentId, courseId);
-        return Result.ok(companionService.listConversations(studentId, courseId));
+            @RequestParam(value = "studentId", required = false) Long studentId,
+            @RequestParam("courseId") @Positive Long courseId,
+            @RequestParam(value = "beforeId", required = false) Long beforeId,
+            @RequestParam(value = "limit", required = false) Integer limit) {
+        long id = AccessGuard.requireSelfStudent(studentId);
+        courseService.assertAccessibleByStudent(id, courseId);
+        return Result.ok(companionService.listConversations(id, courseId, beforeId, limit));
     }
 
     /**
-     * 查询会话内的所有消息（按创建时间正序）。
-     * GET /api/companion/conversations/{id}
+     * 查询会话消息（keyset 分页，按创建时间正序返回；默认最新 30 条，limit 最大 100）。
+     * GET /api/companion/conversations/{id}?beforeId=&limit=
      */
     @GetMapping("/conversations/{id}")
-    public Result<List<CompanionMessageVO>> getMessages(@PathVariable("id") Long id) {
-        return Result.ok(companionService.getMessages(id));
+    public Result<List<CompanionMessageVO>> getMessages(
+            @PathVariable("id") @Positive Long id,
+            @RequestParam(value = "beforeId", required = false) Long beforeId,
+            @RequestParam(value = "limit", required = false) Integer limit) {
+        CurrentUser.requireStudent();
+        return Result.ok(companionService.getMessages(id, beforeId, limit));
     }
 
     /**
@@ -166,7 +177,8 @@ public class CompanionController {
      * DELETE /api/companion/conversations/{id}
      */
     @DeleteMapping("/conversations/{id}")
-    public Result<Void> deleteConversation(@PathVariable("id") Long id) {
+    public Result<Void> deleteConversation(@PathVariable("id") @Positive Long id) {
+        CurrentUser.requireStudent();
         companionService.deleteConversation(id);
         return Result.ok(null);
     }

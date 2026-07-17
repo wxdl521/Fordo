@@ -7,6 +7,10 @@ import com.wenjin.dto.AdaptiveDiagnosticVO;
 import com.wenjin.dto.EvidenceVO;
 import com.wenjin.service.AdaptiveDiagnosticService;
 import com.wenjin.service.CourseService;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,21 +22,17 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 图引导自适应诊断接口（学生侧，M2 T6）。
  *
- * <h3>鉴权约定（对齐 DiagnosticController / PracticeController）</h3>
+ * <h3>鉴权约定</h3>
  * <ul>
- *   <li>每个方法体第一行 {@link AccessGuard#assertSelf} 绑定本人身份（未登录→401，他人→403）。</li>
- *   <li>start 额外调 {@link CourseService#assertAccessibleByStudent}（课程存在+已发布+该生已选），
- *       对齐课程发布里程碑约定：边界调用，不侵入深层 service。</li>
- *   <li>answer/abandon 的 session 属主反查由 {@link AdaptiveDiagnosticService} 内部完成（T4 实现），
- *       Controller 不重复做。</li>
+ *   <li>每个方法通过 {@link AccessGuard#requireSelfStudent} 从 principal 派生学生 ID；
+ *       遗留 body/query {@code studentId} 若存在且 ≠ principal → 403。</li>
+ *   <li>start / evidence 额外调 {@link CourseService#assertAccessibleByStudent}。</li>
+ *   <li>answer/abandon 的 session 属主反查由 service 内部完成。</li>
  * </ul>
- *
- * <p>Controller 保持薄：参数校验（非空） → assertSelf → （start 加 assertAccessibleByStudent）
- * → 委托 service → {@code Result.ok(vo)}。不写任何业务逻辑；错误路径全靠 service 抛的
- * BusinessException + 既有全局异常处理器映射（401/403/404/400）。</p>
  */
 @RestController
 @RequestMapping("/api/diagnostic/adaptive")
+@Validated
 public class AdaptiveDiagnosticController {
 
     private final AdaptiveDiagnosticService adaptiveDiagnosticService;
@@ -49,12 +49,10 @@ public class AdaptiveDiagnosticController {
      * POST /api/diagnostic/adaptive/start
      */
     @PostMapping("/start")
-    public Result<AdaptiveDiagnosticVO> start(@RequestBody AdaptiveStartRequest req) {
-        // 1. 归属校验：studentId 必须等于当前登录用户
-        AccessGuard.assertSelf(req.getStudentId());
-        // 2. 课程访问校验（已发布 + 已选课）——T4 评审移交项
-        courseService.assertAccessibleByStudent(req.getStudentId(), req.getCourseId());
-        return Result.ok(adaptiveDiagnosticService.start(req.getStudentId(), req.getCourseId()));
+    public Result<AdaptiveDiagnosticVO> start(@Valid @RequestBody AdaptiveStartRequest req) {
+        long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
+        courseService.assertAccessibleByStudent(studentId, req.getCourseId());
+        return Result.ok(adaptiveDiagnosticService.start(studentId, req.getCourseId()));
     }
 
     /**
@@ -62,11 +60,10 @@ public class AdaptiveDiagnosticController {
      * POST /api/diagnostic/adaptive/{sessionId}/answer
      */
     @PostMapping("/{sessionId}/answer")
-    public Result<AdaptiveDiagnosticVO> answer(@PathVariable Long sessionId,
-                                               @RequestBody AdaptiveAnswerRequest req) {
-        // 1. 归属校验：studentId 必须等于当前登录用户
-        AccessGuard.assertSelf(req.getStudentId());
-        // 2. service 内部完成 session 属主反查（T4 实现）
+    public Result<AdaptiveDiagnosticVO> answer(@PathVariable @Positive Long sessionId,
+                                               @Valid @RequestBody AdaptiveAnswerRequest req) {
+        long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
+        req.setStudentId(studentId);
         return Result.ok(adaptiveDiagnosticService.answer(sessionId, req));
     }
 
@@ -75,37 +72,36 @@ public class AdaptiveDiagnosticController {
      * POST /api/diagnostic/adaptive/{sessionId}/abandon
      */
     @PostMapping("/{sessionId}/abandon")
-    public Result<Void> abandon(@PathVariable Long sessionId,
-                                @RequestBody AdaptiveAbandonRequest req) {
-        // 1. 归属校验：studentId 必须等于当前登录用户
-        AccessGuard.assertSelf(req.getStudentId());
-        // 2. service 内部完成 session 属主反查（T4 实现）
-        adaptiveDiagnosticService.abandon(sessionId, req.getStudentId());
+    public Result<Void> abandon(@PathVariable @Positive Long sessionId,
+                                @RequestBody(required = false) AdaptiveAbandonRequest req) {
+        Long clientId = req == null ? null : req.getStudentId();
+        long studentId = AccessGuard.requireSelfStudent(clientId);
+        adaptiveDiagnosticService.abandon(sessionId, studentId);
         return Result.ok();
     }
 
     /**
      * 获取最近一次已完成会话的证据（回放归因，T8）。
-     * GET /api/diagnostic/adaptive/evidence?studentId=&courseId=
-     *
-     * <p>守卫对齐 start 端点：assertSelf(studentId) → assertAccessibleByStudent → service。
-     * 无已完成会话时 data=null（合法业务状态，非 404）。
+     * GET /api/diagnostic/adaptive/evidence?courseId=  （可选兼容参数 studentId）
      */
     @GetMapping("/evidence")
-    public Result<EvidenceVO> evidence(@RequestParam Long studentId, @RequestParam Long courseId) {
-        // 1. 归属校验：studentId 必须等于当前登录用户
-        AccessGuard.assertSelf(studentId);
-        // 2. 课程访问校验（已发布 + 已选课）——对齐 start 端点
-        courseService.assertAccessibleByStudent(studentId, courseId);
-        return Result.ok(adaptiveDiagnosticService.latestEvidence(studentId, courseId));
+    public Result<EvidenceVO> evidence(
+            @RequestParam(value = "studentId", required = false) Long studentId,
+            @RequestParam @Positive Long courseId) {
+        long id = AccessGuard.requireSelfStudent(studentId);
+        courseService.assertAccessibleByStudent(id, courseId);
+        return Result.ok(adaptiveDiagnosticService.latestEvidence(id, courseId));
     }
 
-    // ── 轻量请求体 DTO（无现成类时内联，对齐 PracticeStartRequest 风格）──
+    // ── 轻量请求体 DTO ──
 
-    /** start 请求体。 */
+    /** start 请求体。studentId 为可选兼容字段。 */
     public static class AdaptiveStartRequest {
 
         private Long studentId;
+
+        @NotNull(message = "courseId 不能为空")
+        @Positive(message = "courseId 必须为正数")
         private Long courseId;
 
         public Long getStudentId() { return studentId; }
@@ -114,7 +110,7 @@ public class AdaptiveDiagnosticController {
         public void setCourseId(Long courseId) { this.courseId = courseId; }
     }
 
-    /** abandon 请求体（与 answer 一致，含 studentId 供 assertSelf）。 */
+    /** abandon 请求体（studentId 可选兼容字段）。 */
     public static class AdaptiveAbandonRequest {
 
         private Long studentId;

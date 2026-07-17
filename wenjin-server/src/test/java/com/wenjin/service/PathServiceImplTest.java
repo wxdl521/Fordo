@@ -13,6 +13,7 @@ import com.wenjin.entity.LearningPath;
 import com.wenjin.entity.LearningPathItem;
 import com.wenjin.entity.Question;
 import com.wenjin.entity.QuestionNode;
+import com.wenjin.entity.StudentCourse;
 import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
@@ -20,10 +21,13 @@ import com.wenjin.mapper.LearningPathItemMapper;
 import com.wenjin.mapper.LearningPathMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
+import com.wenjin.mapper.StudentCourseMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.service.LearningPathWriter;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.impl.PathServiceImpl;
 import com.wenjin.support.QuestionStatus;
+import org.springframework.dao.DeadlockLoserDataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -35,17 +39,24 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -63,10 +74,12 @@ class PathServiceImplTest {
     @Mock KgEdgeMapper kgEdgeMapper;
     @Mock LearningPathMapper learningPathMapper;
     @Mock LearningPathItemMapper learningPathItemMapper;
+    @Mock StudentCourseMapper studentCourseMapper;
     @Mock DiagnosticResultService diagnosticResultService;
     @Mock QuestionAiClient questionAiClient;
     @Mock QuestionNodeMapper questionNodeMapper;
     @Mock QuestionMapper questionMapper;
+    @Mock PlatformTransactionManager transactionManager;
 
     private static final Long S = 2L, C = 1L;
 
@@ -74,16 +87,27 @@ class PathServiceImplTest {
     @AfterEach
     void clearCurrentUser() {
         CurrentUser.clear();
+        TransactionSynchronizationManager.setActualTransactionActive(false);
     }
 
     /**
      * 默认 stub：questionNodeMapper/questionMapper 返回空列表，令现有测试不因新增 buildAvailableCountMap 调用而 NPE。
+     * 选课行 FOR UPDATE 覆盖 generate 持久化路径（LearningPathWriter 短事务）。
      * LENIENT 模式下未用到也不报错。
      */
     @BeforeEach
     void stubAvailCountDefaults() {
         when(questionNodeMapper.selectList(any())).thenReturn(List.of());
         when(questionMapper.selectList(any())).thenReturn(List.of());
+        when(transactionManager.getTransaction(any(TransactionDefinition.class)))
+                .thenAnswer(invocation -> new SimpleTransactionStatus());
+        doNothing().when(transactionManager).commit(any());
+        doNothing().when(transactionManager).rollback(any());
+        StudentCourse sc = new StudentCourse();
+        sc.setId(900L);
+        sc.setStudentId(S);
+        sc.setCourseId(C);
+        when(studentCourseMapper.selectForUpdate(eq(S), eq(C))).thenReturn(sc);
     }
 
     private LearningPath path(long id, long studentId) {
@@ -111,9 +135,16 @@ class PathServiceImplTest {
     }
 
     private PathServiceImpl implWithDecay(boolean decayEnabled) {
+        LearningPathWriter writer = newLearningPathWriter();
         return new PathServiceImpl(studentMasteryMapper, kgNodeMapper, kgEdgeMapper,
-                learningPathMapper, learningPathItemMapper, diagnosticResultService, questionAiClient,
-                questionNodeMapper, questionMapper, calculator(decayEnabled));
+                learningPathMapper, learningPathItemMapper, studentCourseMapper,
+                diagnosticResultService, questionAiClient,
+                questionNodeMapper, questionMapper, calculator(decayEnabled), writer);
+    }
+
+    private LearningPathWriter newLearningPathWriter() {
+        return new LearningPathWriter(
+                learningPathMapper, learningPathItemMapper, studentCourseMapper, transactionManager);
     }
 
     private KgNode node(long id, String code, String name) {
@@ -140,10 +171,15 @@ class PathServiceImplTest {
         return m;
     }
 
-    /** 让 insert(LearningPath) 回填自增 id=777。 */
+    /** 让 insert(LearningPath) 回填自增 id=777；item 回填递增 id。 */
     private void stubInsertPathId() {
         doAnswer(inv -> { ((LearningPath) inv.getArgument(0)).setId(777L); return 1; })
                 .when(learningPathMapper).insert(any(LearningPath.class));
+        AtomicLong itemId = new AtomicLong(10L);
+        doAnswer(inv -> {
+            ((LearningPathItem) inv.getArgument(0)).setId(itemId.getAndIncrement());
+            return 1;
+        }).when(learningPathItemMapper).insert(any(LearningPathItem.class));
     }
 
     private LearningPathItem item(long id, long pathId, long nodeId, int order, int status) {
@@ -151,6 +187,18 @@ class PathServiceImplTest {
         it.setId(id); it.setPathId(pathId); it.setNodeId(nodeId);
         it.setStepOrder(order); it.setStatus(status); it.setReason("r");
         return it;
+    }
+
+    private PathGenerateRequest singleTargetRequest() {
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(node(4, "T", "卡点")));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of());
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(mastery(4, "30.00", 0)));
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setStudentId(S);
+        req.setCourseId(C);
+        req.setTargetNodeId(4L);
+        req.setUseAi(false);
+        return req;
     }
 
     @Test
@@ -202,7 +250,7 @@ class PathServiceImplTest {
     }
 
     @Test
-    @DisplayName("C 持久化：旧路径置失效 + 插入 path + 逐步 item(status=0)")
+    @DisplayName("C 持久化：锁选课 + 旧路径置失效 + 插入 path/item + 写 current_path_id")
     void persists() {
         when(kgNodeMapper.selectList(any())).thenReturn(List.of(node(4, "T", "卡点")));
         when(kgEdgeMapper.selectList(any())).thenReturn(List.of());
@@ -214,6 +262,7 @@ class PathServiceImplTest {
 
         impl().generate(req);
 
+        verify(studentCourseMapper, times(1)).selectForUpdate(S, C);
         // 旧路径失效：update(null, wrapper) 调一次
         verify(learningPathMapper, times(1)).update(any(), any());
         verify(learningPathMapper, times(1)).insert(any(LearningPath.class));
@@ -225,6 +274,11 @@ class PathServiceImplTest {
         assertThat(it.getStepOrder()).isEqualTo(1);
         assertThat(it.getStatus()).isEqualTo(0);
         assertThat(it.getReason()).isNotBlank();
+
+        ArgumentCaptor<StudentCourse> scCap = ArgumentCaptor.forClass(StudentCourse.class);
+        verify(studentCourseMapper, times(1)).updateById(scCap.capture());
+        assertThat(scCap.getValue().getId()).isEqualTo(900L);
+        assertThat(scCap.getValue().getCurrentPathId()).isEqualTo(777L);
     }
 
     @Test
@@ -251,7 +305,11 @@ class PathServiceImplTest {
         when(studentMasteryMapper.selectList(any())).thenReturn(List.of(mastery(4, "30.00", 0)));
         stubInsertPathId();
         when(questionAiClient.explainLearningStep(anyString(), anyString(), anyString()))
-                .thenThrow(new BusinessException(ResultCode.AI_ERROR, "boom"));
+                .thenAnswer(inv -> {
+                    // AI 必须在事务外（不得持 FOR UPDATE 调网络）
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                    throw new BusinessException(ResultCode.AI_ERROR, "boom");
+                });
 
         PathGenerateRequest req = new PathGenerateRequest();
         req.setStudentId(S); req.setCourseId(C); req.setTargetNodeId(4L); req.setUseAi(true);
@@ -260,6 +318,28 @@ class PathServiceImplTest {
 
         verify(questionAiClient, times(1)).explainLearningStep(anyString(), anyString(), anyString());
         assertThat(vo.getSteps().get(0).getReason()).isNotBlank(); // 回退模板，非空
+    }
+
+    @Test
+    @DisplayName("E2 useAi=true：AI 成功返回时亦在事务外调用")
+    void useAiOutsideTransaction() {
+        when(kgNodeMapper.selectList(any())).thenReturn(List.of(node(4, "T", "卡点")));
+        when(kgEdgeMapper.selectList(any())).thenReturn(List.of());
+        when(studentMasteryMapper.selectList(any())).thenReturn(List.of(mastery(4, "30.00", 0)));
+        stubInsertPathId();
+        when(questionAiClient.explainLearningStep(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> {
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                    return "AI 理由";
+                });
+
+        PathGenerateRequest req = new PathGenerateRequest();
+        req.setStudentId(S); req.setCourseId(C); req.setTargetNodeId(4L); req.setUseAi(true);
+
+        LearningPathVO vo = impl().generate(req);
+
+        assertThat(vo.getSteps().get(0).getReason()).isEqualTo("AI 理由");
+        verify(learningPathMapper, times(1)).insert(any(LearningPath.class));
     }
 
     @Test
@@ -276,6 +356,40 @@ class PathServiceImplTest {
         impl().generate(req);
 
         verify(questionAiClient, never()).explainLearningStep(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("F2 standalone：writer 最多尝试 3 次且每次使用 REQUIRED 事务")
+    void standaloneWriterRetriesAreBoundedAndRequired() {
+        PathGenerateRequest req = singleTargetRequest();
+        DeadlockLoserDataAccessException failure =
+                new DeadlockLoserDataAccessException("deadlock", null);
+        when(studentCourseMapper.selectForUpdate(S, C)).thenThrow(failure);
+
+        assertThatThrownBy(() -> impl().generate(req)).isSameAs(failure);
+
+        verify(studentCourseMapper, times(3)).selectForUpdate(S, C);
+        ArgumentCaptor<TransactionDefinition> definitions =
+                ArgumentCaptor.forClass(TransactionDefinition.class);
+        verify(transactionManager, times(3)).getTransaction(definitions.capture());
+        assertThat(definitions.getAllValues())
+                .allSatisfy(definition -> assertThat(definition.getPropagationBehavior())
+                        .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRED));
+    }
+
+    @Test
+    @DisplayName("F3 ambient transaction：writer 只写一次，不开内层事务且异常原样外抛")
+    void ambientWriterDoesNotStartOrRetryInnerTransaction() {
+        PathGenerateRequest req = singleTargetRequest();
+        DeadlockLoserDataAccessException failure =
+                new DeadlockLoserDataAccessException("outer transaction must decide rollback", null);
+        when(studentCourseMapper.selectForUpdate(S, C)).thenThrow(failure);
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+
+        assertThatThrownBy(() -> impl().generate(req)).isSameAs(failure);
+
+        verify(studentCourseMapper, times(1)).selectForUpdate(S, C);
+        verify(transactionManager, never()).getTransaction(any(TransactionDefinition.class));
     }
 
     @Test
@@ -369,11 +483,15 @@ class PathServiceImplTest {
     }
 
     @Test
-    @DisplayName("J getCurrent：返回有效路径步骤、进度统计、角色与目标")
+    @DisplayName("J getCurrent：经 current_path_id 指针返回有效路径步骤、进度统计、角色与目标")
     void getCurrentReturnsSteps() {
+        StudentCourse sc = new StudentCourse();
+        sc.setId(900L); sc.setStudentId(S); sc.setCourseId(C); sc.setCurrentPathId(777L);
+        when(studentCourseMapper.selectOne(any())).thenReturn(sc);
+
         LearningPath p = new LearningPath();
         p.setId(777L); p.setStudentId(S); p.setCourseId(C); p.setTargetNodeId(3L); p.setStatus(1);
-        when(learningPathMapper.selectList(any())).thenReturn(List.of(p));
+        when(learningPathMapper.selectById(777L)).thenReturn(p);
         // A(已完成)→B→T 链
         when(learningPathItemMapper.selectList(any())).thenReturn(List.of(
                 item(11L, 777L, 1L, 1, 1), item(12L, 777L, 2L, 2, 0), item(13L, 777L, 3L, 3, 0)));
@@ -385,6 +503,8 @@ class PathServiceImplTest {
 
         LearningPathVO vo = impl().getCurrent(S, C);
 
+        verify(learningPathMapper, never()).selectList(any());
+        verify(learningPathMapper).selectById(777L);
         assertThat(vo.getSteps()).hasSize(3);
         assertThat(vo.getProgress().getDone()).isEqualTo(1);
         assertThat(vo.getProgress().getTotal()).isEqualTo(3);
@@ -397,6 +517,20 @@ class PathServiceImplTest {
                 .containsEntry("A", "root")
                 .containsEntry("B", "prereq")
                 .containsEntry("T", "stuck");
+    }
+
+    @Test
+    @DisplayName("J2 getCurrent：指针为空 → 空路径")
+    void getCurrentEmptyWhenNoPointer() {
+        StudentCourse sc = new StudentCourse();
+        sc.setId(900L); sc.setStudentId(S); sc.setCourseId(C); sc.setCurrentPathId(null);
+        when(studentCourseMapper.selectOne(any())).thenReturn(sc);
+
+        LearningPathVO vo = impl().getCurrent(S, C);
+
+        assertThat(vo.getSteps()).isEmpty();
+        assertThat(vo.getProgress().getTotal()).isEqualTo(0);
+        verify(learningPathMapper, never()).selectById(any());
     }
 
     @Test
@@ -633,9 +767,13 @@ class PathServiceImplTest {
     @Test
     @DisplayName("P getCurrent(): availableQuestionCount 同样批量计算——mapper 各调一次")
     void getCurrent_availableCountBatched() {
+        StudentCourse sc = new StudentCourse();
+        sc.setId(900L); sc.setStudentId(S); sc.setCourseId(C); sc.setCurrentPathId(777L);
+        when(studentCourseMapper.selectOne(any())).thenReturn(sc);
+
         LearningPath p = new LearningPath();
         p.setId(777L); p.setStudentId(S); p.setCourseId(C); p.setTargetNodeId(3L); p.setStatus(1);
-        when(learningPathMapper.selectList(any())).thenReturn(List.of(p));
+        when(learningPathMapper.selectById(777L)).thenReturn(p);
         when(learningPathItemMapper.selectList(any())).thenReturn(List.of(
                 item(11L, 777L, 1L, 1, 0), item(12L, 777L, 3L, 2, 0)));
         when(kgNodeMapper.selectList(any())).thenReturn(List.of(

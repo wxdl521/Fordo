@@ -14,6 +14,11 @@ public class PaperVO {
     /** 课程 ID */
     private Long courseId;
 
+    /**
+     * 冻结会话令牌（UUID）。交卷必须原样回传；空卷时可为空。
+     */
+    private String sessionToken;
+
     /** 实际题数（= questions.size()） */
     private int total;
 

@@ -23,6 +23,9 @@ public class StudentCourse {
     /** 课程（逻辑外键→course.id） */
     private Long courseId;
 
+    /** 当前有效学习路径（逻辑外键→learning_path.id；V5 唯一事实源指针） */
+    private Long currentPathId;
+
     /** 选课时间 */
     private LocalDateTime createdAt;
 }

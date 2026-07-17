@@ -8,11 +8,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * {@link AuthSecretGuard} 纯单测：直接调用包级静态方法 {@code enforce}，无需 Spring 上下文。
  *
- * <p>TDD 红绿流程：先写此测试（编译即为 RED），实现 enforce 后转为 GREEN。</p>
+ * <p>非 dev/test 拒绝默认值、空值、UTF-8 &lt; 32 字节；dev/test 放宽。</p>
  */
 class AuthSecretGuardTest {
 
-    /** 生产 profile + 默认密钥 → 必须抛出 IllegalStateException（阻止启动，部署门禁）。 */
+    private static final String SECRET_31 = "a".repeat(31);
+    private static final String SECRET_32 = "a".repeat(32);
+
+    /** 生产 profile + 默认密钥 → 必须抛出 IllegalStateException。 */
     @Test
     void prod_defaultSecret_throwsIllegalState() {
         assertThatThrownBy(() ->
@@ -20,19 +23,84 @@ class AuthSecretGuardTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
-    /** 无激活 profile（开发/单测环境）+ 默认密钥 → 仅告警，不抛异常，开发正常运行。 */
+    /** 无激活 profile + 默认密钥 → 拒绝启动。 */
     @Test
-    void noProfile_defaultSecret_doesNotThrow() {
+    void noProfile_defaultSecret_throws() {
+        assertThatThrownBy(() -> AuthSecretGuard.enforce(
+                TokenService.DEFAULT_DEV_SECRET, new String[]{}))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    /** null profile 数组 + 默认密钥 → 拒绝启动。 */
+    @Test
+    void nullProfiles_defaultSecret_throws() {
+        assertThatThrownBy(() -> AuthSecretGuard.enforce(
+                TokenService.DEFAULT_DEV_SECRET, null))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    /** 混合 dev/prod profile + 默认密钥 → 拒绝启动。 */
+    @Test
+    void mixedProfiles_defaultSecret_throws() {
+        assertThatThrownBy(() -> AuthSecretGuard.enforce(
+                TokenService.DEFAULT_DEV_SECRET, new String[]{"dev", "prod"}))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    /** test profile + 默认密钥 → 不抛异常。 */
+    @Test
+    void testProfile_defaultSecret_doesNotThrow() {
         assertThatCode(() ->
-                AuthSecretGuard.enforce(TokenService.DEFAULT_DEV_SECRET, new String[]{}))
+                AuthSecretGuard.enforce(TokenService.DEFAULT_DEV_SECRET, new String[]{"test"}))
                 .doesNotThrowAnyException();
     }
 
-    /** 任意 profile（含 prod）+ 自定义密钥 → 不抛异常。 */
+    /** prod + 自定义但不足 32 字节 → 拒绝。 */
     @Test
-    void anyProfile_customSecret_doesNotThrow() {
-        assertThatCode(() ->
+    void prod_shortCustomSecret_throws() {
+        assertThatThrownBy(() ->
                 AuthSecretGuard.enforce("my-super-secret-key-2026", new String[]{"prod"}))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("32");
+    }
+
+    /** prod + 31 字节边界 → 拒绝。 */
+    @Test
+    void prod_31ByteSecret_throws() {
+        assertThatThrownBy(() ->
+                AuthSecretGuard.enforce(SECRET_31, new String[]{"prod"}))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    /** prod + 32 字节边界 → 通过。 */
+    @Test
+    void prod_32ByteSecret_doesNotThrow() {
+        assertThatCode(() ->
+                AuthSecretGuard.enforce(SECRET_32, new String[]{"prod"}))
+                .doesNotThrowAnyException();
+    }
+
+    /** prod + 空密钥 → 拒绝。 */
+    @Test
+    void prod_emptySecret_throws() {
+        assertThatThrownBy(() ->
+                AuthSecretGuard.enforce("", new String[]{"prod"}))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    /** prod + null 密钥 → 拒绝。 */
+    @Test
+    void prod_nullSecret_throws() {
+        assertThatThrownBy(() ->
+                AuthSecretGuard.enforce(null, new String[]{"prod"}))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    /** test profile 允许短密钥。 */
+    @Test
+    void testProfile_shortSecret_doesNotThrow() {
+        assertThatCode(() ->
+                AuthSecretGuard.enforce(SECRET_31, new String[]{"test"}))
                 .doesNotThrowAnyException();
     }
 }

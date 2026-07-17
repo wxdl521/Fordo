@@ -4,6 +4,7 @@ import com.wenjin.common.GlobalExceptionHandler;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.AuthContextInterceptor;
 import com.wenjin.config.CurrentUser;
+import com.wenjin.config.TestPrincipalSupport;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.PaperQuestionVO;
 import com.wenjin.dto.PracticeStartVO;
@@ -59,7 +60,7 @@ class CompanionControllerTest {
     void setUp() {
         CompanionController controller = new CompanionController(companionService, courseService);
         mvc = MockMvcBuilders.standaloneSetup(controller)
-                .addInterceptors(new AuthContextInterceptor(tokenService))
+                .addInterceptors(TestPrincipalSupport.authInterceptor(tokenService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -148,7 +149,7 @@ class CompanionControllerTest {
                                 }
                                 """))
                 .andExpect(request().asyncNotStarted())
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
 
         verify(companionService, never()).startTurn(any());
@@ -172,7 +173,7 @@ class CompanionControllerTest {
                                 }
                                 """))
                 .andExpect(request().asyncNotStarted())
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
 
         verify(courseService).assertAccessibleByStudent(2L, 5L);
@@ -193,7 +194,7 @@ class CompanionControllerTest {
                                 }
                                 """))
                 .andExpect(request().asyncNotStarted())
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
 
         verify(companionService, never()).startTurn(any());
@@ -240,7 +241,7 @@ class CompanionControllerTest {
                         .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
                         .param("studentId", "2")
                         .param("courseId", "5"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
 
         verify(courseService).assertAccessibleByStudent(2L, 5L);

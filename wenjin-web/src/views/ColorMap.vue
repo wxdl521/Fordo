@@ -7,7 +7,7 @@
 
       <!-- 搜索 -->
       <div v-show="width >= 720" :style="{ position: 'relative', marginLeft: 'auto' }">
-        <input v-model="query" placeholder="搜索知识点…" class="wj-search" :style="{ width: '190px', height: '34px', boxSizing: 'border-box', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '8px', padding: '0 12px', color: 'var(--ink)', fontSize: '13px', outline: 'none', transition: 'background-color 0.35s, border-color 0.35s' }" />
+        <input v-model="query" aria-label="搜索知识点" placeholder="搜索知识点…" class="wj-search" :style="{ width: '190px', height: '34px', boxSizing: 'border-box', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '8px', padding: '0 12px', color: 'var(--ink)', fontSize: '13px', outline: 'none', transition: 'background-color 0.35s, border-color 0.35s' }" />
         <div v-if="results.length" :style="{ position: 'absolute', top: '40px', left: 0, width: '280px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '10px', padding: '6px', zIndex: 40, boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }">
           <div v-for="r in results" :key="r.id" @click="pickNode(r.id)" class="wj-hover-card2" :style="{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', borderRadius: '6px', cursor: 'pointer' }">
             <span :style="{ width: '7px', height: '7px', borderRadius: '50%', background: r.color, flex: 'none' }"></span>
@@ -18,7 +18,7 @@
       </div>
 
       <!-- 章节筛选 -->
-      <select v-show="width >= 900" v-model="chapterFilter" :style="{ height: '34px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '8px', padding: '0 8px', color: 'var(--ink)', fontSize: '12.5px', outline: 'none', cursor: 'pointer', transition: 'background-color 0.35s, border-color 0.35s' }">
+      <select v-show="width >= 900" v-model="chapterFilter" aria-label="筛选章节" :style="{ height: '34px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '8px', padding: '0 8px', color: 'var(--ink)', fontSize: '12.5px', outline: 'none', cursor: 'pointer', transition: 'background-color 0.35s, border-color 0.35s' }">
         <option v-for="c in CHAPTERS" :key="c" :value="c">{{ c }}</option>
       </select>
 
@@ -52,6 +52,13 @@
         <button @click="router.push('/')" class="wj-btn-acc" :style="{ height: '40px', padding: '0 28px', background: 'var(--acc)', border: 'none', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, cursor: 'pointer' }">去登录</button>
       </div>
 
+      <!-- 无课程：空态（禁止回落默认课程 1） -->
+      <div v-else-if="!courseId" :style="{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', color: 'var(--mut)', zIndex: 5 }">
+        <div :style="{ fontFamily: serif, fontSize: '20px', fontWeight: 600, letterSpacing: '2px', color: 'var(--ink)' }">尚未选择课程</div>
+        <div :style="{ fontSize: '13px' }">请先在首页选择一门课程，再查看染色地图</div>
+        <button @click="router.push('/')" class="wj-btn-acc" :style="{ height: '40px', padding: '0 28px', background: 'var(--acc)', border: 'none', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, cursor: 'pointer' }">去选课</button>
+      </div>
+
       <svg v-else-if="layout" width="100%" height="100%" :style="{ position: 'absolute', inset: 0, display: 'block', cursor: isPanning ? 'grabbing' : 'grab', transform: mapIn ? 'scale(1)' : 'scale(0.96)', transformOrigin: '50% 50%', transition: 'transform 1.2s cubic-bezier(0.22,1,0.36,1)', userSelect: 'none' }" @wheel.prevent="onWheel" @pointerdown="onSvgPointerDown" @pointermove="onSvgPointerMove" @pointerup="onSvgPointerUp" @pointercancel="onSvgPointerUp">
 
         <!-- 可变换的内容层 -->
@@ -76,7 +83,21 @@
           </template>
 
           <!-- 节点 -->
-          <g v-for="n in nodeList" :key="n.id" :opacity="n.op" :style="{ cursor: draggingNode === n.id ? 'grabbing' : 'pointer', transition: 'opacity 0.25s' }" @mouseenter="hoverId = n.id" @mouseleave="hoverId = null" @click="!wasDragged && (selectedId = n.id)" @pointerdown.stop="onNodePointerDown($event, n.id)">
+          <g
+            v-for="n in nodeList"
+            :key="n.id"
+            :opacity="n.op"
+            role="button"
+            :tabindex="0"
+            :aria-label="n.short || n.id"
+            :aria-pressed="selectedId === n.id ? 'true' : 'false'"
+            :style="{ cursor: draggingNode === n.id ? 'grabbing' : 'pointer', transition: 'opacity 0.25s', outline: 'none' }"
+            @mouseenter="hoverId = n.id"
+            @mouseleave="hoverId = null"
+            @click="!wasDragged && (selectedId = n.id)"
+            @keydown="onNodeKeydown($event, n.id)"
+            @pointerdown.stop="onNodePointerDown($event, n.id)"
+          >
             <circle :cx="n.x" :cy="n.y" :r="Math.max(n.r * 2, 18)" fill="transparent" />
             <template v-if="n.status !== 'dim'">
               <circle :cx="n.x" :cy="n.y" :r="n.r * 1.95" :fill="n.c" :opacity="n.glowOuter" />
@@ -112,7 +133,7 @@
       </div>
 
       <!-- 加载态 -->
-      <div v-if="currentUser && !layout" :style="{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mut)', fontSize: '13px' }">正在绘制知识图谱……</div>
+      <div v-if="currentUser && courseId && !layout" :style="{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mut)', fontSize: '13px' }">正在绘制知识图谱……</div>
 
       <!-- 今日复习侧边栏 -->
       <div v-if="currentUser && reviewOpen" class="wj-review-drawer">
@@ -187,11 +208,17 @@
       <div v-show="width >= 640" :style="{ position: 'absolute', right: '20px', bottom: width >= 900 && layout && currentUser ? '128px' : '20px', fontSize: '12px', color: 'var(--mut)', opacity: 0.75, zIndex: 10 }">悬停节点查看前置链 · 点击查看详情</div>
 
       <!-- 抽屉 -->
-      <div v-if="sel" :style="{ position: 'absolute', right: '16px', top: '16px', bottom: '16px', width: drawerW, boxSizing: 'border-box', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '14px', display: 'flex', flexDirection: 'column', zIndex: 30, boxShadow: '0 12px 36px rgba(0,0,0,0.16)', animation: 'wjDrawerIn 0.34s cubic-bezier(0.22,1,0.36,1) both', transition: 'background-color 0.35s, border-color 0.35s' }">
+      <div
+        v-if="sel"
+        role="dialog"
+        aria-modal="false"
+        :aria-label="sel.name"
+        :style="{ position: 'absolute', right: '16px', top: '16px', bottom: '16px', width: drawerW, boxSizing: 'border-box', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '14px', display: 'flex', flexDirection: 'column', zIndex: 30, boxShadow: '0 12px 36px rgba(0,0,0,0.16)', animation: 'wjDrawerIn 0.34s cubic-bezier(0.22,1,0.36,1) both', transition: 'background-color 0.35s, border-color 0.35s' }"
+      >
         <div :style="{ flex: 1, overflowY: 'auto', padding: '20px 22px 10px' }">
           <div :style="{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '12px' }">
             <span :style="{ fontSize: '11.5px', color: 'var(--mut)', border: '1px solid var(--line)', borderRadius: '999px', padding: '3px 10px', flex: 'none' }">{{ sel.chapter }}</span>
-            <button @click="selectedId = null" class="wj-hover-card2" :style="{ marginLeft: 'auto', width: '28px', height: '28px', border: 'none', background: 'transparent', color: 'var(--mut)', fontSize: '17px', cursor: 'pointer', borderRadius: '6px', lineHeight: 1 }">×</button>
+            <button type="button" aria-label="关闭详情" @click="selectedId = null" class="wj-hover-card2" :style="{ marginLeft: 'auto', width: '28px', height: '28px', border: 'none', background: 'transparent', color: 'var(--mut)', fontSize: '17px', cursor: 'pointer', borderRadius: '6px', lineHeight: 1 }">×</button>
           </div>
           <div :style="{ fontSize: '17px', fontWeight: 600, lineHeight: 1.45, marginBottom: '14px' }">{{ sel.name }}</div>
 
@@ -241,14 +268,17 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from '../composables/useTheme.js'
 import { useViewport } from '../composables/useViewport.js'
-import { useGraphData, resetGraphData } from '../composables/useGraphData.js'
+import { useGraphData } from '../composables/useGraphData.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
+import { useSessionStore } from '../store/session.js'
 import { computeLayout, shortName, radiusOf } from '../utils/graphLayout.js'
 import { fetchTodayReview } from '../api/review.js'
 import ReviewPanel from '../components/ReviewPanel.vue'
+import { createLatestRequest } from '../utils/latestRequest.js'
 
 const serif = "'Noto Serif SC', serif"
 const { theme } = useTheme()
@@ -256,31 +286,14 @@ const { width } = useViewport()
 const route = useRoute()
 const router = useRouter()
 
-// ── 从 localStorage 读取当前登录用户 ──
-function readUser() {
-  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
-}
-const currentUser = ref(readUser())
-const { courseId: studentCourseId } = useStudentCourse()
-const courseId = computed(() => studentCourseId.value || 1)
+const session = useSessionStore()
+const { user: currentUser } = storeToRefs(session)
+// 无课程 → null（禁止 || 1）
+const { courseId } = useStudentCourse()
 
-// 每次进入页面都重新加载（诊断后 mastery 会更新）
-const { data } = useGraphData(courseId.value, currentUser.value?.id, true)
+// 实例级图谱加载：courseId 变化时 latestRequest 丢弃迟到响应
+const { data, reload: reloadGraph } = useGraphData(courseId)
 
-// 监听 storage 事件（其他标签页登录/退出时同步）
-if (typeof window !== 'undefined') {
-  window.addEventListener('storage', (e) => {
-    if (e.key === 'wj_user') {
-      const newUser = readUser()
-      if (newUser?.id !== currentUser.value?.id) {
-        currentUser.value = newUser
-        resetGraphData()
-        // 重新加载页面数据
-        window.location.reload()
-      }
-    }
-  })
-}
 
 const CHAPTERS = ['全部章节', '软件工程概述', '需求确定', '软件项目管理', '系统分析', '系统设计', '对象设计', '软件测试', '部署与维护']
 
@@ -302,6 +315,19 @@ const reviewItems = ref([])
 const reviewTotalCount = ref(0)
 const reviewLoading = ref(false)
 const reviewError = ref('')
+const reviewRequest = createLatestRequest()
+let disposed = false
+
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+}
+
+function isCurrentReviewContext(request, userId, id) {
+  return !disposed
+    && request.isCurrent()
+    && Number(courseId.value) === id
+    && currentUser.value?.id === userId
+}
 
 const reviewCount = computed(() => {
   if (reviewTotalCount.value > 0) return reviewTotalCount.value
@@ -309,23 +335,34 @@ const reviewCount = computed(() => {
 })
 
 async function loadReview() {
-  if (!currentUser.value?.id || !courseId.value) {
+  if (disposed) return
+  const userId = currentUser.value?.id
+  const id = Number(courseId.value)
+  if (!userId || !(id > 0)) {
+    reviewRequest.cancel()
     reviewItems.value = []
     reviewTotalCount.value = 0
+    reviewLoading.value = false
+    reviewError.value = ''
     return
   }
+  const request = reviewRequest.next()
   reviewLoading.value = true
   reviewError.value = ''
+  reviewItems.value = []
+  reviewTotalCount.value = 0
   try {
-    const vo = await fetchTodayReview(currentUser.value.id, courseId.value)
+    const vo = await fetchTodayReview(id, { signal: request.signal })
+    if (!isCurrentReviewContext(request, userId, id)) return
     reviewItems.value = vo?.items || []
     reviewTotalCount.value = vo?.totalDecayingCount ?? reviewItems.value.length
   } catch (e) {
+    if (!isCurrentReviewContext(request, userId, id) || isAbortError(e)) return
     reviewError.value = e.message || '加载复习队列失败'
     reviewItems.value = []
     reviewTotalCount.value = 0
   } finally {
-    reviewLoading.value = false
+    if (isCurrentReviewContext(request, userId, id)) reviewLoading.value = false
   }
 }
 
@@ -351,7 +388,6 @@ const panStart = ref({ x: 0, y: 0 })
 const panStartPan = ref({ x: 0, y: 0 })
 const draggingNode = ref(null)
 const dragOffset = ref({ x: 0, y: 0 })
-const dragStartPos = ref({ x: 0, y: 0 })
 const wasDragged = ref(false)
 const spaceHeld = ref(false)
 const dragTick = ref(0) // 拖拽时递增，强制 nodeList 重新计算
@@ -491,7 +527,7 @@ function onSvgPointerMove(e) {
 }
 
 // SVG pointer up
-function onSvgPointerUp(e) {
+function onSvgPointerUp() {
   if (isPanning.value) {
     isPanning.value = false
   }
@@ -551,17 +587,31 @@ const miniView = computed(() => {
 
 // 键盘快捷键
 function onKeyDown(e) {
-  if (e.code === 'Space' && !e.repeat) {
+  // Space on focused map node selects it (handled by onNodeKeydown); only hold-to-pan when not on a node
+  const onNode = e.target?.getAttribute?.('role') === 'button' && e.target?.closest?.('svg')
+  if (e.code === 'Space' && !e.repeat && !onNode) {
     spaceHeld.value = true
     e.preventDefault()
   }
   if (e.key === '0') { fitAll() }
   if (e.key === '+' || e.key === '=') { zoomIn() }
   if (e.key === '-') { zoomOut() }
+  if (e.key === 'Escape' && selectedId.value) {
+    selectedId.value = null
+  }
 }
 function onKeyUp(e) {
   if (e.code === 'Space') {
     spaceHeld.value = false
+  }
+}
+
+/** Keyboard activate map node (Enter / Space) */
+function onNodeKeydown(e, id) {
+  if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+    e.preventDefault()
+    e.stopPropagation()
+    selectedId.value = id
   }
 }
 
@@ -650,7 +700,6 @@ const ROOT_NODES = computed(() => {
 
 const ROOT_EDGES = computed(() => {
   if (!data.value || !layout.value) return []
-  const nodeSet = new Set(ROOT_NODES.value)
   const edges = new Set()
   // BFS 从根节点出发，沿 inEdges 找到所有到最低分节点的路径
   const L = layout.value
@@ -791,9 +840,15 @@ const hoverTip = computed(() => {
   }
 })
 
-// ── 今日复习：进入页面 / 换课时刷新 ──
-watch(courseId, () => {
-  if (currentUser.value) loadReview()
+// ── 课程/用户边界变化：作废旧复习请求；切课时同时清空布局 ──
+watch([courseId, () => currentUser.value?.id], ([nextCourseId], [previousCourseId]) => {
+  if (nextCourseId !== previousCourseId) {
+    layout.value = null
+    mapIn.value = false
+    selectedId.value = null
+    hoverId.value = null
+  }
+  loadReview()
 })
 
 // ── 布局 ──
@@ -801,22 +856,35 @@ onMounted(() => {
   if (route.query.root === '1') rootCause.value = true
   if (currentUser.value) loadReview()
   if (data.value) buildLayout()
-  watch(data, (d) => { if (d) buildLayout() })
+  watch(data, (d) => {
+    if (d) buildLayout()
+    else layout.value = null
+  })
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('keyup', onKeyUp)
 })
 onUnmounted(() => {
+  disposed = true
+  reviewRequest.cancel()
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('keyup', onKeyUp)
+  if (window.__wjColorMap?.loadReview === loadReview) delete window.__wjColorMap
 })
 
 function buildLayout() {
+  if (!data.value) {
+    layout.value = null
+    return
+  }
   layout.value = computeLayout(data.value)
   setTimeout(() => {
     mapIn.value = true
     requestAnimationFrame(() => fitAll())
   }, 60)
 }
+
+// 暴露 reload 供诊断返回后强制刷新（可选）
+void reloadGraph
 
 // ── 章节标签 ──
 const chapterLabels = computed(() => {

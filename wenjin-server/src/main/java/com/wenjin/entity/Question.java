@@ -23,6 +23,9 @@ public class Question {
     /** 题干 */
     private String stem;
 
+    /** 题干 SHA-256 十六进制指纹（trim 后；课程内唯一） */
+    private String stemHash;
+
     /** 题型：1=单选, 2=多选, 3=判断, 4=简答 */
     private Integer type;
 

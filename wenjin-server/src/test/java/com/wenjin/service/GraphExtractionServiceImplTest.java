@@ -4,8 +4,10 @@ import com.wenjin.ai.ImageToMarkdownAiClient;
 import com.wenjin.ai.SyllabusGraphAiClient;
 import com.wenjin.common.BusinessException;
 import com.wenjin.dto.GraphImportRequest;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.impl.GraphExtractionServiceImpl;
 import com.wenjin.support.ImagePreprocessor;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -15,6 +17,8 @@ import org.springframework.mock.web.MockMultipartFile;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -25,7 +29,13 @@ class GraphExtractionServiceImplTest {
     @Mock ImageToMarkdownAiClient vision;
     @Mock SyllabusGraphAiClient syllabus;
     @org.mockito.Mock com.wenjin.support.DocumentTextExtractor docExtractor;
+    @Mock CourseAccessService courseAccessService;
     @InjectMocks GraphExtractionServiceImpl service;
+
+    @BeforeEach
+    void allowAccess() {
+        lenient().when(courseAccessService.assertManageCourseCode(anyString())).thenReturn(1L);
+    }
 
     @Test
     void imageFlow_tilesEachAndJoinsMarkdown() {

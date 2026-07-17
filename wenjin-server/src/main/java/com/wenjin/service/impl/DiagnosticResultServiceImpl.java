@@ -87,7 +87,9 @@ public class DiagnosticResultServiceImpl implements DiagnosticResultService {
     @Override
     public DiagnosticResultVO getResult(Long studentId, Long courseId) {
         List<KgNode> nodes = kgNodeMapper.selectList(
-                new LambdaQueryWrapper<KgNode>().eq(KgNode::getCourseId, courseId));
+                new LambdaQueryWrapper<KgNode>()
+                        .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt));
         Map<Long, KgNode> nodeById = new HashMap<>();
         for (KgNode n : nodes) {
             nodeById.put(n.getId(), n);
@@ -105,7 +107,8 @@ public class DiagnosticResultServiceImpl implements DiagnosticResultService {
         List<KgEdge> edges = kgEdgeMapper.selectList(
                 new LambdaQueryWrapper<KgEdge>()
                         .eq(KgEdge::getCourseId, courseId)
-                        .eq(KgEdge::getRelationType, PREREQ));
+                        .eq(KgEdge::getRelationType, PREREQ)
+                        .isNull(KgEdge::getArchivedAt));
         Map<Long, List<Long>> prereqMap = new HashMap<>(); // toNodeId -> [fromNodeId]
         for (KgEdge e : edges) {
             prereqMap.computeIfAbsent(e.getToNodeId(), k -> new ArrayList<>()).add(e.getFromNodeId());

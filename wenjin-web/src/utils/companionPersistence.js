@@ -17,9 +17,12 @@ export function createDebouncedPersist(
   }
 
   function flush(...args) {
+    // Capture before cancel() clears pendingArgs so course-switch / unmount
+    // can still persist the last scheduled snapshot.
     const argsToWrite = args.length ? args : pendingArgs
     cancel()
-    writeSnapshot(...(argsToWrite || []))
+    if (argsToWrite == null) return
+    writeSnapshot(...argsToWrite)
   }
 
   function scheduleWrite(...args) {

@@ -91,7 +91,8 @@ public class QueryMasteryTool implements CompanionTool {
 
     private Map<String, Object> buildOverview(ToolContext ctx) {
         List<KgNode> nodes = nodeMapper.selectList(new LambdaQueryWrapper<KgNode>()
-                .eq(KgNode::getCourseId, ctx.courseId()));
+                .eq(KgNode::getCourseId, ctx.courseId())
+                .isNull(KgNode::getArchivedAt));
         List<StudentMastery> masteries = masteryMapper.selectList(new LambdaQueryWrapper<StudentMastery>()
                 .eq(StudentMastery::getStudentId, ctx.studentId())
                 .eq(StudentMastery::getCourseId, ctx.courseId()));

@@ -5,6 +5,7 @@ import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.dto.GraphImportRequest;
 import com.wenjin.dto.GraphImportResult;
+import com.wenjin.security.CourseAccessService;
 import com.wenjin.service.GraphImportService;
 import com.wenjin.service.GraphService;
 import com.wenjin.support.RelationType;
@@ -46,10 +47,13 @@ public class GraphImportServiceImpl implements GraphImportService {
 
     private final GraphService graphService;
     private final GraphCleanAiClient graphCleanAiClient;
+    private final CourseAccessService courseAccessService;
 
-    public GraphImportServiceImpl(GraphService graphService, GraphCleanAiClient graphCleanAiClient) {
+    public GraphImportServiceImpl(GraphService graphService, GraphCleanAiClient graphCleanAiClient,
+                                  CourseAccessService courseAccessService) {
         this.graphService = graphService;
         this.graphCleanAiClient = graphCleanAiClient;
+        this.courseAccessService = courseAccessService;
     }
 
     @Override
@@ -60,6 +64,8 @@ public class GraphImportServiceImpl implements GraphImportService {
         if (file == null || file.isEmpty()) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "上传文件不能为空");
         }
+        // 归属优先：避免对无权课程做昂贵 Excel/AI 解析
+        courseAccessService.assertManageCourseCode(courseCode);
 
         // 1) 解析 Excel
         ParsedData parsed;

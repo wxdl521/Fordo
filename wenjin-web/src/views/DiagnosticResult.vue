@@ -94,20 +94,21 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { fetchResult, fetchEvidence } from '../api/diagnostic.js'
 import { generatePath } from '../api/path.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
+import { useSessionStore } from '../store/session.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 
 const { courseId } = useStudentCourse()
+const authSession = useSessionStore()
+if (!authSession.hydrated) authSession.hydrate()
+const { token: authToken, user: authUser } = storeToRefs(authSession)
+const authUserId = computed(() => authUser.value?.id ?? null)
 
-// 从 localStorage 读取当前登录用户
-function readUser() {
-  try { return JSON.parse(localStorage.getItem('wj_user')) } catch { return null }
-}
-const currentUser = readUser()
-const DEMO_STUDENT_ID = currentUser?.id || 2
 const router = useRouter()
 const data = ref(null)
 const evidence = ref(null)
@@ -115,6 +116,47 @@ const loading = ref(false)
 const error = ref('')
 const generating = ref(false)
 const genError = ref('')
+const resultRequest = createLatestRequest()
+const pathRequest = createLatestRequest()
+let activeResultContext = null
+let disposed = false
+
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
+}
+
+function captureOwner(id = courseId.value) {
+  return {
+    token: authToken.value,
+    userId: authUserId.value,
+    courseId: Number(id)
+  }
+}
+
+function isCurrentResult(request, owner) {
+  return !disposed
+    && request.isCurrent()
+    && authToken.value === owner.token
+    && authUserId.value === owner.userId
+    && Number(courseId.value) === owner.courseId
+}
+
+function isActiveResultContext(context) {
+  return Boolean(context?.dataIdentity)
+    && !disposed
+    && activeResultContext === context
+    && resultRequest.revision === context.resultRevision
+    && Boolean(context.owner.token)
+    && Number(context.owner.userId) > 0
+    && authToken.value === context.owner.token
+    && authUserId.value === context.owner.userId
+    && Number(courseId.value) === context.courseId
+    && data.value === context.dataIdentity
+}
+
+function invalidateActiveResult() {
+  activeResultContext = null
+}
 
 const diagnosticLink = computed(() => ({
   path: '/diagnostic',
@@ -142,44 +184,79 @@ const distRows = computed(() => {
 })
 
 async function load() {
+  if (disposed) return
+  invalidateActiveResult()
+  const id = Number(courseId.value)
+  const owner = captureOwner(id)
+  const request = resultRequest.next()
+  pathRequest.cancel()
+  generating.value = false
+  genError.value = ''
+  data.value = null
+  evidence.value = null
   loading.value = true
   error.value = ''
   try {
-    if (!courseId.value) {
+    if (!(id > 0)) {
       error.value = '请先从首页选择一门课程'
       return
     }
-    data.value = await fetchResult(DEMO_STUDENT_ID, courseId.value)
-    // 证据卡取数失败时静默忽略（不打扰既有结果页渲染），data=null 也静默不渲染
-    evidence.value = await fetchEvidence(DEMO_STUDENT_ID, courseId.value).catch(() => null)
+    const nextData = await fetchResult(id, { signal: request.signal })
+    if (!isCurrentResult(request, owner)) return
+    data.value = nextData
+    activeResultContext = {
+      owner,
+      courseId: id,
+      resultRevision: request.revision,
+      dataIdentity: data.value
+    }
+    // 主结果可用即结束主加载；证据卡在后台追加，失败时静默忽略。
+    loading.value = false
+    const nextEvidence = await fetchEvidence(id, { signal: request.signal }).catch(() => null)
+    if (!isCurrentResult(request, owner)) return
+    evidence.value = nextEvidence
   } catch (e) {
+    if (!isCurrentResult(request, owner) || isAbortError(e)) return
     error.value = e.message || '未知错误'
   } finally {
-    loading.value = false
+    if (isCurrentResult(request, owner)) loading.value = false
   }
 }
 
 async function goPath() {
   if (generating.value) return
+  const context = activeResultContext
+  if (!isActiveResultContext(context)) return
+  const request = pathRequest.next()
   generating.value = true
   genError.value = ''
   try {
-    await generatePath({ studentId: DEMO_STUDENT_ID, courseId: courseId.value })
-    router.push({ path: '/path', query: { courseId: courseId.value } })
+    await generatePath({ courseId: context.courseId }, { signal: request.signal })
+    if (!request.isCurrent() || !isActiveResultContext(context)) return
+    router.push({ path: '/path', query: { courseId: context.courseId } })
   } catch (e) {
+    if (!request.isCurrent() || !isActiveResultContext(context) || isAbortError(e)) return
     genError.value = e.message || '未知错误'
   } finally {
-    generating.value = false
+    if (request.isCurrent() && isActiveResultContext(context)) generating.value = false
   }
 }
 
 // 无条件 load:courseId 为空时由 load 内部守卫给出选课引导(不静默回落课程1)
-watch(courseId, () => load(), { immediate: true })
+watch([courseId, authToken, authUserId], () => load(), { immediate: true })
 
 onMounted(() => {
   if (import.meta.env.DEV) {
-    window.__wjResult = { data, loading, error, generating, genError, load, goPath }
+    window.__wjResult = { data, evidence, loading, error, generating, genError, load, goPath }
   }
+})
+
+onBeforeUnmount(() => {
+  disposed = true
+  invalidateActiveResult()
+  resultRequest.cancel()
+  pathRequest.cancel()
+  if (window.__wjResult?.load === load) delete window.__wjResult
 })
 </script>
 

@@ -1,6 +1,10 @@
 package com.wenjin.support;
 
 import com.wenjin.common.BusinessException;
+import com.wenjin.common.ResultCode;
+import com.wenjin.config.LimitsProperties;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockMultipartFile;
@@ -40,12 +44,51 @@ class DocumentTextExtractorTest {
         assertThatThrownBy(() -> extractor.extract(f)).isInstanceOf(BusinessException.class);
     }
 
+    @Test
+    void extract_pdfPagesOverLimit_413() throws Exception {
+        LimitsProperties limits = new LimitsProperties();
+        limits.getDocument().setMaxPages(2);
+        DocumentTextExtractor limited = new DocumentTextExtractor(limits);
+        byte[] pdf = buildPdf(3);
+        MockMultipartFile f = new MockMultipartFile("file", "a.pdf", "application/pdf", pdf);
+
+        assertThatThrownBy(() -> limited.extract(f))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(ResultCode.PAYLOAD_TOO_LARGE.getCode());
+    }
+
+    @Test
+    void extract_textOverLimit_413() throws Exception {
+        LimitsProperties limits = new LimitsProperties();
+        limits.getDocument().setMaxTextChars(10);
+        DocumentTextExtractor limited = new DocumentTextExtractor(limits);
+        byte[] docx = buildDocx("这是一段超过十个字符的正文内容");
+        MockMultipartFile f = new MockMultipartFile("file", "a.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx);
+
+        assertThatThrownBy(() -> limited.extract(f))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(ResultCode.PAYLOAD_TOO_LARGE.getCode());
+    }
+
     private static byte[] buildDocx(String... paragraphs) throws Exception {
         try (XWPFDocument doc = new XWPFDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             for (String p : paragraphs) {
                 doc.createParagraph().createRun().setText(p);
             }
             doc.write(out);
+            return out.toByteArray();
+        }
+    }
+
+    private static byte[] buildPdf(int pages) throws Exception {
+        try (PDDocument doc = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            for (int i = 0; i < pages; i++) {
+                doc.addPage(new PDPage());
+            }
+            doc.save(out);
             return out.toByteArray();
         }
     }

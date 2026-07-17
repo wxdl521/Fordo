@@ -1,0 +1,20 @@
+# 集成测试 profile：对 Testcontainers MySQL 启用 Flyway，禁止 sql.init 清库
+spring:
+  flyway:
+    enabled: true
+  sql:
+    init:
+      mode: never
+
+wenjin:
+  seed:
+    enabled: false
+  bootstrap:
+    admin:
+      enabled: false
+  ai:
+    enabled: false
+  features:
+    fixed-diagnostic-enabled: true
+    graph-reconcile-enabled: true
+    ai-job-dispatch-enabled: true

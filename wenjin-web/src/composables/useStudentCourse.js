@@ -1,29 +1,32 @@
 import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { useCourseStore, normalizeCourseId } from '../store/course.js'
 
-export const LS_KEY = 'wj.student.currentCourseId'
+export { STUDENT_COURSE_KEY as LS_KEY } from '../store/course.js'
 
-/** 学生端当前课程：URL query 优先，其次 localStorage */
+/**
+ * 学生端当前课程：URL query 优先，其次 course store（无课 → null，禁止回落 1）。
+ */
 export function useStudentCourse() {
   const route = useRoute()
+  const courseStore = useCourseStore()
+  if (!courseStore.hydrated) courseStore.hydrate()
 
   const courseId = computed(() => {
-    const q = Number(route.query.courseId)
-    if (q > 0) return q
-    const saved = Number(localStorage.getItem(LS_KEY))
-    return saved > 0 ? saved : null
+    const fromQuery = normalizeCourseId(route.query.courseId)
+    if (fromQuery != null) return fromQuery
+    return courseStore.studentCourseId
   })
 
   function rememberCourse(id) {
-    const n = Number(id)
-    if (n > 0) localStorage.setItem(LS_KEY, String(n))
+    courseStore.setStudentCourseId(id)
   }
 
   watch(
     () => route.query.courseId,
     (v) => {
-      const id = Number(v)
-      if (id > 0) rememberCourse(id)
+      const id = normalizeCourseId(v)
+      if (id != null) rememberCourse(id)
     },
     { immediate: true }
   )

@@ -3,9 +3,11 @@ package com.wenjin.service;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.CurrentUser;
+import com.wenjin.config.LimitsProperties;
 import com.wenjin.entity.CompanionConversation;
 import com.wenjin.mapper.CompanionConversationMapper;
 import com.wenjin.mapper.CompanionMessageMapper;
+import com.wenjin.support.ConversationContextBuilder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,9 +50,11 @@ class CompanionOwnershipTest {
 
     private CompanionServiceImpl service() {
         // 其余依赖不涉及：传 null 不会被触达（decayCalculator 亦不会被触达，传 null）
+        LimitsProperties limits = new LimitsProperties();
         return new CompanionServiceImpl(
                 conversationMapper, messageMapper,
-                null, null, null, null, null, null, null, courseService);
+                null, null, null, null, null, null, null, courseService,
+                new ConversationContextBuilder(limits), limits);
     }
 
     private CompanionConversation conv(long convId, long ownerStudentId) {
@@ -78,7 +82,10 @@ class CompanionOwnershipTest {
     void getMessages_owner_doesNotThrow() {
         CurrentUser.set(2L); // 当前用户 2 == 属主 2
         when(conversationMapper.selectById(99L)).thenReturn(conv(99L, 2L));
-        when(messageMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(List.of());
+        when(messageMapper.selectKeysetByConversation(
+                org.mockito.ArgumentMatchers.eq(99L),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of());
 
         assertThatCode(() -> service().getMessages(99L)).doesNotThrowAnyException();
         org.mockito.Mockito.verify(courseService).assertAccessibleByStudent(2L, 10L);

@@ -6,10 +6,14 @@ import com.wenjin.dto.CourseWithMasteryVO;
 import com.wenjin.entity.Course;
 import com.wenjin.entity.StudentCourse;
 import com.wenjin.entity.StudentMastery;
+import com.wenjin.entity.SysUser;
 import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.StudentCourseMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.mapper.SysUserMapper;
+import com.wenjin.security.UserRole;
 import com.wenjin.service.impl.CourseServiceImpl;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -36,9 +40,19 @@ class CourseServiceImplTest {
     private CourseMapper courseMapper;
     @Mock
     private StudentMasteryMapper studentMasteryMapper;
+    @Mock
+    private SysUserMapper sysUserMapper;
 
     @InjectMocks
     private CourseServiceImpl service;
+
+    @BeforeEach
+    void stubStudentUser() {
+        SysUser student = new SysUser();
+        student.setId(2L);
+        student.setRole(UserRole.STUDENT.code());
+        lenient().when(sysUserMapper.selectById(2L)).thenReturn(student);
+    }
 
     // ---- enroll ----
 
@@ -54,6 +68,27 @@ class CourseServiceImplTest {
         service.enroll(2L, 1L);
 
         verify(studentCourseMapper).insert(any(StudentCourse.class));
+    }
+
+    @Test
+    void enroll_userNotFound_throws() {
+        when(sysUserMapper.selectById(99L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.enroll(99L, 1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("用户不存在");
+    }
+
+    @Test
+    void enroll_nonStudentUser_throws() {
+        SysUser teacher = new SysUser();
+        teacher.setId(3L);
+        teacher.setRole(UserRole.TEACHER.code());
+        when(sysUserMapper.selectById(3L)).thenReturn(teacher);
+
+        assertThatThrownBy(() -> service.enroll(3L, 1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("仅学生可选课");
     }
 
     @Test

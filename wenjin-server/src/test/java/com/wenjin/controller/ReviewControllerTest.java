@@ -4,6 +4,7 @@ import com.wenjin.common.GlobalExceptionHandler;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.AuthContextInterceptor;
 import com.wenjin.config.CurrentUser;
+import com.wenjin.config.TestPrincipalSupport;
 import com.wenjin.dto.ReviewTodayVO;
 import com.wenjin.security.TokenService;
 import com.wenjin.service.CourseService;
@@ -45,7 +46,7 @@ class ReviewControllerTest {
     void setup() {
         ReviewController controller = new ReviewController(reviewService, courseService);
         mvc = MockMvcBuilders.standaloneSetup(controller)
-                .addInterceptors(new AuthContextInterceptor(tokenService))
+                .addInterceptors(TestPrincipalSupport.authInterceptor(tokenService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -59,7 +60,7 @@ class ReviewControllerTest {
     @DisplayName("today: 无 Authorization 头 → 401")
     void today_noToken_returns401() throws Exception {
         mvc.perform(get("/api/review/today").param("studentId", "2").param("courseId", "1"))
-                .andExpect(status().isOk())
+                .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(ResultCode.UNAUTHORIZED.getCode()));
     }
 
@@ -71,7 +72,7 @@ class ReviewControllerTest {
                         .header("Authorization", "Bearer " + token)
                         .param("studentId", "9")
                         .param("courseId", "1"))
-                .andExpect(status().isOk())
+                .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(ResultCode.FORBIDDEN.getCode()));
     }
 

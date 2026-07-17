@@ -46,21 +46,31 @@ public interface CompanionService {
     void streamReply(Long conversationId, CompanionStreamSink sink);
 
     /**
-     * 查询学生的所有会话（按更新时间倒序）。
+     * 查询学生的会话列表（按更新时间倒序，keyset 分页）。
      *
      * @param studentId 学生 ID
      * @param courseId  课程 ID
-     * @return 会话列表
+     * @param beforeId  上一页最后一条会话 id（可空）
+     * @param limit     条数（默认 30，最大 100）
      */
-    List<CompanionConversationVO> listConversations(Long studentId, Long courseId);
+    List<CompanionConversationVO> listConversations(Long studentId, Long courseId, Long beforeId, Integer limit);
+
+    default List<CompanionConversationVO> listConversations(Long studentId, Long courseId) {
+        return listConversations(studentId, courseId, null, null);
+    }
 
     /**
-     * 查询会话内的所有消息（按创建时间正序）。
+     * 查询会话消息（keyset 分页，返回时间正序）。
      *
      * @param conversationId 会话 ID
-     * @return 消息列表
+     * @param beforeId       上一页最早消息 id（可空=最新一页）
+     * @param limit          条数（默认 30，最大 100）
      */
-    List<CompanionMessageVO> getMessages(Long conversationId);
+    List<CompanionMessageVO> getMessages(Long conversationId, Long beforeId, Integer limit);
+
+    default List<CompanionMessageVO> getMessages(Long conversationId) {
+        return getMessages(conversationId, null, null);
+    }
 
     /**
      * 删除会话及其所有消息。

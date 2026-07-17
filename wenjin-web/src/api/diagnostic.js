@@ -1,75 +1,95 @@
 import { http } from './http.js'
 
-/**
- * 获取诊断试卷（答案已剥离）
- * @param {number} courseId
- * @returns {Promise<PaperVO>} { courseId, total, questions: [{ questionId, stem, chapter, type, options: [{ key, text }] }] }
- */
-export function fetchPaper(courseId) {
-  return http.get('/diagnostic/paper', { params: { courseId } })
+function post(url, body, config) {
+  return config && Object.keys(config).length > 0
+    ? http.post(url, body, config)
+    : http.post(url, body)
 }
 
 /**
- * 提交诊断答卷
- * @param {{ studentId: number, courseId: number, answers: Array<{ questionId: number, optionKey: string }> }} payload
+ * 获取诊断试卷（答案已剥离；含冻结 sessionToken）
+ * @param {number} courseId
+ * @returns {Promise<PaperVO>} { courseId, sessionToken, total, questions: [{ questionId, stem, chapter, type, options: [{ key, text }] }] }
+ */
+export function fetchPaper(courseId, config = {}) {
+  return http.get('/diagnostic/paper', {
+    ...config,
+    params: { ...config.params, courseId }
+  })
+}
+
+/**
+ * 提交诊断答卷（身份由服务端 principal 派生；须带 sessionToken）
+ * @param {{ sessionToken: string, answers: Array<{ questionId: number, optionKey: string|null }>, courseId?: number }} payload
  * @returns {Promise<SubmitResult>} { total, correctCount, grades: [{ questionId, correct, correctKey }] }
  */
-export function submitPaper(payload) {
-  return http.post('/diagnostic/submit', payload)
+export function submitPaper(payload, config = {}) {
+  const body = {
+    sessionToken: payload.sessionToken,
+    answers: payload.answers
+  }
+  // courseId 可选（服务端以会话为准）；不再传 studentId
+  if (payload.courseId != null) {
+    body.courseId = payload.courseId
+  }
+  return post('/diagnostic/submit', body, config)
 }
 
 /**
  * 获取诊断回溯结果
- * @param {number} studentId
  * @param {number} courseId
  * @returns {Promise<DiagnosticResultVO>}
  */
-export function fetchResult(studentId, courseId) {
-  return http.get('/diagnostic/result', { params: { studentId, courseId } })
+export function fetchResult(courseId, config = {}) {
+  return http.get('/diagnostic/result', {
+    ...config,
+    params: { ...config.params, courseId }
+  })
 }
 
 /**
  * 开始一次图引导自适应诊断（快速诊断）。
- * @param {{ studentId: number, courseId: number }} payload
+ * @param {{ courseId: number }} payload
  * @returns {Promise<AdaptiveVO>} { sessionId, done, probe|null, progress, summary|null, resultUrl|null }
- *   probe: { nodeId, questions: [脱敏 PaperQuestionVO] }（done=false 时非空，无 nodeName）
- *   progress: { tested, inferred, unknown, budgetLeft }
- *   summary: { tested, inferredPass, inferredFail, unknown, nodes: [...] }（done=true 时非空）
  */
-export function startAdaptive(payload) {
-  return http.post('/diagnostic/adaptive/start', payload)
+export function startAdaptive(payload, config = {}) {
+  const body = { ...payload }
+  delete body.studentId
+  return post('/diagnostic/adaptive/start', body, config)
 }
 
 /**
  * 提交当前探针作答，换取下一探针或结束。
  * @param {number} sessionId
- * @param {{ studentId: number, answers: Array<{ questionId: number, studentAnswer: string }> }} payload
- *   answers 必须 ⊆ 当前探针题目；studentAnswer 与固定卷 optionKey 同格式（如 'A'）
+ * @param {{ answers: Array<{ questionId: number, studentAnswer: string }> }} payload
  * @returns {Promise<AdaptiveVO>} 结构同 startAdaptive
  */
-export function answerAdaptive(sessionId, payload) {
-  return http.post(`/diagnostic/adaptive/${sessionId}/answer`, payload)
+export function answerAdaptive(sessionId, payload, config = {}) {
+  const body = { ...payload }
+  delete body.studentId
+  return post(`/diagnostic/adaptive/${sessionId}/answer`, body, config)
 }
 
 /**
  * 放弃当前自适应诊断会话（服务端做终止收尾推断落库）。
  * @param {number} sessionId
- * @param {{ studentId: number }} payload
+ * @param {object} [payload]
  * @returns {Promise<AdaptiveVO>}
  */
-export function abandonAdaptive(sessionId, payload) {
-  return http.post(`/diagnostic/adaptive/${sessionId}/abandon`, payload)
+export function abandonAdaptive(sessionId, payload = {}, config = {}) {
+  const body = { ...payload }
+  delete body.studentId
+  return post(`/diagnostic/adaptive/${sessionId}/abandon`, body, config)
 }
 
 /**
  * 获取最近一次已完成自适应诊断会话的证据（回放归因，T8）。
- * @param {number} studentId
  * @param {number} courseId
  * @returns {Promise<EvidenceVO|null>}
- *   EvidenceVO: { sessionId, finishedAt, tested, inferredPass, inferredFail, unknown,
- *     inferredNodes: [{ nodeId, name, state, fromNodeId, fromName, fromPass }] }
- *   无已完成会话时 data=null（合法业务状态）。
  */
-export function fetchEvidence(studentId, courseId) {
-  return http.get('/diagnostic/adaptive/evidence', { params: { studentId, courseId } })
+export function fetchEvidence(courseId, config = {}) {
+  return http.get('/diagnostic/adaptive/evidence', {
+    ...config,
+    params: { ...config.params, courseId }
+  })
 }

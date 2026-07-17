@@ -715,6 +715,18 @@ class PracticeServiceImplTest {
     }
 
     @Test
+    @DisplayName("I1: 节点已归档 → BusinessException（NOT_FOUND，与缺失同等）")
+    void start_archivedNode_throwsNotFound() {
+        KgNode archived = kgNode(NODE_ID, "KT01", "已归档节点");
+        archived.setArchivedAt(LocalDateTime.now());
+        when(kgNodeMapper.selectById(NODE_ID)).thenReturn(archived);
+
+        assertThatThrownBy(() -> impl().start(STUDENT_ID, COURSE_ID, NODE_ID, null, 5))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("知识点不存在");
+    }
+
+    @Test
     @DisplayName("I1: node.courseId 与请求 courseId 不符 → BusinessException（防枚举跨课程 IDOR）")
     void start_nodeCourseIdMismatch_throwsNotFound() {
         // 节点属于 courseId=99，请求 courseId=COURSE_ID=1 → 不匹配

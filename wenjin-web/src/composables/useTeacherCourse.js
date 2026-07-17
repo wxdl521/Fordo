@@ -1,32 +1,106 @@
-import { ref, computed, onMounted } from 'vue'
+import { computed, getCurrentInstance, onBeforeUnmount, onMounted, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { fetchTeacherCourses } from '../api/teacher.js'
+import { useCourseStore } from '../store/course.js'
+import { useSessionStore } from '../store/session.js'
+import { createLatestRequest } from '../utils/latestRequest.js'
 
-export const LS_KEY = 'wj.teacher.currentCourseId'
+export { TEACHER_COURSE_KEY as LS_KEY } from '../store/course.js'
 
-/** 教师端多课程：与图谱审核页共用 localStorage 中的当前课程 */
-export function useTeacherCourse() {
-  const courses = ref([])
-  const currentCourse = ref(null)
+/**
+ * 教师端多课程：各教师页共享 course store 中的 teacherCourseId / teacherCourses。
+ * @param {{ autoLoad?: boolean }} [options]
+ */
+export function useTeacherCourse(options = {}) {
+  const { autoLoad = true } = options
+  const courseStore = useCourseStore()
+  const sessionStore = useSessionStore()
+  if (!courseStore.hydrated) courseStore.hydrate()
+  const coursesRequest = createLatestRequest()
+  const instance = getCurrentInstance()
+  let disposed = false
 
-  const courseId = computed(() => currentCourse.value?.id ?? null)
+  const { teacherCourses: courses, teacherCourseId } = storeToRefs(courseStore)
+  const currentCourse = computed(() => courseStore.teacherCourse)
+  const courseId = computed(() => courseStore.teacherCourseId)
 
-  async function loadCourses(preferId) {
-    try {
-      const list = await fetchTeacherCourses()
-      courses.value = Array.isArray(list) ? list : []
-    } catch {
-      courses.value = []
-    }
-    if (courses.value.length === 0) {
-      currentCourse.value = null
-      return
-    }
-    const saved = preferId ?? Number(localStorage.getItem(LS_KEY))
-    currentCourse.value = courses.value.find(c => c.id === saved) || courses.value[0]
-    localStorage.setItem(LS_KEY, String(currentCourse.value.id))
+  function isAbortError(err) {
+    return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
   }
 
-  onMounted(() => loadCourses())
+  function hasValidOwner(owner) {
+    return Boolean(owner.token) && Number(owner.userId) > 0
+  }
 
-  return { courses, currentCourse, courseId, loadCourses }
+  function isCurrentOwner(request, owner) {
+    return !disposed
+      && hasValidOwner(owner)
+      && request.isCurrent()
+      && sessionStore.token === owner.token
+      && sessionStore.userId === owner.userId
+  }
+
+  /**
+   * @param {unknown} [preferId]
+   */
+  async function loadCourses(preferId) {
+    if (disposed) return null
+    const owner = { token: sessionStore.token, userId: sessionStore.userId }
+    if (!hasValidOwner(owner)) {
+      coursesRequest.cancel()
+      return null
+    }
+    const request = coursesRequest.next()
+    try {
+      const list = await fetchTeacherCourses({ signal: request.signal })
+      if (!isCurrentOwner(request, owner)) return null
+      courseStore.setTeacherCourses(Array.isArray(list) ? list : [])
+    } catch (err) {
+      if (!isCurrentOwner(request, owner) || isAbortError(err)) return null
+      courseStore.setTeacherCourses([])
+    }
+    if (!isCurrentOwner(request, owner)) return null
+    return courseStore.selectTeacherCourse(preferId)
+  }
+
+  /**
+   * @param {unknown} id
+   */
+  function selectCourse(id) {
+    const n = Number(id)
+    if (!(n > 0)) return
+    const found = courseStore.teacherCourses.find((c) => c.id === n)
+    if (found) courseStore.setTeacherCourseId(found.id)
+  }
+
+  if (autoLoad) {
+    onMounted(() => {
+      void loadCourses()
+    })
+  }
+
+  if (instance) {
+    watch(
+      () => [sessionStore.token, sessionStore.userId],
+      ([nextToken, nextUserId], [previousToken, previousUserId]) => {
+        if (nextToken !== previousToken || nextUserId !== previousUserId) {
+          coursesRequest.cancel()
+        }
+      },
+      { flush: 'sync' }
+    )
+    onBeforeUnmount(() => {
+      disposed = true
+      coursesRequest.cancel()
+    })
+  }
+
+  return {
+    courses,
+    currentCourse,
+    courseId,
+    teacherCourseId,
+    loadCourses,
+    selectCourse
+  }
 }

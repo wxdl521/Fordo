@@ -2,6 +2,8 @@ package com.wenjin.config;
 
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.security.CurrentPrincipal;
+import com.wenjin.security.UserRole;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -10,10 +12,8 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * AccessGuard.assertSelf 的三态单测（无 Mockito，无 Spring 上下文）：
- * 1. 当前用户为 null → UNAUTHORIZED
- * 2. studentId 与当前用户不匹配 → FORBIDDEN
- * 3. 完全匹配 → 放行不抛
+ * AccessGuard 单测（无 Mockito，无 Spring 上下文）：
+ * assertSelf 三态 + requireSelfStudent 兼容窗口语义。
  */
 class AccessGuardTest {
 
@@ -52,6 +52,44 @@ class AccessGuardTest {
         // 端点 studentId 为 null（不应通过）→ FORBIDDEN
         CurrentUser.set(2L);
         assertThatThrownBy(() -> AccessGuard.assertSelf(null))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.FORBIDDEN.getCode()));
+    }
+
+    @Test
+    void requireSelfStudent_nullClientId_returnsPrincipal() {
+        CurrentUser.set(2L);
+        assertThat(AccessGuard.requireSelfStudent(null)).isEqualTo(2L);
+    }
+
+    @Test
+    void requireSelfStudent_matchingClientId_returnsPrincipal() {
+        CurrentUser.set(2L);
+        assertThat(AccessGuard.requireSelfStudent(2L)).isEqualTo(2L);
+    }
+
+    @Test
+    void requireSelfStudent_mismatchedClientId_throwsForbidden() {
+        CurrentUser.set(2L);
+        assertThatThrownBy(() -> AccessGuard.requireSelfStudent(9L))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.FORBIDDEN.getCode()));
+    }
+
+    @Test
+    void requireSelfStudent_anonymous_throwsUnauthorized() {
+        assertThatThrownBy(() -> AccessGuard.requireSelfStudent(null))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
+                        .isEqualTo(ResultCode.UNAUTHORIZED.getCode()));
+    }
+
+    @Test
+    void requireSelfStudent_teacher_throwsForbidden() {
+        CurrentUser.set(new CurrentPrincipal(2L, UserRole.TEACHER));
+        assertThatThrownBy(() -> AccessGuard.requireSelfStudent(2L))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(ex -> assertThat(((BusinessException) ex).getCode())
                         .isEqualTo(ResultCode.FORBIDDEN.getCode()));

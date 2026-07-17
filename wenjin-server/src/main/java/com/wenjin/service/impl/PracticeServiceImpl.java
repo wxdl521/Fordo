@@ -184,7 +184,8 @@ public class PracticeServiceImpl implements PracticeService {
 
         // ── 2. 校验节点存在且属于指定课程（防枚举跨课程 IDOR）────────────────
         KgNode node = kgNodeMapper.selectById(nodeId);
-        if (node == null) {
+        // 归档节点与缺失同等处理，避免对已下线知识点开练
+        if (node == null || node.getArchivedAt() != null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "知识点不存在：nodeId=" + nodeId);
         }
         if (!courseId.equals(node.getCourseId())) {
@@ -509,6 +510,7 @@ public class PracticeServiceImpl implements PracticeService {
         List<KgNode> nodes = kgNodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>()
                         .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt)
                         .in(KgNode::getNodeCode, weakNodeCodes));
         Map<String, String> codeToName = nodes.stream()
                 .collect(Collectors.toMap(KgNode::getNodeCode, KgNode::getName, (a, b) -> a));
@@ -686,6 +688,7 @@ public class PracticeServiceImpl implements PracticeService {
         List<KgNode> nodes = kgNodeMapper.selectList(
                 new LambdaQueryWrapper<KgNode>()
                         .eq(KgNode::getCourseId, courseId)
+                        .isNull(KgNode::getArchivedAt)
                         .in(KgNode::getNodeCode, nodeCodes));
         if (nodes.isEmpty()) {
             return false; // 找不到节点，保守不触发

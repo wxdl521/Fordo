@@ -95,4 +95,35 @@ class ImagePreprocessorTest {
         assertThatThrownBy(() -> ImagePreprocessor.compress(new byte[]{1, 2, 3}, 2000, 3_500_000L))
                 .isInstanceOf(BusinessException.class);
     }
+
+    @Test
+    void assertImageBounds_pixelsOver40M_rejectsBeforeDecodePath() {
+        assertThatThrownBy(() -> ImagePreprocessor.assertImageBounds(10000, 5000, 10000, 40_000_000L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(com.wenjin.common.ResultCode.PAYLOAD_TOO_LARGE.getCode());
+    }
+
+    @Test
+    void assertImageBounds_dimensionOverLimit_rejects() {
+        assertThatThrownBy(() -> ImagePreprocessor.assertImageBounds(10001, 100, 10000, 40_000_000L))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void predictTileCount_tallImage_over12_rejectedByTiles() throws Exception {
+        // 宽 1600、极高图：预测切片数应 > 12
+        int h = 1600 + 12 * (2200 - 120); // 足够多步
+        // 直接用 bounds 检查 predicted
+        int predicted = ImagePreprocessor.predictTileCount(1600, 40_000, 1600, 2200, 120);
+        assertThat(predicted).isGreaterThan(12);
+
+        byte[] in = png(solid(100, 100)); // 小图走通路径
+        // 超高图内存压力大：用 assert + predict 覆盖业务拒绝条件；tiles 对超高图会在 decode bounds 拒绝
+        assertThatThrownBy(() -> ImagePreprocessor.tiles(
+                png(solid(800, 9000)), 1600, 2200, 120, 3_500_000L, 10000, 40_000_000L, 3))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(com.wenjin.common.ResultCode.PAYLOAD_TOO_LARGE.getCode());
+    }
 }
