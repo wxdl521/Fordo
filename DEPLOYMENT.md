@@ -412,6 +412,25 @@ npm run build        # 产出 dist/
 | 已配置 | `wenjin-server/.../config/WebConfig.java` | CORS 来源外部化 + 测试 | 小 |
 | 已引入 | `wenjin-server/pom.xml` | `spring-boot-starter-actuator` | 极小 |
 | 运维 | Flyway migrator 作业 + app DML 账号 | 见 2.3；不跑 `data.sql` / 不跑生产 `schema.sql` | 中 |
+| 已配置 | `application.yml` → `spring.task.scheduling` | 调度线程池 size=2，避免长任务饿死 cleanup/草稿清理 | 小 |
+
+### 4.1 配置清单（调度与基线）
+
+| 配置项 | 默认（基线 `application.yml`） | 说明 |
+|--------|--------------------------------|------|
+| `spring.task.scheduling.pool.size` | `2` | Spring 默认单线程调度器；扩到 2 使 `AiJobWorker.tick` 内联长任务不饿死 `AiJobPayloadCleanup` / `GraphDraftStore` |
+| `spring.task.scheduling.thread-name-prefix` | `wj-sched-` | 调度线程名前缀，便于日志与线程 dump 定位 |
+
+```yaml
+spring:
+  task:
+    scheduling:
+      pool:
+        size: 2
+      thread-name-prefix: wj-sched-
+```
+
+**决策**：worker 独立 executor 方案暂不采用（当前任务量单飞足够），未来吞吐需求出现时再迁。
 
 **`application-prod.yml` 参考全文**（profile 名即文件名后缀，`SPRING_PROFILES_ACTIVE=prod` 时自动合并覆盖 `application.yml`）：
 

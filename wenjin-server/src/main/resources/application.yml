@@ -30,6 +30,12 @@ spring:
     multipart:
       max-file-size: 10MB
       max-request-size: 12MB
+  # 调度线程池：AiJobWorker / payload cleanup / GraphDraftStore 共用；size=1 时长任务会饿死其余 @Scheduled
+  task:
+    scheduling:
+      pool:
+        size: 2
+      thread-name-prefix: wj-sched-
 
 # MyBatis-Plus 配置
 mybatis-plus:
