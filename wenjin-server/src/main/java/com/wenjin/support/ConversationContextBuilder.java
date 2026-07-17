@@ -44,10 +44,12 @@ public class ConversationContextBuilder {
     }
 
     /**
-     * 根据会话已有摘要 + 全量历史构建模型上下文窗口。
+     * 根据会话已有摘要 + 历史消息构建模型上下文窗口。
      *
      * @param conversation 会话（含 summary_* 字段）
-     * @param history      按创建时间/id 升序的完整历史（含本轮最新用户消息）
+     * @param history      按创建时间/id 升序的历史（含本轮最新用户消息）；
+     *                     可为 watermark 切片（仅 id &gt; summaryThroughMessageId），
+     *                     此时已折叠部分以 conversation.summaryText 为准
      */
     public BuiltContext build(CompanionConversation conversation, List<CompanionMessage> history) {
         if (history == null || history.isEmpty()) {

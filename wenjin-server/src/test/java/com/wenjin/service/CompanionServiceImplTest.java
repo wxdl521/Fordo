@@ -377,6 +377,34 @@ class CompanionServiceImplTest {
     }
 
     @Test
+    void streamReplyLoadsHistoryViaSelectSinceIdAscWithWatermark() {
+        Long conversationId = 314L;
+        Long throughId = 40L;
+        List<CompanionMessage> incremental = new ArrayList<>();
+        for (int i = 41; i <= 50; i++) {
+            CompanionMessage m = userMessage("msg-" + i);
+            m.setId((long) i);
+            m.setRole(i % 2 == 1 ? ROLE_USER : ROLE_AI);
+            incremental.add(m);
+        }
+        stubConversationAndPromptWithWatermark(conversationId, throughId, incremental);
+        configureTools(false, 2, 3, List.of());
+
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(3);
+            onToken.accept("ok");
+            return null;
+        }).when(aiClient).stream(any(), any(), any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, t -> { });
+
+        // 生产路径：按 watermark 增量加载，不得回退 selectList
+        verify(messageMapper).selectSinceIdAsc(eq(conversationId), eq(throughId));
+        verify(messageMapper, never()).selectList(any());
+    }
+
+    @Test
     void streamReplyWhenToolsDisabledUsesLegacyPromptGrounding() {
         Long conversationId = 304L;
         stubConversationAndPrompt(conversationId, List.of(userMessage("review first")));
@@ -1196,12 +1224,42 @@ class CompanionServiceImplTest {
         conversation.setCourseId(10L);
         conversation.setNodeCode("KT12");
         when(conversationMapper.selectById(conversationId)).thenReturn(conversation);
-        when(messageMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(history);
+        // P0-2 生产路径：增量加载 selectSinceIdAsc（afterId = summaryThroughMessageId，默认 null）
+        when(messageMapper.selectSinceIdAsc(eq(conversationId), any())).thenReturn(history);
         when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(whitelistNodes);
         when(pathService.getCurrent(1L, 10L)).thenReturn(path());
         when(diagnosticResultService.getResult(1L, 10L)).thenReturn(null);
         when(courseMapper.selectById(10L)).thenReturn(null);
         when(nodeMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(focusNode);
+    }
+
+    /**
+     * 与 {@link #stubConversationAndPrompt} 相同，并设置 summary watermark，
+     * 使 streamReply 以 afterId = throughId 调用 selectSinceIdAsc。
+     */
+    private CompanionConversation stubConversationAndPromptWithWatermark(Long conversationId,
+                                                                         Long summaryThroughMessageId,
+                                                                         List<CompanionMessage> history) {
+        KgNode whitelistNode = new KgNode();
+        whitelistNode.setId(12L);
+        whitelistNode.setNodeCode("KT12");
+        whitelistNode.setName("二次函数基础");
+
+        CompanionConversation conversation = new CompanionConversation();
+        conversation.setId(conversationId);
+        conversation.setStudentId(1L);
+        conversation.setCourseId(10L);
+        conversation.setNodeCode("KT12");
+        conversation.setSummaryText("【历史摘要】已折叠的旧消息");
+        conversation.setSummaryThroughMessageId(summaryThroughMessageId);
+        when(conversationMapper.selectById(conversationId)).thenReturn(conversation);
+        when(messageMapper.selectSinceIdAsc(eq(conversationId), eq(summaryThroughMessageId))).thenReturn(history);
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(whitelistNode));
+        when(pathService.getCurrent(1L, 10L)).thenReturn(path());
+        when(diagnosticResultService.getResult(1L, 10L)).thenReturn(null);
+        when(courseMapper.selectById(10L)).thenReturn(null);
+        when(nodeMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(whitelistNode);
+        return conversation;
     }
 
     private void stubWeakPoint() {

@@ -152,8 +152,8 @@ public class CompanionServiceImpl implements CompanionService {
         // P0-2：仅加载 watermark 之后的消息（已折叠进摘要的 id 不再全量拉取）
         List<CompanionMessage> history = messageMapper.selectSinceIdAsc(
                 conversationId, conversation.getSummaryThroughMessageId());
-        if (history == null || history.isEmpty()) {
-            // 兼容未启用自定义 SQL 的测试 stub：回退 LambdaQueryWrapper
+        if (history == null) {
+            // 仅 null 回退（测试 stub 未 mock 时）；空列表表示真实无增量消息，不得全量重载
             history = messageMapper.selectList(
                     new LambdaQueryWrapper<CompanionMessage>()
                             .eq(CompanionMessage::getConversationId, conversationId)
