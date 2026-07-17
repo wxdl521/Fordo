@@ -141,6 +141,7 @@ public class AgentTraceService {
             patch.setErrorCode(errorCode);
             patch.setTokensIn(ctx.tokensIn());
             patch.setTokensOut(ctx.tokensOut());
+            patch.setTokensEstimated(ctx.tokensEstimated());
             long durationMs = Duration.between(ctx.startedAt(), Instant.now()).toMillis();
             if (durationMs < 0) {
                 durationMs = 0;

@@ -20,6 +20,8 @@ public final class TraceContext {
     private final AtomicInteger seq = new AtomicInteger(0);
     private final AtomicInteger tokensIn = new AtomicInteger(0);
     private final AtomicInteger tokensOut = new AtomicInteger(0);
+    /** 1 = token 计数来自 chars/2 估算（无上游 usage）。 */
+    private final AtomicInteger tokensEstimated = new AtomicInteger(0);
     private final Map<String, ToolCacheEntry> toolCache = new ConcurrentHashMap<>();
 
     private TraceContext(long runId, boolean noop, Instant startedAt) {
@@ -28,8 +30,8 @@ public final class TraceContext {
         this.startedAt = startedAt == null ? Instant.now() : startedAt;
     }
 
-    /** 创建活跃上下文（由 {@link AgentTraceService} 在 run 建成功后调用）。 */
-    static TraceContext active(long runId) {
+    /** 创建活跃上下文（由 {@link AgentTraceService} 在 run 建成功后调用；测试可构造）。 */
+    public static TraceContext active(long runId) {
         return new TraceContext(runId, false, Instant.now());
     }
 
@@ -70,6 +72,16 @@ public final class TraceContext {
 
     public int tokensOut() {
         return tokensOut.get();
+    }
+
+    /** 标记本 run 的 token 为估算值（phase2 流式无 usage 时）。 */
+    public void markTokensEstimated() {
+        tokensEstimated.set(1);
+    }
+
+    /** 0=精确/未知，1=按 chars/2 估算。 */
+    public int tokensEstimated() {
+        return tokensEstimated.get();
     }
 
     /** Phase 3 工具结果缓存；本期仅预留结构。 */

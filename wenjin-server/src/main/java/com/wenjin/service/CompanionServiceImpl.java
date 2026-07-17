@@ -27,6 +27,13 @@ import com.wenjin.service.companion.ToolContext;
 import com.wenjin.service.companion.ToolExecutionResult;
 import com.wenjin.service.companion.ToolExecutionState;
 import com.wenjin.service.companion.ToolGovernor;
+import com.wenjin.service.trace.AgentTraceService;
+import com.wenjin.service.trace.StartRunCmd;
+import com.wenjin.service.trace.StepRecord;
+import com.wenjin.service.trace.TraceContext;
+import com.wenjin.support.AgentRunStatus;
+import com.wenjin.support.AgentStepStatus;
+import com.wenjin.support.AgentStepType;
 import com.wenjin.support.CompanionFinalTextSanitizer;
 import com.wenjin.support.ConversationContextBuilder;
 import com.wenjin.support.PracticeIntent;
@@ -77,6 +84,10 @@ public class CompanionServiceImpl implements CompanionService {
 
     @Autowired(required = false)
     private CompanionToolProperties toolProperties = disabledToolProperties();
+
+    /** Agent 轨迹埋点；缺省 / 关闭时走 NOOP，失败不得影响主流程。 */
+    @Autowired(required = false)
+    private AgentTraceService agentTraceService;
 
     @Override
     @Transactional
@@ -185,12 +196,23 @@ public class CompanionServiceImpl implements CompanionService {
                 conversation.getNodeCode(),
                 toolOrchestrationAvailable);
 
-        if (!toolOrchestrationAvailable) {
-            streamWithLegacyPath(conversationId, systemPrompt, ctx, sink);
-            return;
+        // 一次学生消息的完整编排 = 一个 run；SSE 异常断开也必须 finishRun
+        TraceContext traceCtx = startCompanionTrace(conversation, latestUserContent(history));
+        int runStatus = AgentRunStatus.SUCCEEDED;
+        String errorCode = null;
+        try {
+            if (!toolOrchestrationAvailable) {
+                streamWithLegacyPath(conversationId, systemPrompt, ctx, sink, traceCtx);
+                return;
+            }
+            streamWithTools(conversationId, conversation, systemPrompt, history, ctx, usableTools, sink, traceCtx);
+        } catch (RuntimeException ex) {
+            runStatus = AgentRunStatus.FAILED;
+            errorCode = "UNEXPECTED";
+            throw ex;
+        } finally {
+            finishCompanionTrace(traceCtx, runStatus, errorCode);
         }
-
-        streamWithTools(conversationId, conversation, systemPrompt, history, ctx, usableTools, sink);
     }
 
     @Override
@@ -243,13 +265,18 @@ public class CompanionServiceImpl implements CompanionService {
     private void streamWithLegacyPath(Long conversationId,
                                       String systemPrompt,
                                       ConversationContextBuilder.BuiltContext ctx,
-                                      CompanionStreamSink sink) {
+                                      CompanionStreamSink sink,
+                                      TraceContext traceCtx) {
         ConversationContextBuilder.LegacyPrompt prompt = contextBuilder.toLegacyPrompt(ctx);
         StringBuilder fullReply = new StringBuilder();
         int maxOut = limits.getCompanion().getMaxAiOutputChars();
+        long started = System.currentTimeMillis();
+        String inputDigest = "legacy|user=" + truncateForTrace(prompt.latestUserMessage(), 200);
         aiClient.stream(systemPrompt, prompt.history(), prompt.latestUserMessage(),
                 truncatingTokenConsumer(fullReply, sink, maxOut));
-        saveAiMessage(conversationId, fullReply.toString());
+        String reply = fullReply.toString();
+        saveAiMessage(conversationId, reply);
+        recordPhase2Step(traceCtx, inputDigest, reply, started);
     }
 
     private Consumer<String> truncatingTokenConsumer(StringBuilder fullReply,
@@ -297,7 +324,8 @@ public class CompanionServiceImpl implements CompanionService {
                                  List<CompanionMessage> history,
                                  ConversationContextBuilder.BuiltContext ctx,
                                  List<CompanionTool> tools,
-                                 CompanionStreamSink sink) {
+                                 CompanionStreamSink sink,
+                                 TraceContext traceCtx) {
         List<Map<String, Object>> messages = contextBuilder.toToolMessages(systemPrompt, ctx);
         List<Map<String, Object>> toolSchemas = tools.stream().map(CompanionTool::schema).toList();
         Map<String, String> toolLabels = buildToolLabels(tools);
@@ -306,15 +334,19 @@ public class CompanionServiceImpl implements CompanionService {
         boolean practiceStarted = false;
 
         if (tryForceStartPracticeFromIntent(
-                conversationId, conversation, history, tools, toolLabels, messages, context, state, sink)) {
+                conversationId, conversation, history, tools, toolLabels, messages, context, state, sink, traceCtx)) {
             return;
         }
 
         for (int round = 0; round < maxRounds(); round++) {
             CompanionAiClient.TurnOutcome outcome;
+            String phase1Input = messagesDigest(messages);
+            long phase1Started = System.currentTimeMillis();
             try {
                 outcome = aiClient.completeWithTools(messages, toolSchemas);
+                recordPhase1Step(traceCtx, phase1Input, outcome, AgentStepStatus.OK, phase1Started, null);
             } catch (Exception ex) {
+                recordPhase1Step(traceCtx, phase1Input, null, AgentStepStatus.FAILED, phase1Started, "PHASE1_ERROR");
                 log.warn("Companion tool resolution failed for conversationId={}, falling back to no-tool stream",
                         conversationId, ex);
                 String fallbackPrompt = buildSystemPromptForStudent(
@@ -324,10 +356,10 @@ public class CompanionServiceImpl implements CompanionService {
                         false);
                 if (hasToolContext(messages)) {
                     streamFinalMessages(conversationId, withSystemPrompt(messages, fallbackPrompt),
-                            practiceStarted, sink);
+                            practiceStarted, sink, traceCtx);
                     return;
                 }
-                streamWithLegacyPath(conversationId, fallbackPrompt, ctx, sink);
+                streamWithLegacyPath(conversationId, fallbackPrompt, ctx, sink, traceCtx);
                 return;
             }
             if (outcome instanceof CompanionAiClient.FinalText) {
@@ -339,12 +371,12 @@ public class CompanionServiceImpl implements CompanionService {
 
             messages.add(assistantToolCallMessage(toolCalls.calls()));
             for (CompanionAiClient.ToolCall call : toolCalls.calls()) {
-                practiceStarted = applyToolCall(call, toolLabels, messages, context, state, sink)
+                practiceStarted = applyToolCall(call, toolLabels, messages, context, state, sink, traceCtx)
                         || practiceStarted;
             }
         }
 
-        streamFinalMessages(conversationId, messages, practiceStarted, sink);
+        streamFinalMessages(conversationId, messages, practiceStarted, sink, traceCtx);
     }
 
     /**
@@ -360,7 +392,8 @@ public class CompanionServiceImpl implements CompanionService {
                                                     List<Map<String, Object>> messages,
                                                     ToolContext context,
                                                     ToolExecutionState state,
-                                                    CompanionStreamSink sink) {
+                                                    CompanionStreamSink sink,
+                                                    TraceContext traceCtx) {
         if (toolProperties == null || !toolProperties.isIntentRoutingEnabled()) {
             return false;
         }
@@ -388,8 +421,8 @@ public class CompanionServiceImpl implements CompanionService {
                 buildStartPracticeArgsJson(intent));
 
         messages.add(assistantToolCallMessage(List.of(call)));
-        boolean practiceStarted = applyToolCall(call, toolLabels, messages, context, state, sink);
-        streamFinalMessages(conversationId, messages, practiceStarted, sink);
+        boolean practiceStarted = applyToolCall(call, toolLabels, messages, context, state, sink, traceCtx);
+        streamFinalMessages(conversationId, messages, practiceStarted, sink, traceCtx);
         return true;
     }
 
@@ -398,10 +431,13 @@ public class CompanionServiceImpl implements CompanionService {
                                   List<Map<String, Object>> messages,
                                   ToolContext context,
                                   ToolExecutionState state,
-                                  CompanionStreamSink sink) {
+                                  CompanionStreamSink sink,
+                                  TraceContext traceCtx) {
         String toolName = call.name() == null ? "" : call.name();
         sink.toolStart(toolName, toolLabels.getOrDefault(toolName, toolName));
+        long started = System.currentTimeMillis();
         ToolExecutionResult result = toolGovernor.execute(context, call, state);
+        recordToolStep(traceCtx, call, result, started);
         messages.add(toolMessage(result));
         sink.toolResult(toolName, result.ok());
         if (result.practiceCard() != null) {
@@ -471,9 +507,12 @@ public class CompanionServiceImpl implements CompanionService {
     private void streamFinalMessages(Long conversationId,
                                      List<Map<String, Object>> messages,
                                      boolean practiceStarted,
-                                     CompanionStreamSink sink) {
+                                     CompanionStreamSink sink,
+                                     TraceContext traceCtx) {
         StringBuilder fullReply = new StringBuilder();
         int maxOut = limits.getCompanion().getMaxAiOutputChars();
+        long started = System.currentTimeMillis();
+        String inputDigest = messagesDigest(messages);
         aiClient.streamMessages(messages, token -> contextBuilder.appendOutputToken(fullReply, token, maxOut));
         boolean hitCap = fullReply.length() >= maxOut;
         String clean = CompanionFinalTextSanitizer.sanitize(fullReply.toString());
@@ -484,6 +523,7 @@ public class CompanionServiceImpl implements CompanionService {
         }
         sink.token(clean);
         saveAiMessage(conversationId, clean);
+        recordPhase2Step(traceCtx, inputDigest, clean, started);
     }
 
     private boolean hasToolContext(List<Map<String, Object>> messages) {
@@ -590,6 +630,206 @@ public class CompanionServiceImpl implements CompanionService {
         aiMessage.setContent(content);
         aiMessage.setCreatedAt(LocalDateTime.now());
         messageMapper.insert(aiMessage);
+    }
+
+    // ── Agent trace helpers (Task 7；失败不得打断主流程) ──────────────────────
+
+    private TraceContext startCompanionTrace(CompanionConversation conversation, String firstInput) {
+        if (agentTraceService == null || conversation == null) {
+            return TraceContext.NOOP;
+        }
+        try {
+            Long studentId = conversation.getStudentId() == null ? 0L : conversation.getStudentId();
+            Long courseId = conversation.getCourseId() == null ? 0L : conversation.getCourseId();
+            TraceContext ctx = agentTraceService.startRun(StartRunCmd.of(
+                    studentId,
+                    courseId,
+                    conversation.getId(),
+                    "COMPANION_CHAT",
+                    null,
+                    firstInput));
+            return ctx == null ? TraceContext.NOOP : ctx;
+        } catch (Exception e) {
+            log.warn("startCompanionTrace failed, continuing with NOOP: {}", e.toString());
+            return TraceContext.NOOP;
+        }
+    }
+
+    private void finishCompanionTrace(TraceContext ctx, int runStatus, String errorCode) {
+        if (agentTraceService == null || ctx == null) {
+            return;
+        }
+        try {
+            agentTraceService.finishRun(ctx, runStatus, errorCode);
+        } catch (Exception e) {
+            log.warn("finishCompanionTrace failed for runId={}: {}", ctx.runId(), e.toString());
+        }
+    }
+
+    private void safeStep(TraceContext ctx, StepRecord record) {
+        if (agentTraceService == null || ctx == null || record == null) {
+            return;
+        }
+        try {
+            agentTraceService.step(ctx, record);
+        } catch (Exception e) {
+            log.warn("agentTrace step failed for runId={}: {}", ctx.runId(), e.toString());
+        }
+    }
+
+    private void recordPhase1Step(TraceContext ctx,
+                                  String inputDigest,
+                                  CompanionAiClient.TurnOutcome outcome,
+                                  int status,
+                                  long startedMs,
+                                  String errorCode) {
+        String output = phase1OutputJson(outcome);
+        int tokensIn = estimateTokens(inputDigest);
+        int tokensOut = estimateTokens(output);
+        if (ctx != null && !ctx.isNoop() && (tokensIn > 0 || tokensOut > 0)) {
+            ctx.markTokensEstimated();
+        }
+        safeStep(ctx, new StepRecord(
+                AgentStepType.LLM_CALL,
+                "phase1",
+                status,
+                inputDigest,
+                output,
+                tokensIn,
+                tokensOut,
+                elapsedMs(startedMs),
+                errorCode));
+    }
+
+    private void recordPhase2Step(TraceContext ctx, String inputDigest, String output, long startedMs) {
+        int tokensIn = estimateTokens(inputDigest);
+        int tokensOut = estimateTokens(output);
+        // 流式无 usage：chars/2 估算并标记 tokens_estimated
+        if (ctx != null && !ctx.isNoop()) {
+            ctx.markTokensEstimated();
+        }
+        safeStep(ctx, new StepRecord(
+                AgentStepType.LLM_CALL,
+                "phase2",
+                AgentStepStatus.OK,
+                inputDigest,
+                output,
+                tokensIn,
+                tokensOut,
+                elapsedMs(startedMs),
+                null));
+    }
+
+    private void recordToolStep(TraceContext ctx,
+                                CompanionAiClient.ToolCall call,
+                                ToolExecutionResult result,
+                                long startedMs) {
+        String toolName = call == null || call.name() == null || call.name().isBlank()
+                ? "unknown"
+                : call.name();
+        String input = call == null ? null : call.argumentsJson();
+        String output = result == null ? null : result.content();
+        int status = result != null && result.ok() ? AgentStepStatus.OK : AgentStepStatus.FAILED;
+        String errorCode = status == AgentStepStatus.OK ? null : "TOOL_FAILED";
+        safeStep(ctx, new StepRecord(
+                AgentStepType.TOOL_CALL,
+                toolName,
+                status,
+                input,
+                output,
+                0,
+                0,
+                elapsedMs(startedMs),
+                errorCode));
+    }
+
+    private static String latestUserContent(List<CompanionMessage> history) {
+        if (history == null || history.isEmpty()) {
+            return null;
+        }
+        for (int i = history.size() - 1; i >= 0; i--) {
+            CompanionMessage m = history.get(i);
+            if (m != null && m.getRole() != null && m.getRole() == ROLE_USER) {
+                return m.getContent();
+            }
+        }
+        CompanionMessage last = history.get(history.size() - 1);
+        return last == null ? null : last.getContent();
+    }
+
+    private static String messagesDigest(List<Map<String, Object>> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("msgs=").append(messages.size());
+        for (Map<String, Object> message : messages) {
+            if (message == null) {
+                continue;
+            }
+            Object role = message.get("role");
+            Object content = message.get("content");
+            String c = content == null ? "" : String.valueOf(content);
+            sb.append('|').append(role).append(':').append(truncateForTrace(c, 80));
+            if (message.containsKey("tool_calls")) {
+                sb.append("+tool_calls");
+            }
+            if (sb.length() > 500) {
+                sb.append("…");
+                break;
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String phase1OutputJson(CompanionAiClient.TurnOutcome outcome) {
+        if (outcome == null) {
+            return null;
+        }
+        if (outcome instanceof CompanionAiClient.FinalText finalText) {
+            String text = finalText.text() == null ? "" : finalText.text();
+            return "{\"type\":\"final_text\",\"text\":\"" + escapeJson(truncateForTrace(text, 200)) + "\"}";
+        }
+        if (outcome instanceof CompanionAiClient.ToolCalls toolCalls) {
+            StringBuilder names = new StringBuilder();
+            if (toolCalls.calls() != null) {
+                for (int i = 0; i < toolCalls.calls().size(); i++) {
+                    if (i > 0) {
+                        names.append(',');
+                    }
+                    CompanionAiClient.ToolCall call = toolCalls.calls().get(i);
+                    names.append('"').append(escapeJson(call == null ? "" : call.name())).append('"');
+                }
+            }
+            return "{\"type\":\"tool_calls\",\"names\":[" + names + "]}";
+        }
+        return "{\"type\":\"unknown\"}";
+    }
+
+    /** 无上游 usage 时按 chars/2 估算 token。 */
+    static int estimateTokens(String text) {
+        if (text == null || text.isEmpty()) {
+            return 0;
+        }
+        return text.length() / 2;
+    }
+
+    private static int elapsedMs(long startedMs) {
+        long d = System.currentTimeMillis() - startedMs;
+        if (d < 0) {
+            return 0;
+        }
+        return (int) Math.min(d, Integer.MAX_VALUE);
+    }
+
+    private static String truncateForTrace(String value, int max) {
+        if (value == null) {
+            return null;
+        }
+        if (max <= 0 || value.length() <= max) {
+            return value;
+        }
+        return value.substring(0, max) + "…";
     }
 
     private void assertConversationOwner(Long conversationId) {
