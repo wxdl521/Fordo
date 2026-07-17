@@ -84,6 +84,8 @@ describe('API endpoint contracts', () => {
         'reviewQuestions',
         'reviewAllQuestions',
         'fetchDashboard',
+        'fetchAgentRuns',
+        'fetchAgentRunSteps',
         'fetchTeacherCourses',
         'createTeacherCourse',
         'deleteTeacherCourse',
@@ -104,7 +106,7 @@ describe('API endpoint contracts', () => {
       expect(Object.keys(module).sort()).toEqual([...names].sort())
       exportCount += names.length
     }
-    expect(exportCount).toBe(59)
+    expect(exportCount).toBe(61)
   })
 
   it('maps user and course operations without forwarding privilege fields', () => {

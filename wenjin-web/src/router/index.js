@@ -16,6 +16,7 @@ const Growth = () => import('../views/Growth.vue')
 const TeacherGraphReview = () => import('../views/TeacherGraphReview.vue')
 const TeacherQuestionPool = () => import('../views/TeacherQuestionPool.vue')
 const TeacherDashboard = () => import('../views/TeacherDashboard.vue')
+const TeacherAgentTrace = () => import('../views/TeacherAgentTrace.vue')
 const GraphExtractReview = () => import('../views/GraphExtractReview.vue')
 const NodePractice = () => import('../views/NodePractice.vue')
 
@@ -34,6 +35,7 @@ const routes = [
   { path: '/teacher/graph', name: 'teacher-graph', component: TeacherGraphReview, meta: { title: '图谱审核工作台' } },
   { path: '/teacher/questions', name: 'teacher-questions', component: TeacherQuestionPool, meta: { title: '题目审核池' } },
   { path: '/teacher/dashboard', name: 'teacher-dashboard', component: TeacherDashboard, meta: { title: '学情看板' } },
+  { path: '/teacher/agent-runs', name: 'teacher-agent-runs', component: TeacherAgentTrace, meta: { title: 'Agent 轨迹' } },
   { path: '/teacher/graph-extract-review', name: 'teacher-graph-extract-review', component: GraphExtractReview, meta: { title: '抽取审核' } },
   { path: '/practice', name: 'practice', component: NodePractice, meta: { title: '节点练习' } },
 ]

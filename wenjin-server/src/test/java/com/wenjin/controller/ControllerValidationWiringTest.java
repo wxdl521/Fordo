@@ -71,9 +71,11 @@ class ControllerValidationWiringTest {
                 QuestionAdminController.class,
                 ReviewController.class,
                 SystemAdminUserController.class,
+                TeacherAgentRunController.class,
                 TeacherCourseController.class,
                 TeacherDashboardController.class,
                 TeacherGraphController.class,
+                TeacherJobController.class,
                 TeacherQuestionController.class,
                 UserController.class
         );

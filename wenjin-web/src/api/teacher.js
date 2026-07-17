@@ -56,6 +56,17 @@ export function fetchDashboard(courseId, config = {}) {
   })
 }
 
+// ── Agent 轨迹（教师端）──
+export function fetchAgentRuns({ courseId, studentId, page, size }, config = {}) {
+  return http.get('/teacher/agent-runs', {
+    ...config,
+    params: { ...config.params, courseId, studentId, page, size }
+  })
+}
+export function fetchAgentRunSteps(runId, config = {}) {
+  return http.get(`/teacher/agent-runs/${runId}/steps`, config)
+}
+
 // ── 课程管理（多课程切换）──
 export function fetchTeacherCourses(config = {}) {
   return http.get('/teacher/courses', config)
