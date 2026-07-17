@@ -330,7 +330,10 @@ public class CompanionServiceImpl implements CompanionService {
         List<Map<String, Object>> toolSchemas = tools.stream().map(CompanionTool::schema).toList();
         Map<String, String> toolLabels = buildToolLabels(tools);
         ToolExecutionState state = new ToolExecutionState(maxToolCalls());
-        ToolContext context = new ToolContext(conversation.getStudentId(), conversation.getCourseId());
+        ToolContext context = new ToolContext(
+                conversation.getStudentId(),
+                conversation.getCourseId(),
+                conversation.getNodeCode());
         boolean practiceStarted = false;
 
         if (tryForceStartPracticeFromIntent(
@@ -1065,6 +1068,8 @@ public class CompanionServiceImpl implements CompanionService {
         sb.append("- 涉及掌握度、薄弱点、证据时间时，先通过工具查询，再回答。\n");
         sb.append("- 涉及节点详情、前置关系、后继关系时，先通过工具获取节点详情，再组织解释。\n");
         sb.append("- 需要发起练习、推荐练习或确认练习入口时，先通过工具获取练习信息。\n");
+        sb.append("- query_mastery：查掌握度/趋势；get_node_detail：节点详情与前后继；start_practice：发起练习。\n");
+        sb.append("- trace_prerequisites：追溯前置链；get_learning_frontier：可学前沿；get_review_queue：今日复习队列；schedule_review：把节点钉入今日复习。\n");
         sb.append("- 用户只说节点名称时，先从课程知识点范围匹配名称；能确定 nodeCode 就用 nodeCode，否则传精确 nodeName 让服务端解析。\n");
         sb.append("- 禁止编造掌握度；没有工具证据时，要明确说明暂未查询到。\n");
         sb.append("- 工具只能通过接口提供的 function/tool_calls 通道调用；禁止在回复正文中输出 DSML、XML、tool_calls、invoke、伪标签或任何工具协议原文。\n");
