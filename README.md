@@ -386,6 +386,33 @@ M10 提供考试备考计划：确定性任务序列（LLM 零参与 packing）�
 
 配置明细见 **`DEPLOYMENT.md`**（`plan-enabled`、`limits.plan.*`、`wenjin.plan.replan-cron`、V14）。
 
+## M11 多智能体（可选 · 默认关闭）
+
+M11 在同一编排骨架上挂三个 **persona**（不引入 LangGraph/AutoGen）：
+
+1. **学生伴学 Agent**（M4–M10）：对话态、工具集、记忆/RAG/计划；轨迹见 M5 `agent_run`。
+2. **TeacherInsightAgent（教师周报）**：只读聚合掌握度/练习/对话统计 → 结构化 payload（弱点、异常、参与度环比）+ 可选 LLM 叙述；**不读 `student_memory`**。
+3. **SupervisorSampler（质量抽查）**：每周随机抽 N 条 `COMPANION_CHAT`（排除 DEGRADED/CANCELLED），复用 M6 `JudgeService` 打分，低分写入 `flags` 并可跳转既有教师 trace。
+
+后两者为一次性任务型 agent（无对话态、无记忆写入），由 `AiJob` 异步执行；toggle 关时与 M10 基线一致。
+
+### 能力摘要
+
+- Flyway **`V15__agent_report.sql`**：`agent_report`（`uk_report_period` 幂等）。
+- 确定性聚合 **`ReportAggregations`**（可单测）：班级最低 5 节点、7 日 effective 下降 &gt;0.15、14 日无练习、周对话/练习环比。
+- Job kind：`TEACHER_WEEKLY_REPORT` / `SUPERVISOR_SAMPLE`；叙事失败仍 READY。
+- API：`GET /api/teacher/reports?courseId=&kind=`、`GET /api/teacher/reports/{id}`（`assertManageCourse`）。
+- 特性开关 **`wenjin.features.multi-agent-enabled`**：**默认 `false`**（开发与生产一致）；`WENJIN_FEATURE_MULTI_AGENT`。关闭 → 零 cron、worker 拒跑、报告 API 404。
+
+相关代码：
+
+- `wenjin-server/src/main/resources/db/migration/V15__agent_report.sql`
+- `wenjin-server/src/main/java/com/wenjin/support/multiagent/`
+- `wenjin-server/src/main/java/com/wenjin/service/multiagent/`
+- `wenjin-server/src/main/java/com/wenjin/controller/TeacherReportController.java`
+
+配置明细见 **`DEPLOYMENT.md`**（`multi-agent-enabled`、`limits.supervisor.*`、`wenjin.multi-agent.report-cron`、V15）。
+
 ## 测试与验收
 
 后端测试：
