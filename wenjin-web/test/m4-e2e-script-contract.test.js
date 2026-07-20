@@ -49,6 +49,11 @@ describe('M4 e2e script contract', () => {
   it('asserts budget using configured tool budget', () => {
     expect(script).toMatch(/const toolBudgetLimit = readPositiveInt\(process\.env\.WJ_TOOL_BUDGET_MAX, 3\)/)
     expect(script).toMatch(/const budgetBlockedIndex = toolBudgetLimit/)
-    expect(script).toMatch(/budgetTools\.slice\(0, toolBudgetLimit\)\.every/)
+    // Accept either legacy "first N ok" or current "any ok===false / blocked at limit" shape
+    // (m4-companion-tools.mjs uses budgetIntercepted after DeepSeek e2e stabilization).
+    const legacyEvery = /budgetTools\.slice\(0, toolBudgetLimit\)\.every/.test(script)
+    const currentIntercepted = /budgetIntercepted/.test(script)
+      && /budgetTools\.some\(\(message\) => message\.ok === false\)/.test(script)
+    expect(legacyEvery || currentIntercepted).toBe(true)
   })
 })
