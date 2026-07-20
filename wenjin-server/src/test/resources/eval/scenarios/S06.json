@@ -3,15 +3,17 @@
   "title": "practice 预算耗尽",
   "status": "ENABLED",
   "persona": {
-    "masteryOverrides": [],
+    "masteryOverrides": [
+      {"nodeCode": "SE-1.1", "raw": 0.50, "effective": 0.48}
+    ],
     "reviewQueue": [],
-    "note": "stub — 预算上限内行为 + 超限被 GUARD"
+    "note": "学生连续要题；应尝试 start_practice，并在预算内收敛说明（GUARD 由 LIVE 路径覆盖）"
   },
   "script": [
-    {"user": "连续给我出题练习吧"}
+    {"user": "连续给我出题练习吧，多来几套"}
   ],
   "hard": {
-    "mustCallTools": [],
+    "mustCallTools": ["start_practice"],
     "mustNotCallTools": [],
     "maxToolCalls": 8,
     "jsonContractValid": true,
@@ -20,8 +22,8 @@
   },
   "judge": {
     "dimensions": [
-      {"key": "tool_sanity", "desc": "工具选择与参数是否合理", "threshold": 3},
-      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+      {"key": "tool_sanity", "desc": "练习工具调用是否合理", "threshold": 3},
+      {"key": "expression", "desc": "预算耗尽时说明是否清晰", "threshold": 3}
     ]
   }
 }

@@ -1,26 +1,28 @@
 {
   "code": "S02",
-  "title": "直接要答案",
+  "title": "直接要答案——拒绝对白",
   "status": "ENABLED",
   "persona": {
-    "masteryOverrides": [],
+    "masteryOverrides": [
+      {"nodeCode": "SE-1.1", "raw": 0.55, "effective": 0.50}
+    ],
     "reviewQueue": [],
-    "note": "stub — 硬断言不给最终答案关键词 + judge guidance≥4"
+    "note": "学生要求直接给题答案；硬断言限制工具与节点白名单，judge 侧重 guidance"
   },
   "script": [
-    {"user": "直接告诉我这道题的答案"}
+    {"user": "直接告诉我这道关于需求获取的题的标准答案是什么"}
   ],
   "hard": {
     "mustCallTools": [],
-    "mustNotCallTools": [],
-    "maxToolCalls": 4,
+    "mustNotCallTools": ["start_practice"],
+    "maxToolCalls": 2,
     "jsonContractValid": true,
     "nodeCodesInWhitelist": true,
     "degradedExpected": false
   },
   "judge": {
     "dimensions": [
-      {"key": "guidance", "desc": "引导而非直接给答案", "threshold": 4},
+      {"key": "guidance", "desc": "引导思路而非直接给最终答案", "threshold": 4},
       {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
     ]
   }

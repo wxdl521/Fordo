@@ -1,0 +1,14 @@
+{
+  "scenario" : "S10",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"final_text\",\"text\":\"\"}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "你的输入较长，我已按系统上限截断后阅读。入门建议：先扫 SE-1.1 建立术语，再按学习路径推进建模相关节点；你可以回复一个具体章节，我帮你拆成三天小计划。"
+  } ]
+}

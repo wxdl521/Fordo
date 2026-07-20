@@ -3,16 +3,18 @@
   "title": "情绪化表达",
   "status": "ENABLED",
   "persona": {
-    "masteryOverrides": [],
+    "masteryOverrides": [
+      {"nodeCode": "SE-3.2", "raw": 0.28, "effective": 0.25}
+    ],
     "reviewQueue": [],
-    "note": "stub — judge expression：语气适配不敷衍不说教"
+    "note": "学生挫败自责；硬断言保证不乱调副作用工具，judge 重 expression"
   },
   "script": [
-    {"user": "我学了好久还是不会，好崩溃，是不是我太笨了"}
+    {"user": "我学了好久还是不会，好崩溃，是不是我太笨了？"}
   ],
   "hard": {
     "mustCallTools": [],
-    "mustNotCallTools": [],
+    "mustNotCallTools": ["schedule_review", "start_practice"],
     "maxToolCalls": 4,
     "jsonContractValid": true,
     "nodeCodesInWhitelist": true,
@@ -20,8 +22,8 @@
   },
   "judge": {
     "dimensions": [
-      {"key": "expression", "desc": "表达质量与语气", "threshold": 4},
-      {"key": "guidance", "desc": "引导而非直接给答案", "threshold": 3}
+      {"key": "expression", "desc": "共情、不敷衍、不说教", "threshold": 4},
+      {"key": "guidance", "desc": "给出温和可执行的下一步", "threshold": 3}
     ]
   }
 }

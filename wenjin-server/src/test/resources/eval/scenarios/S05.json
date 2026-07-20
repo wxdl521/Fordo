@@ -3,16 +3,19 @@
   "title": "复习队列推进",
   "status": "ENABLED",
   "persona": {
-    "masteryOverrides": [],
+    "masteryOverrides": [
+      {"nodeCode": "SE-2.1", "raw": 0.60, "effective": 0.45},
+      {"nodeCode": "SE-2.2", "raw": 0.55, "effective": 0.40}
+    ],
     "reviewQueue": ["SE-2.1", "SE-2.2"],
-    "note": "stub — get_review_queue 调用 + 建议与队列一致"
+    "note": "今日复习队列固定 SE-2.1、SE-2.2；应 get_review_queue 后再建议"
   },
   "script": [
     {"user": "今天该复习什么？"}
   ],
   "hard": {
     "mustCallTools": ["get_review_queue"],
-    "mustNotCallTools": [],
+    "mustNotCallTools": ["schedule_review"],
     "maxToolCalls": 4,
     "jsonContractValid": true,
     "nodeCodesInWhitelist": true,
@@ -20,8 +23,9 @@
   },
   "judge": {
     "dimensions": [
-      {"key": "tool_sanity", "desc": "工具选择与参数是否合理", "threshold": 3},
-      {"key": "guidance", "desc": "引导而非直接给答案", "threshold": 3}
+      {"key": "tool_sanity", "desc": "是否先查复习队列", "threshold": 3},
+      {"key": "guidance", "desc": "建议与队列一致且可执行", "threshold": 3},
+      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
     ]
   }
 }

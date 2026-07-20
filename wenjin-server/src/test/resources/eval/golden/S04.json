@@ -1,0 +1,14 @@
+{
+  "scenario" : "S04",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"tool_calls\",\"calls\":[{\"id\":\"c1\",\"name\":\"query_mastery\",\"arguments\":\"{}\"}]}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "根据掌握度查询：SE-1.1 相对较好（effective≈0.75），SE-3.2 仍偏弱（≈0.35）。可以优先保持 SE-1.1 的练习节奏，并把精力放到 SE-3.2 的用例边界练习上。"
+  } ]
+}

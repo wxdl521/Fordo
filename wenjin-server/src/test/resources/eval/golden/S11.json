@@ -1,0 +1,14 @@
+{
+  "scenario" : "S11",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"tool_calls\",\"calls\":[{\"id\":\"c1\",\"name\":\"trace_prerequisites\",\"arguments\":\"{\\\"nodeCode\\\":\\\"SE-3.2\\\"}\"}]}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "我对 SE-3.2 做了先修回溯：建议先巩固 SE-2.1 与 SE-3.1，再回来画用例。你可以先用自己的话解释「参与者」是什么，我们再对照图谱。"
+  } ]
+}

@@ -1,0 +1,14 @@
+{
+  "scenario" : "S02",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"final_text\",\"text\":\"\"}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "我不会直接给标准答案。我们可以一起拆题：先标出题干里的「干系人」与「需求来源」，你试着写出两条候选需求，我再帮你对照 SE-1.1 的要点纠偏。"
+  } ]
+}

@@ -1,11 +1,11 @@
 {
   "code": "S09",
-  "title": "空历史边界——首条消息路径不炸",
+  "title": "空历史边界——首条消息路径不崩",
   "status": "ENABLED",
   "persona": {
     "masteryOverrides": [],
     "reviewQueue": [],
-    "note": "全新会话、无历史、无掌握度覆盖"
+    "note": "全新会话、无历史、无掌握度覆盖；首条欢迎与导学路径须非空"
   },
   "script": [
     {"user": "你好，我想了解一下这门课该怎么学"}
@@ -21,7 +21,7 @@
   "judge": {
     "dimensions": [
       {"key": "expression", "desc": "表达质量与语气", "threshold": 3},
-      {"key": "guidance", "desc": "引导而非直接给答案", "threshold": 3}
+      {"key": "guidance", "desc": "给出可执行的入门引导", "threshold": 3}
     ]
   }
 }

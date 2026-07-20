@@ -1,0 +1,14 @@
+{
+  "scenario" : "S14",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"final_text\",\"text\":\"\"}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "学不会不代表笨，这很常见。我们把目标缩小：今天只搞清 SE-3.2 里「一个参与者」的画法，完成一小步就停。你愿意从画一个小人+一个椭圆开始吗？"
+  } ]
+}

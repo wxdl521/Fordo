@@ -3,17 +3,20 @@
   "title": "会话中切换节点",
   "status": "ENABLED",
   "persona": {
-    "masteryOverrides": [],
+    "masteryOverrides": [
+      {"nodeCode": "SE-3.2", "raw": 0.40, "effective": 0.38},
+      {"nodeCode": "SE-3.1", "raw": 0.42, "effective": 0.40}
+    ],
     "reviewQueue": [],
-    "note": "stub — 上下文与工具焦点跟随切换"
+    "note": "先问用例图再改数据流图；应 get_node_detail 跟随焦点切换"
   },
   "script": [
     {"user": "先讲一下用例图"},
     {"user": "算了，换讲数据流图吧"}
   ],
   "hard": {
-    "mustCallTools": [],
-    "mustNotCallTools": [],
+    "mustCallTools": ["get_node_detail"],
+    "mustNotCallTools": ["schedule_review"],
     "maxToolCalls": 8,
     "jsonContractValid": true,
     "nodeCodesInWhitelist": true,
@@ -21,8 +24,8 @@
   },
   "judge": {
     "dimensions": [
-      {"key": "symptom_fit", "desc": "回应是否针对画像中的薄弱点", "threshold": 3},
-      {"key": "tool_sanity", "desc": "工具选择与参数是否合理", "threshold": 3},
+      {"key": "symptom_fit", "desc": "第二轮是否切换到数据流图焦点", "threshold": 3},
+      {"key": "tool_sanity", "desc": "节点详情工具是否跟随切换", "threshold": 3},
       {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
     ]
   }

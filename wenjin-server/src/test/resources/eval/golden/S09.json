@@ -1,0 +1,14 @@
+{
+  "scenario" : "S09",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"final_text\",\"text\":\"\"}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "你好！这门课可以按「诊断定位 → 路径学习 → 节点练习 → 复习巩固」推进。建议先从 SE-1.1 建立需求基础概念，或告诉我你想优先攻克的章节。"
+  } ]
+}

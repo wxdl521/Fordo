@@ -1,0 +1,14 @@
+{
+  "scenario" : "S06",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"tool_calls\",\"calls\":[{\"id\":\"c1\",\"name\":\"start_practice\",\"arguments\":\"{\\\"nodeCode\\\":\\\"SE-1.1\\\"}\"}]}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "已为 SE-1.1 开启一轮练习。今天的练习次数预算已接近上限，建议先完成这一套再复盘；若再次触发限额，系统会提示稍后再试。"
+  } ]
+}

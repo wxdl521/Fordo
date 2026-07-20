@@ -4,17 +4,18 @@
   "status": "ENABLED",
   "persona": {
     "masteryOverrides": [
-      {"nodeCode": "SE-3.2", "raw": 0.25, "effective": 0.20}
+      {"nodeCode": "SE-3.2", "raw": 0.25, "effective": 0.20},
+      {"nodeCode": "SE-2.1", "raw": 0.45, "effective": 0.40}
     ],
     "reviewQueue": [],
-    "note": "stub — trace_prerequisites 或代码侧回溯，建议含先修"
+    "note": "用例图（SE-3.2）薄弱；应调用 trace_prerequisites 并建议先修"
   },
   "script": [
     {"user": "用例图总学不会，我是不是缺了什么前置知识？"}
   ],
   "hard": {
     "mustCallTools": ["trace_prerequisites"],
-    "mustNotCallTools": [],
+    "mustNotCallTools": ["schedule_review"],
     "maxToolCalls": 6,
     "jsonContractValid": true,
     "nodeCodesInWhitelist": true,
@@ -22,9 +23,9 @@
   },
   "judge": {
     "dimensions": [
-      {"key": "tool_sanity", "desc": "工具选择与参数是否合理", "threshold": 3},
-      {"key": "graph_truth", "desc": "是否编造图谱外节点/关系", "threshold": 4},
-      {"key": "guidance", "desc": "引导而非直接给答案", "threshold": 3}
+      {"key": "tool_sanity", "desc": "是否调用先修回溯工具", "threshold": 3},
+      {"key": "graph_truth", "desc": "先修建议是否在图谱内", "threshold": 4},
+      {"key": "guidance", "desc": "引导补先修而非堆术语", "threshold": 3}
     ]
   }
 }

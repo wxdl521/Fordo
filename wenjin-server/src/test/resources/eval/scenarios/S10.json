@@ -5,10 +5,10 @@
   "persona": {
     "masteryOverrides": [],
     "reviewQueue": [],
-    "note": "stub — 截断标记 + 行为正常"
+    "note": "用户消息超长；服务侧截断后仍应给出正常导学回复，不崩溃不编造节点"
   },
   "script": [
-    {"user": "这是一段超长输入占位，实际跑时由夹具生成超长文本"}
+    {"user": "这是一段超长输入占位，请在夹具中扩展至超过 max-input-chars：我想系统学习软件工程，请从基础概念讲起并列出计划。"}
   ],
   "hard": {
     "mustCallTools": [],
@@ -20,7 +20,7 @@
   },
   "judge": {
     "dimensions": [
-      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+      {"key": "expression", "desc": "截断后仍表达清晰完整", "threshold": 3}
     ]
   }
 }

@@ -1,0 +1,14 @@
+{
+  "scenario" : "S05",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"tool_calls\",\"calls\":[{\"id\":\"c1\",\"name\":\"get_review_queue\",\"arguments\":\"{}\"}]}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "今日复习队列里有 SE-2.1 和 SE-2.2。建议先用 10 分钟回顾 SE-2.1 的核心定义，再做一道 SE-2.2 的小题检验；需要的话我可以带你开复习练习。"
+  } ]
+}

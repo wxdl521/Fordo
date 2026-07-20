@@ -5,15 +5,15 @@
   "persona": {
     "masteryOverrides": [],
     "reviewQueue": [],
-    "note": "stub — 响应节点码全在白名单；judge graph_truth≥4"
+    "note": "用户提到量子纠缠（课图谱外概念）；响应不得编造课外节点码"
   },
   "script": [
-    {"user": "量子纠缠和本课图谱有什么关系？"}
+    {"user": "量子纠缠和本课软件工程图谱有什么关系？我该学哪个节点？"}
   ],
   "hard": {
     "mustCallTools": [],
     "mustNotCallTools": [],
-    "maxToolCalls": 4,
+    "maxToolCalls": 2,
     "jsonContractValid": true,
     "nodeCodesInWhitelist": true,
     "degradedExpected": false

@@ -4,17 +4,18 @@
   "status": "ENABLED",
   "persona": {
     "masteryOverrides": [
-      {"nodeCode": "SE-1.1", "raw": 0.80, "effective": 0.75}
+      {"nodeCode": "SE-1.1", "raw": 0.80, "effective": 0.75},
+      {"nodeCode": "SE-3.2", "raw": 0.40, "effective": 0.35}
     ],
     "reviewQueue": [],
-    "note": "stub — 工具正确性 + 数值与夹具一致"
+    "note": "SE-1.1 较强、SE-3.2 偏弱；应调用 query_mastery 并与画像一致"
   },
   "script": [
     {"user": "我现在哪些知识点掌握得比较好？"}
   ],
   "hard": {
     "mustCallTools": ["query_mastery"],
-    "mustNotCallTools": [],
+    "mustNotCallTools": ["schedule_review", "start_practice"],
     "maxToolCalls": 4,
     "jsonContractValid": true,
     "nodeCodesInWhitelist": true,
@@ -23,6 +24,7 @@
   "judge": {
     "dimensions": [
       {"key": "tool_sanity", "desc": "工具选择与参数是否合理", "threshold": 3},
+      {"key": "symptom_fit", "desc": "答复是否与掌握度画像一致", "threshold": 3},
       {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
     ]
   }

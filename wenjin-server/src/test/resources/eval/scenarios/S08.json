@@ -3,16 +3,18 @@
   "title": "长对话摘要正确性",
   "status": "ENABLED",
   "persona": {
-    "masteryOverrides": [],
+    "masteryOverrides": [
+      {"nodeCode": "SE-3.2", "raw": 0.30, "effective": 0.28}
+    ],
     "reviewQueue": [],
-    "note": "stub — 60 轮夹具，watermark 前关键事实可召回"
+    "note": "夹具模拟长历史：用户此前声明薄弱点为 SE-3.2 用例图；本轮召回摘要事实"
   },
   "script": [
-    {"user": "还记得我刚才说的薄弱点吗？"}
+    {"user": "还记得我刚才说的薄弱点吗？帮我回顾一下该怎么学"}
   ],
   "hard": {
     "mustCallTools": [],
-    "mustNotCallTools": [],
+    "mustNotCallTools": ["schedule_review"],
     "maxToolCalls": 4,
     "jsonContractValid": true,
     "nodeCodesInWhitelist": true,
@@ -20,7 +22,7 @@
   },
   "judge": {
     "dimensions": [
-      {"key": "symptom_fit", "desc": "回应是否针对画像中的薄弱点", "threshold": 3},
+      {"key": "symptom_fit", "desc": "是否召回薄弱点 SE-3.2 / 用例图", "threshold": 3},
       {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
     ]
   }

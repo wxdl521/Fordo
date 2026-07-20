@@ -1,7 +1,13 @@
 package com.wenjin.eval;
 
 import com.wenjin.config.FeatureFlagsProperties;
+import com.wenjin.eval.golden.EnabledScenarioStepsFactory;
+import com.wenjin.eval.golden.GoldenLoader;
+import com.wenjin.eval.report.EvalReportCase;
+import com.wenjin.eval.report.EvalReportGenerator;
+import com.wenjin.eval.runner.EvalCaseOutcome;
 import com.wenjin.eval.runner.EvalEnabledGuard;
+import com.wenjin.eval.runner.EvalMode;
 import com.wenjin.eval.scenario.EvalScenarioDocument;
 import com.wenjin.eval.scenario.EvalScenarioStatus;
 import com.wenjin.eval.scenario.ScenarioLoader;
@@ -9,13 +15,18 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * Minimal eval suite skeleton (M6).
- * <p>Full LIVE/REPLAY batch + Docker is Task 10+; this test only verifies gate + scenario inventory
- * without MySQL/Docker.
+ * Eval suite entry (M6).
+ * <p>Default tests: gate + inventory + golden inventory (no Docker).
+ * REPLAY hard asserts live in {@link ReplayScenarioHardAssertTest}.
+ * Full LIVE+RECORD batch requires AI keys and is opt-in.
  */
 class EvalSuiteTest {
 
@@ -25,7 +36,6 @@ class EvalSuiteTest {
         FeatureFlagsProperties flags = new FeatureFlagsProperties();
         flags.setEvalEnabled(false);
         assumeTrue(!EvalEnabledGuard.isEnabled(flags), "guard off");
-        // Suite would skip all scenarios when flag is false (see Live/Replay executors).
         assertThat(EvalEnabledGuard.SKIP_REASON).contains("eval-enabled=false");
     }
 
@@ -42,18 +52,55 @@ class EvalSuiteTest {
                 .filter(d -> d.resolvedStatus() == EvalScenarioStatus.PENDING)
                 .count();
         assertThat(enabled + pending).isEqualTo(docs.size());
+        assertThat(enabled).isEqualTo(EnabledScenarioStepsFactory.enabledCodes().size());
+        assertThat(pending).isEqualTo(4); // S07,S12,S13,S16
         assertThat(docs.stream().map(EvalScenarioDocument::code)).contains("S01", "S09");
     }
 
+    @Test
+    @DisplayName("ENABLED scenarios have classpath goldens for REPLAY")
+    void enabledGoldensPresent() {
+        GoldenLoader goldens = new GoldenLoader();
+        for (String code : EnabledScenarioStepsFactory.enabledCodes()) {
+            assertThat(goldens.loadFromClasspath(code).scenario()).isEqualTo(code);
+        }
+    }
+
+    @Test
+    @DisplayName("writes target/eval-report.md summary (at least empty / inventory)")
+    void writesEvalReportMarkdown() throws Exception {
+        ScenarioLoader loader = new ScenarioLoader();
+        List<EvalReportCase> cases = loader.loadAll().stream()
+                .map(d -> {
+                    if (d.resolvedStatus() == EvalScenarioStatus.PENDING) {
+                        return EvalReportCase.of(EvalCaseOutcome.skipped(
+                                d.code(), EvalMode.REPLAY, "PENDING: " + d.pendingReason()));
+                    }
+                    if (d.resolvedStatus() != EvalScenarioStatus.ENABLED) {
+                        return EvalReportCase.of(EvalCaseOutcome.skipped(
+                                d.code(), EvalMode.REPLAY, "status=" + d.status()));
+                    }
+                    // ENABLED detailed hard results written by ReplayScenarioHardAssertTest;
+                    // inventory row marks presence for suite-level report.
+                    return EvalReportCase.of(EvalCaseOutcome.skipped(
+                            d.code(), EvalMode.REPLAY, "inventory-only (see ReplayScenarioHardAssertTest)"));
+                })
+                .toList();
+
+        Path path = new EvalReportGenerator().writeDefault(cases);
+        assertThat(path).exists();
+        assertThat(Files.readString(path)).contains("# Eval Report", "S01", "S07");
+    }
+
     /**
-     * Placeholder for full suite: only runs when explicitly enabled
-     * ({@code -Dwenjin.eval.suite=true}) and still does not require Docker in this skeleton.
+     * Optional full suite hook: {@code -Dwenjin.eval.suite=true}.
+     * Still does not require Docker; LIVE path needs AI keys separately.
      */
     @Test
     @EnabledIfSystemProperty(named = "wenjin.eval.suite", matches = "true")
     @DisplayName("optional full suite hook (disabled by default)")
     void fullSuite_optIn() {
-        // Task 10 will drive LIVE RECORD / REPLAY batch here.
         assertThat(new ScenarioLoader().loadAll()).isNotEmpty();
+        assertThat(EnabledScenarioStepsFactory.enabledCodes()).isNotEmpty();
     }
 }

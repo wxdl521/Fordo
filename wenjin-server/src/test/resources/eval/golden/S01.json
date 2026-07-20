@@ -1,0 +1,22 @@
+{
+  "scenario" : "S01",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"tool_calls\",\"calls\":[{\"id\":\"c1\",\"name\":\"query_mastery\",\"arguments\":\"{\\\"nodeCode\\\":\\\"SE-3.2\\\"}\"}]}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "我查了你的掌握度：SE-3.2（用例图）有效分约 0.30，确实偏弱。我们先从「参与者与用例边界」画一个最小例子，你先说说你卡在哪一步？"
+  }, {
+    "idx" : 2,
+    "name" : "phase1",
+    "output" : "{\"type\":\"final_text\",\"text\":\"\"}"
+  }, {
+    "idx" : 3,
+    "name" : "phase2",
+    "output" : "建议先巩固 SE-2.1 相关基础表述，再回到 SE-3.2 画一个含 1 个参与者、2 个用例的草图，我帮你检查边界是否清晰。"
+  } ]
+}
