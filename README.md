@@ -6,7 +6,7 @@
 
 ## 当前进度
 
-当前代码已经完成 M1-M5 主链路，并包含教师端建图、题库审核、课程标准抽取、课程发布、认证与生产配置骨架。
+当前代码已经完成 M1-M5 主链路，M6 伴侣评测骨架（场景/硬断言/REPLAY golden/CI），并包含教师端建图、题库审核、课程标准抽取、课程发布、认证与生产配置骨架。
 
 | 里程碑 | 状态 | 已落地能力 |
 | --- | --- | --- |
@@ -16,6 +16,7 @@
 | M3 遗忘衰减与复习调度 | 已完成 | 读时指数衰减、raw/effective 双分值、今日复习队列、复习直通 M1 自由练习、ColorMap 褪色态 |
 | M4 伴侣工具调用 | 已完成 | 伴侣两段式工具调用、`query_mastery` / `get_node_detail` / `start_practice`、工具治理、SSE 工具事件、对话内练习卡 |
 | M5 Agent 轨迹 | 已完成 | `agent_run`/`agent_step` 埋点、工具结果截断与 I/O 截断、教师端轨迹列表/steps 明细、特性开关与 Flyway V10 |
+| M6 伴侣评测 | 进行中 | 场景 JSON S01–S16、HardAssert、GoldenRecorder/REPLAY、Judge 骨架、CI `eval-replay` 任务 |
 
 近期还做过 ColorMap 体验修补：今日复习面板改为地图内侧边抽屉，绘图 loading 不再误挂在 hover 状态上，左下角图例与操作提示不再重叠。
 
@@ -279,6 +280,39 @@ M5 为伴侣等 Agent 编排补齐可观测轨迹，并给教师提供按课程�
 - `wenjin-web/src/api/teacher.js`（`fetchAgentRuns` / `fetchAgentRunSteps`）
 
 生产开关与限流配置见 **`DEPLOYMENT.md`**（`agent-trace-enabled`、`limits.trace` / `limits.tools`、调度池、V10）。
+
+## M6 伴侣评测（REPLAY）
+
+M6 用场景脚本 + 硬断言 +（可选）LLM-as-judge 回归伴侣行为。CI 默认跑 **REPLAY**，不依赖 AI Key / Docker。
+
+| 构件 | 位置 |
+| --- | --- |
+| 场景（事实源） | `wenjin-server/src/test/resources/eval/scenarios/S01.json` … `S16.json` |
+| Golden（REPLAY） | `wenjin-server/src/test/resources/eval/golden/{code}.json`（ENABLED 场景） |
+| 硬断言 / 执行器 | `com.wenjin.eval.hard`、`runner`、`golden`、`replay` |
+| 报告 | `wenjin-server/target/eval-report.md`（评测测试写出） |
+| Judge 校准草稿 | `wenjin-server/docs/quality/judge-calibration-v1.md` |
+
+- **ENABLED**（CI 硬断言）：S01–S06、S08–S11、S14、S15  
+- **PENDING**（待 M8/M9）：S07、S12、S13、S16  
+- 开关：`wenjin.features.eval-enabled`（生产默认关，`WENJIN_FEATURE_EVAL`）  
+- Judge 模型：`wenjin.eval.judge-model`（可选，见 DEPLOYMENT）
+
+本地 REPLAY（与 CI `eval-replay` 一致）：
+
+```powershell
+cd wenjin-server
+$env:WENJIN_AUTH_SECRET = "ci-test-secret-not-for-prod-at-least-32-bytes"
+.\mvnw.cmd -Dtest=com.wenjin.eval.** "-Deval.mode=replay" test
+```
+
+刷新 golden（工厂合成步 → `GoldenRecorder`，无 AI Key）：
+
+```powershell
+.\mvnw.cmd "-Dtest=com.wenjin.eval.golden.GenerateEnabledGoldensTest" "-Dwenjin.eval.write-goldens=true" test
+```
+
+有 AI Key 时再做完整 **LIVE+RECORD**；当前 CI 仅保证 golden REPLAY 硬断言绿。
 
 ## 测试与验收
 

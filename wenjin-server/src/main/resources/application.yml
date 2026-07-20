@@ -111,6 +111,8 @@ wenjin:
     ai-job-dispatch-enabled: true
     agent-trace-enabled: true                    # Agent 执行轨迹埋点
     eval-enabled: true                           # 评测套件（M6）
+  eval:                                          # 伴侣评测（M6）
+    judge-model: ${WENJIN_EVAL_JUDGE_MODEL:}     # LLM-as-judge 模型；空则回落 wenjin.ai.model
   jobs:                                          # AI 异步作业 worker
     poll-interval-ms: 2000                       # 领取轮询间隔
     heartbeat-interval-ms: 30000

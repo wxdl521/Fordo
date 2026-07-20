@@ -414,8 +414,11 @@ npm run build        # 产出 dist/
 | 运维 | Flyway migrator 作业 + app DML 账号 | 见 2.3；不跑 `data.sql` / 不跑生产 `schema.sql` | 中 |
 | 已配置 | `application.yml` → `spring.task.scheduling` | 调度线程池 size=2，避免长任务饿死 cleanup/草稿清理 | 小 |
 | 已配置 | `wenjin.features.agent-trace-enabled` | M5 Agent 轨迹埋点 + 教师查询 API | 小 |
+| 已配置 | `wenjin.features.eval-enabled` | M6 伴侣评测套件 / runner | 小 |
+| 已配置 | `wenjin.eval.judge-model` | M6 LLM-as-judge 模型名（可选） | 极小 |
 | 已配置 | `wenjin.limits.trace` / `wenjin.limits.tools` | step I/O 与工具结果截断 | 小 |
 | 已迁移 | Flyway `V10__agent_trace.sql` | `agent_run` / `agent_step` 表 | 中 |
+| 已迁移 | Flyway `V11__eval.sql` | 评测场景/运行元数据表（M6） | 中 |
 
 ### 4.1 配置清单（调度与基线）
 
@@ -440,6 +443,8 @@ spring:
 | 配置项 | 默认（dev 基线） | 生产 | 说明 |
 |--------|------------------|------|------|
 | `wenjin.features.agent-trace-enabled` | `true` | `${WENJIN_FEATURE_AGENT_TRACE:false}` | 关闭时埋点 no-op，教师 `GET /api/teacher/agent-runs**` 统一 404 |
+| `wenjin.features.eval-enabled` | `true` | `${WENJIN_FEATURE_EVAL:false}` | M6 评测套件总开关；关闭时 LIVE/REPLAY executor 整体 skip |
+| `wenjin.eval.judge-model` | `${WENJIN_EVAL_JUDGE_MODEL:}`（空则回落文本模型） | 同左 | LLM-as-judge 模型；未配置时沿用 `wenjin.ai.model` |
 | `wenjin.limits.trace.max-io-chars` | `8000` | 继承基线 | `agent_step.input_json` / `output_json` 超长截断并追加 `[truncated]` |
 | `wenjin.limits.tools.max-result-chars` | `4000` | 继承基线 | 通用工具结果字符上限（与伴侣侧 `wenjin.companion.tools.max-result-chars` 并存；后者偏对话上下文） |
 | `wenjin.companion.tools.max-result-chars` | `2000` | 继承基线 | 伴侣 ToolGovernor 结果截断（M4） |
@@ -448,6 +453,9 @@ spring:
 wenjin:
   features:
     agent-trace-enabled: true   # prod: ${WENJIN_FEATURE_AGENT_TRACE:false}
+    eval-enabled: true          # prod: ${WENJIN_FEATURE_EVAL:false}
+  eval:
+    judge-model: ${WENJIN_EVAL_JUDGE_MODEL:}   # 可选；空则用 wenjin.ai.model
   limits:
     trace:
       max-io-chars: 8000
@@ -460,8 +468,9 @@ wenjin:
 - **默认关生产开关**：轨迹含工具 I/O 摘要，生产需显式 `WENJIN_FEATURE_AGENT_TRACE=true`，与固定诊断 / 图谱对账 / AI job 同一 feature-flag 风格。
 - **截断而非全文落库**：`max-io-chars` / `max-result-chars` 防止 MEDIUMTEXT 膨胀与日志噪声；教师页 steps 明细展示的即截断后内容。
 - **学生端不开放 trace API**：仅教师/管理员经 `TeacherAgentRunController` 读本课 run；学生令牌应 401/403。
-- **Schema**：空库走 Flyway V1…**V10**；既有库在 V9 成功后 migrate **V10**（`CREATE TABLE agent_run` / `agent_step`）。`schema.sql` 仅本地空库快照，生产禁用。
+- **Schema**：空库走 Flyway V1…**V11**；既有库在 V9 成功后 migrate **V10**（`agent_run` / `agent_step`），再 **V11**（eval 元数据表）。`schema.sql` 仅本地空库快照，生产禁用。
 - **发布顺序**：migrate V10 → 滚动应用（可先 flag off）→ 冒烟教师页 `/teacher/agent-runs` → 再开 `WENJIN_FEATURE_AGENT_TRACE`。回滚优先关 flag，不必立刻 drop 表。
+- **M6 评测**：生产默认 `eval-enabled=false`；CI 用 REPLAY 硬断言（`eval-replay` job，不调用外网模型）。LIVE 录 golden / judge 校准仅在有 Key 的受控环境执行。
 
 **`application-prod.yml` 参考全文**（profile 名即文件名后缀，`SPRING_PROFILES_ACTIVE=prod` 时自动合并覆盖 `application.yml`）：
 
