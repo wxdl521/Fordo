@@ -31,6 +31,7 @@ public final class ReplayCompanionAiClient implements CompanionAiClient {
     private final String scenario;
     private final List<GoldenLlmCall> calls;
     private final AtomicInteger cursor = new AtomicInteger(0);
+    private volatile String lastPhase1Raw;
 
     public ReplayCompanionAiClient(GoldenFile golden) {
         Objects.requireNonNull(golden, "golden");
@@ -55,7 +56,13 @@ public final class ReplayCompanionAiClient implements CompanionAiClient {
     public TurnOutcome completeWithTools(List<Map<String, Object>> messages,
                                          List<Map<String, Object>> toolSchemas) {
         GoldenLlmCall call = next("phase1");
+        lastPhase1Raw = call.output();
         return parsePhase1(call.output());
+    }
+
+    @Override
+    public String lastPhase1Raw() {
+        return lastPhase1Raw;
     }
 
     @Override
@@ -94,7 +101,8 @@ public final class ReplayCompanionAiClient implements CompanionAiClient {
         return call;
     }
 
-    static TurnOutcome parsePhase1(String output) {
+    /** Public for M9 {@code Phase1DecisionParser} and unit tests. */
+    public static TurnOutcome parsePhase1(String output) {
         if (output == null || output.isBlank()) {
             return new FinalText("");
         }

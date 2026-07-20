@@ -35,4 +35,12 @@ public interface CompanionAiClient {
     TurnOutcome completeWithTools(List<Map<String, Object>> messages, List<Map<String, Object>> toolSchemas);
 
     void streamMessages(List<Map<String, Object>> messages, Consumer<String> onToken);
+
+    /**
+     * Raw phase-1 model output from the most recent {@link #completeWithTools} call, if available.
+     * Used by M9 {@code Phase1DecisionParser} to read {@code intent}. Default: null.
+     */
+    default String lastPhase1Raw() {
+        return null;
+    }
 }
