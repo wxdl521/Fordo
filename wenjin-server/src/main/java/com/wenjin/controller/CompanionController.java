@@ -7,6 +7,7 @@ import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
 import com.wenjin.dto.PracticeStartVO;
+import com.wenjin.dto.ProbeStartVO;
 import com.wenjin.service.CompanionService;
 import com.wenjin.service.CourseService;
 import jakarta.annotation.PreDestroy;
@@ -116,6 +117,11 @@ public class CompanionController {
                     @Override
                     public void practiceCard(PracticeStartVO card) {
                         sendEvent(emitter, "practice_card", card, "practice_card");
+                    }
+
+                    @Override
+                    public void probeCard(ProbeStartVO card) {
+                        sendEvent(emitter, "probe_card", card, "probe_card");
                     }
                 });
 
