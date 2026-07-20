@@ -12,6 +12,7 @@ public class LimitsProperties {
 
     private final Companion companion = new Companion();
     private final Prompt prompt = new Prompt();
+    private final Memory memory = new Memory();
     private final Draft draft = new Draft();
     private final Image image = new Image();
     private final Document document = new Document();
@@ -77,6 +78,20 @@ public class LimitsProperties {
         private int maxTextChars = 200_000;
         /** 解压膨胀比上限（防 zip bomb） */
         private int maxDecompressRatio = 100;
+    }
+
+    /**
+     * 长期记忆读时强度与去重（wenjin.limits.memory.*，M7）。
+     * effective = salience × exp(−λ · Δdays)。
+     */
+    @Data
+    public static class Memory {
+        /** 遗忘系数 λ（天⁻¹）；默认 0.05 */
+        private double lambda = 0.05;
+        /** Jaccard 同义判定阈值；≥ 此值视为同义并强化已有记忆 */
+        private double jaccardThreshold = 0.6;
+        /** content 写入硬上限（与列 VARCHAR(500) 对齐，蒸馏侧再夹到 200） */
+        private int maxContentChars = 500;
     }
 
     @Data

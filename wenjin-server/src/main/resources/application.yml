@@ -88,6 +88,10 @@ wenjin:
       memory-chars: 4000
       retrieval-chars: 4000                      # 预留槽，当前恒空
       recent-chars: 16000
+    memory:                                      # 长期记忆强度 / 去重（M7）
+      lambda: 0.05                               # effective = salience * exp(-λ * Δdays)
+      jaccard-threshold: 0.6                     # ≥ 阈值视为同义，强化已有不插入
+      max-content-chars: 500
     draft:
       max-total: 100                             # 全局草稿上限
       max-per-user: 10                           # 单教师草稿上限
