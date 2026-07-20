@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master, 'codex/**']
+    branches: [main, master, 'codex/**', 'feat/**']
   pull_request:
 
 concurrency:
@@ -64,6 +64,22 @@ jobs:
             wenjin-server/target/failsafe-reports/**
             wenjin-server/target/site/jacoco/**
           if-no-files-found: ignore
+
+  eval-replay:
+    name: eval-replay
+    needs: backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '21', cache: maven, cache-dependency-path: wenjin-server/pom.xml}
+      - run: ./mvnw -q -Dtest=com.wenjin.eval.** test -Deval.mode=replay
+        working-directory: wenjin-server
+        env:
+          WENJIN_AUTH_SECRET: ci-test-secret-not-for-prod-at-least-32-bytes
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: eval-report, path: wenjin-server/target/eval-report.md, if-no-files-found: ignore}
 
   frontend:
     name: frontend-check
