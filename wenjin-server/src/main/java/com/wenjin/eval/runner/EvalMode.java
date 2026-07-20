@@ -1,6 +1,6 @@
 package com.wenjin.eval.runner;
 
-/** Eval execution mode (REPLAY is later tasks; LIVE skeleton is Task 5). */
+/** Eval execution mode: LIVE (real/mock AI) or REPLAY (golden {@code llmCalls}). */
 public enum EvalMode {
     REPLAY,
     LIVE

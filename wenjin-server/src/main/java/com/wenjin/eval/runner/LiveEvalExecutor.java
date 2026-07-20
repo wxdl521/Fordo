@@ -21,7 +21,7 @@ import java.util.Set;
  * LIVE eval executor skeleton (Task 5).
  * <p>Loads a scenario, optionally prepares persona via {@link EvalFixture}, drives script turns
  * through {@link CompanionTurnRunner} (real companion path or mocked AI), runs hard asserts.
- * RECORD / REPLAY / Judge are later tasks.
+ * REPLAY mode: {@link ReplayEvalExecutor}; RECORD export: {@code GoldenRecorder}; soft scores: {@code JudgeService}.
  */
 public final class LiveEvalExecutor {
 
