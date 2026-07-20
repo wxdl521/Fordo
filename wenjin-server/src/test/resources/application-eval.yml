@@ -1,0 +1,22 @@
+# Eval profile (M6): reuses Flyway IT base; suite skipped when eval-enabled=false
+spring:
+  flyway:
+    enabled: true
+  sql:
+    init:
+      mode: never
+
+wenjin:
+  seed:
+    enabled: false
+  bootstrap:
+    admin:
+      enabled: false
+  ai:
+    enabled: false
+  features:
+    eval-enabled: true
+    agent-trace-enabled: true
+    fixed-diagnostic-enabled: true
+    graph-reconcile-enabled: true
+    ai-job-dispatch-enabled: false

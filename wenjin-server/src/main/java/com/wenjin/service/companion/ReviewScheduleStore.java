@@ -68,9 +68,17 @@ public class ReviewScheduleStore {
         return result;
     }
 
-    /** Test / maintenance hook. */
-    void clear() {
+    /** Clear all pins (eval reset / maintenance). */
+    public void clear() {
         pins.clear();
+    }
+
+    /** Clear pins for one student×course (all dates). */
+    public void clearStudent(Long studentId, Long courseId) {
+        Objects.requireNonNull(studentId, "studentId");
+        Objects.requireNonNull(courseId, "courseId");
+        pins.keySet().removeIf(key ->
+                Objects.equals(key.studentId(), studentId) && Objects.equals(key.courseId(), courseId));
     }
 
     private record PinKey(Long studentId, Long courseId, LocalDate date, String nodeCode) {
