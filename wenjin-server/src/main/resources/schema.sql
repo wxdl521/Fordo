@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════
 --  问津 · 知识图谱驱动的个性化学习导航系统
---  本地空库重建快照（当前最终 DDL，含 V3–V11；共 27 张业务表）
+--  本地空库重建快照（当前最终 DDL，含 V3–V12；共 28 张业务表）
 --
 --  ⚠ 仅本地空库 / 会删数据 / 生产禁用
 --    · 本脚本含 DROP TABLE IF EXISTS，会清空目标库业务表数据。
---    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V11）。
+--    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V12）。
 --    · 新增版本化迁移（Vn）后，必须把最终 DDL 同步回本文件，保持本地快照一致。
 --    · 应用启动默认 spring.flyway.enabled=false（WENJIN_FLYWAY_ENABLED），
 --      普通应用账号只有 DML；发布流水线用 migrator 凭据单独跑迁移作业。
@@ -16,7 +16,8 @@
 --    4. V9 起建立命名物理外键与 sys_user.role CHECK；本地快照与 Flyway 最终态对齐。
 --    5. V10 增 agent_run / agent_step（无物理 FK，与迁移脚本一致）。
 --    6. V11 增 eval_scenario / eval_case_result（评测场景与结果，无物理 FK）。
---    7. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--    7. V12 增 student_memory；companion_conversation 增 distilled_through / summary_origin。
+--    8. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -371,7 +372,9 @@ CREATE TABLE `companion_conversation` (
     `title`      VARCHAR(128) DEFAULT NULL            COMMENT '会话标题（首问截断/节点名前缀）',
     `node_code`  VARCHAR(64)  DEFAULT NULL            COMMENT '发起时的图谱节点上下文（可空）',
     `summary_text` MEDIUMTEXT NULL                    COMMENT '历史消息滚动摘要（送入模型）【V8】',
+    `summary_origin` TINYINT NOT NULL DEFAULT 0       COMMENT '0=DETERMINISTIC mergeSummary,1=LLM SUMMARY_REFRESH【V12】',
     `summary_through_message_id` BIGINT NULL          COMMENT '摘要覆盖到的最后一条消息 id（含）【V8】',
+    `distilled_through_message_id` BIGINT NULL        COMMENT '已蒸馏到的最后一条消息 id（含）【V12】',
     `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP                          COMMENT '创建时间',
     `updated_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
@@ -379,6 +382,23 @@ CREATE TABLE `companion_conversation` (
     CONSTRAINT `fk_companion_student` FOREIGN KEY (`student_id`) REFERENCES `sys_user` (`id`),
     CONSTRAINT `fk_companion_course` FOREIGN KEY (`course_id`) REFERENCES `course` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 学习伴侣会话';
+
+DROP TABLE IF EXISTS `student_memory`;
+CREATE TABLE `student_memory` (
+    `id`                  BIGINT        NOT NULL AUTO_INCREMENT COMMENT '记忆ID',
+    `student_id`          BIGINT        NOT NULL COMMENT '学生（逻辑外键→sys_user.id）',
+    `course_id`           BIGINT        NOT NULL COMMENT '课程（逻辑外键→course.id）',
+    `kind`                TINYINT       NOT NULL COMMENT '0=EPISODIC,1=SEMANTIC,2=PROCEDURAL',
+    `content`             VARCHAR(500)  NOT NULL COMMENT '记忆正文',
+    `node_code`           VARCHAR(32)   NULL COMMENT '关联知识点 node_code（可空）',
+    `source_run_id`       BIGINT        NULL COMMENT '来源 agent_run.id（可空）',
+    `salience`            DECIMAL(6,4)  NOT NULL DEFAULT 1.0000 COMMENT '基础显著度',
+    `last_reinforced_at`  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最近强化时间',
+    `status`              TINYINT       NOT NULL DEFAULT 1 COMMENT '0=ARCHIVED,1=ACTIVE',
+    `created_at`          DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_mem_student` (`student_id`, `course_id`, `kind`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生长期记忆（M7）【V12】';
 
 DROP TABLE IF EXISTS `companion_message`;
 CREATE TABLE `companion_message` (

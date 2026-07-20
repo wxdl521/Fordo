@@ -30,8 +30,17 @@ public class CompanionConversation {
     /** 历史消息滚动摘要（送入模型） */
     private String summaryText;
 
+    /**
+     * 摘要来源：0=DETERMINISTIC（请求路径 mergeSummary），1=LLM（SUMMARY_REFRESH 作业）。
+     * @see com.wenjin.support.SummaryOrigin
+     */
+    private Integer summaryOrigin;
+
     /** 摘要覆盖到的最后一条消息 id（含） */
     private Long summaryThroughMessageId;
+
+    /** 已蒸馏到的最后一条消息 id（含）；MEMORY_DISTILL 守卫推进 */
+    private Long distilledThroughMessageId;
 
     /** 创建时间 */
     private LocalDateTime createdAt;

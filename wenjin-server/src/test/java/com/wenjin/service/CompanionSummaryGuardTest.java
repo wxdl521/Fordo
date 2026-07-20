@@ -44,6 +44,7 @@ class CompanionSummaryGuardTest {
 
         assertThat(sql).contains("summary_text");
         assertThat(sql).contains("summary_through_message_id");
+        assertThat(sql).contains("summary_origin");
         assertThat(sql).contains("updated_at");
         assertThat(sql).doesNotContain("node_code");
         assertThat(sql).contains("summary_through_message_id is null")
@@ -223,7 +224,7 @@ class CompanionSummaryGuardTest {
 
         /**
          * 对齐 mapper SQL：
-         * UPDATE ... SET summary_text, summary_through_message_id, updated_at
+         * UPDATE ... SET summary_text, summary_through_message_id, summary_origin=0, updated_at
          * WHERE id=? AND (summary_through_message_id IS NULL OR summary_through_message_id < ?)
          */
         synchronized int updateSummaryGuarded(Long id, String summaryText, Long throughId) {
@@ -237,6 +238,7 @@ class CompanionSummaryGuardTest {
             }
             row.setSummaryText(summaryText);
             row.setSummaryThroughMessageId(throughId);
+            row.setSummaryOrigin(0);
             row.setUpdatedAt(LocalDateTime.now());
             return 1;
         }
@@ -249,7 +251,9 @@ class CompanionSummaryGuardTest {
             c.setTitle(src.getTitle());
             c.setNodeCode(src.getNodeCode());
             c.setSummaryText(src.getSummaryText());
+            c.setSummaryOrigin(src.getSummaryOrigin());
             c.setSummaryThroughMessageId(src.getSummaryThroughMessageId());
+            c.setDistilledThroughMessageId(src.getDistilledThroughMessageId());
             c.setCreatedAt(src.getCreatedAt());
             c.setUpdatedAt(src.getUpdatedAt());
             return c;
