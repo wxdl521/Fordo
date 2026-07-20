@@ -25,4 +25,7 @@ public class FeatureFlagsProperties {
 
     /** 评测套件 / runner（M6；关闭时 EvalSuite 整体 skip） */
     private boolean evalEnabled = true;
+
+    /** 伴侣长期记忆（M7；关闭时 PromptAssembler 以空 MEMORY 槽工作） */
+    private boolean memoryEnabled = true;
 }

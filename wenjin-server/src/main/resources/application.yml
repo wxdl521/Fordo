@@ -81,6 +81,13 @@ wenjin:
       max-recent-messages: 20                    # 近窗保留最新消息条数
       list-default-limit: 30                     # 会话/消息列表默认 limit
       list-max-limit: 100                        # 会话/消息列表 limit 上限
+    prompt:                                      # PromptAssembler 分槽预算（M7）
+      system-chars: 8000
+      skill-chars: 2000                          # 预留槽，当前恒空
+      summary-chars: 8000
+      memory-chars: 4000
+      retrieval-chars: 4000                      # 预留槽，当前恒空
+      recent-chars: 16000
     draft:
       max-total: 100                             # 全局草稿上限
       max-per-user: 10                           # 单教师草稿上限
@@ -111,6 +118,7 @@ wenjin:
     ai-job-dispatch-enabled: true
     agent-trace-enabled: true                    # Agent 执行轨迹埋点
     eval-enabled: true                           # 评测套件（M6）
+    memory-enabled: true                         # 伴侣长期记忆（M7；关则 MEMORY 槽为空）
   eval:                                          # 伴侣评测（M6）
     judge-model: ${WENJIN_EVAL_JUDGE_MODEL:}     # LLM-as-judge 模型；空则回落 wenjin.ai.model
   jobs:                                          # AI 异步作业 worker

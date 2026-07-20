@@ -11,6 +11,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class LimitsProperties {
 
     private final Companion companion = new Companion();
+    private final Prompt prompt = new Prompt();
     private final Draft draft = new Draft();
     private final Image image = new Image();
     private final Document document = new Document();
@@ -31,6 +32,20 @@ public class LimitsProperties {
         private int listDefaultLimit = 30;
         /** 会话/消息列表 limit 上限 */
         private int listMaxLimit = 100;
+    }
+
+    /**
+     * PromptAssembler 分槽字符预算（wenjin.limits.prompt.*）。
+     * 各槽独立上限；总长度仍受 {@link Companion#maxContextChars} 约束。
+     */
+    @Data
+    public static class Prompt {
+        private int systemChars = 8_000;
+        private int skillChars = 2_000;
+        private int summaryChars = 8_000;
+        private int memoryChars = 4_000;
+        private int retrievalChars = 4_000;
+        private int recentChars = 16_000;
     }
 
     @Data
