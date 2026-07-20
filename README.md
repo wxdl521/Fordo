@@ -287,14 +287,14 @@ M6 用场景脚本 + 硬断言 +（可选）LLM-as-judge 回归伴侣行为。CI
 
 | 构件 | 位置 |
 | --- | --- |
-| 场景（事实源） | `wenjin-server/src/test/resources/eval/scenarios/S01.json` … `S18.json` |
+| 场景（事实源） | `wenjin-server/src/test/resources/eval/scenarios/S01.json` … `S19.json` |
 | Golden（REPLAY） | `wenjin-server/src/test/resources/eval/golden/{code}.json`（ENABLED 场景） |
 | 硬断言 / 执行器 | `com.wenjin.eval.hard`、`runner`、`golden`、`replay` |
 | 报告 | `wenjin-server/target/eval-report.md`（评测测试写出） |
 | Judge 校准草稿 | `wenjin-server/docs/quality/judge-calibration-v1.md` |
 
-- **ENABLED**（CI 硬断言）：S01–S06、S08–S11、S14、S15  
-- **PENDING**（待 M7 LIVE / M8/M9）：S07、S12、S13、S16、**S18**（跨会话记忆引用）  
+- **ENABLED**（CI 硬断言）：S01–S06、S08–S11、**S13**、S14、S15、**S16**、**S19**  
+- **PENDING**（待 M7 LIVE / M9）：S07、S12、**S18**（跨会话记忆引用）  
 - S02：`guidance` 阈值 4；system prompt 强化「索要直接答案 → 分步引导」  
 - 开关：`wenjin.features.eval-enabled`（生产默认关，`WENJIN_FEATURE_EVAL`）  
 - Judge 模型：`wenjin.eval.judge-model`（可选，见 DEPLOYMENT）
@@ -337,6 +337,29 @@ M7 为学生伴侣增加三层记忆（EPISODIC / SEMANTIC / PROCEDURAL）与分
 - `wenjin-server/src/main/java/com/wenjin/service/companion/RecordObservationTool.java`
 
 配置明细见 **`DEPLOYMENT.md`**（`memory-enabled`、`limits.memory.*`、`limits.prompt.*`、V12）。
+
+## M8 RAG（语料挂载图谱）
+
+M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `RETRIEVAL` 槽，并提供 `search_materials` 工具与引用校验。
+
+### 能力摘要
+
+- Flyway **`V13__rag.sql`**：`doc_source` / `doc_chunk`（FULLTEXT ngram）/ `chunk_node_map`。
+- **NODE_REF 入库**：`DOC_INGEST` 作业解析 Markdown frontmatter + `##` 切块，映射直写 `APPROVED`（样例见 `src/test/resources/rag/node-ref/`）。
+- **检索**：`RetrievalService` 两段式（节点圈定 → 可选全课程放宽）；`FulltextRetriever` 实现 `RetrieverPort`（向量实现预留）。
+- **注入**：`rag-enabled` 且有命中时填充 RETRIEVAL 不可信包裹块；`CitationValidator` 剔除越界 `citedChunkIds`。
+- **工具**：`search_materials`（读、可缓存；`query`≤50、`nodeCodes`≤5、`topK` 1..5）。
+- 特性开关 **`wenjin.features.rag-enabled`**：开发默认 `true`；生产默认 `false`（`WENJIN_FEATURE_RAG`）。关闭时：空 RETRIEVAL、工具从 schema 下架。
+- **部署**：上线前执行 `ops/sql/preflight-ngram.sql`，确认 `ngram_token_size=2`。版权：整本出版教材勿部署到公网演示环境。
+
+相关代码：
+
+- `wenjin-server/src/main/resources/db/migration/V13__rag.sql`
+- `wenjin-server/src/main/java/com/wenjin/support/rag/`
+- `wenjin-server/src/main/java/com/wenjin/service/rag/`
+- `wenjin-server/src/main/java/com/wenjin/service/companion/SearchMaterialsTool.java`
+
+配置明细见 **`DEPLOYMENT.md`**（`rag-enabled`、`limits.rag.*`、V13、ngram 预检）。
 
 ## 测试与验收
 

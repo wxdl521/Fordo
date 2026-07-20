@@ -416,12 +416,15 @@ npm run build        # 产出 dist/
 | 已配置 | `wenjin.features.agent-trace-enabled` | M5 Agent 轨迹埋点 + 教师查询 API | 小 |
 | 已配置 | `wenjin.features.eval-enabled` | M6 伴侣评测套件 / runner | 小 |
 | 已配置 | `wenjin.features.memory-enabled` | M7 伴侣长期记忆（注入 / 蒸馏 / 工具） | 小 |
+| 已配置 | `wenjin.features.rag-enabled` | M8 RAG 语料检索 / RETRIEVAL / search_materials | 小 |
 | 已配置 | `wenjin.eval.judge-model` | M6 LLM-as-judge 模型名（可选） | 极小 |
 | 已配置 | `wenjin.limits.trace` / `wenjin.limits.tools` | step I/O 与工具结果截断 | 小 |
 | 已配置 | `wenjin.limits.prompt` / `wenjin.limits.memory` | M7 分槽预算与记忆强度/注入 | 小 |
+| 已配置 | `wenjin.limits.rag` | M8 检索 top-k / snippet | 小 |
 | 已迁移 | Flyway `V10__agent_trace.sql` | `agent_run` / `agent_step` 表 | 中 |
 | 已迁移 | Flyway `V11__eval.sql` | 评测场景/运行元数据表（M6） | 中 |
 | 已迁移 | Flyway `V12__student_memory.sql` | `student_memory` + 会话蒸馏列（M7） | 中 |
+| 已迁移 | Flyway `V13__rag.sql` | `doc_source` / `doc_chunk` / `chunk_node_map`（M8） | 中 |
 
 ### 4.1 配置清单（调度与基线）
 
@@ -448,6 +451,7 @@ spring:
 | `wenjin.features.agent-trace-enabled` | `true` | `${WENJIN_FEATURE_AGENT_TRACE:false}` | 关闭时埋点 no-op，教师 `GET /api/teacher/agent-runs**` 统一 404 |
 | `wenjin.features.eval-enabled` | `true` | `${WENJIN_FEATURE_EVAL:false}` | M6 评测套件总开关；关闭时 LIVE/REPLAY executor 整体 skip |
 | `wenjin.features.memory-enabled` | `true` | `${WENJIN_FEATURE_MEMORY:false}` | M7 长期记忆；关则 MEMORY 空、不 distill、记忆工具下架 |
+| `wenjin.features.rag-enabled` | `true` | `${WENJIN_FEATURE_RAG:false}` | M8 RAG；关则 RETRIEVAL 空、`search_materials` 下架 |
 | `wenjin.eval.judge-model` | `${WENJIN_EVAL_JUDGE_MODEL:}`（空则回落文本模型） | 同左 | LLM-as-judge 模型；未配置时沿用 `wenjin.ai.model` |
 | `wenjin.limits.trace.max-io-chars` | `8000` | 继承基线 | `agent_step.input_json` / `output_json` 超长截断并追加 `[truncated]` |
 | `wenjin.limits.tools.max-result-chars` | `4000` | 继承基线 | 通用工具结果字符上限（与伴侣侧 `wenjin.companion.tools.max-result-chars` 并存；后者偏对话上下文） |
@@ -456,13 +460,16 @@ spring:
 | `wenjin.limits.prompt.skill-chars` | `2000` | 继承基线 | SKILL 预留槽 |
 | `wenjin.limits.prompt.summary-chars` | `8000` | 继承基线 | SUMMARY 槽 |
 | `wenjin.limits.prompt.memory-chars` | `4000` | 继承基线 | MEMORY 槽 |
-| `wenjin.limits.prompt.retrieval-chars` | `4000` | 继承基线 | RETRIEVAL 预留槽 |
+| `wenjin.limits.prompt.retrieval-chars` | `4000` | 继承基线 | RETRIEVAL 槽（M8） |
 | `wenjin.limits.prompt.recent-chars` | `16000` | 继承基线 | RECENT 近窗槽 |
 | `wenjin.limits.memory.lambda` | `0.05` | 继承基线 | effective = salience × exp(−λ·Δdays) |
 | `wenjin.limits.memory.jaccard-threshold` | `0.6` | 继承基线 | 同义去重阈值 |
 | `wenjin.limits.memory.max-content-chars` | `500` | 继承基线 | content 写入硬上限（对齐列宽） |
 | `wenjin.limits.memory.inject-top-k` | `5` | 继承基线 | MEMORY 槽注入条数 |
 | `wenjin.limits.memory.write-per-run` | `2` | 继承基线 | `record_observation` 每 run 上限 |
+| `wenjin.limits.rag.inject-top-k` | `4` | 继承基线 | RETRIEVAL 注入 top-k |
+| `wenjin.limits.rag.search-default-top-k` | `3` | 继承基线 | `search_materials` 默认 topK |
+| `wenjin.limits.rag.snippet-chars` | `200` | 继承基线 | 工具返回 snippet 上限 |
 
 ```yaml
 wenjin:
@@ -470,6 +477,7 @@ wenjin:
     agent-trace-enabled: true   # prod: ${WENJIN_FEATURE_AGENT_TRACE:false}
     eval-enabled: true          # prod: ${WENJIN_FEATURE_EVAL:false}
     memory-enabled: true        # prod: ${WENJIN_FEATURE_MEMORY:false}
+    rag-enabled: true           # prod: ${WENJIN_FEATURE_RAG:false}
   eval:
     judge-model: ${WENJIN_EVAL_JUDGE_MODEL:}   # 可选；空则用 wenjin.ai.model
   limits:
@@ -490,6 +498,10 @@ wenjin:
       max-content-chars: 500
       inject-top-k: 5
       write-per-run: 2
+    rag:
+      inject-top-k: 4
+      search-default-top-k: 3
+      snippet-chars: 200
 ```
 
 **决策笔记**：
@@ -497,10 +509,11 @@ wenjin:
 - **默认关生产开关**：轨迹含工具 I/O 摘要，生产需显式 `WENJIN_FEATURE_AGENT_TRACE=true`，与固定诊断 / 图谱对账 / AI job 同一 feature-flag 风格。
 - **截断而非全文落库**：`max-io-chars` / `max-result-chars` 防止 MEDIUMTEXT 膨胀与日志噪声；教师页 steps 明细展示的即截断后内容。
 - **学生端不开放 trace API**：仅教师/管理员经 `TeacherAgentRunController` 读本课 run；学生令牌应 401/403。
-- **Schema**：空库走 Flyway V1…**V12**；既有库在 V9 成功后 migrate **V10**（`agent_run` / `agent_step`），**V11**（eval），**V12**（`student_memory`）。`schema.sql` 仅本地空库快照，生产禁用。
+- **Schema**：空库走 Flyway V1…**V13**；既有库 migrate **V10**（`agent_run` / `agent_step`），**V11**（eval），**V12**（`student_memory`），**V13**（RAG 三表 + FULLTEXT ngram）。`schema.sql` 仅本地空库快照，生产禁用。
 - **发布顺序**：migrate V10 → 滚动应用（可先 flag off）→ 冒烟教师页 `/teacher/agent-runs` → 再开 `WENJIN_FEATURE_AGENT_TRACE`。回滚优先关 flag，不必立刻 drop 表。
 - **M6 评测**：生产默认 `eval-enabled=false`；CI 用 REPLAY 硬断言（`eval-replay` job，不调用外网模型）。LIVE 录 golden / judge 校准仅在有 Key 的受控环境执行。
 - **M7 记忆**：生产默认 `memory-enabled=false`；开启前须完成 V12 migrate。关闭时行为回到 M6 基线（空 MEMORY 槽、无 distill 入队、记忆工具不可用）。`record_observation` 超 `write-per-run` 返回 `TOOL_BUDGET_EXCEEDED` + GUARD，且不占用总工具次数。
+- **M8 RAG**：生产默认 `rag-enabled=false`；开启前须完成 **V13 migrate** 与 **`ops/sql/preflight-ngram.sql`**（`ngram_token_size=2`）。关闭时回到 M7 基线（空 RETRIEVAL、`search_materials` 不可用）。**版权**：整本出版教材勿部署到公网 `fordo.thingxue.com`；校内演示环境不受限。NODE_REF 参考文档可入库。
 
 **`application-prod.yml` 参考全文**（profile 名即文件名后缀，`SPRING_PROFILES_ACTIVE=prod` 时自动合并覆盖 `application.yml`）：
 
