@@ -80,3 +80,40 @@ export function deleteTeacherCourse(id) {
 export function setTeacherCourseStatus(id, published) {
   return http.patch(`/teacher/courses/${id}/status`, { published })
 }
+
+// ── RAG 语料审核（教师端）──
+export function fetchRagSources(courseId, config = {}) {
+  return http.get('/teacher/rag/sources', {
+    ...config,
+    params: { ...config.params, courseId }
+  })
+}
+export function fetchRagMappings({ courseId, nodeCode, status, page, size }, config = {}) {
+  return http.get('/teacher/rag/mappings', {
+    ...config,
+    params: { ...config.params, courseId, nodeCode, status, page, size }
+  })
+}
+export function approveRagMapping(id) {
+  return http.post(`/teacher/rag/mappings/${id}/approve`)
+}
+export function rejectRagMapping(id) {
+  return http.post(`/teacher/rag/mappings/${id}/reject`)
+}
+export function batchApproveRagMappings(courseId, body = {}) {
+  return http.post('/teacher/rag/mappings/batch-approve', body, { params: { courseId } })
+}
+export function createNodeRefSource(body) {
+  return http.post('/teacher/rag/sources/node-ref', body)
+}
+
+// ── 多智能体报告（教师端）──
+export function fetchTeacherReports(courseId, kind, config = {}) {
+  return http.get('/teacher/reports', {
+    ...config,
+    params: { ...config.params, courseId, kind }
+  })
+}
+export function fetchTeacherReport(id, config = {}) {
+  return http.get(`/teacher/reports/${id}`, config)
+}

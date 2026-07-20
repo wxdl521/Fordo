@@ -25,6 +25,7 @@ import * as review from '../review.js'
 import * as jobs from '../jobs.js'
 import * as teacher from '../teacher.js'
 import * as companion from '../companion.js'
+import * as student from '../student.js'
 
 function expectMultipartCall(call, expectedPath, expectedFile, expectedConfig) {
   const [actualPath, body, config] = call
@@ -89,15 +90,28 @@ describe('API endpoint contracts', () => {
         'fetchTeacherCourses',
         'createTeacherCourse',
         'deleteTeacherCourse',
-        'setTeacherCourseStatus'
+        'setTeacherCourseStatus',
+        'fetchRagSources',
+        'fetchRagMappings',
+        'approveRagMapping',
+        'rejectRagMapping',
+        'batchApproveRagMappings',
+        'createNodeRefSource',
+        'fetchTeacherReports',
+        'fetchTeacherReport'
       ]],
       [companion, [
         'isAbortError',
         'listConversations',
         'fetchConversation',
         'deleteConversation',
+        'submitProbe',
         'dispatchChatStreamEvent',
         'chatStream'
+      ]],
+      [student, [
+        'fetchDailyBrief',
+        'fetchStudentChunk'
       ]]
     ])
 
@@ -106,7 +120,8 @@ describe('API endpoint contracts', () => {
       expect(Object.keys(module).sort()).toEqual([...names].sort())
       exportCount += names.length
     }
-    expect(exportCount).toBe(61)
+    // 61 baseline + 8 teacher RAG/reports + 1 companion submitProbe + 2 student = 72
+    expect(exportCount).toBe(72)
   })
 
   it('maps user and course operations without forwarding privilege fields', () => {

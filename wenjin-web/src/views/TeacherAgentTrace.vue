@@ -209,8 +209,8 @@ watch(courseId, () => {
 
 onBeforeUnmount(() => {
   disposed = true
-  listRequest.abort()
-  stepsRequest.abort()
+  listRequest.cancel()
+  stepsRequest.cancel()
 })
 </script>
 

@@ -100,7 +100,9 @@ const teacherLinks = [
   { to: '/teacher/graph', label: '图谱审核' },
   { to: '/teacher/questions', label: '题目审核' },
   { to: '/teacher/dashboard', label: '学情看板' },
-  { to: '/teacher/agent-runs', label: 'Agent 轨迹' }
+  { to: '/teacher/agent-runs', label: 'Agent 轨迹' },
+  { to: '/teacher/rag', label: '语料审核' },
+  { to: '/teacher/reports', label: '周报' }
 ]
 
 // 导航链接样式
