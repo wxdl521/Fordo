@@ -26,6 +26,8 @@ wenjin:
     eval-enabled: ${WENJIN_FEATURE_EVAL:false}
     memory-enabled: ${WENJIN_FEATURE_MEMORY:false}
     rag-enabled: ${WENJIN_FEATURE_RAG:false}
+    reflection-enabled: ${WENJIN_FEATURE_REFLECTION:false}
+    companion-llm-enabled: ${WENJIN_FEATURE_COMPANION_LLM:true}
 
 # Actuator 仅暴露无详情的健康检查
 management:

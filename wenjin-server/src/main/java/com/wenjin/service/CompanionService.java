@@ -4,6 +4,7 @@ import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
 import com.wenjin.dto.PracticeStartVO;
+import com.wenjin.dto.ProbeStartVO;
 
 import java.util.List;
 import java.util.function.Consumer;
@@ -24,6 +25,10 @@ public interface CompanionService {
         }
 
         public void practiceCard(PracticeStartVO card) {
+        }
+
+        /** M9 understanding probe card (optional). */
+        public void probeCard(ProbeStartVO card) {
         }
     }
 

@@ -31,4 +31,14 @@ public class FeatureFlagsProperties {
 
     /** RAG 语料检索（M8；关闭时 RETRIEVAL 空、search_materials 下架） */
     private boolean ragEnabled = true;
+
+    /**
+     * 反思探针 / 换策略重讲（M9；关闭时不下发 probe_understanding、不自动探针）。
+     */
+    private boolean reflectionEnabled = true;
+
+    /**
+     * 伴侣 LLM 调用（M9 紧急 kill switch；关闭时走 CompanionDegradeService 零 LLM 模板）。
+     */
+    private boolean companionLlmEnabled = true;
 }

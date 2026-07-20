@@ -26,7 +26,9 @@ import com.wenjin.mapper.CompanionMessageMapper;
 import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.service.companion.CompanionDegradeService;
 import com.wenjin.service.companion.CompanionTool;
+import com.wenjin.service.companion.ReflectionCoordinator;
 import com.wenjin.service.companion.ToolContext;
 import com.wenjin.service.companion.ToolExecutionResult;
 import com.wenjin.service.companion.ToolExecutionState;
@@ -39,7 +41,10 @@ import com.wenjin.support.AgentRunStatus;
 import com.wenjin.support.AgentStepStatus;
 import com.wenjin.support.AgentStepType;
 import com.wenjin.support.CompanionFinalTextSanitizer;
+import com.wenjin.support.CompanionIntent;
 import com.wenjin.support.ConversationContextBuilder;
+import com.wenjin.support.Phase1Decision;
+import com.wenjin.support.Phase1DecisionParser;
 import com.wenjin.support.PracticeIntent;
 import com.wenjin.support.PracticeIntentDetector;
 import lombok.RequiredArgsConstructor;
@@ -109,6 +114,14 @@ public class CompanionServiceImpl implements CompanionService {
 
     @Autowired(required = false)
     private FeatureFlagsProperties featureFlags;
+
+    /** M9 零 LLM 降级。 */
+    @Autowired(required = false)
+    private CompanionDegradeService degradeService;
+
+    /** M9 反思探针协调。 */
+    @Autowired(required = false)
+    private ReflectionCoordinator reflectionCoordinator;
 
     @Override
     @Transactional
@@ -243,12 +256,18 @@ public class CompanionServiceImpl implements CompanionService {
         int runStatus = AgentRunStatus.SUCCEEDED;
         String errorCode = null;
         try {
+            // M9 kill switch: companion-llm-enabled=false → zero-LLM template path
+            if (!isCompanionLlmEnabled()) {
+                runStatus = streamDegraded(conversationId, conversation, sink, traceCtx,
+                        CompanionDegradeService.REASON_LLM_DISABLED);
+                return;
+            }
             if (!toolOrchestrationAvailable) {
                 streamWithLegacyPath(conversationId, systemPrompt, ctx, memoryLines,
                         retrievalBlocks, sink, traceCtx);
                 return;
             }
-            streamWithTools(conversationId, conversation, systemPrompt, history, ctx,
+            runStatus = streamWithTools(conversationId, conversation, systemPrompt, history, ctx,
                     memoryLines, retrievalBlocks, usableTools, sink, traceCtx);
         } catch (RuntimeException ex) {
             runStatus = AgentRunStatus.FAILED;
@@ -385,29 +404,32 @@ public class CompanionServiceImpl implements CompanionService {
     private static final String FALLBACK_AFTER_TOOLS =
             "我已根据工具结果整理完毕。你还想继续了解哪一块？";
 
-    private void streamWithTools(Long conversationId,
-                                 CompanionConversation conversation,
-                                 String systemPrompt,
-                                 List<CompanionMessage> history,
-                                 ConversationContextBuilder.BuiltContext ctx,
-                                 List<String> memoryLines,
-                                 List<CompanionTool> tools,
-                                 CompanionStreamSink sink,
-                                 TraceContext traceCtx) {
-        streamWithTools(conversationId, conversation, systemPrompt, history, ctx,
+    private int streamWithTools(Long conversationId,
+                                CompanionConversation conversation,
+                                String systemPrompt,
+                                List<CompanionMessage> history,
+                                ConversationContextBuilder.BuiltContext ctx,
+                                List<String> memoryLines,
+                                List<CompanionTool> tools,
+                                CompanionStreamSink sink,
+                                TraceContext traceCtx) {
+        return streamWithTools(conversationId, conversation, systemPrompt, history, ctx,
                 memoryLines, List.of(), tools, sink, traceCtx);
     }
 
-    private void streamWithTools(Long conversationId,
-                                 CompanionConversation conversation,
-                                 String systemPrompt,
-                                 List<CompanionMessage> history,
-                                 ConversationContextBuilder.BuiltContext ctx,
-                                 List<String> memoryLines,
-                                 List<String> retrievalBlocks,
-                                 List<CompanionTool> tools,
-                                 CompanionStreamSink sink,
-                                 TraceContext traceCtx) {
+    /**
+     * @return run status ({@link AgentRunStatus#SUCCEEDED} or {@link AgentRunStatus#DEGRADED})
+     */
+    private int streamWithTools(Long conversationId,
+                                CompanionConversation conversation,
+                                String systemPrompt,
+                                List<CompanionMessage> history,
+                                ConversationContextBuilder.BuiltContext ctx,
+                                List<String> memoryLines,
+                                List<String> retrievalBlocks,
+                                List<CompanionTool> tools,
+                                CompanionStreamSink sink,
+                                TraceContext traceCtx) {
         List<Map<String, Object>> messages = contextBuilder.toToolMessages(
                 systemPrompt,
                 ctx,
@@ -421,10 +443,12 @@ public class CompanionServiceImpl implements CompanionService {
                 conversation.getCourseId(),
                 conversation.getNodeCode());
         boolean practiceStarted = false;
+        int llmFailures = 0;
+        CompanionIntent lastIntent = CompanionIntent.CHAT;
 
         if (tryForceStartPracticeFromIntent(
                 conversationId, conversation, history, tools, toolLabels, messages, context, state, sink, traceCtx)) {
-            return;
+            return AgentRunStatus.SUCCEEDED;
         }
 
         for (int round = 0; round < maxRounds(); round++) {
@@ -433,24 +457,54 @@ public class CompanionServiceImpl implements CompanionService {
             long phase1Started = System.currentTimeMillis();
             try {
                 outcome = aiClient.completeWithTools(messages, toolSchemas);
+                lastIntent = Phase1DecisionParser.extractIntent(aiClient.lastPhase1Raw());
                 recordPhase1Step(traceCtx, phase1Input, outcome, AgentStepStatus.OK, phase1Started, null);
             } catch (Exception ex) {
+                llmFailures++;
                 recordPhase1Step(traceCtx, phase1Input, null, AgentStepStatus.FAILED, phase1Started, "PHASE1_ERROR");
-                log.warn("Companion tool resolution failed for conversationId={}, falling back to no-tool stream",
-                        conversationId, ex);
+                log.warn("Companion tool resolution failed for conversationId={} (failures={})",
+                        conversationId, llmFailures, ex);
+                if (llmFailures >= 2 || isTimeout(ex)) {
+                    return streamDegraded(conversationId, conversation, sink, traceCtx,
+                            isTimeout(ex)
+                                    ? CompanionDegradeService.REASON_LLM_TIMEOUT
+                                    : CompanionDegradeService.REASON_LLM_FAILURES);
+                }
                 String fallbackPrompt = buildSystemPromptForStudent(
                         conversation.getStudentId(),
                         conversation.getCourseId(),
                         conversation.getNodeCode(),
                         false);
                 if (hasToolContext(messages)) {
-                    streamFinalMessages(conversationId, withSystemPrompt(messages, fallbackPrompt),
-                            practiceStarted, sink, traceCtx);
-                    return;
+                    try {
+                        streamFinalMessages(conversationId, withSystemPrompt(messages, fallbackPrompt),
+                                practiceStarted, sink, traceCtx);
+                        return AgentRunStatus.SUCCEEDED;
+                    } catch (Exception phase2Ex) {
+                        llmFailures++;
+                        if (llmFailures >= 2 || isTimeout(phase2Ex)) {
+                            return streamDegraded(conversationId, conversation, sink, traceCtx,
+                                    isTimeout(phase2Ex)
+                                            ? CompanionDegradeService.REASON_LLM_TIMEOUT
+                                            : CompanionDegradeService.REASON_LLM_FAILURES);
+                        }
+                        throw phase2Ex instanceof RuntimeException re ? re : new RuntimeException(phase2Ex);
+                    }
                 }
-                streamWithLegacyPath(conversationId, fallbackPrompt, ctx, memoryLines,
-                        retrievalBlocks, sink, traceCtx);
-                return;
+                try {
+                    streamWithLegacyPath(conversationId, fallbackPrompt, ctx, memoryLines,
+                            retrievalBlocks, sink, traceCtx);
+                    return AgentRunStatus.SUCCEEDED;
+                } catch (Exception legacyEx) {
+                    llmFailures++;
+                    if (llmFailures >= 2 || isTimeout(legacyEx)) {
+                        return streamDegraded(conversationId, conversation, sink, traceCtx,
+                                isTimeout(legacyEx)
+                                        ? CompanionDegradeService.REASON_LLM_TIMEOUT
+                                        : CompanionDegradeService.REASON_LLM_FAILURES);
+                    }
+                    throw legacyEx instanceof RuntimeException re ? re : new RuntimeException(legacyEx);
+                }
             }
             if (outcome instanceof CompanionAiClient.FinalText) {
                 break;
@@ -466,7 +520,92 @@ public class CompanionServiceImpl implements CompanionService {
             }
         }
 
-        streamFinalMessages(conversationId, messages, practiceStarted, sink, traceCtx);
+        try {
+            streamFinalMessages(conversationId, messages, practiceStarted, sink, traceCtx);
+        } catch (Exception phase2Ex) {
+            llmFailures++;
+            if (llmFailures >= 2 || isTimeout(phase2Ex)) {
+                return streamDegraded(conversationId, conversation, sink, traceCtx,
+                        isTimeout(phase2Ex)
+                                ? CompanionDegradeService.REASON_LLM_TIMEOUT
+                                : CompanionDegradeService.REASON_LLM_FAILURES);
+            }
+            throw phase2Ex instanceof RuntimeException re ? re : new RuntimeException(phase2Ex);
+        }
+
+        // M9: after EXPLAIN phase2, optionally auto-issue understanding probe
+        maybeAutoProbeAfterExplain(conversation, lastIntent, sink);
+        return AgentRunStatus.SUCCEEDED;
+    }
+
+    private void maybeAutoProbeAfterExplain(CompanionConversation conversation,
+                                            CompanionIntent intent,
+                                            CompanionStreamSink sink) {
+        if (reflectionCoordinator == null || conversation == null) {
+            return;
+        }
+        if (!reflectionCoordinator.shouldAutoProbe(intent)) {
+            return;
+        }
+        String nodeCode = conversation.getNodeCode();
+        if (!StringUtils.hasText(nodeCode)) {
+            return;
+        }
+        try {
+            Phase1Decision decision = Phase1Decision.of(intent, new CompanionAiClient.FinalText(""));
+            reflectionCoordinator.maybeIssueProbe(
+                            conversation.getStudentId(),
+                            conversation.getCourseId(),
+                            nodeCode,
+                            decision)
+                    .ifPresent(sink::probeCard);
+        } catch (Exception e) {
+            log.warn("auto probe after EXPLAIN failed: {}", e.getMessage());
+        }
+    }
+
+    private int streamDegraded(Long conversationId,
+                               CompanionConversation conversation,
+                               CompanionStreamSink sink,
+                               TraceContext traceCtx,
+                               String reason) {
+        if (degradeService == null || conversation == null) {
+            String fallback = "学习伴侣暂时不可用，请稍后再试。优先完成今日复习与薄弱点练习。";
+            sink.token(fallback);
+            saveAiMessage(conversationId, fallback);
+            return AgentRunStatus.DEGRADED;
+        }
+        CompanionDegradeService.DegradeResult result = degradeService.degrade(
+                conversation.getStudentId(),
+                conversation.getCourseId(),
+                conversation.getNodeCode(),
+                reason,
+                traceCtx);
+        if (result.text() != null) {
+            sink.token(result.text());
+            saveAiMessage(conversationId, result.text());
+        }
+        if (result.practiceCard() != null) {
+            sink.practiceCard(result.practiceCard());
+        }
+        return AgentRunStatus.DEGRADED;
+    }
+
+    private boolean isCompanionLlmEnabled() {
+        return featureFlags == null || featureFlags.isCompanionLlmEnabled();
+    }
+
+    private static boolean isTimeout(Throwable ex) {
+        Throwable t = ex;
+        while (t != null) {
+            String name = t.getClass().getName();
+            String msg = t.getMessage() == null ? "" : t.getMessage().toLowerCase();
+            if (name.contains("Timeout") || msg.contains("timeout") || msg.contains("timed out")) {
+                return true;
+            }
+            t = t.getCause();
+        }
+        return false;
     }
 
     /**
@@ -701,12 +840,14 @@ public class CompanionServiceImpl implements CompanionService {
         }
         boolean memoryOn = isMemoryEnabled();
         boolean ragOn = isRagEnabled();
+        boolean reflectionOn = isReflectionEnabled();
         // Lexicographic by tool name so schema/dict order is stable across injectors.
         return companionTools.stream()
                 .filter(Objects::nonNull)
                 .filter(tool -> tool.schema() != null)
                 .filter(tool -> memoryOn || !isMemoryTool(tool.name()))
                 .filter(tool -> ragOn || !isRagTool(tool.name()))
+                .filter(tool -> reflectionOn || !isReflectionTool(tool.name()))
                 .sorted(Comparator.comparing(CompanionTool::name, Comparator.nullsLast(String::compareTo)))
                 .toList();
     }
@@ -717,6 +858,14 @@ public class CompanionServiceImpl implements CompanionService {
 
     private static boolean isRagTool(String name) {
         return "search_materials".equals(name);
+    }
+
+    private static boolean isReflectionTool(String name) {
+        return "probe_understanding".equals(name);
+    }
+
+    private boolean isReflectionEnabled() {
+        return featureFlags == null || featureFlags.isReflectionEnabled();
     }
 
     private boolean isMemoryEnabled() {
