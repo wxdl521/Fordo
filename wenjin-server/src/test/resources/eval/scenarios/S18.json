@@ -1,0 +1,31 @@
+{
+  "code": "S18",
+  "title": "跨会话记忆引用",
+  "status": "PENDING",
+  "pendingReason": "M7-memory LIVE golden pending",
+  "persona": {
+    "masteryOverrides": [
+      {"nodeCode": "SE-4.1", "raw": 0.40, "effective": 0.35}
+    ],
+    "reviewQueue": [],
+    "note": "学生在先前会话中对二叉树遍历连错，蒸馏后应有 EPISODIC/SEMANTIC 记忆；本会话应引用该经历，不要求强制工具"
+  },
+  "script": [
+    {"user": "我上次二叉树那边是不是卡过？你还记得吗？帮我接着练。"}
+  ],
+  "hard": {
+    "mustCallTools": [],
+    "mustNotCallTools": [],
+    "maxToolCalls": 4,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "memory_use", "desc": "是否体现/引用跨会话学习经历（如遍历连错、图示讲解等），而非装作完全不记得", "threshold": 3},
+      {"key": "guidance", "desc": "引导练习与复习而非直接甩完整答案", "threshold": 3},
+      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+    ]
+  }
+}
