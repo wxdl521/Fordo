@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════
 --  问津 · 知识图谱驱动的个性化学习导航系统
---  本地空库重建快照（当前最终 DDL，含 V3–V13；共 31 张业务表）
+--  本地空库重建快照（当前最终 DDL，含 V3–V14；共 34 张业务表）
 --
 --  ⚠ 仅本地空库 / 会删数据 / 生产禁用
 --    · 本脚本含 DROP TABLE IF EXISTS，会清空目标库业务表数据。
---    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V13）。
+--    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V14）。
 --    · 新增版本化迁移（Vn）后，必须把最终 DDL 同步回本文件，保持本地快照一致。
 --    · 应用启动默认 spring.flyway.enabled=false（WENJIN_FLYWAY_ENABLED），
 --      普通应用账号只有 DML；发布流水线用 migrator 凭据单独跑迁移作业。
@@ -18,7 +18,8 @@
 --    6. V11 增 eval_scenario / eval_case_result（评测场景与结果，无物理 FK）。
 --    7. V12 增 student_memory；companion_conversation 增 distilled_through / summary_origin。
 --    8. V13 增 doc_source / doc_chunk / chunk_node_map（M8 RAG；FULLTEXT ngram）。
---    9. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--    9. V14 增 agent_plan / agent_plan_task / tool_effect_key（M10 规划）。
+--   10. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -588,5 +589,47 @@ CREATE TABLE `eval_case_result` (
     PRIMARY KEY (`id`),
     KEY `idx_result_batch` (`batch_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评测结果【V11】';
+
+-- ───────────────────────────── 组：学习计划【V14】─────────────────────────────
+
+DROP TABLE IF EXISTS `tool_effect_key`;
+DROP TABLE IF EXISTS `agent_plan_task`;
+DROP TABLE IF EXISTS `agent_plan`;
+
+CREATE TABLE `agent_plan` (
+    `id`             BIGINT   NOT NULL AUTO_INCREMENT,
+    `student_id`     BIGINT   NOT NULL,
+    `course_id`      BIGINT   NOT NULL,
+    `goal_type`      TINYINT  NOT NULL DEFAULT 0 COMMENT '0=EXAM_PREP',
+    `target_date`    DATE     NOT NULL,
+    `status`         TINYINT  NOT NULL DEFAULT 0 COMMENT '0=DRAFT,1=ACTIVE,2=DONE,3=CANCELLED',
+    `scope_json`     TEXT     NULL COMMENT '限定节点集，空=全图谱；可含 at_risk 等标志',
+    `created_run_id` BIGINT   NULL,
+    `created_at`     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `confirmed_at`   DATETIME NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_plan_student` (`student_id`, `course_id`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学习计划【V14】';
+
+CREATE TABLE `agent_plan_task` (
+    `id`        BIGINT      NOT NULL AUTO_INCREMENT,
+    `plan_id`   BIGINT      NOT NULL,
+    `task_date` DATE        NOT NULL,
+    `node_code` VARCHAR(32) NOT NULL,
+    `task_kind` TINYINT     NOT NULL COMMENT '0=REVIEW,1=LEARN,2=PRACTICE',
+    `status`    TINYINT     NOT NULL DEFAULT 0 COMMENT '0=PENDING,1=DONE,2=SKIPPED,3=RESCHEDULED',
+    `origin`    TINYINT     NOT NULL DEFAULT 0 COMMENT '0=INITIAL,1=REPLAN',
+    PRIMARY KEY (`id`),
+    KEY `idx_task_plan_date` (`plan_id`, `task_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='计划每日任务【V14】';
+
+CREATE TABLE `tool_effect_key` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT,
+    `tool_name`   VARCHAR(64)  NOT NULL,
+    `request_key` VARCHAR(128) NOT NULL,
+    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_effect` (`tool_name`, `request_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='写类工具幂等键（取消/重试防双写）【V14】';
 
 SET FOREIGN_KEY_CHECKS = 1;
