@@ -287,14 +287,15 @@ M6 用场景脚本 + 硬断言 +（可选）LLM-as-judge 回归伴侣行为。CI
 
 | 构件 | 位置 |
 | --- | --- |
-| 场景（事实源） | `wenjin-server/src/test/resources/eval/scenarios/S01.json` … `S16.json` |
+| 场景（事实源） | `wenjin-server/src/test/resources/eval/scenarios/S01.json` … `S18.json` |
 | Golden（REPLAY） | `wenjin-server/src/test/resources/eval/golden/{code}.json`（ENABLED 场景） |
 | 硬断言 / 执行器 | `com.wenjin.eval.hard`、`runner`、`golden`、`replay` |
 | 报告 | `wenjin-server/target/eval-report.md`（评测测试写出） |
 | Judge 校准草稿 | `wenjin-server/docs/quality/judge-calibration-v1.md` |
 
 - **ENABLED**（CI 硬断言）：S01–S06、S08–S11、S14、S15  
-- **PENDING**（待 M8/M9）：S07、S12、S13、S16  
+- **PENDING**（待 M7 LIVE / M8/M9）：S07、S12、S13、S16、**S18**（跨会话记忆引用）  
+- S02：`guidance` 阈值 4；system prompt 强化「索要直接答案 → 分步引导」  
 - 开关：`wenjin.features.eval-enabled`（生产默认关，`WENJIN_FEATURE_EVAL`）  
 - Judge 模型：`wenjin.eval.judge-model`（可选，见 DEPLOYMENT）
 
@@ -313,6 +314,29 @@ $env:WENJIN_AUTH_SECRET = "ci-test-secret-not-for-prod-at-least-32-bytes"
 ```
 
 有 AI Key 时再做完整 **LIVE+RECORD**；当前 CI 仅保证 golden REPLAY 硬断言绿。
+
+## M7 长期记忆（三层 + PromptAssembler）
+
+M7 为学生伴侣增加三层记忆（EPISODIC / SEMANTIC / PROCEDURAL）与分槽上下文组装。
+
+### 能力摘要
+
+- Flyway **`V12__student_memory.sql`**：`student_memory` 表 + 会话 `distilled_through_message_id` / `summary_origin`。
+- **PromptAssembler** 槽序：`SYSTEM → SKILL → SUMMARY → MEMORY → RETRIEVAL → RECENT`；预算 `wenjin.limits.prompt.*`。
+- **MEMORY 槽注入**：按 effective top-k（`inject-top-k`，默认 5）分组渲染「学生画像 / 近期学习经历 / 有效策略」，注入后强化选中项。
+- **异步蒸馏**：`MEMORY_DISTILL` / `SUMMARY_REFRESH`（摘要折叠后入队；flag 关时不派发 distill）。
+- **工具**：`recall_student_context`（读、可缓存）、`record_observation`（写，每 run ≤ `write-per-run`）。
+- 特性开关 **`wenjin.features.memory-enabled`**：开发默认 `true`；生产默认 `false`（`WENJIN_FEATURE_MEMORY`）。关闭时：不注入 MEMORY、不入队 distill、记忆工具从 schema 下架。
+
+相关代码：
+
+- `wenjin-server/src/main/resources/db/migration/V12__student_memory.sql`
+- `wenjin-server/src/main/java/com/wenjin/support/PromptAssembler.java`
+- `wenjin-server/src/main/java/com/wenjin/service/memory/`
+- `wenjin-server/src/main/java/com/wenjin/service/companion/RecallStudentContextTool.java`
+- `wenjin-server/src/main/java/com/wenjin/service/companion/RecordObservationTool.java`
+
+配置明细见 **`DEPLOYMENT.md`**（`memory-enabled`、`limits.memory.*`、`limits.prompt.*`、V12）。
 
 ## 测试与验收
 
