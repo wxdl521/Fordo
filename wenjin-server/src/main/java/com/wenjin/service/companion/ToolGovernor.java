@@ -47,14 +47,18 @@ public class ToolGovernor {
 
     /**
      * Read-only tools eligible for per-run result de-duplication.
-     * Includes future Task-12 names so the set is stable once tools land.
      */
     public static final Set<String> READ_CACHEABLE_TOOLS = Set.of(
             "query_mastery",
             "get_node_detail",
             "get_review_queue",
             "get_learning_frontier",
-            "trace_prerequisites");
+            "trace_prerequisites",
+            "recall_student_context");
+
+    /** Side-effecting memory write tools with a separate per-run write budget. */
+    public static final Set<String> MEMORY_WRITE_TOOLS = Set.of(
+            "record_observation");
 
     private static final String TRUNCATION_MARKER = "[已截断]";
 
@@ -163,6 +167,15 @@ public class ToolGovernor {
             }
         }
 
+        // Memory write budget (record_observation): reject before tool-call budget.
+        if (isMemoryWrite(toolName) && !state.tryConsumeMemoryWrite(memoryWritePerRun())) {
+            result = failed(toolCallId, toolName,
+                    ToolErrorCodes.TOOL_BUDGET_EXCEEDED,
+                    "本轮记忆写入次数已达上限");
+            audit(ctx, toolName, argsJson, started, result);
+            return result;
+        }
+
         boolean sideEffecting = tool.sideEffecting();
         if (!state.tryConsume(sideEffecting)) {
             result = failed(toolCallId, toolName,
@@ -187,6 +200,17 @@ public class ToolGovernor {
 
     private static boolean isCacheable(String toolName) {
         return toolName != null && READ_CACHEABLE_TOOLS.contains(toolName);
+    }
+
+    private static boolean isMemoryWrite(String toolName) {
+        return toolName != null && MEMORY_WRITE_TOOLS.contains(toolName);
+    }
+
+    private int memoryWritePerRun() {
+        if (limits != null && limits.getMemory() != null) {
+            return Math.max(0, limits.getMemory().getWritePerRun());
+        }
+        return 2;
     }
 
     String cacheKey(String toolName, JsonNode args) {

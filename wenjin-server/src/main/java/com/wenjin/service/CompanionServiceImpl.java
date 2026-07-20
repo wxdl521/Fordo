@@ -6,8 +6,10 @@ import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.CompanionToolProperties;
 import com.wenjin.config.CurrentUser;
+import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.service.memory.MemoryJobEnqueueService;
+import com.wenjin.service.memory.StudentMemoryService;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
@@ -94,6 +96,13 @@ public class CompanionServiceImpl implements CompanionService {
     /** 摘要推进后派发 MEMORY_DISTILL / SUMMARY_REFRESH；缺省时跳过。 */
     @Autowired(required = false)
     private MemoryJobEnqueueService memoryJobEnqueueService;
+
+    /** 长期记忆注入 / 工具；缺省或 feature 关闭时 MEMORY 槽为空。 */
+    @Autowired(required = false)
+    private StudentMemoryService studentMemoryService;
+
+    @Autowired(required = false)
+    private FeatureFlagsProperties featureFlags;
 
     @Override
     @Transactional
@@ -213,16 +222,21 @@ public class CompanionServiceImpl implements CompanionService {
                 conversation.getNodeCode(),
                 toolOrchestrationAvailable);
 
+        // MEMORY 槽：memory-enabled 时按 effective top-k 注入并强化选中项
+        List<String> memoryLines = loadMemoryLines(
+                conversation.getStudentId(), conversation.getCourseId());
+
         // 一次学生消息的完整编排 = 一个 run；SSE 异常断开也必须 finishRun
         TraceContext traceCtx = startCompanionTrace(conversation, latestUserContent(history));
         int runStatus = AgentRunStatus.SUCCEEDED;
         String errorCode = null;
         try {
             if (!toolOrchestrationAvailable) {
-                streamWithLegacyPath(conversationId, systemPrompt, ctx, sink, traceCtx);
+                streamWithLegacyPath(conversationId, systemPrompt, ctx, memoryLines, sink, traceCtx);
                 return;
             }
-            streamWithTools(conversationId, conversation, systemPrompt, history, ctx, usableTools, sink, traceCtx);
+            streamWithTools(conversationId, conversation, systemPrompt, history, ctx,
+                    memoryLines, usableTools, sink, traceCtx);
         } catch (RuntimeException ex) {
             runStatus = AgentRunStatus.FAILED;
             errorCode = "UNEXPECTED";
@@ -284,7 +298,17 @@ public class CompanionServiceImpl implements CompanionService {
                                       ConversationContextBuilder.BuiltContext ctx,
                                       CompanionStreamSink sink,
                                       TraceContext traceCtx) {
-        ConversationContextBuilder.LegacyPrompt prompt = contextBuilder.toLegacyPrompt(ctx);
+        streamWithLegacyPath(conversationId, systemPrompt, ctx, List.of(), sink, traceCtx);
+    }
+
+    private void streamWithLegacyPath(Long conversationId,
+                                      String systemPrompt,
+                                      ConversationContextBuilder.BuiltContext ctx,
+                                      List<String> memoryLines,
+                                      CompanionStreamSink sink,
+                                      TraceContext traceCtx) {
+        ConversationContextBuilder.LegacyPrompt prompt =
+                contextBuilder.toLegacyPrompt(ctx, memoryLines == null ? List.of() : memoryLines);
         StringBuilder fullReply = new StringBuilder();
         int maxOut = limits.getCompanion().getMaxAiOutputChars();
         long started = System.currentTimeMillis();
@@ -340,10 +364,12 @@ public class CompanionServiceImpl implements CompanionService {
                                  String systemPrompt,
                                  List<CompanionMessage> history,
                                  ConversationContextBuilder.BuiltContext ctx,
+                                 List<String> memoryLines,
                                  List<CompanionTool> tools,
                                  CompanionStreamSink sink,
                                  TraceContext traceCtx) {
-        List<Map<String, Object>> messages = contextBuilder.toToolMessages(systemPrompt, ctx);
+        List<Map<String, Object>> messages = contextBuilder.toToolMessages(
+                systemPrompt, ctx, memoryLines == null ? List.of() : memoryLines);
         List<Map<String, Object>> toolSchemas = tools.stream().map(CompanionTool::schema).toList();
         Map<String, String> toolLabels = buildToolLabels(tools);
         ToolExecutionState state = new ToolExecutionState(maxToolCalls());
@@ -379,7 +405,7 @@ public class CompanionServiceImpl implements CompanionService {
                             practiceStarted, sink, traceCtx);
                     return;
                 }
-                streamWithLegacyPath(conversationId, fallbackPrompt, ctx, sink, traceCtx);
+                streamWithLegacyPath(conversationId, fallbackPrompt, ctx, memoryLines, sink, traceCtx);
                 return;
             }
             if (outcome instanceof CompanionAiClient.FinalText) {
@@ -629,12 +655,39 @@ public class CompanionServiceImpl implements CompanionService {
         if (companionTools == null || companionTools.isEmpty()) {
             return List.of();
         }
+        boolean memoryOn = isMemoryEnabled();
         // Lexicographic by tool name so schema/dict order is stable across injectors.
         return companionTools.stream()
                 .filter(Objects::nonNull)
                 .filter(tool -> tool.schema() != null)
+                .filter(tool -> memoryOn || !isMemoryTool(tool.name()))
                 .sorted(Comparator.comparing(CompanionTool::name, Comparator.nullsLast(String::compareTo)))
                 .toList();
+    }
+
+    private static boolean isMemoryTool(String name) {
+        return "recall_student_context".equals(name) || "record_observation".equals(name);
+    }
+
+    private boolean isMemoryEnabled() {
+        return featureFlags == null || featureFlags.isMemoryEnabled();
+    }
+
+    /**
+     * 加载 MEMORY 槽行；flag 关 / 服务缺省 / 失败时返回空列表（不阻断对话）。
+     */
+    List<String> loadMemoryLines(Long studentId, Long courseId) {
+        if (!isMemoryEnabled() || studentMemoryService == null) {
+            return List.of();
+        }
+        try {
+            List<String> lines = studentMemoryService.loadInjectLines(studentId, courseId);
+            return lines == null ? List.of() : lines;
+        } catch (Exception e) {
+            log.warn("memory inject failed: studentId={} courseId={}: {}",
+                    studentId, courseId, e.getMessage());
+            return List.of();
+        }
     }
 
     private int maxRounds() {
@@ -1089,6 +1142,7 @@ public class CompanionServiceImpl implements CompanionService {
         sb.append("- 需要发起练习、推荐练习或确认练习入口时，先通过工具获取练习信息。\n");
         sb.append("- query_mastery：查掌握度/趋势；get_node_detail：节点详情与前后继；start_practice：发起练习。\n");
         sb.append("- trace_prerequisites：追溯前置链；get_learning_frontier：可学前沿；get_review_queue：今日复习队列；schedule_review：把节点钉入今日复习。\n");
+        sb.append("- recall_student_context：按关键词检索学生长期记忆；record_observation：记录 SEMANTIC/PROCEDURAL 观察（每轮有限）。\n");
         sb.append("- 用户只说节点名称时，先从课程知识点范围匹配名称；能确定 nodeCode 就用 nodeCode，否则传精确 nodeName 让服务端解析。\n");
         sb.append("- 禁止编造掌握度；没有工具证据时，要明确说明暂未查询到。\n");
         sb.append("- 工具只能通过接口提供的 function/tool_calls 通道调用；禁止在回复正文中输出 DSML、XML、tool_calls、invoke、伪标签或任何工具协议原文。\n");
@@ -1097,6 +1151,7 @@ public class CompanionServiceImpl implements CompanionService {
         sb.append("## 对话规则\n");
         sb.append("- 只回答《").append(cn).append("》课程范围内的问题；超出范围时，礼貌地把话题引回当前焦点节点或学习路径目标。\n");
         sb.append("- 采用启发式教学：不要一次性给出完整答案。先点出关键，再追问一个小问题确认理解；学生卡住时再分步提示。\n");
+        sb.append("- 当学生索要「直接答案 / 标准答案 / 最终结论」时：只给分步引导与提示，不给出完整最终答案；先让学生尝试一步。\n");
         sb.append("- 关注优先级：诊断根因 > 当前学习路径 > 当前焦点节点。\n");
         sb.append("- 回答控制在 3 到 6 句，口语化、具体、适合聊天场景。\n");
 
@@ -1151,6 +1206,7 @@ public class CompanionServiceImpl implements CompanionService {
         sb.append("## 对话规则\n");
         sb.append("- 只回答《").append(cn).append("》课程范围内的问题；超出范围时礼貌地把话题引导回当前焦点节点或学习路径目标。\n");
         sb.append("- 采用启发式教学：不要一次性给出完整答案。先一句话点出关键，再反问一个小问题确认理解；学生卡住时再分步提示，逐步逼近答案。\n");
+        sb.append("- 当学生索要「直接答案 / 标准答案 / 最终结论」时：只给分步引导与提示，不给出完整最终答案；先让学生尝试一步。\n");
         sb.append("- 关注优先级：诊断根因 > 学生薄弱点 > 当前学习路径。\n");
         sb.append("- 回答控制在 3–5 句、口语化，适合聊天气泡；多用具体例子，少长篇理论。\n");
         sb.append("- 不要编造学生未学内容的掌握情况，只依据上文提供的诊断/掌握度信息。\n");

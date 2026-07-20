@@ -27,6 +27,8 @@ public record ToolParamSpec(
     public enum ParamType {
         STRING,
         INT,
+        /** JSON number (integral or floating). min/max apply as doubles. */
+        NUMBER,
         BOOL,
         ARRAY
     }
@@ -53,6 +55,10 @@ public record ToolParamSpec(
 
     public static ToolParamSpec integer(String name, boolean required, Double min, Double max) {
         return new ToolParamSpec(name, ParamType.INT, required, null, min, max, null, null);
+    }
+
+    public static ToolParamSpec number(String name, boolean required, Double min, Double max) {
+        return new ToolParamSpec(name, ParamType.NUMBER, required, null, min, max, null, null);
     }
 
     public static ToolParamSpec bool(String name, boolean required) {

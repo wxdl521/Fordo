@@ -132,15 +132,21 @@ public class ConversationContextBuilder {
     }
 
     public LegacyPrompt toLegacyPrompt(BuiltContext ctx) {
+        return toLegacyPrompt(ctx, List.of());
+    }
+
+    /**
+     * Legacy 路径；{@code memoryLines} 非空时经 PromptAssembler MEMORY 槽注入。
+     */
+    public LegacyPrompt toLegacyPrompt(BuiltContext ctx, List<String> memoryLines) {
         List<CompanionMessage> recent = ctx.recentMessages();
         if (recent.isEmpty()) {
             return new LegacyPrompt(List.of(), "");
         }
-        // Legacy path carries system prompt separately; assemble SUMMARY + RECENT only.
         AssembledPrompt assembled = promptAssembler.assemble(new AssembleRequest(
                 null,
                 ctx.summaryText(),
-                List.of(),
+                memoryLines == null ? List.of() : memoryLines,
                 List.of(),
                 recent));
         List<CompanionAiClient.ChatMsg> msgs = assembled.messages();
@@ -156,12 +162,21 @@ public class ConversationContextBuilder {
 
     /** Tool 编排路径：system + 可选摘要伪对话 + 近窗消息。 */
     public List<Map<String, Object>> toToolMessages(String systemPrompt, BuiltContext ctx) {
+        return toToolMessages(systemPrompt, ctx, List.of());
+    }
+
+    /**
+     * Tool 编排路径；{@code memoryLines} 非空时注入 MEMORY 伪对话。
+     */
+    public List<Map<String, Object>> toToolMessages(String systemPrompt,
+                                                    BuiltContext ctx,
+                                                    List<String> memoryLines) {
         // System is prepended outside AssembleRequest so max-context budgeting still
-        // covers summary+recent (historical contract); assembler owns SUMMARY/RECENT form.
+        // covers summary+recent (historical contract); assembler owns SUMMARY/MEMORY/RECENT form.
         AssembledPrompt assembled = promptAssembler.assemble(new AssembleRequest(
                 null,
                 ctx.summaryText(),
-                List.of(),
+                memoryLines == null ? List.of() : memoryLines,
                 List.of(),
                 ctx.recentMessages()));
         List<Map<String, Object>> messages = new ArrayList<>(assembled.messages().size() + 1);

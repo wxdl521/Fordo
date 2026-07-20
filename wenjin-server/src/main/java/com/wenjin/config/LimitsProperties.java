@@ -92,6 +92,10 @@ public class LimitsProperties {
         private double jaccardThreshold = 0.6;
         /** content 写入硬上限（与列 VARCHAR(500) 对齐，蒸馏侧再夹到 200） */
         private int maxContentChars = 500;
+        /** MEMORY 槽注入 top-k（按 effective 全 kind 混排） */
+        private int injectTopK = 5;
+        /** record_observation 每 run 写入上限 */
+        private int writePerRun = 2;
     }
 
     @Data

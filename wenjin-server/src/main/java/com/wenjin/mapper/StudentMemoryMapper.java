@@ -39,6 +39,29 @@ public interface StudentMemoryMapper extends BaseMapper<StudentMemory> {
                                      @Param("kind") Integer kind);
 
     /**
+     * content LIKE 检索（query 已在服务层转义 %/_；仅本人×课程×ACTIVE）。
+     */
+    @Select("""
+            <script>
+            SELECT id, student_id, course_id, kind, content, node_code, source_run_id,
+                   salience, last_reinforced_at, status, created_at
+            FROM student_memory
+            WHERE student_id = #{studentId}
+              AND course_id = #{courseId}
+              AND status = 1
+              AND content LIKE CONCAT('%', #{query}, '%')
+            <if test="kind != null">
+              AND kind = #{kind}
+            </if>
+            ORDER BY last_reinforced_at DESC, id DESC
+            </script>
+            """)
+    List<StudentMemory> selectByContentLike(@Param("studentId") Long studentId,
+                                            @Param("courseId") Long courseId,
+                                            @Param("query") String query,
+                                            @Param("kind") Integer kind);
+
+    /**
      * 命中/注入强化：仅刷新 last_reinforced_at（不改 salience / content）。
      *
      * @return 影响行数

@@ -43,6 +43,7 @@ public final class ToolParamValidator {
         return switch (spec.type()) {
             case STRING -> validateString(spec, value);
             case INT -> validateInt(spec, value);
+            case NUMBER -> validateNumber(spec, value);
             case BOOL -> value.isBoolean()
                     ? null
                     : "Tool argument has invalid type: " + spec.name();
@@ -79,6 +80,20 @@ public final class ToolParamValidator {
 
     private static String validateInt(ToolParamSpec spec, JsonNode value) {
         if (!value.isIntegralNumber() || !value.canConvertToInt()) {
+            return "Tool argument has invalid type: " + spec.name();
+        }
+        double number = value.asDouble();
+        if (spec.min() != null && number < spec.min()) {
+            return "Tool argument below minimum: " + spec.name();
+        }
+        if (spec.max() != null && number > spec.max()) {
+            return "Tool argument above maximum: " + spec.name();
+        }
+        return null;
+    }
+
+    private static String validateNumber(ToolParamSpec spec, JsonNode value) {
+        if (!value.isNumber()) {
             return "Tool argument has invalid type: " + spec.name();
         }
         double number = value.asDouble();

@@ -3,8 +3,10 @@ package com.wenjin.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.ai.CompanionAiClient;
 import com.wenjin.config.CompanionToolProperties;
+import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.dto.CompanionChatRequest;
+import com.wenjin.service.memory.StudentMemoryService;
 import com.wenjin.dto.DiagnosticResultVO;
 import com.wenjin.dto.LearningPathVO;
 import com.wenjin.dto.PaperQuestionVO;
@@ -39,6 +41,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -87,6 +90,9 @@ class CompanionServiceImplTest {
 
     @Mock
     private CourseService courseService;
+
+    @Mock
+    private StudentMemoryService studentMemoryService;
 
     private CompanionServiceImpl service;
     private CompanionChatRequest req;
@@ -1080,6 +1086,99 @@ class CompanionServiceImplTest {
     }
 
     @Test
+    void streamReply_whenMemoryEnabled_injectsMemoryLinesIntoPhase1Context() {
+        Long conversationId = 910L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("继续上次")));
+        configureTools(true, 2, 4, List.of(fakeTool(
+                "query_mastery",
+                "查询掌握度",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        FeatureFlagsProperties flags = new FeatureFlagsProperties();
+        flags.setMemoryEnabled(true);
+        ReflectionTestUtils.setField(service, "featureFlags", flags);
+        ReflectionTestUtils.setField(service, "studentMemoryService", studentMemoryService);
+        when(studentMemoryService.loadInjectLines(1L, 10L)).thenReturn(List.of(
+                "【学生画像】",
+                "· 偏好代码示例",
+                "【近期学习经历】",
+                "· 用例图练习受挫（SE-3.2）"));
+
+        when(aiClient.completeWithTools(any(), any()))
+                .thenReturn(new CompanionAiClient.FinalText("好的，我们按代码示例继续。"));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(1);
+            onToken.accept("ok");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, t -> { });
+
+        ArgumentCaptor<List<Map<String, Object>>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(aiClient).completeWithTools(messagesCaptor.capture(), any());
+        String joined = messagesCaptor.getValue().stream()
+                .map(m -> String.valueOf(m.get("content")))
+                .collect(Collectors.joining("\n"));
+        assertThat(joined).contains("【记忆要点】");
+        assertThat(joined).contains("【学生画像】");
+        assertThat(joined).contains("偏好代码示例");
+        assertThat(joined).contains("用例图练习受挫");
+        verify(studentMemoryService).loadInjectLines(1L, 10L);
+    }
+
+    @Test
+    void streamReply_whenMemoryDisabled_skipsInjectAndHidesMemoryTools() {
+        Long conversationId = 911L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("你好")));
+        configureTools(true, 2, 4, List.of(
+                fakeTool("recall_student_context", "回忆", Map.of("type", "object", "properties", Map.of())),
+                fakeTool("record_observation", "记录", Map.of("type", "object", "properties", Map.of())),
+                fakeTool("query_mastery", "掌握度", Map.of("type", "object", "properties", Map.of()))));
+
+        FeatureFlagsProperties flags = new FeatureFlagsProperties();
+        flags.setMemoryEnabled(false);
+        ReflectionTestUtils.setField(service, "featureFlags", flags);
+        ReflectionTestUtils.setField(service, "studentMemoryService", studentMemoryService);
+
+        when(aiClient.completeWithTools(any(), any()))
+                .thenReturn(new CompanionAiClient.FinalText("你好"));
+        doAnswer(invocation -> {
+            Consumer<String> onToken = invocation.getArgument(1);
+            onToken.accept("hi");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, t -> { });
+
+        verify(studentMemoryService, never()).loadInjectLines(any(), any());
+        ArgumentCaptor<List> schemaCaptor = ArgumentCaptor.forClass(List.class);
+        verify(aiClient).completeWithTools(any(), schemaCaptor.capture());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> schemas = schemaCaptor.getValue();
+        List<String> names = schemas.stream()
+                .map(s -> {
+                    Object fn = s.get("function");
+                    if (fn instanceof Map<?, ?> m) {
+                        return String.valueOf(m.get("name"));
+                    }
+                    return "";
+                })
+                .toList();
+        assertThat(names).contains("query_mastery");
+        assertThat(names).doesNotContain("recall_student_context", "record_observation");
+
+        ArgumentCaptor<List<Map<String, Object>>> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(aiClient).completeWithTools(messagesCaptor.capture(), any());
+        String joined = messagesCaptor.getValue().stream()
+                .map(m -> String.valueOf(m.get("content")))
+                .collect(Collectors.joining("\n"));
+        assertThat(joined).doesNotContain("【记忆要点】");
+        assertThat(joined).doesNotContain("【学生画像】");
+    }
+
+    @Test
     void buildPromptOmitsWeakPointSectionAndAddsToolGuidance() {
         LearningPathVO.NodeRef targetNode = new LearningPathVO.NodeRef();
         targetNode.setNodeCode("KT20");
@@ -1110,6 +1209,8 @@ class CompanionServiceImplTest {
         assertThat(prompt).contains("只用自然语言总结结果");
         assertThat(prompt).contains("当前学习路径");
         assertThat(prompt).contains("当前焦点节点");
+        assertThat(prompt).contains("直接答案");
+        assertThat(prompt).contains("分步引导");
     }
 
     @Test
