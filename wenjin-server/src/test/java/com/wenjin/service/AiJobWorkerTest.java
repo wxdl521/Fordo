@@ -61,6 +61,7 @@ class AiJobWorkerTest {
     @Mock private GraphImportService graphImportService;
     @Mock private MemoryDistillService memoryDistillService;
     @Mock private SummaryRefreshService summaryRefreshService;
+    @Mock private com.wenjin.service.rag.DocIngestService docIngestService;
     @Mock private SysUserMapper sysUserMapper;
     @Mock private AiJobHeartbeatScheduler heartbeatScheduler;
     @Mock private ScheduledFuture<?> heartbeatFuture;
@@ -84,6 +85,7 @@ class AiJobWorkerTest {
                 graphImportService,
                 memoryDistillService,
                 summaryRefreshService,
+                docIngestService,
                 new PrincipalLoader(sysUserMapper),
                 featureFlags,
                 heartbeatScheduler,
@@ -263,6 +265,7 @@ class AiJobWorkerTest {
                     graphImportService,
                     memoryDistillService,
                     summaryRefreshService,
+                    docIngestService,
                     new PrincipalLoader(sysUserMapper),
                     featureFlags,
                     dedicatedScheduler,

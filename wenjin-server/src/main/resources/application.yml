@@ -86,7 +86,7 @@ wenjin:
       skill-chars: 2000                          # 预留槽，当前恒空
       summary-chars: 8000
       memory-chars: 4000
-      retrieval-chars: 4000                      # 预留槽，当前恒空
+      retrieval-chars: 4000                      # RETRIEVAL 槽（M8 rag-enabled 时注入）
       recent-chars: 16000
     memory:                                      # 长期记忆强度 / 去重 / 注入（M7）
       lambda: 0.05                               # effective = salience * exp(-λ * Δdays)
@@ -94,6 +94,10 @@ wenjin:
       max-content-chars: 500
       inject-top-k: 5                            # MEMORY 槽按 effective 注入条数
       write-per-run: 2                           # record_observation 每 run 上限
+    rag:                                         # 语料检索 / 注入（M8）
+      inject-top-k: 4                            # RETRIEVAL 注入 top-k
+      search-default-top-k: 3                    # search_materials 默认 topK
+      snippet-chars: 200                         # 工具返回 snippet 上限
     draft:
       max-total: 100                             # 全局草稿上限
       max-per-user: 10                           # 单教师草稿上限
@@ -125,6 +129,7 @@ wenjin:
     agent-trace-enabled: true                    # Agent 执行轨迹埋点
     eval-enabled: true                           # 评测套件（M6）
     memory-enabled: true                         # 伴侣长期记忆（M7；关则 MEMORY 槽为空）
+    rag-enabled: true                            # RAG 语料检索（M8；关则 RETRIEVAL 空、工具下架）
   eval:                                          # 伴侣评测（M6）
     judge-model: ${WENJIN_EVAL_JUDGE_MODEL:}     # LLM-as-judge 模型；空则回落 wenjin.ai.model
   jobs:                                          # AI 异步作业 worker

@@ -26,6 +26,12 @@ public final class AiJobKind {
      */
     public static final String SUMMARY_REFRESH = "SUMMARY_REFRESH";
 
+    /**
+     * 语料入库（M8）：NODE_REF Markdown / 课件 PDF·PPT。
+     * request_key={@code src:{courseId}:{fileHash}}；request_json 含 sourceId、fileHash。
+     */
+    public static final String DOC_INGEST = "DOC_INGEST";
+
     private AiJobKind() {}
 
     /** 伴侣侧学生归属异步作业（允许 student actor）。 */

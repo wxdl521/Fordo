@@ -139,6 +139,15 @@ public class ConversationContextBuilder {
      * Legacy 路径；{@code memoryLines} 非空时经 PromptAssembler MEMORY 槽注入。
      */
     public LegacyPrompt toLegacyPrompt(BuiltContext ctx, List<String> memoryLines) {
+        return toLegacyPrompt(ctx, memoryLines, List.of());
+    }
+
+    /**
+     * Legacy 路径；可选 RETRIEVAL 块注入。
+     */
+    public LegacyPrompt toLegacyPrompt(BuiltContext ctx,
+                                       List<String> memoryLines,
+                                       List<String> retrievalBlocks) {
         List<CompanionMessage> recent = ctx.recentMessages();
         if (recent.isEmpty()) {
             return new LegacyPrompt(List.of(), "");
@@ -147,7 +156,7 @@ public class ConversationContextBuilder {
                 null,
                 ctx.summaryText(),
                 memoryLines == null ? List.of() : memoryLines,
-                List.of(),
+                retrievalBlocks == null ? List.of() : retrievalBlocks,
                 recent));
         List<CompanionAiClient.ChatMsg> msgs = assembled.messages();
         if (msgs.isEmpty()) {
@@ -171,13 +180,23 @@ public class ConversationContextBuilder {
     public List<Map<String, Object>> toToolMessages(String systemPrompt,
                                                     BuiltContext ctx,
                                                     List<String> memoryLines) {
+        return toToolMessages(systemPrompt, ctx, memoryLines, List.of());
+    }
+
+    /**
+     * Tool 编排路径；可选 RETRIEVAL 块注入。
+     */
+    public List<Map<String, Object>> toToolMessages(String systemPrompt,
+                                                    BuiltContext ctx,
+                                                    List<String> memoryLines,
+                                                    List<String> retrievalBlocks) {
         // System is prepended outside AssembleRequest so max-context budgeting still
         // covers summary+recent (historical contract); assembler owns SUMMARY/MEMORY/RECENT form.
         AssembledPrompt assembled = promptAssembler.assemble(new AssembleRequest(
                 null,
                 ctx.summaryText(),
                 memoryLines == null ? List.of() : memoryLines,
-                List.of(),
+                retrievalBlocks == null ? List.of() : retrievalBlocks,
                 ctx.recentMessages()));
         List<Map<String, Object>> messages = new ArrayList<>(assembled.messages().size() + 1);
         Map<String, Object> system = new LinkedHashMap<>();

@@ -13,6 +13,7 @@ public class LimitsProperties {
     private final Companion companion = new Companion();
     private final Prompt prompt = new Prompt();
     private final Memory memory = new Memory();
+    private final Rag rag = new Rag();
     private final Draft draft = new Draft();
     private final Image image = new Image();
     private final Document document = new Document();
@@ -96,6 +97,19 @@ public class LimitsProperties {
         private int injectTopK = 5;
         /** record_observation 每 run 写入上限 */
         private int writePerRun = 2;
+    }
+
+    /**
+     * RAG 检索与注入（wenjin.limits.rag.*，M8）。
+     */
+    @Data
+    public static class Rag {
+        /** RETRIEVAL / get_node_detail 引用注入 top-k */
+        private int injectTopK = 4;
+        /** search_materials 默认 topK */
+        private int searchDefaultTopK = 3;
+        /** 检索 snippet 最大字符 */
+        private int snippetChars = 200;
     }
 
     @Data

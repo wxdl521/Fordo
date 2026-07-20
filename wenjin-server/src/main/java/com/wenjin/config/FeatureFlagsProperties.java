@@ -28,4 +28,7 @@ public class FeatureFlagsProperties {
 
     /** 伴侣长期记忆（M7；关闭时 PromptAssembler 以空 MEMORY 槽工作） */
     private boolean memoryEnabled = true;
+
+    /** RAG 语料检索（M8；关闭时 RETRIEVAL 空、search_materials 下架） */
+    private boolean ragEnabled = true;
 }

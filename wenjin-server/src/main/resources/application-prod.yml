@@ -25,6 +25,7 @@ wenjin:
     agent-trace-enabled: ${WENJIN_FEATURE_AGENT_TRACE:false}
     eval-enabled: ${WENJIN_FEATURE_EVAL:false}
     memory-enabled: ${WENJIN_FEATURE_MEMORY:false}
+    rag-enabled: ${WENJIN_FEATURE_RAG:false}
 
 # Actuator 仅暴露无详情的健康检查
 management:

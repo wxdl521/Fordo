@@ -10,6 +10,7 @@ import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.service.memory.MemoryJobEnqueueService;
 import com.wenjin.service.memory.StudentMemoryService;
+import com.wenjin.service.rag.RetrievalService;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
@@ -47,6 +48,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -100,6 +102,10 @@ public class CompanionServiceImpl implements CompanionService {
     /** 长期记忆注入 / 工具；缺省或 feature 关闭时 MEMORY 槽为空。 */
     @Autowired(required = false)
     private StudentMemoryService studentMemoryService;
+
+    /** RAG 检索注入；缺省或 rag-enabled=false 时 RETRIEVAL 槽为空。 */
+    @Autowired(required = false)
+    private RetrievalService retrievalService;
 
     @Autowired(required = false)
     private FeatureFlagsProperties featureFlags;
@@ -226,17 +232,24 @@ public class CompanionServiceImpl implements CompanionService {
         List<String> memoryLines = loadMemoryLines(
                 conversation.getStudentId(), conversation.getCourseId());
 
+        // RETRIEVAL 槽：rag-enabled 且有命中时注入不可信包裹块
+        List<String> retrievalBlocks = loadRetrievalBlocks(
+                conversation.getCourseId(),
+                conversation.getNodeCode(),
+                latestUserContent(history));
+
         // 一次学生消息的完整编排 = 一个 run；SSE 异常断开也必须 finishRun
         TraceContext traceCtx = startCompanionTrace(conversation, latestUserContent(history));
         int runStatus = AgentRunStatus.SUCCEEDED;
         String errorCode = null;
         try {
             if (!toolOrchestrationAvailable) {
-                streamWithLegacyPath(conversationId, systemPrompt, ctx, memoryLines, sink, traceCtx);
+                streamWithLegacyPath(conversationId, systemPrompt, ctx, memoryLines,
+                        retrievalBlocks, sink, traceCtx);
                 return;
             }
             streamWithTools(conversationId, conversation, systemPrompt, history, ctx,
-                    memoryLines, usableTools, sink, traceCtx);
+                    memoryLines, retrievalBlocks, usableTools, sink, traceCtx);
         } catch (RuntimeException ex) {
             runStatus = AgentRunStatus.FAILED;
             errorCode = "UNEXPECTED";
@@ -298,7 +311,7 @@ public class CompanionServiceImpl implements CompanionService {
                                       ConversationContextBuilder.BuiltContext ctx,
                                       CompanionStreamSink sink,
                                       TraceContext traceCtx) {
-        streamWithLegacyPath(conversationId, systemPrompt, ctx, List.of(), sink, traceCtx);
+        streamWithLegacyPath(conversationId, systemPrompt, ctx, List.of(), List.of(), sink, traceCtx);
     }
 
     private void streamWithLegacyPath(Long conversationId,
@@ -307,8 +320,21 @@ public class CompanionServiceImpl implements CompanionService {
                                       List<String> memoryLines,
                                       CompanionStreamSink sink,
                                       TraceContext traceCtx) {
+        streamWithLegacyPath(conversationId, systemPrompt, ctx, memoryLines, List.of(), sink, traceCtx);
+    }
+
+    private void streamWithLegacyPath(Long conversationId,
+                                      String systemPrompt,
+                                      ConversationContextBuilder.BuiltContext ctx,
+                                      List<String> memoryLines,
+                                      List<String> retrievalBlocks,
+                                      CompanionStreamSink sink,
+                                      TraceContext traceCtx) {
         ConversationContextBuilder.LegacyPrompt prompt =
-                contextBuilder.toLegacyPrompt(ctx, memoryLines == null ? List.of() : memoryLines);
+                contextBuilder.toLegacyPrompt(
+                        ctx,
+                        memoryLines == null ? List.of() : memoryLines,
+                        retrievalBlocks == null ? List.of() : retrievalBlocks);
         StringBuilder fullReply = new StringBuilder();
         int maxOut = limits.getCompanion().getMaxAiOutputChars();
         long started = System.currentTimeMillis();
@@ -368,8 +394,25 @@ public class CompanionServiceImpl implements CompanionService {
                                  List<CompanionTool> tools,
                                  CompanionStreamSink sink,
                                  TraceContext traceCtx) {
+        streamWithTools(conversationId, conversation, systemPrompt, history, ctx,
+                memoryLines, List.of(), tools, sink, traceCtx);
+    }
+
+    private void streamWithTools(Long conversationId,
+                                 CompanionConversation conversation,
+                                 String systemPrompt,
+                                 List<CompanionMessage> history,
+                                 ConversationContextBuilder.BuiltContext ctx,
+                                 List<String> memoryLines,
+                                 List<String> retrievalBlocks,
+                                 List<CompanionTool> tools,
+                                 CompanionStreamSink sink,
+                                 TraceContext traceCtx) {
         List<Map<String, Object>> messages = contextBuilder.toToolMessages(
-                systemPrompt, ctx, memoryLines == null ? List.of() : memoryLines);
+                systemPrompt,
+                ctx,
+                memoryLines == null ? List.of() : memoryLines,
+                retrievalBlocks == null ? List.of() : retrievalBlocks);
         List<Map<String, Object>> toolSchemas = tools.stream().map(CompanionTool::schema).toList();
         Map<String, String> toolLabels = buildToolLabels(tools);
         ToolExecutionState state = new ToolExecutionState(maxToolCalls());
@@ -405,7 +448,8 @@ public class CompanionServiceImpl implements CompanionService {
                             practiceStarted, sink, traceCtx);
                     return;
                 }
-                streamWithLegacyPath(conversationId, fallbackPrompt, ctx, memoryLines, sink, traceCtx);
+                streamWithLegacyPath(conversationId, fallbackPrompt, ctx, memoryLines,
+                        retrievalBlocks, sink, traceCtx);
                 return;
             }
             if (outcome instanceof CompanionAiClient.FinalText) {
@@ -656,11 +700,13 @@ public class CompanionServiceImpl implements CompanionService {
             return List.of();
         }
         boolean memoryOn = isMemoryEnabled();
+        boolean ragOn = isRagEnabled();
         // Lexicographic by tool name so schema/dict order is stable across injectors.
         return companionTools.stream()
                 .filter(Objects::nonNull)
                 .filter(tool -> tool.schema() != null)
                 .filter(tool -> memoryOn || !isMemoryTool(tool.name()))
+                .filter(tool -> ragOn || !isRagTool(tool.name()))
                 .sorted(Comparator.comparing(CompanionTool::name, Comparator.nullsLast(String::compareTo)))
                 .toList();
     }
@@ -669,8 +715,16 @@ public class CompanionServiceImpl implements CompanionService {
         return "recall_student_context".equals(name) || "record_observation".equals(name);
     }
 
+    private static boolean isRagTool(String name) {
+        return "search_materials".equals(name);
+    }
+
     private boolean isMemoryEnabled() {
         return featureFlags == null || featureFlags.isMemoryEnabled();
+    }
+
+    private boolean isRagEnabled() {
+        return featureFlags == null || featureFlags.isRagEnabled();
     }
 
     /**
@@ -686,6 +740,36 @@ public class CompanionServiceImpl implements CompanionService {
         } catch (Exception e) {
             log.warn("memory inject failed: studentId={} courseId={}: {}",
                     studentId, courseId, e.getMessage());
+            return List.of();
+        }
+    }
+
+    /**
+     * 加载 RETRIEVAL 槽块；flag 关 / 服务缺省 / 无命中时返回空列表（不阻断对话）。
+     * <p>有命中时 formatInjectionBlocks 含不可信包裹；空命中不注入占位（避免污染无关轮次）。
+     */
+    List<String> loadRetrievalBlocks(Long courseId, String nodeCode, String userQuery) {
+        if (!isRagEnabled() || retrievalService == null || courseId == null) {
+            return List.of();
+        }
+        if (userQuery == null || userQuery.isBlank()) {
+            return List.of();
+        }
+        try {
+            int topK = limits != null && limits.getRag() != null
+                    ? Math.max(1, limits.getRag().getInjectTopK())
+                    : 4;
+            List<String> nodeCodes = StringUtils.hasText(nodeCode) ? List.of(nodeCode.trim()) : List.of();
+            RetrievalService.RetrievalResult result = retrievalService.search(
+                    courseId, nodeCodes, userQuery.trim(), topK, true);
+            if (result == null || result.isEmpty()) {
+                return List.of();
+            }
+            List<String> blocks = retrievalService.formatInjectionBlocks(result);
+            return blocks == null ? List.of() : blocks;
+        } catch (Exception e) {
+            log.warn("retrieval inject failed: courseId={} nodeCode={}: {}",
+                    courseId, nodeCode, e.getMessage());
             return List.of();
         }
     }

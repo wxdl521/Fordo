@@ -9,6 +9,7 @@ import com.wenjin.security.CurrentPrincipal;
 import com.wenjin.security.PrincipalLoader;
 import com.wenjin.service.memory.MemoryDistillService;
 import com.wenjin.service.memory.SummaryRefreshService;
+import com.wenjin.service.rag.DocIngestService;
 import com.wenjin.support.AiJobErrorCodes;
 import com.wenjin.support.AiJobHeartbeatScheduler;
 import com.wenjin.support.AiJobKind;
@@ -38,6 +39,7 @@ public class AiJobWorker {
     private final GraphImportService graphImportService;
     private final MemoryDistillService memoryDistillService;
     private final SummaryRefreshService summaryRefreshService;
+    private final DocIngestService docIngestService;
     private final PrincipalLoader principalLoader;
     private final FeatureFlagsProperties featureFlags;
     private final AiJobHeartbeatScheduler heartbeatScheduler;
@@ -51,6 +53,7 @@ public class AiJobWorker {
                        GraphImportService graphImportService,
                        MemoryDistillService memoryDistillService,
                        SummaryRefreshService summaryRefreshService,
+                       DocIngestService docIngestService,
                        PrincipalLoader principalLoader,
                        FeatureFlagsProperties featureFlags,
                        AiJobHeartbeatScheduler heartbeatScheduler,
@@ -63,6 +66,7 @@ public class AiJobWorker {
         this.graphImportService = graphImportService;
         this.memoryDistillService = memoryDistillService;
         this.summaryRefreshService = summaryRefreshService;
+        this.docIngestService = docIngestService;
         this.principalLoader = principalLoader;
         this.featureFlags = featureFlags;
         this.heartbeatScheduler = heartbeatScheduler;
@@ -154,8 +158,26 @@ public class AiJobWorker {
                     runGraphImportExcel(job, leaseToken, request, heartbeat);
             case AiJobKind.MEMORY_DISTILL -> runMemoryDistill(job, leaseToken, request, heartbeat);
             case AiJobKind.SUMMARY_REFRESH -> runSummaryRefresh(job, leaseToken, request, heartbeat);
+            case AiJobKind.DOC_INGEST -> runDocIngest(job, leaseToken, request, heartbeat);
             default -> throw new BusinessException(ResultCode.BAD_REQUEST, "未知作业类型: " + kind);
         };
+    }
+
+    private Object runDocIngest(AiJob job,
+                               String leaseToken,
+                               Map<String, Object> request,
+                               HeartbeatGuard heartbeat) {
+        long sourceId = MemoryDistillService.longVal(request, "sourceId", 0L);
+        markProgressOrLose(job.getId(), leaseToken, 15, heartbeat);
+        heartbeat.requireOwned();
+        String hash = stringVal(request.get("fileHash"));
+        byte[] bytes = payloadStore.load(hash);
+        markProgressOrLose(job.getId(), leaseToken, 40, heartbeat);
+        heartbeat.requireOwned();
+        // M8 core: NODE_REF path only；COURSEWARE/TEXTBOOK PDF·PPT 初标后续里程碑
+        Object result = docIngestService.ingestNodeRefBytes(sourceId, bytes);
+        markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
+        return result;
     }
 
     private Object runMemoryDistill(AiJob job,
