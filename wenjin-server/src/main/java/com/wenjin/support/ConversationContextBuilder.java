@@ -6,6 +6,7 @@ import com.wenjin.entity.CompanionConversation;
 import com.wenjin.entity.CompanionMessage;
 import com.wenjin.support.PromptAssembler.AssembleRequest;
 import com.wenjin.support.PromptAssembler.AssembledPrompt;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -32,10 +33,12 @@ public class ConversationContextBuilder {
     private final LimitsProperties limits;
     private final PromptAssembler promptAssembler;
 
+    /** 单测便捷构造：自建 {@link PromptAssembler}。 */
     public ConversationContextBuilder(LimitsProperties limits) {
         this(limits, new PromptAssembler(limits));
     }
 
+    @Autowired
     public ConversationContextBuilder(LimitsProperties limits, PromptAssembler promptAssembler) {
         this.limits = Objects.requireNonNull(limits, "limits");
         this.promptAssembler = Objects.requireNonNull(promptAssembler, "promptAssembler");

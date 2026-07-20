@@ -10,6 +10,7 @@ import com.wenjin.support.AgentReportKind;
 import com.wenjin.support.AgentReportStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -39,13 +40,16 @@ public class SupervisorSampleReportService {
     private final JudgeService judgeService;
     private final Random random;
 
+    @Autowired
     public SupervisorSampleReportService(
             AgentReportService agentReportService,
             AgentRunMapper agentRunMapper,
             LimitsProperties limitsProperties,
-            @Autowired(required = false) JudgeService judgeService
+            ObjectProvider<JudgeService> judgeServiceProvider
     ) {
-        this(agentReportService, agentRunMapper, limitsProperties, judgeService, new Random());
+        this(agentReportService, agentRunMapper, limitsProperties,
+                judgeServiceProvider == null ? null : judgeServiceProvider.getIfAvailable(),
+                new Random());
     }
 
     /** 可注入 Random 便于单测。 */

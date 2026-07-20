@@ -5,9 +5,10 @@ import org.springframework.stereotype.Component;
 
 /**
  * 默认空润色：跳过写回，保留请求路径确定性摘要。
+ * <p>用 name 条件避免与自身候选类型循环导致 bean 缺失。
  */
 @Component
-@ConditionalOnMissingBean(SummaryRefreshAiClient.class)
+@ConditionalOnMissingBean(name = "openAiCompatibleSummaryRefreshAiClient")
 public class NoOpSummaryRefreshAiClient implements SummaryRefreshAiClient {
 
     @Override

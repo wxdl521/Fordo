@@ -12,6 +12,7 @@ import com.wenjin.service.trace.ToolCacheEntry;
 import com.wenjin.service.trace.TraceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -75,6 +76,7 @@ public class ToolGovernor {
         this(tools, objectMapper, properties, null);
     }
 
+    @Autowired
     public ToolGovernor(List<CompanionTool> tools,
                         ObjectMapper objectMapper,
                         CompanionToolProperties properties,

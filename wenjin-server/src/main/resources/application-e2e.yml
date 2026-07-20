@@ -1,0 +1,17 @@
+# Local e2e profile — points at isolated wenjin_e2e database
+spring:
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/wenjin_e2e?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&useAffectedRows=true
+    username: root
+    password: root
+
+wenjin:
+  features:
+    agent-trace-enabled: true
+    eval-enabled: true
+    memory-enabled: true
+    rag-enabled: true
+    plan-enabled: true
+    multi-agent-enabled: false
+    companion-llm-enabled: false
+    reflection-enabled: false
