@@ -34,14 +34,17 @@ public final class EnabledScenarioStepsFactory {
         BY_CODE.put("S04", s04());
         BY_CODE.put("S05", s05());
         BY_CODE.put("S06", s06());
+        BY_CODE.put("S07", s07());
         BY_CODE.put("S08", s08());
         BY_CODE.put("S09", s09());
         BY_CODE.put("S10", s10());
         BY_CODE.put("S11", s11());
+        BY_CODE.put("S12", s12());
         BY_CODE.put("S13", s13());
         BY_CODE.put("S14", s14());
         BY_CODE.put("S15", s15());
         BY_CODE.put("S16", s16());
+        BY_CODE.put("S17", s17());
         BY_CODE.put("S19", s19());
     }
 
@@ -132,12 +135,42 @@ public final class EnabledScenarioStepsFactory {
                                 + "建议先完成这一套再复盘；若再次触发限额，系统会提示稍后再试。"));
     }
 
+    private static List<EvalStepView> s07() {
+        // M9 degrade skeleton: DEGRADE step + zero-LLM template (no tools required)
+        return List.of(
+                new EvalStepView("DEGRADE", "LLM_FAILURES", 0,
+                        "{}",
+                        "{\"degraded\":true,\"reason\":\"LLM_FAILURES\"}"),
+                llmPhase1Final(),
+                llmPhase2(
+                        "我这边暂时无法调用大模型，先给你一条不依赖 AI 的学习建议：优先完成今日复习，"
+                                + "再针对薄弱点做短练习。可以先巩固 SE-2.1 或 SE-3.2。"));
+    }
+
     private static List<EvalStepView> s08() {
         return List.of(
                 llmPhase1Final(),
                 llmPhase2(
                         "记得你提到的薄弱点是 SE-3.2 用例图。结合摘要：先复习参与者与系统边界，"
                                 + "再画一个小例子巩固；需要我按这个顺序带着走吗？"));
+    }
+
+    private static List<EvalStepView> s12() {
+        // EXPLAIN intent + re-explain strategy (no probe tool required for hard assert)
+        return List.of(
+                llm("phase1", "{\"type\":\"final_text\",\"text\":\"\",\"intent\":\"EXPLAIN\"}"),
+                llmPhase2(
+                        "换个讲法看 SE-3.2：把「参与者」想成系统外的人/系统，椭圆是系统能提供的服务。"
+                                + "你先举一个生活场景里的参与者，我再帮你对照边界是否画对。"));
+    }
+
+    private static List<EvalStepView> s17() {
+        // CHAT intent → must not call probe_understanding
+        return List.of(
+                llm("phase1", "{\"type\":\"final_text\",\"text\":\"\",\"intent\":\"CHAT\"}"),
+                llmPhase2(
+                        "你好！可以按「诊断定位 → 路径学习 → 节点练习 → 复习巩固」安排节奏。"
+                                + "今天想先摸清薄弱点，还是直接挑 SE-1.1 开一小段练习？"));
     }
 
     private static List<EvalStepView> s09() {

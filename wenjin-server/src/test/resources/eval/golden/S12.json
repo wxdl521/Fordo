@@ -1,0 +1,14 @@
+{
+  "scenario" : "S12",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"final_text\",\"text\":\"\",\"intent\":\"EXPLAIN\"}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "换个讲法看 SE-3.2：把「参与者」想成系统外的人/系统，椭圆是系统能提供的服务。你先举一个生活场景里的参与者，我再帮你对照边界是否画对。"
+  } ]
+}

@@ -41,8 +41,13 @@ class ScenarioLoaderTest {
 
         Optional<EvalScenarioDocument> s07 = loader.loadByCode("S07");
         assertThat(s07).isPresent();
-        assertThat(s07.get().resolvedStatus()).isEqualTo(EvalScenarioStatus.PENDING);
-        assertThat(s07.get().pendingReason()).isEqualTo("M9-reflection");
+        assertThat(s07.get().resolvedStatus()).isEqualTo(EvalScenarioStatus.ENABLED);
+        assertThat(s07.get().hard().degradedExpected()).isTrue();
+
+        Optional<EvalScenarioDocument> s17 = loader.loadByCode("S17");
+        assertThat(s17).isPresent();
+        assertThat(s17.get().resolvedStatus()).isEqualTo(EvalScenarioStatus.ENABLED);
+        assertThat(s17.get().hard().mustNotCallTools()).contains("probe_understanding");
     }
 
     @Test

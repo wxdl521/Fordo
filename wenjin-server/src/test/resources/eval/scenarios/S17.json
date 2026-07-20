@@ -1,0 +1,26 @@
+{
+  "code": "S17",
+  "title": "CHAT 意图不探针",
+  "status": "ENABLED",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": [],
+    "note": "M9 intent=CHAT (or missing) → must not call probe_understanding"
+  },
+  "script": [
+    {"user": "你好，今天想随便聊聊学习节奏"}
+  ],
+  "hard": {
+    "mustCallTools": [],
+    "mustNotCallTools": ["probe_understanding"],
+    "maxToolCalls": 4,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+    ]
+  }
+}

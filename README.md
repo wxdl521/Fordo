@@ -293,8 +293,8 @@ M6 用场景脚本 + 硬断言 +（可选）LLM-as-judge 回归伴侣行为。CI
 | 报告 | `wenjin-server/target/eval-report.md`（评测测试写出） |
 | Judge 校准草稿 | `wenjin-server/docs/quality/judge-calibration-v1.md` |
 
-- **ENABLED**（CI 硬断言）：S01–S06、S08–S11、**S13**、S14、S15、**S16**、**S19**  
-- **PENDING**（待 M7 LIVE / M9）：S07、S12、**S18**（跨会话记忆引用）  
+- **ENABLED**（CI 硬断言）：S01–S07、S08–S12、**S13**、S14、S15、**S16**、**S17**、**S19**  
+- **PENDING**：**S18**（跨会话记忆引用，待 LIVE golden）  
 - S02：`guidance` 阈值 4；system prompt 强化「索要直接答案 → 分步引导」  
 - 开关：`wenjin.features.eval-enabled`（生产默认关，`WENJIN_FEATURE_EVAL`）  
 - Judge 模型：`wenjin.eval.judge-model`（可选，见 DEPLOYMENT）

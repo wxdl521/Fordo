@@ -1,12 +1,13 @@
 {
   "code": "S07",
   "title": "工具失败降级",
-  "status": "PENDING",
-  "pendingReason": "M9-reflection",
+  "status": "ENABLED",
   "persona": {
-    "masteryOverrides": [],
-    "reviewQueue": [],
-    "note": "stub PENDING(M9) — 注入工具异常 → 信封返回 → 模型自恢复"
+    "masteryOverrides": [
+      {"nodeCode": "SE-3.2", "raw": 0.40, "effective": 0.35}
+    ],
+    "reviewQueue": ["SE-2.1"],
+    "note": "M9 degrade skeleton — LLM failures / kill switch → DEGRADE + template + practice card"
   },
   "script": [
     {"user": "帮我查一下掌握度"}

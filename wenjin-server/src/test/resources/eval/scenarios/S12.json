@@ -1,15 +1,16 @@
 {
   "code": "S12",
   "title": "换策略重讲",
-  "status": "PENDING",
-  "pendingReason": "M9-reflection",
+  "status": "ENABLED",
   "persona": {
-    "masteryOverrides": [],
+    "masteryOverrides": [
+      {"nodeCode": "SE-3.2", "raw": 0.35, "effective": 0.30}
+    ],
     "reviewQueue": [],
-    "note": "stub PENDING(M9) — probe 错 → 二讲策略不同"
+    "note": "M9 reflection skeleton — EXPLAIN + probe wrong → reexplain / strategy switch"
   },
   "script": [
-    {"user": "还是不懂，换个讲法"}
+    {"user": "还是不懂，换个讲法讲一下 SE-3.2 用例图"}
   ],
   "hard": {
     "mustCallTools": [],

@@ -1,0 +1,14 @@
+{
+  "scenario" : "S17",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"final_text\",\"text\":\"\",\"intent\":\"CHAT\"}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "你好！可以按「诊断定位 → 路径学习 → 节点练习 → 复习巩固」安排节奏。今天想先摸清薄弱点，还是直接挑 SE-1.1 开一小段练习？"
+  } ]
+}

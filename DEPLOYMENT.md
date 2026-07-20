@@ -417,6 +417,8 @@ npm run build        # 产出 dist/
 | 已配置 | `wenjin.features.eval-enabled` | M6 伴侣评测套件 / runner | 小 |
 | 已配置 | `wenjin.features.memory-enabled` | M7 伴侣长期记忆（注入 / 蒸馏 / 工具） | 小 |
 | 已配置 | `wenjin.features.rag-enabled` | M8 RAG 语料检索 / RETRIEVAL / search_materials | 小 |
+| 已配置 | `wenjin.features.reflection-enabled` | M9 反思探针 / 换策略重讲 | 小 |
+| 已配置 | `wenjin.features.companion-llm-enabled` | M9 伴侣 LLM 紧急 kill switch | 小 |
 | 已配置 | `wenjin.eval.judge-model` | M6 LLM-as-judge 模型名（可选） | 极小 |
 | 已配置 | `wenjin.limits.trace` / `wenjin.limits.tools` | step I/O 与工具结果截断 | 小 |
 | 已配置 | `wenjin.limits.prompt` / `wenjin.limits.memory` | M7 分槽预算与记忆强度/注入 | 小 |
@@ -452,6 +454,8 @@ spring:
 | `wenjin.features.eval-enabled` | `true` | `${WENJIN_FEATURE_EVAL:false}` | M6 评测套件总开关；关闭时 LIVE/REPLAY executor 整体 skip |
 | `wenjin.features.memory-enabled` | `true` | `${WENJIN_FEATURE_MEMORY:false}` | M7 长期记忆；关则 MEMORY 空、不 distill、记忆工具下架 |
 | `wenjin.features.rag-enabled` | `true` | `${WENJIN_FEATURE_RAG:false}` | M8 RAG；关则 RETRIEVAL 空、`search_materials` 下架 |
+| `wenjin.features.reflection-enabled` | `true` | `${WENJIN_FEATURE_REFLECTION:false}` | M9 反思；关则不下发 `probe_understanding`、不自动探针 |
+| `wenjin.features.companion-llm-enabled` | `true` | `${WENJIN_FEATURE_COMPANION_LLM:true}` | M9 紧急关 LLM；关则零 LLM 模板 + 练习卡，run=`DEGRADED` |
 | `wenjin.eval.judge-model` | `${WENJIN_EVAL_JUDGE_MODEL:}`（空则回落文本模型） | 同左 | LLM-as-judge 模型；未配置时沿用 `wenjin.ai.model` |
 | `wenjin.limits.trace.max-io-chars` | `8000` | 继承基线 | `agent_step.input_json` / `output_json` 超长截断并追加 `[truncated]` |
 | `wenjin.limits.tools.max-result-chars` | `4000` | 继承基线 | 通用工具结果字符上限（与伴侣侧 `wenjin.companion.tools.max-result-chars` 并存；后者偏对话上下文） |
@@ -478,6 +482,8 @@ wenjin:
     eval-enabled: true          # prod: ${WENJIN_FEATURE_EVAL:false}
     memory-enabled: true        # prod: ${WENJIN_FEATURE_MEMORY:false}
     rag-enabled: true           # prod: ${WENJIN_FEATURE_RAG:false}
+    reflection-enabled: true    # prod: ${WENJIN_FEATURE_REFLECTION:false}
+    companion-llm-enabled: true # prod: ${WENJIN_FEATURE_COMPANION_LLM:true}
   eval:
     judge-model: ${WENJIN_EVAL_JUDGE_MODEL:}   # 可选；空则用 wenjin.ai.model
   limits:
@@ -514,6 +520,31 @@ wenjin:
 - **M6 评测**：生产默认 `eval-enabled=false`；CI 用 REPLAY 硬断言（`eval-replay` job，不调用外网模型）。LIVE 录 golden / judge 校准仅在有 Key 的受控环境执行。
 - **M7 记忆**：生产默认 `memory-enabled=false`；开启前须完成 V12 migrate。关闭时行为回到 M6 基线（空 MEMORY 槽、无 distill 入队、记忆工具不可用）。`record_observation` 超 `write-per-run` 返回 `TOOL_BUDGET_EXCEEDED` + GUARD，且不占用总工具次数。
 - **M8 RAG**：生产默认 `rag-enabled=false`；开启前须完成 **V13 migrate** 与 **`ops/sql/preflight-ngram.sql`**（`ngram_token_size=2`）。关闭时回到 M7 基线（空 RETRIEVAL、`search_materials` 不可用）。**版权**：整本出版教材勿部署到公网 `fordo.thingxue.com`；校内演示环境不受限。NODE_REF 参考文档可入库。
+- **M9 竞赛交付 / 紧急 kill switch**：见下表；**无新 Flyway**（探针会话为进程内 `ProbeSessionStore`，避免占用 M10 的 V14）。
+
+### 4.2.1 M9 紧急 kill switch 矩阵
+
+赛中若 LLM 故障、探针误伤或策略回路异常，优先关 flag，无需回滚 schema。
+
+| `companion-llm-enabled` | `reflection-enabled` | 伴侣行为 |
+|-------------------------|----------------------|----------|
+| `true` | `true` | 正常：phase1 intent + 工具；EXPLAIN 后可自动探针；可 `probe_understanding` |
+| `true` | `false` | 正常 LLM；**不下发**探针工具、不自动探针、无换策略回路 |
+| `false` | `true` / `false` | **零 LLM 降级**：模板话术 + 练习卡（due → weak → frontier）；`agent_run.status=DEGRADED` + `DEGRADE` step |
+
+| 触发条件 | 行为 |
+|----------|------|
+| `companion-llm-enabled=false` | 立即走 `CompanionDegradeService` |
+| 同 turn LLM 失败次数 ≥ 2 | 同上（`reason=LLM_FAILURES`） |
+| LLM timeout | 同上（`reason=LLM_TIMEOUT`） |
+| Probe 提交 | **永不写 EWMA / mastery**（与练习 submit 隔离） |
+
+```bash
+# 紧急关伴侣 LLM（保留站点其它功能）
+export WENJIN_FEATURE_COMPANION_LLM=false
+# 仅关反思探针 / 换策略
+export WENJIN_FEATURE_REFLECTION=false
+```
 
 **`application-prod.yml` 参考全文**（profile 名即文件名后缀，`SPRING_PROFILES_ACTIVE=prod` 时自动合并覆盖 `application.yml`）：
 
@@ -718,6 +749,8 @@ process.
 | `WENJIN_BOOTSTRAP_ADMIN_USERNAME` | 引导管理员用户名 | 空 | 仅 one-shot 窗口设置 |
 | `WENJIN_BOOTSTRAP_ADMIN_PASSWORD` | 引导管理员明文口令（≥16） | 空 | 仅 one-shot；成功后**立即 unset** |
 | `WENJIN_FEATURE_AGENT_TRACE` | M5 Agent 轨迹埋点与教师查询 | prod 默认 false | 需先 migrate V10；开启后教师可访问 `/api/teacher/agent-runs` |
+| `WENJIN_FEATURE_REFLECTION` | M9 反思探针 | prod 默认 false | 关则无 probe / 自动探针 |
+| `WENJIN_FEATURE_COMPANION_LLM` | M9 伴侣 LLM | prod 默认 **true** | 紧急设 `false` → 零 LLM 降级 |
 
 ---
 

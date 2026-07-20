@@ -43,6 +43,13 @@ public final class GoldenHardAssertSupport {
                 if (!output.isBlank()) {
                     finalResponse = output;
                 }
+                // M9 synthetic degrade marker in recorded phase2 text
+                if (output != null && output.contains("无法调用大模型")) {
+                    steps.add(0, new EvalStepView("DEGRADE", "LLM_FAILURES", 0,
+                            "{}", "{\"degraded\":true,\"reason\":\"LLM_FAILURES\"}"));
+                }
+            } else if ("degrade".equalsIgnoreCase(name)) {
+                steps.add(new EvalStepView("DEGRADE", "LLM_FAILURES", 0, null, output));
             } else {
                 steps.add(new EvalStepView("LLM_CALL", name, 0, null, output));
             }
