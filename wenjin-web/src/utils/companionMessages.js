@@ -42,6 +42,100 @@ export function createPracticeMessage(card) {
   }
 }
 
+/**
+ * Normalize probe_card SSE payload into a single-question card for QuestionAnswerCard.
+ * @param {object} card ProbeStartVO
+ */
+export function normalizeProbeCard(card) {
+  const q = card?.question || {}
+  return {
+    sessionId: card?.sessionId,
+    nodeCode: card?.nodeCode || null,
+    nodeName: card?.nodeName || null,
+    source: card?.source || null,
+    ephemeral: !!card?.ephemeral,
+    question: {
+      questionId: q.questionId,
+      c: q.chapter || card?.nodeName || card?.nodeCode || '理解探针',
+      q: q.stem || '',
+      o: (q.options || []).map((option) => option.text),
+      optionKeys: (q.options || []).map((option) => option.key),
+      type: q.type || 4
+    }
+  }
+}
+
+export function createProbeMessage(card) {
+  return {
+    role: 'probe',
+    card: normalizeProbeCard(card),
+    phase: 'answering',
+    answers: {
+      single: null,
+      multi: [],
+      text: ''
+    },
+    submitResult: null,
+    submitError: ''
+  }
+}
+
+/**
+ * Build studentAnswer string for probe submit from message answers.
+ * @param {object} message probe message
+ * @returns {string}
+ */
+export function buildProbeStudentAnswer(message) {
+  const q = message?.card?.question
+  if (!q) return ''
+  if (q.type === 2) {
+    const selected = [...(message.answers?.multi || [])].sort((a, b) => a - b)
+    return selected
+      .map((i) => q.optionKeys?.[i])
+      .filter((v) => v !== undefined)
+      .join(',')
+  }
+  if (q.type === 4) {
+    return message.answers?.text != null ? String(message.answers.text) : ''
+  }
+  const idx = message.answers?.single
+  if (typeof idx === 'number' && q.optionKeys?.[idx] !== undefined) {
+    return q.optionKeys[idx]
+  }
+  return ''
+}
+
+/**
+ * Split assistant text into plain / citation-chip segments.
+ * Matches `资料 #123` patterns.
+ * @param {string} text
+ * @returns {Array<{ type: 'text' | 'citation', value: string, chunkId?: number }>}
+ */
+export function parseCitationSegments(text) {
+  const source = text == null ? '' : String(text)
+  if (!source) return []
+  const re = /资料\s*#(\d+)/g
+  const segments = []
+  let last = 0
+  let m
+  while ((m = re.exec(source)) !== null) {
+    if (m.index > last) {
+      segments.push({ type: 'text', value: source.slice(last, m.index) })
+    }
+    const chunkId = Number(m[1])
+    segments.push({
+      type: 'citation',
+      value: m[0],
+      chunkId: Number.isFinite(chunkId) ? chunkId : undefined
+    })
+    last = m.index + m[0].length
+  }
+  if (last < source.length) {
+    segments.push({ type: 'text', value: source.slice(last) })
+  }
+  return segments
+}
+
 export function createToolMessage(event, ok = null) {
   return {
     role: 'tool',

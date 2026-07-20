@@ -30,6 +30,18 @@ vi.mock('../../api/review.js', () => ({
   fetchTodayReview: vi.fn().mockResolvedValue({ items: [], totalDecayingCount: 0 })
 }))
 
+vi.mock('../../api/student.js', () => ({
+  fetchDailyBrief: vi.fn().mockResolvedValue({
+    todayPlanTasks: [],
+    reviewBacklogCount: 0,
+    backlogAlert: false,
+    weakDrops: [],
+    planSectionVisible: false,
+    atRisk: false
+  }),
+  fetchStudentChunk: vi.fn()
+}))
+
 vi.mock('../../utils/graphLayout.js', () => ({
   computeLayout: (data) => {
     const nodes = data?.nodes || []

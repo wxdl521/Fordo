@@ -45,6 +45,13 @@
     <!-- 画布 -->
     <div ref="canvasRef" class="wj-canvas-container" :style="{ flex: 1, position: 'relative', overflow: 'hidden', touchAction: 'none' }">
 
+      <!-- 每日简报（学生已登录且有课程） -->
+      <DailyBriefCard
+        v-if="currentUser && courseId"
+        :course-id="courseId"
+        :enabled="!!currentUser && !!courseId"
+      />
+
       <!-- 未登录提示 -->
       <div v-if="!currentUser" :style="{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', color: 'var(--mut)', zIndex: 5 }">
         <div :style="{ fontFamily: serif, fontSize: '20px', fontWeight: 600, letterSpacing: '2px', color: 'var(--ink)' }">请先登录</div>
@@ -278,6 +285,7 @@ import { useSessionStore } from '../store/session.js'
 import { computeLayout, shortName, radiusOf } from '../utils/graphLayout.js'
 import { fetchTodayReview } from '../api/review.js'
 import ReviewPanel from '../components/ReviewPanel.vue'
+import DailyBriefCard from '../components/DailyBriefCard.vue'
 import { createLatestRequest } from '../utils/latestRequest.js'
 
 const serif = "'Noto Serif SC', serif"

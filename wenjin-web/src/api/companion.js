@@ -47,8 +47,23 @@ export function deleteConversation(id, config = {}) {
 }
 
 /**
+ * 提交理解探针作答。
+ * POST /api/companion/probe/{sessionId}/submit
+ * @param {string} sessionId
+ * @param {{ courseId: number, studentAnswer: string, studentId?: number }} payload
+ * @param {{ signal?: AbortSignal }} [config]
+ */
+export function submitProbe(sessionId, payload, config) {
+  const body = { ...payload }
+  // 仍保留 studentId：后端 ProbeSubmitRequest 当前要求非空；AccessGuard 会校验与 principal 一致
+  return config
+    ? http.post(`/companion/probe/${sessionId}/submit`, body, config)
+    : http.post(`/companion/probe/${sessionId}/submit`, body)
+}
+
+/**
  * Dispatch a parsed companion SSE event to optional callbacks.
- * Supported events: `meta`, `tool_start`, `tool_result`, `practice_card`, `token`, `done`, `error`.
+ * Supported events: `meta`, `tool_start`, `tool_result`, `practice_card`, `probe_card`, `token`, `done`, `error`.
  *
  * @param {string} eventType
  * @param {any} payload
@@ -59,7 +74,8 @@ export function deleteConversation(id, config = {}) {
  *   onError?: (message: string) => void,
  *   onToolStart?: (event: any) => void,
  *   onToolResult?: (event: any) => void,
- *   onPracticeCard?: (event: any) => void
+ *   onPracticeCard?: (event: any) => void,
+ *   onProbeCard?: (event: any) => void
  * }} callbacks
  * @returns {{ handled: boolean, done: boolean }}
  */
@@ -76,6 +92,9 @@ export function dispatchChatStreamEvent(eventType, payload, callbacks = {}) {
       return { handled: true, done: false }
     case 'practice_card':
       callbacks.onPracticeCard?.(payload)
+      return { handled: true, done: false }
+    case 'probe_card':
+      callbacks.onProbeCard?.(payload)
       return { handled: true, done: false }
     case 'token':
       callbacks.onToken?.(payload?.t ?? '')
@@ -101,7 +120,8 @@ export function dispatchChatStreamEvent(eventType, payload, callbacks = {}) {
  *   onError?: (message: string) => void,
  *   onToolStart?: (event: any) => void,
  *   onToolResult?: (event: any) => void,
- *   onPracticeCard?: (event: any) => void
+ *   onPracticeCard?: (event: any) => void,
+ *   onProbeCard?: (event: any) => void
  * }} callbacks
  * @param {{ signal?: AbortSignal }} [options]
  * @returns {Promise<void>}

@@ -15,6 +15,7 @@ describe('dispatchChatStreamEvent', () => {
       onToolStart: (event) => calls.push(['tool_start', event]),
       onToolResult: (event) => calls.push(['tool_result', event]),
       onPracticeCard: (event) => calls.push(['practice_card', event]),
+      onProbeCard: (event) => calls.push(['probe_card', event]),
       onDone: () => calls.push(['done']),
       onError: (message) => calls.push(['error', message])
     }
@@ -24,6 +25,7 @@ describe('dispatchChatStreamEvent', () => {
     expect(dispatchChatStreamEvent('tool_start', { name: 'query_mastery', label: '查询掌握度' }, callbacks).done).toBe(false)
     expect(dispatchChatStreamEvent('tool_result', { name: 'query_mastery', ok: true }, callbacks).done).toBe(false)
     expect(dispatchChatStreamEvent('practice_card', { sessionId: 88 }, callbacks).done).toBe(false)
+    expect(dispatchChatStreamEvent('probe_card', { sessionId: 'p-1' }, callbacks).done).toBe(false)
     expect(dispatchChatStreamEvent('error', { message: 'boom' }, callbacks).done).toBe(false)
     expect(dispatchChatStreamEvent('done', {}, callbacks).done).toBe(true)
 
@@ -33,6 +35,7 @@ describe('dispatchChatStreamEvent', () => {
       ['tool_start', { name: 'query_mastery', label: '查询掌握度' }],
       ['tool_result', { name: 'query_mastery', ok: true }],
       ['practice_card', { sessionId: 88 }],
+      ['probe_card', { sessionId: 'p-1' }],
       ['error', 'boom'],
       ['done']
     ])

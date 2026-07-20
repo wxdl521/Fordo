@@ -58,14 +58,70 @@
           <div class="cp-msg-role">{{ roleLabel(msg.role) }}</div>
 
           <div class="cp-msg-main">
-            <div v-if="isPlainMessage(msg) && msg.content" class="cp-msg-body">
+            <div v-if="msg.role === 'user' && msg.content" class="cp-msg-body">
               {{ msg.content }}
+            </div>
+
+            <div v-else-if="msg.role === 'assistant' && msg.content" class="cp-msg-body">
+              <template v-for="(seg, si) in citationSegments(msg.content)" :key="si">
+                <button
+                  v-if="seg.type === 'citation' && seg.chunkId"
+                  type="button"
+                  class="cp-cite-chip"
+                  @click="openCitation(seg.chunkId)"
+                >{{ seg.value }}</button>
+                <span v-else>{{ seg.value }}</span>
+              </template>
             </div>
 
             <div v-else-if="msg.role === 'tool'" class="cp-tool-capsule" :class="toolStateClass(msg)">
               <span class="cp-tool-dot"></span>
               <span class="cp-tool-label">{{ msg.label || msg.name }}</span>
               <span class="cp-tool-state">{{ toolStateText(msg) }}</span>
+            </div>
+
+            <div v-else-if="msg.role === 'probe'" class="cp-practice">
+              <div class="cp-practice-head">
+                <div class="cp-practice-title">理解探针 · {{ msg.card?.nodeName || msg.card?.nodeCode || '节点' }}</div>
+                <div class="cp-practice-meta">{{ msg.card?.source === 'EPHEMERAL' || msg.card?.ephemeral ? '即时题' : '题库' }}</div>
+              </div>
+
+              <div v-if="msg.phase !== 'result' && msg.card?.question" class="cp-practice-body">
+                <QuestionAnswerCard
+                  :question="msg.card.question"
+                  :index="1"
+                  :total="1"
+                  :selected="msg.answers.single"
+                  :selected-set="msg.answers.multi"
+                  :text-value="msg.answers.text"
+                  :is-last="true"
+                  :last-label="msg.phase === 'submitting' ? '提交中...' : (msg.phase === 'submitError' ? '重新提交' : '提交答案')"
+                  :has-selection="probeHasSelection(msg)"
+                  :show-hint="false"
+                  @pick="onProbePick(msg, $event)"
+                  @text-input="onProbeTextInput(msg, $event)"
+                  @prev="() => {}"
+                  @next="submitProbeMessage(msg)"
+                  @skip="submitProbeMessage(msg)"
+                />
+                <div v-if="msg.phase === 'submitting'" class="cp-practice-note">正在提交探针…</div>
+                <div v-else-if="msg.submitError" class="cp-practice-note is-error" role="alert">{{ msg.submitError }}</div>
+              </div>
+
+              <div v-if="msg.phase === 'result' && msg.submitResult" class="cp-practice-result">
+                <div class="cp-practice-lines">
+                  <div class="cp-practice-line" :class="msg.submitResult.correct ? 'is-ok' : 'is-bad'">
+                    {{ msg.submitResult.correct ? '回答正确' : '回答有误' }}
+                  </div>
+                </div>
+                <button
+                  v-if="msg.submitResult.reexplainAvailable"
+                  type="button"
+                  class="cp-reexplain"
+                  :disabled="typing"
+                  @click="requestReexplain(msg)"
+                >换个方式再讲一遍</button>
+              </div>
             </div>
 
             <div v-else-if="msg.role === 'practice'" class="cp-practice">
@@ -201,6 +257,22 @@
         </button>
       </div>
     </main>
+
+    <!-- 引用抽屉：资料 #id -->
+    <div v-if="citationOpen" class="cp-cite-mask" @click.self="closeCitation">
+      <aside class="cp-cite-drawer" role="dialog" aria-modal="true" aria-label="资料引用">
+        <header class="cp-cite-head">
+          <div>
+            <div class="cp-cite-kicker">资料 #{{ citationId }}</div>
+            <div class="cp-cite-title">{{ citation?.sourceTitle || '语料切块' }}</div>
+          </div>
+          <button type="button" class="cp-chip-close" aria-label="关闭" @click="closeCitation">×</button>
+        </header>
+        <div v-if="citationLoading" class="cp-cite-body muted">加载中…</div>
+        <div v-else-if="citationError" class="cp-cite-body is-error" role="alert">{{ citationError }}</div>
+        <div v-else class="cp-cite-body">{{ citation?.content || '（无正文）' }}</div>
+      </aside>
+    </div>
   </div>
 </template>
 
@@ -213,9 +285,11 @@ import {
   fetchConversation,
   deleteConversation,
   chatStream,
+  submitProbe,
   isAbortError
 } from '../api/companion.js'
 import { submitPractice } from '../api/practice.js'
+import { fetchStudentChunk } from '../api/student.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
 import { buildCompanionChatPayload, readCompanionNodeCode } from '../utils/companionContext.js'
 import { createDebouncedPersist } from '../utils/companionPersistence.js'
@@ -224,11 +298,14 @@ import {
   appendAssistantToken,
   applyToolResult,
   buildPracticeAnswerList,
+  buildProbeStudentAnswer,
   conversationSnapshotKey,
   createPracticeMessage,
+  createProbeMessage,
   createToolMessage,
   createTypedMessagesSnapshot,
   normalizeConversationMessage,
+  parseCitationSegments,
   restoreTypedMessagesFromSnapshot
 } from '../utils/companionMessages.js'
 import { useSessionStore } from '../store/session.js'
@@ -248,6 +325,12 @@ const conversationLoadingTarget = ref(null)
 const conversations = ref([])
 const ctxNodeCode = ref(null)
 const scrollEl = ref(null)
+const citationOpen = ref(false)
+const citationId = ref(null)
+const citation = ref(null)
+const citationLoading = ref(false)
+const citationError = ref('')
+const citationRequest = createLatestRequest()
 let snapshotPersist
 
 /** 三闸：列表 / 详情 / SSE，各自 abort + isCurrent 防迟到写 */
@@ -259,6 +342,7 @@ function cancelAllCompanionRequests() {
   conversationListGate.cancel()
   conversationDetailGate.cancel()
   streamGate.cancel()
+  citationRequest.cancel()
 }
 
 /**
@@ -297,11 +381,36 @@ function roleLabel(role) {
   if (role === 'user') return '你'
   if (role === 'assistant') return 'AI'
   if (role === 'tool') return '工具'
+  if (role === 'probe') return '探针'
   return '练习'
 }
 
-function isPlainMessage(message) {
-  return message.role === 'user' || message.role === 'assistant'
+function citationSegments(content) {
+  return parseCitationSegments(content)
+}
+
+async function openCitation(chunkId) {
+  citationOpen.value = true
+  citationId.value = chunkId
+  citation.value = null
+  citationError.value = ''
+  citationLoading.value = true
+  const request = citationRequest.next()
+  try {
+    const data = await fetchStudentChunk(chunkId, { signal: request.signal })
+    if (!request.isCurrent()) return
+    citation.value = data
+  } catch (error) {
+    if (isAbortError(error) || !request.isCurrent()) return
+    citationError.value = error?.message || '无法加载资料'
+  } finally {
+    if (request.isCurrent()) citationLoading.value = false
+  }
+}
+
+function closeCitation() {
+  citationOpen.value = false
+  citationRequest.cancel()
 }
 
 /** Hide empty assistant placeholders so tools/practice appear first without a blank AI row. */
@@ -522,6 +631,78 @@ async function submitPracticeMessage(message) {
   scrollToEnd()
 }
 
+function probeHasSelection(message) {
+  const q = message?.card?.question
+  if (!q) return false
+  if (q.type === 4) return true
+  if (q.type === 2) return (message.answers?.multi || []).length > 0
+  return typeof message.answers?.single === 'number'
+}
+
+function onProbePick(message, optionIndex) {
+  if (message.phase === 'submitting' || message.phase === 'result') return
+  message.submitError = ''
+  if (message.phase === 'submitError') message.phase = 'answering'
+  const q = message.card?.question
+  if (q?.type === 2) {
+    const current = [...(message.answers.multi || [])]
+    const existingIndex = current.indexOf(optionIndex)
+    if (existingIndex >= 0) current.splice(existingIndex, 1)
+    else current.push(optionIndex)
+    message.answers.multi = current
+    return
+  }
+  message.answers.single = optionIndex
+}
+
+function onProbeTextInput(message, text) {
+  if (message.phase === 'submitting' || message.phase === 'result') return
+  message.submitError = ''
+  if (message.phase === 'submitError') message.phase = 'answering'
+  message.answers.text = text
+}
+
+async function submitProbeMessage(message) {
+  if (message.phase === 'submitting' || message.phase === 'result') return
+  const studentAnswer = buildProbeStudentAnswer(message)
+  if (!studentAnswer && message.card?.question?.type !== 4) {
+    message.submitError = '请先选择答案。'
+    message.phase = 'submitError'
+    return
+  }
+  if (!courseId.value) {
+    message.submitError = '请先选择课程。'
+    message.phase = 'submitError'
+    return
+  }
+
+  message.submitError = ''
+  message.phase = 'submitting'
+  scrollToEnd()
+
+  try {
+    const result = await submitProbe(message.card.sessionId, {
+      courseId: courseId.value,
+      studentId: studentId.value,
+      studentAnswer
+    })
+    message.submitResult = result
+    message.phase = 'result'
+  } catch (error) {
+    message.submitError = error.message || '提交失败，请稍后重试。'
+    message.phase = 'submitError'
+  }
+  scrollToEnd()
+}
+
+/** 换策略再讲：发一条用户消息请伴侣重讲（不另开 SSE 编排）。 */
+function requestReexplain(message) {
+  if (typing.value) return
+  const node = message?.card?.nodeName || message?.card?.nodeCode || '刚才的知识点'
+  input.value = `我对「${node}」还不太理解，请换个方式再讲一遍。`
+  sendText()
+}
+
 function practiceMasteryDelta(message) {
   if (!message.submitResult) return null
   const before = message.submitResult.masteryBefore
@@ -723,6 +904,11 @@ async function sendText() {
       onPracticeCard: (event) => {
         if (!isCurrent()) return
         msgs.value.push(createPracticeMessage(event))
+        scrollToEnd()
+      },
+      onProbeCard: (event) => {
+        if (!isCurrent()) return
+        msgs.value.push(createProbeMessage(event))
         scrollToEnd()
       },
       onToken: (token) => {
@@ -1080,6 +1266,105 @@ onUnmounted(() => {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.cp-cite-chip {
+  display: inline;
+  margin: 0 2px;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--acc) 35%, var(--line));
+  border-radius: 999px;
+  background: var(--accSoft);
+  color: var(--acc);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+.cp-cite-chip:hover {
+  border-color: var(--acc);
+}
+
+.cp-reexplain {
+  margin-top: 10px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--acc);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cp-reexplain:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cp-practice-line.is-ok { color: var(--ok); font-weight: 600; }
+.cp-practice-line.is-bad { color: var(--warn); font-weight: 600; }
+
+.cp-cite-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.28);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cp-cite-drawer {
+  width: min(400px, 100%);
+  height: 100%;
+  background: var(--card);
+  border-left: 1px solid var(--line);
+  box-shadow: -8px 0 28px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  animation: cpCiteIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes cpCiteIn {
+  from { transform: translateX(16px); opacity: 0.6; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.cp-cite-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cp-cite-kicker {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--mut);
+  margin-bottom: 4px;
+}
+
+.cp-cite-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.cp-cite-body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 18px;
+  font-size: 13.5px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cp-cite-body.muted { color: var(--mut); }
+.cp-cite-body.is-error { color: #c44; }
 
 .cp-tool-capsule {
   display: inline-flex;
