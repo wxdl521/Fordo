@@ -11,6 +11,8 @@ import com.wenjin.security.PrincipalLoader;
 import com.wenjin.security.UserRole;
 import com.wenjin.service.memory.MemoryDistillService;
 import com.wenjin.service.memory.SummaryRefreshService;
+import com.wenjin.service.multiagent.SupervisorSampleReportService;
+import com.wenjin.service.multiagent.TeacherWeeklyReportService;
 import com.wenjin.support.AiJobErrorCodes;
 import com.wenjin.support.AiJobHeartbeatScheduler;
 import com.wenjin.support.AiJobKind;
@@ -62,6 +64,8 @@ class AiJobWorkerTest {
     @Mock private MemoryDistillService memoryDistillService;
     @Mock private SummaryRefreshService summaryRefreshService;
     @Mock private com.wenjin.service.rag.DocIngestService docIngestService;
+    @Mock private TeacherWeeklyReportService teacherWeeklyReportService;
+    @Mock private SupervisorSampleReportService supervisorSampleReportService;
     @Mock private SysUserMapper sysUserMapper;
     @Mock private AiJobHeartbeatScheduler heartbeatScheduler;
     @Mock private ScheduledFuture<?> heartbeatFuture;
@@ -86,6 +90,8 @@ class AiJobWorkerTest {
                 memoryDistillService,
                 summaryRefreshService,
                 docIngestService,
+                teacherWeeklyReportService,
+                supervisorSampleReportService,
                 new PrincipalLoader(sysUserMapper),
                 featureFlags,
                 heartbeatScheduler,
@@ -266,6 +272,8 @@ class AiJobWorkerTest {
                     memoryDistillService,
                     summaryRefreshService,
                     docIngestService,
+                    teacherWeeklyReportService,
+                    supervisorSampleReportService,
                     new PrincipalLoader(sysUserMapper),
                     featureFlags,
                     dedicatedScheduler,

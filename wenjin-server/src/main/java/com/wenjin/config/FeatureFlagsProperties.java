@@ -46,4 +46,9 @@ public class FeatureFlagsProperties {
      * 学习计划（M10；关闭时工具下架、scheduler 不跑、brief 隐藏计划段、ACTIVE 冻结不删）。
      */
     private boolean planEnabled = true;
+
+    /**
+     * 多智能体周报 / 抽查（M11；默认关闭。关则零调度、报告 API 404）。
+     */
+    private boolean multiAgentEnabled = false;
 }

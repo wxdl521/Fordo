@@ -20,6 +20,7 @@ public class LimitsProperties {
     private final Trace trace = new Trace();
     private final Tools tools = new Tools();
     private final Plan plan = new Plan();
+    private final Supervisor supervisor = new Supervisor();
 
     @Data
     public static class Companion {
@@ -142,5 +143,14 @@ public class LimitsProperties {
         private int maxScopeNodes = 42;
         /** brief 中「有效分新跌破阈值」最多展示节点数 */
         private int weakDropLimit = 2;
+    }
+
+    /**
+     * Supervisor 抽查（wenjin.limits.supervisor.*，M11 可选）。
+     */
+    @Data
+    public static class Supervisor {
+        /** 每课程每周抽样 COMPANION_CHAT run 数 */
+        private int sampleSize = 5;
     }
 }

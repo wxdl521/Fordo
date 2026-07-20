@@ -32,10 +32,27 @@ public final class AiJobKind {
      */
     public static final String DOC_INGEST = "DOC_INGEST";
 
+    /**
+     * 教师学情周报（M11 可选）。
+     * request_key={@code course:{courseId}:period:{periodStart}}。
+     */
+    public static final String TEACHER_WEEKLY_REPORT = "TEACHER_WEEKLY_REPORT";
+
+    /**
+     * 伴学质量抽查（M11 可选）。
+     * request_key={@code course:{courseId}:period:{periodStart}}。
+     */
+    public static final String SUPERVISOR_SAMPLE = "SUPERVISOR_SAMPLE";
+
     private AiJobKind() {}
 
     /** 伴侣侧学生归属异步作业（允许 student actor）。 */
     public static boolean isStudentSideJob(String kind) {
         return MEMORY_DISTILL.equals(kind) || SUMMARY_REFRESH.equals(kind);
+    }
+
+    /** 多智能体系统作业（owner=课程教师；允许 teacher/admin actor）。 */
+    public static boolean isMultiAgentJob(String kind) {
+        return TEACHER_WEEKLY_REPORT.equals(kind) || SUPERVISOR_SAMPLE.equals(kind);
     }
 }

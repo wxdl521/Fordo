@@ -9,6 +9,8 @@ import com.wenjin.security.CurrentPrincipal;
 import com.wenjin.security.PrincipalLoader;
 import com.wenjin.service.memory.MemoryDistillService;
 import com.wenjin.service.memory.SummaryRefreshService;
+import com.wenjin.service.multiagent.SupervisorSampleReportService;
+import com.wenjin.service.multiagent.TeacherWeeklyReportService;
 import com.wenjin.service.rag.DocIngestService;
 import com.wenjin.support.AiJobErrorCodes;
 import com.wenjin.support.AiJobHeartbeatScheduler;
@@ -21,6 +23,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ScheduledFuture;
@@ -40,6 +43,8 @@ public class AiJobWorker {
     private final MemoryDistillService memoryDistillService;
     private final SummaryRefreshService summaryRefreshService;
     private final DocIngestService docIngestService;
+    private final TeacherWeeklyReportService teacherWeeklyReportService;
+    private final SupervisorSampleReportService supervisorSampleReportService;
     private final PrincipalLoader principalLoader;
     private final FeatureFlagsProperties featureFlags;
     private final AiJobHeartbeatScheduler heartbeatScheduler;
@@ -54,6 +59,8 @@ public class AiJobWorker {
                        MemoryDistillService memoryDistillService,
                        SummaryRefreshService summaryRefreshService,
                        DocIngestService docIngestService,
+                       TeacherWeeklyReportService teacherWeeklyReportService,
+                       SupervisorSampleReportService supervisorSampleReportService,
                        PrincipalLoader principalLoader,
                        FeatureFlagsProperties featureFlags,
                        AiJobHeartbeatScheduler heartbeatScheduler,
@@ -67,6 +74,8 @@ public class AiJobWorker {
         this.memoryDistillService = memoryDistillService;
         this.summaryRefreshService = summaryRefreshService;
         this.docIngestService = docIngestService;
+        this.teacherWeeklyReportService = teacherWeeklyReportService;
+        this.supervisorSampleReportService = supervisorSampleReportService;
         this.principalLoader = principalLoader;
         this.featureFlags = featureFlags;
         this.heartbeatScheduler = heartbeatScheduler;
@@ -159,8 +168,61 @@ public class AiJobWorker {
             case AiJobKind.MEMORY_DISTILL -> runMemoryDistill(job, leaseToken, request, heartbeat);
             case AiJobKind.SUMMARY_REFRESH -> runSummaryRefresh(job, leaseToken, request, heartbeat);
             case AiJobKind.DOC_INGEST -> runDocIngest(job, leaseToken, request, heartbeat);
+            case AiJobKind.TEACHER_WEEKLY_REPORT -> runTeacherWeeklyReport(job, leaseToken, request, heartbeat);
+            case AiJobKind.SUPERVISOR_SAMPLE -> runSupervisorSample(job, leaseToken, request, heartbeat);
             default -> throw new BusinessException(ResultCode.BAD_REQUEST, "未知作业类型: " + kind);
         };
+    }
+
+    private Object runTeacherWeeklyReport(AiJob job,
+                                          String leaseToken,
+                                          Map<String, Object> request,
+                                          HeartbeatGuard heartbeat) {
+        assertMultiAgentEnabled();
+        long courseId = job.getCourseId() != null
+                ? job.getCourseId()
+                : MemoryDistillService.longVal(request, "courseId", 0L);
+        LocalDate periodStart = parseDate(request.get("periodStart"));
+        LocalDate periodEnd = parseDate(request.get("periodEnd"));
+        markProgressOrLose(job.getId(), leaseToken, 20, heartbeat);
+        heartbeat.requireOwned();
+        // 骨架：空聚合仍 READY；后续可接掌握度/练习查询端口
+        long reportId = teacherWeeklyReportService.buildEmptySkeleton(courseId, periodStart, periodEnd);
+        markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
+        return Map.of("reportId", reportId);
+    }
+
+    private Object runSupervisorSample(AiJob job,
+                                      String leaseToken,
+                                      Map<String, Object> request,
+                                      HeartbeatGuard heartbeat) {
+        assertMultiAgentEnabled();
+        long courseId = job.getCourseId() != null
+                ? job.getCourseId()
+                : MemoryDistillService.longVal(request, "courseId", 0L);
+        LocalDate periodStart = parseDate(request.get("periodStart"));
+        LocalDate periodEnd = parseDate(request.get("periodEnd"));
+        markProgressOrLose(job.getId(), leaseToken, 20, heartbeat);
+        heartbeat.requireOwned();
+        long reportId = supervisorSampleReportService.buildAndStore(courseId, periodStart, periodEnd);
+        markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
+        return Map.of("reportId", reportId);
+    }
+
+    private void assertMultiAgentEnabled() {
+        if (featureFlags == null || !featureFlags.isMultiAgentEnabled()) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "多智能体功能未开启");
+        }
+    }
+
+    private static LocalDate parseDate(Object value) {
+        if (value == null) {
+            return LocalDate.now();
+        }
+        if (value instanceof LocalDate d) {
+            return d;
+        }
+        return LocalDate.parse(String.valueOf(value));
     }
 
     private Object runDocIngest(AiJob job,
