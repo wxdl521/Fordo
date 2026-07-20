@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════
 --  问津 · 知识图谱驱动的个性化学习导航系统
---  本地空库重建快照（当前最终 DDL，含 V3–V14；共 34 张业务表）
+--  本地空库重建快照（当前最终 DDL，含 V3–V15；共 35 张业务表）
 --
 --  ⚠ 仅本地空库 / 会删数据 / 生产禁用
 --    · 本脚本含 DROP TABLE IF EXISTS，会清空目标库业务表数据。
---    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V14）。
+--    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V15）。
 --    · 新增版本化迁移（Vn）后，必须把最终 DDL 同步回本文件，保持本地快照一致。
 --    · 应用启动默认 spring.flyway.enabled=false（WENJIN_FLYWAY_ENABLED），
 --      普通应用账号只有 DML；发布流水线用 migrator 凭据单独跑迁移作业。
@@ -19,7 +19,8 @@
 --    7. V12 增 student_memory；companion_conversation 增 distilled_through / summary_origin。
 --    8. V13 增 doc_source / doc_chunk / chunk_node_map（M8 RAG；FULLTEXT ngram）。
 --    9. V14 增 agent_plan / agent_plan_task / tool_effect_key（M10 规划）。
---   10. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--   10. V15 增 agent_report（M11 多智能体周报 / 抽查，可选）。
+--   11. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -631,5 +632,22 @@ CREATE TABLE `tool_effect_key` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_effect` (`tool_name`, `request_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='写类工具幂等键（取消/重试防双写）【V14】';
+
+-- ───────────────────────────── 组：多智能体报告【V15】─────────────────────────────
+
+DROP TABLE IF EXISTS `agent_report`;
+
+CREATE TABLE `agent_report` (
+    `id`           BIGINT      NOT NULL AUTO_INCREMENT,
+    `course_id`    BIGINT      NOT NULL,
+    `kind`         TINYINT     NOT NULL COMMENT '0=TEACHER_WEEKLY,1=SUPERVISOR_SAMPLE',
+    `period_start` DATE        NOT NULL,
+    `period_end`   DATE        NOT NULL,
+    `status`       TINYINT     NOT NULL DEFAULT 0 COMMENT '0=PENDING,1=READY,2=FAILED',
+    `payload_json` MEDIUMTEXT  NULL COMMENT '报告结构化内容',
+    `created_at`   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_report_period` (`course_id`, `kind`, `period_start`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='多智能体产出【V15】';
 
 SET FOREIGN_KEY_CHECKS = 1;
