@@ -1,6 +1,9 @@
 package com.wenjin.eval;
 
+import com.wenjin.eval.golden.GoldenLoader;
+import com.wenjin.eval.golden.GoldenRecorder;
 import com.wenjin.eval.hard.HardAssertChecker;
+import com.wenjin.eval.report.EvalReportGenerator;
 import com.wenjin.eval.scenario.ScenarioLoader;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -24,5 +27,20 @@ public class EvalConfiguration {
     @Bean
     public HardAssertChecker hardAssertChecker() {
         return new HardAssertChecker();
+    }
+
+    @Bean
+    public GoldenRecorder goldenRecorder() {
+        return new GoldenRecorder();
+    }
+
+    @Bean
+    public GoldenLoader goldenLoader() {
+        return new GoldenLoader();
+    }
+
+    @Bean
+    public EvalReportGenerator evalReportGenerator() {
+        return new EvalReportGenerator();
     }
 }
