@@ -29,10 +29,10 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 /**
  * 受控迁移两条路径：
  * <ul>
- *   <li>空库：执行 V1…V12 建出全部业务表与后续增量，二次 migrate 无变更且 checksum 稳定</li>
- *   <li>遗留库：先加载 V1 级结构（m01/m02），baseline version 2 接管，执行 V3+（含 V4–V12）</li>
+ *   <li>空库：执行 V1…V13 建出全部业务表与后续增量，二次 migrate 无变更且 checksum 稳定</li>
+ *   <li>遗留库：先加载 V1 级结构（m01/m02），baseline version 2 接管，执行 V3+（含 V4–V13）</li>
  * </ul>
- * <p>说明：本地 {@code schema.sql} 是「当前最终 DDL」快照（已含 V4–V12 对象与物理 FK），不能直接当作
+ * <p>说明：本地 {@code schema.sql} 是「当前最终 DDL」快照（已含 V4–V13 对象与物理 FK），不能直接当作
  * 遗留库输入，否则 baseline@2 后重跑 V4+ 会因列已存在而失败。遗留路径因此以
  * {@code V1__baseline_schema.sql} 模拟接入 Flyway 前的生产库。
  */
@@ -75,7 +75,9 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
     private static final List<String> V12_TABLES = List.of("student_memory");
 
-    /** 空库跑完 V1…V12 后应有的业务表（V4–V6/V8–V9 为 ALTER；V7 增 ai_job；V10 增 agent_*；V11 增 eval_*；V12 增 student_memory）。 */
+    private static final List<String> V13_TABLES = List.of("doc_source", "doc_chunk", "chunk_node_map");
+
+    /** 空库跑完 V1…V13 后应有的业务表（V4–V6/V8–V9 为 ALTER；V7 增 ai_job；V10 增 agent_*；V11 增 eval_*；V12 增 student_memory；V13 增 RAG 三表）。 */
     private static final List<String> EXPECTED_TABLES_AFTER_ALL;
 
     /** V9 完成后必须存在的完整命名外键矩阵（V9 42 个 + V3 2 个 + V5 1 个）。 */
@@ -134,6 +136,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         all.addAll(V10_TABLES);
         all.addAll(V11_TABLES);
         all.addAll(V12_TABLES);
+        all.addAll(V13_TABLES);
         EXPECTED_TABLES_AFTER_ALL = List.copyOf(all);
     }
 
@@ -169,18 +172,18 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     }
 
     @Test
-    @DisplayName("空库：V1…V12 建出全部表；二次 migrate 无变更且 checksum 稳定；V9 约束、V10–V12 就绪")
-    void emptyDatabase_appliesV1ThroughV12_idempotent() throws Exception {
+    @DisplayName("空库：V1…V13 建出全部表；二次 migrate 无变更且 checksum 稳定；V9 约束、V10–V13 就绪")
+    void emptyDatabase_appliesV1ThroughV13_idempotent() throws Exception {
         Flyway flyway = createFlyway();
 
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        assertThat(first.migrationsExecuted).isEqualTo(12);
+        assertThat(first.migrationsExecuted).isEqualTo(13);
 
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
         Map<String, Integer> checksumsAfterFirst = successChecksums();
         assertThat(checksumsAfterFirst.keySet())
-                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13");
         assertThat(checksumsAfterFirst.get("1")).isNotNull();
         assertThat(checksumsAfterFirst.get("2")).isNotNull();
         assertThat(checksumsAfterFirst.get("3")).isNotNull();
@@ -193,12 +196,19 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(checksumsAfterFirst.get("10")).isNotNull();
         assertThat(checksumsAfterFirst.get("11")).isNotNull();
         assertThat(checksumsAfterFirst.get("12")).isNotNull();
+        assertThat(checksumsAfterFirst.get("13")).isNotNull();
         assertThat(columnExists("companion_conversation", "summary_text")).isTrue();
         assertThat(columnExists("companion_conversation", "summary_through_message_id")).isTrue();
         assertThat(columnExists("companion_conversation", "distilled_through_message_id")).isTrue();
         assertThat(columnExists("companion_conversation", "summary_origin")).isTrue();
         assertThat(columnExists("student_memory", "salience")).isTrue();
         assertThat(columnExists("student_memory", "last_reinforced_at")).isTrue();
+        assertThat(columnExists("doc_source", "kind")).isTrue();
+        assertThat(columnExists("doc_chunk", "content")).isTrue();
+        assertThat(columnExists("chunk_node_map", "review_status")).isTrue();
+        assertThat(constraintExists("doc_chunk", "uk_chunk_seq")).isTrue();
+        assertThat(constraintExists("doc_chunk", "ft_chunk_content")).isTrue();
+        assertThat(constraintExists("chunk_node_map", "uk_map_chunk_node")).isTrue();
         assertThat(columnExists("kg_node", "archived_by_course")).isTrue();
         assertThat(columnExists("kg_edge", "archived_by_course")).isTrue();
         assertThat(columnNullable("kg_node", "archived_by_course")).isFalse();
@@ -223,7 +233,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
         Map<String, Integer> checksumsAfterSecond = successChecksums();
         assertThat(checksumsAfterSecond).isEqualTo(checksumsAfterFirst);
-        assertThat(countSuccessHistoryRows()).isEqualTo(12);
+        assertThat(countSuccessHistoryRows()).isEqualTo(13);
     }
 
     @Test
@@ -246,7 +256,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     }
 
     @Test
-    @DisplayName("遗留库：V1 结构 + baseline@2 接管，执行 V3…V12；二次 migrate 无变更")
+    @DisplayName("遗留库：V1 结构 + baseline@2 接管，执行 V3…V13；二次 migrate 无变更")
     void legacySchema_baselinesAtVersion2_onlyFutureMigrations() throws Exception {
         applyLegacyBaselineSchema();
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(BASELINE_TABLES);
@@ -254,18 +264,21 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         Flyway flyway = createFlyway();
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        // baseline@2 后执行 V3、V4、V5、V6、V7、V8、V9、V10、V11、V12
-        assertThat(first.migrationsExecuted).isEqualTo(10);
+        // baseline@2 后执行 V3、V4、V5、V6、V7、V8、V9、V10、V11、V12、V13
+        assertThat(first.migrationsExecuted).isEqualTo(11);
 
         Map<String, Integer> history = successChecksums();
-        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3–V12
+        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3–V13
         assertThat(history.keySet()).doesNotContain("1");
-        assertThat(history.keySet()).contains("2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12");
+        assertThat(history.keySet()).contains("2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13");
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
         assertThat(columnExists("companion_conversation", "summary_text")).isTrue();
         assertThat(columnExists("companion_conversation", "distilled_through_message_id")).isTrue();
         assertThat(columnExists("companion_conversation", "summary_origin")).isTrue();
         assertThat(columnExists("student_memory", "content")).isTrue();
+        assertThat(columnExists("doc_source", "status")).isTrue();
+        assertThat(columnExists("doc_chunk", "seq")).isTrue();
+        assertThat(columnExists("chunk_node_map", "node_code")).isTrue();
         assertThat(columnExists("kg_node", "archived_by_course")).isTrue();
         assertThat(columnExists("kg_edge", "archived_by_course")).isTrue();
         assertThat(constraintExists("kg_node", "chk_node_course_archive_marker")).isTrue();
@@ -574,7 +587,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
     /**
      * 加载 V1 baseline DDL，模拟「已有 m01/m02 结构、尚未跑 V3+」的遗留库。
-     * <p>不用当前 {@code schema.sql}：该文件是本地最终快照，已含 V4–V11 对象与约束。
+     * <p>不用当前 {@code schema.sql}：该文件是本地最终快照，已含 V4–V13 对象与约束。
      */
     private static void applyLegacyBaselineSchema() throws Exception {
         final String raw;
