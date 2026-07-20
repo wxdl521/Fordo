@@ -4,6 +4,8 @@ import com.wenjin.ai.CompanionAiClient;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.entity.CompanionConversation;
 import com.wenjin.entity.CompanionMessage;
+import com.wenjin.support.PromptAssembler.AssembleRequest;
+import com.wenjin.support.PromptAssembler.AssembledPrompt;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -18,6 +20,8 @@ import java.util.Objects;
  * <p>
  * 规则：近窗默认最新 20 条；更早消息并入滚动摘要；总字符 ≤ maxContextChars；
  * 始终保留最新用户消息。
+ * <p>
+ * 出站 prompt（legacy / tool messages）经 {@link PromptAssembler} 分槽装配。
  */
 @Component
 public class ConversationContextBuilder {
@@ -26,9 +30,15 @@ public class ConversationContextBuilder {
     public static final String TRUNCATION_REASON_INPUT = "\n\n[输入已截断：超出输入上限]";
 
     private final LimitsProperties limits;
+    private final PromptAssembler promptAssembler;
 
     public ConversationContextBuilder(LimitsProperties limits) {
-        this.limits = limits;
+        this(limits, new PromptAssembler(limits));
+    }
+
+    public ConversationContextBuilder(LimitsProperties limits, PromptAssembler promptAssembler) {
+        this.limits = Objects.requireNonNull(limits, "limits");
+        this.promptAssembler = Objects.requireNonNull(promptAssembler, "promptAssembler");
     }
 
     /** 构建结果：近窗消息 + 可选摘要；若摘要需回写则携带更新后的字段。 */
@@ -126,31 +136,43 @@ public class ConversationContextBuilder {
         if (recent.isEmpty()) {
             return new LegacyPrompt(List.of(), "");
         }
-        List<CompanionAiClient.ChatMsg> history = new ArrayList<>();
-        if (StringUtils.hasText(ctx.summaryText())) {
-            history.add(new CompanionAiClient.ChatMsg("user", SUMMARY_ROLE_PREFIX + ctx.summaryText().trim()));
-            history.add(new CompanionAiClient.ChatMsg("assistant", "好的，我已了解之前的对话要点，我们继续。"));
+        // Legacy path carries system prompt separately; assemble SUMMARY + RECENT only.
+        AssembledPrompt assembled = promptAssembler.assemble(new AssembleRequest(
+                null,
+                ctx.summaryText(),
+                List.of(),
+                List.of(),
+                recent));
+        List<CompanionAiClient.ChatMsg> msgs = assembled.messages();
+        if (msgs.isEmpty()) {
+            return new LegacyPrompt(List.of(), "");
         }
-        for (int i = 0; i < recent.size() - 1; i++) {
-            CompanionMessage m = recent.get(i);
-            history.add(new CompanionAiClient.ChatMsg(toRole(m), nullToEmpty(m.getContent())));
-        }
-        CompanionMessage latest = recent.get(recent.size() - 1);
-        return new LegacyPrompt(history, nullToEmpty(latest.getContent()));
+        CompanionAiClient.ChatMsg latest = msgs.get(msgs.size() - 1);
+        List<CompanionAiClient.ChatMsg> history = msgs.size() == 1
+                ? List.of()
+                : List.copyOf(msgs.subList(0, msgs.size() - 1));
+        return new LegacyPrompt(history, nullToEmpty(latest.content()));
     }
 
     /** Tool 编排路径：system + 可选摘要伪对话 + 近窗消息。 */
     public List<Map<String, Object>> toToolMessages(String systemPrompt, BuiltContext ctx) {
-        List<Map<String, Object>> messages = new ArrayList<>();
-        messages.add(Map.of("role", "system", "content", systemPrompt == null ? "" : systemPrompt));
-        if (StringUtils.hasText(ctx.summaryText())) {
-            messages.add(Map.of("role", "user", "content", SUMMARY_ROLE_PREFIX + ctx.summaryText().trim()));
-            messages.add(Map.of("role", "assistant", "content", "好的，我已了解之前的对话要点，我们继续。"));
-        }
-        for (CompanionMessage m : ctx.recentMessages()) {
+        // System is prepended outside AssembleRequest so max-context budgeting still
+        // covers summary+recent (historical contract); assembler owns SUMMARY/RECENT form.
+        AssembledPrompt assembled = promptAssembler.assemble(new AssembleRequest(
+                null,
+                ctx.summaryText(),
+                List.of(),
+                List.of(),
+                ctx.recentMessages()));
+        List<Map<String, Object>> messages = new ArrayList<>(assembled.messages().size() + 1);
+        Map<String, Object> system = new LinkedHashMap<>();
+        system.put("role", "system");
+        system.put("content", systemPrompt == null ? "" : systemPrompt);
+        messages.add(system);
+        for (CompanionAiClient.ChatMsg m : assembled.messages()) {
             Map<String, Object> item = new LinkedHashMap<>();
-            item.put("role", toRole(m));
-            item.put("content", nullToEmpty(m.getContent()));
+            item.put("role", m.role() == null ? "user" : m.role());
+            item.put("content", nullToEmpty(m.content()));
             messages.add(item);
         }
         return messages;
