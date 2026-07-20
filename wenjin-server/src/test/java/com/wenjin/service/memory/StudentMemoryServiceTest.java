@@ -59,7 +59,7 @@ class StudentMemoryServiceTest {
 
         assertThat(id).isEqualTo(42L);
         verify(memoryMapper).reinforce(eq(42L), any(LocalDateTime.class));
-        verify(memoryMapper, never()).insert(any());
+        verify(memoryMapper, never()).insert(any(StudentMemory.class));
     }
 
     @Test

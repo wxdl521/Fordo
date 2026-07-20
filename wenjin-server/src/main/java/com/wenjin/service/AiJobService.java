@@ -69,7 +69,34 @@ public class AiJobService {
         courseAccessService.assertManageCourse(courseId);
         CurrentPrincipal principal = CurrentUser.requireTeacher();
         long ownerId = principal.userId();
+        return insertPending(courseId, ownerId, kind, requestKey, requestBody);
+    }
 
+    /**
+     * 系统内部入队（伴侣 MEMORY_DISTILL / SUMMARY_REFRESH 等）。
+     * <p>不校验教师归属 / 不读 CurrentUser；幂等键仍为 (ownerId, kind, requestKey)。
+     * 总闸仍受 {@code ai-job-dispatch-enabled} 约束；关闭时静默跳过并返回 null。
+     */
+    @Transactional
+    public AiJobVO enqueueInternal(Long courseId,
+                                   long ownerId,
+                                   String kind,
+                                   String requestKey,
+                                   Object requestBody) {
+        if (featureFlags == null || !featureFlags.isAiJobDispatchEnabled()) {
+            return null;
+        }
+        if (courseId == null || courseId <= 0 || !StringUtils.hasText(kind)) {
+            return null;
+        }
+        return insertPending(courseId, ownerId, kind, requestKey, requestBody);
+    }
+
+    private AiJobVO insertPending(Long courseId,
+                                  long ownerId,
+                                  String kind,
+                                  String requestKey,
+                                  Object requestBody) {
         String key = normalizeRequestKey(requestKey);
         String json = toJson(requestBody);
 

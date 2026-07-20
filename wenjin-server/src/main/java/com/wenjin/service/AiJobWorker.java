@@ -7,6 +7,8 @@ import com.wenjin.dto.AnnotateRequest;
 import com.wenjin.entity.AiJob;
 import com.wenjin.security.CurrentPrincipal;
 import com.wenjin.security.PrincipalLoader;
+import com.wenjin.service.memory.MemoryDistillService;
+import com.wenjin.service.memory.SummaryRefreshService;
 import com.wenjin.support.AiJobErrorCodes;
 import com.wenjin.support.AiJobHeartbeatScheduler;
 import com.wenjin.support.AiJobKind;
@@ -34,6 +36,8 @@ public class AiJobWorker {
     private final QuestionBankImportService questionBankImportService;
     private final GraphExtractReviewService graphExtractReviewService;
     private final GraphImportService graphImportService;
+    private final MemoryDistillService memoryDistillService;
+    private final SummaryRefreshService summaryRefreshService;
     private final PrincipalLoader principalLoader;
     private final FeatureFlagsProperties featureFlags;
     private final AiJobHeartbeatScheduler heartbeatScheduler;
@@ -45,6 +49,8 @@ public class AiJobWorker {
                        QuestionBankImportService questionBankImportService,
                        GraphExtractReviewService graphExtractReviewService,
                        GraphImportService graphImportService,
+                       MemoryDistillService memoryDistillService,
+                       SummaryRefreshService summaryRefreshService,
                        PrincipalLoader principalLoader,
                        FeatureFlagsProperties featureFlags,
                        AiJobHeartbeatScheduler heartbeatScheduler,
@@ -55,6 +61,8 @@ public class AiJobWorker {
         this.questionBankImportService = questionBankImportService;
         this.graphExtractReviewService = graphExtractReviewService;
         this.graphImportService = graphImportService;
+        this.memoryDistillService = memoryDistillService;
+        this.summaryRefreshService = summaryRefreshService;
         this.principalLoader = principalLoader;
         this.featureFlags = featureFlags;
         this.heartbeatScheduler = heartbeatScheduler;
@@ -90,8 +98,7 @@ public class AiJobWorker {
         Optional<CurrentPrincipal> loadedActor = job.getOwnerId() == null
                 ? Optional.empty()
                 : principalLoader.load(job.getOwnerId());
-        if (loadedActor.isEmpty()
-                || (!loadedActor.get().isTeacher() && !loadedActor.get().isAdmin())) {
+        if (loadedActor.isEmpty() || !actorAllowed(job.getKind(), loadedActor.get())) {
             aiJobService.markFailed(jobId, leaseToken, AiJobErrorCodes.JOB_ACTOR_REVOKED);
             return;
         }
@@ -145,8 +152,44 @@ public class AiJobWorker {
             case AiJobKind.GRAPH_EXTRACT -> runGraphExtract(job, leaseToken, request, heartbeat);
             case AiJobKind.GRAPH_IMPORT_EXCEL ->
                     runGraphImportExcel(job, leaseToken, request, heartbeat);
+            case AiJobKind.MEMORY_DISTILL -> runMemoryDistill(job, leaseToken, request, heartbeat);
+            case AiJobKind.SUMMARY_REFRESH -> runSummaryRefresh(job, leaseToken, request, heartbeat);
             default -> throw new BusinessException(ResultCode.BAD_REQUEST, "未知作业类型: " + kind);
         };
+    }
+
+    private Object runMemoryDistill(AiJob job,
+                                    String leaseToken,
+                                    Map<String, Object> request,
+                                    HeartbeatGuard heartbeat) {
+        long conversationId = MemoryDistillService.longVal(request, "conversationId", 0L);
+        long throughId = MemoryDistillService.longVal(request, "throughId", 0L);
+        markProgressOrLose(job.getId(), leaseToken, 20, heartbeat);
+        heartbeat.requireOwned();
+        Object result = memoryDistillService.distill(conversationId, throughId);
+        markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
+        return result;
+    }
+
+    private Object runSummaryRefresh(AiJob job,
+                                     String leaseToken,
+                                     Map<String, Object> request,
+                                     HeartbeatGuard heartbeat) {
+        long conversationId = MemoryDistillService.longVal(request, "conversationId", 0L);
+        long expectedThrough = MemoryDistillService.longVal(request, "expectedThrough", 0L);
+        markProgressOrLose(job.getId(), leaseToken, 20, heartbeat);
+        heartbeat.requireOwned();
+        Object result = summaryRefreshService.refresh(conversationId, expectedThrough);
+        markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
+        return result;
+    }
+
+    /** 教师作业需 teacher/admin；学生侧 MEMORY_DISTILL / SUMMARY_REFRESH 允许任意有效主体。 */
+    private static boolean actorAllowed(String kind, CurrentPrincipal principal) {
+        if (AiJobKind.isStudentSideJob(kind)) {
+            return principal != null;
+        }
+        return principal != null && (principal.isTeacher() || principal.isAdmin());
     }
 
     private Object runGenerate(AiJob job,

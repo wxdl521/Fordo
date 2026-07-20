@@ -9,6 +9,8 @@ import com.wenjin.mapper.SysUserMapper;
 import com.wenjin.security.CurrentPrincipal;
 import com.wenjin.security.PrincipalLoader;
 import com.wenjin.security.UserRole;
+import com.wenjin.service.memory.MemoryDistillService;
+import com.wenjin.service.memory.SummaryRefreshService;
 import com.wenjin.support.AiJobErrorCodes;
 import com.wenjin.support.AiJobHeartbeatScheduler;
 import com.wenjin.support.AiJobKind;
@@ -57,6 +59,8 @@ class AiJobWorkerTest {
     @Mock private QuestionBankImportService questionBankImportService;
     @Mock private GraphExtractReviewService graphExtractReviewService;
     @Mock private GraphImportService graphImportService;
+    @Mock private MemoryDistillService memoryDistillService;
+    @Mock private SummaryRefreshService summaryRefreshService;
     @Mock private SysUserMapper sysUserMapper;
     @Mock private AiJobHeartbeatScheduler heartbeatScheduler;
     @Mock private ScheduledFuture<?> heartbeatFuture;
@@ -78,6 +82,8 @@ class AiJobWorkerTest {
                 questionBankImportService,
                 graphExtractReviewService,
                 graphImportService,
+                memoryDistillService,
+                summaryRefreshService,
                 new PrincipalLoader(sysUserMapper),
                 featureFlags,
                 heartbeatScheduler,
@@ -255,6 +261,8 @@ class AiJobWorkerTest {
                     questionBankImportService,
                     graphExtractReviewService,
                     graphImportService,
+                    memoryDistillService,
+                    summaryRefreshService,
                     new PrincipalLoader(sysUserMapper),
                     featureFlags,
                     dedicatedScheduler,

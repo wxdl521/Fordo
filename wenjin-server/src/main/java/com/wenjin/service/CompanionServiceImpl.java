@@ -7,6 +7,7 @@ import com.wenjin.common.ResultCode;
 import com.wenjin.config.CompanionToolProperties;
 import com.wenjin.config.CurrentUser;
 import com.wenjin.config.LimitsProperties;
+import com.wenjin.service.memory.MemoryJobEnqueueService;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
@@ -89,6 +90,10 @@ public class CompanionServiceImpl implements CompanionService {
     /** Agent 轨迹埋点；缺省 / 关闭时走 NOOP，失败不得影响主流程。 */
     @Autowired(required = false)
     private AgentTraceService agentTraceService;
+
+    /** 摘要推进后派发 MEMORY_DISTILL / SUMMARY_REFRESH；缺省时跳过。 */
+    @Autowired(required = false)
+    private MemoryJobEnqueueService memoryJobEnqueueService;
 
     @Override
     @Transactional
@@ -186,6 +191,17 @@ public class CompanionServiceImpl implements CompanionService {
                 // 本地实体与库对齐，供本 turn 后续逻辑使用；不得再整实体 updateById
                 conversation.setSummaryText(ctx.summaryText());
                 conversation.setSummaryThroughMessageId(ctx.summaryThroughMessageId());
+                conversation.setSummaryOrigin(0);
+                // MEMORY_DISTILL / SUMMARY_REFRESH：失败不得影响主对话
+                if (memoryJobEnqueueService != null) {
+                    try {
+                        memoryJobEnqueueService.onSummaryUpdated(
+                                conversation, ctx.summaryThroughMessageId());
+                    } catch (Exception e) {
+                        log.warn("memory job enqueue failed: conversationId={}: {}",
+                                conversationId, e.getMessage());
+                    }
+                }
             }
         }
 
