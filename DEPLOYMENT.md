@@ -419,14 +419,17 @@ npm run build        # 产出 dist/
 | 已配置 | `wenjin.features.rag-enabled` | M8 RAG 语料检索 / RETRIEVAL / search_materials | 小 |
 | 已配置 | `wenjin.features.reflection-enabled` | M9 反思探针 / 换策略重讲 | 小 |
 | 已配置 | `wenjin.features.companion-llm-enabled` | M9 伴侣 LLM 紧急 kill switch | 小 |
+| 已配置 | `wenjin.features.plan-enabled` | M10 学习计划 / daily-brief / re-plan | 小 |
 | 已配置 | `wenjin.eval.judge-model` | M6 LLM-as-judge 模型名（可选） | 极小 |
 | 已配置 | `wenjin.limits.trace` / `wenjin.limits.tools` | step I/O 与工具结果截断 | 小 |
 | 已配置 | `wenjin.limits.prompt` / `wenjin.limits.memory` | M7 分槽预算与记忆强度/注入 | 小 |
 | 已配置 | `wenjin.limits.rag` | M8 检索 top-k / snippet | 小 |
+| 已配置 | `wenjin.limits.plan` / `wenjin.plan.replan-cron` | M10 算法 cap / weak / re-plan 调度 | 小 |
 | 已迁移 | Flyway `V10__agent_trace.sql` | `agent_run` / `agent_step` 表 | 中 |
 | 已迁移 | Flyway `V11__eval.sql` | 评测场景/运行元数据表（M6） | 中 |
 | 已迁移 | Flyway `V12__student_memory.sql` | `student_memory` + 会话蒸馏列（M7） | 中 |
 | 已迁移 | Flyway `V13__rag.sql` | `doc_source` / `doc_chunk` / `chunk_node_map`（M8） | 中 |
+| 已迁移 | Flyway `V14__agent_plan.sql` | `agent_plan` / `agent_plan_task` / `tool_effect_key`（M10） | 中 |
 
 ### 4.1 配置清单（调度与基线）
 
@@ -456,6 +459,11 @@ spring:
 | `wenjin.features.rag-enabled` | `true` | `${WENJIN_FEATURE_RAG:false}` | M8 RAG；关则 RETRIEVAL 空、`search_materials` 下架 |
 | `wenjin.features.reflection-enabled` | `true` | `${WENJIN_FEATURE_REFLECTION:false}` | M9 反思；关则不下发 `probe_understanding`、不自动探针 |
 | `wenjin.features.companion-llm-enabled` | `true` | `${WENJIN_FEATURE_COMPANION_LLM:true}` | M9 紧急关 LLM；关则零 LLM 模板 + 练习卡，run=`DEGRADED` |
+| `wenjin.features.plan-enabled` | `true` | `${WENJIN_FEATURE_PLAN:false}` | M10 学习计划；关则工具下架、scheduler 不跑、ACTIVE 冻结不删、brief 隐藏计划段 |
+| `wenjin.limits.plan.daily-task-cap` | `3` | 继承基线 | 每日任务上限 |
+| `wenjin.limits.plan.weak-threshold` | `60` | 继承基线 | weak：effective &lt; 此值（0–100） |
+| `wenjin.limits.plan.backlog-threshold` | `5` | 继承基线 | daily-brief 复习积压置顶 |
+| `wenjin.plan.replan-cron` | `0 30 4 * * *` | 继承基线 | 每日 re-plan（仅 ACTIVE） |
 | `wenjin.eval.judge-model` | `${WENJIN_EVAL_JUDGE_MODEL:}`（空则回落文本模型） | 同左 | LLM-as-judge 模型；未配置时沿用 `wenjin.ai.model` |
 | `wenjin.limits.trace.max-io-chars` | `8000` | 继承基线 | `agent_step.input_json` / `output_json` 超长截断并追加 `[truncated]` |
 | `wenjin.limits.tools.max-result-chars` | `4000` | 继承基线 | 通用工具结果字符上限（与伴侣侧 `wenjin.companion.tools.max-result-chars` 并存；后者偏对话上下文） |
@@ -484,6 +492,9 @@ wenjin:
     rag-enabled: true           # prod: ${WENJIN_FEATURE_RAG:false}
     reflection-enabled: true    # prod: ${WENJIN_FEATURE_REFLECTION:false}
     companion-llm-enabled: true # prod: ${WENJIN_FEATURE_COMPANION_LLM:true}
+    plan-enabled: true          # prod: ${WENJIN_FEATURE_PLAN:false}
+  plan:
+    replan-cron: "0 30 4 * * *"
   eval:
     judge-model: ${WENJIN_EVAL_JUDGE_MODEL:}   # 可选；空则用 wenjin.ai.model
   limits:
@@ -515,12 +526,13 @@ wenjin:
 - **默认关生产开关**：轨迹含工具 I/O 摘要，生产需显式 `WENJIN_FEATURE_AGENT_TRACE=true`，与固定诊断 / 图谱对账 / AI job 同一 feature-flag 风格。
 - **截断而非全文落库**：`max-io-chars` / `max-result-chars` 防止 MEDIUMTEXT 膨胀与日志噪声；教师页 steps 明细展示的即截断后内容。
 - **学生端不开放 trace API**：仅教师/管理员经 `TeacherAgentRunController` 读本课 run；学生令牌应 401/403。
-- **Schema**：空库走 Flyway V1…**V13**；既有库 migrate **V10**（`agent_run` / `agent_step`），**V11**（eval），**V12**（`student_memory`），**V13**（RAG 三表 + FULLTEXT ngram）。`schema.sql` 仅本地空库快照，生产禁用。
+- **Schema**：空库走 Flyway V1…**V14**；既有库 migrate **V10**（`agent_run` / `agent_step`），**V11**（eval），**V12**（`student_memory`），**V13**（RAG 三表 + FULLTEXT ngram），**V14**（计划三表）。`schema.sql` 仅本地空库快照，生产禁用。
 - **发布顺序**：migrate V10 → 滚动应用（可先 flag off）→ 冒烟教师页 `/teacher/agent-runs` → 再开 `WENJIN_FEATURE_AGENT_TRACE`。回滚优先关 flag，不必立刻 drop 表。
 - **M6 评测**：生产默认 `eval-enabled=false`；CI 用 REPLAY 硬断言（`eval-replay` job，不调用外网模型）。LIVE 录 golden / judge 校准仅在有 Key 的受控环境执行。
 - **M7 记忆**：生产默认 `memory-enabled=false`；开启前须完成 V12 migrate。关闭时行为回到 M6 基线（空 MEMORY 槽、无 distill 入队、记忆工具不可用）。`record_observation` 超 `write-per-run` 返回 `TOOL_BUDGET_EXCEEDED` + GUARD，且不占用总工具次数。
 - **M8 RAG**：生产默认 `rag-enabled=false`；开启前须完成 **V13 migrate** 与 **`ops/sql/preflight-ngram.sql`**（`ngram_token_size=2`）。关闭时回到 M7 基线（空 RETRIEVAL、`search_materials` 不可用）。**版权**：整本出版教材勿部署到公网 `fordo.thingxue.com`；校内演示环境不受限。NODE_REF 参考文档可入库。
 - **M9 竞赛交付 / 紧急 kill switch**：见下表；**无新 Flyway**（探针会话为进程内 `ProbeSessionStore`，避免占用 M10 的 V14）。
+- **M10 计划**：生产默认 `plan-enabled=false`；开启前须完成 **V14 migrate**。关闭时：计划工具下架、re-plan 不跑、daily-brief 隐藏计划段、已有 ACTIVE 冻结不删。DRAFT 永不进 brief / re-plan。
 
 ### 4.2.1 M9 紧急 kill switch 矩阵
 
@@ -751,6 +763,7 @@ process.
 | `WENJIN_FEATURE_AGENT_TRACE` | M5 Agent 轨迹埋点与教师查询 | prod 默认 false | 需先 migrate V10；开启后教师可访问 `/api/teacher/agent-runs` |
 | `WENJIN_FEATURE_REFLECTION` | M9 反思探针 | prod 默认 false | 关则无 probe / 自动探针 |
 | `WENJIN_FEATURE_COMPANION_LLM` | M9 伴侣 LLM | prod 默认 **true** | 紧急设 `false` → 零 LLM 降级 |
+| `WENJIN_FEATURE_PLAN` | M10 学习计划 | prod 默认 false | 关则计划工具/re-plan/brief 计划段关闭 |
 
 ---
 

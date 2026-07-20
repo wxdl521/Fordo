@@ -1,0 +1,28 @@
+{
+  "code": "S20",
+  "title": "计划生成 draft_study_plan",
+  "status": "PENDING",
+  "pendingReason": "M10-planning-golden",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": [],
+    "note": "M10 — draft_study_plan 触发、DRAFT 不越界、溢出 PLAN_SCOPE_TOO_LARGE 分支（golden 待录）"
+  },
+  "script": [
+    {"user": "帮我做一份考试复习计划，目标日期两周后。"}
+  ],
+  "hard": {
+    "mustCallTools": ["draft_study_plan"],
+    "mustNotCallTools": [],
+    "maxToolCalls": 4,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "graph_truth", "desc": "是否编造图谱外节点/关系", "threshold": 3},
+      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+    ]
+  }
+}

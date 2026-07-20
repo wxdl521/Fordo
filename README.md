@@ -361,6 +361,31 @@ M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `R
 
 配置明细见 **`DEPLOYMENT.md`**（`rag-enabled`、`limits.rag.*`、V13、ngram 预检）。
 
+## M10 学习计划（确定性算法 + HITL）
+
+M10 提供考试备考计划：确定性任务序列（LLM 零参与 packing）、DRAFT→确认 HITL、每日 re-plan、读时 daily-brief、run 级取消。
+
+### 能力摘要
+
+- Flyway **`V14__agent_plan.sql`**：`agent_plan` / `agent_plan_task` / `tool_effect_key`。
+- **PlanAlgorithm**（纯函数）：候选 due &gt; weak &gt; frontier；每日 `daily-task-cap`；target 日总复习；溢出 `PLAN_SCOPE_TOO_LARGE` + 建议节点集。计划可解释、零幻觉——任务由算法生成，LLM 仅可选解释文案（失败则空）。
+- **工具**：`draft_study_plan`（危档，只产 DRAFT）、`get_plan_progress`（读档，缓存白名单）。
+- **学生端**：`POST /api/student/plans/{id}/confirm|cancel`、`GET /api/student/plans/current`、`GET /api/student/daily-brief`。
+- **DRAFT 红线**：不进 daily-brief、不被 re-plan 触碰、不产生任务提醒。
+- **re-plan**：`@Scheduled` cron `wenjin.plan.replan-cron`（默认 04:30），仅 ACTIVE，失败单计划隔离。
+- **取消**：`agent_run.cancel_requested_at` + `POST /api/companion/runs/{id}/cancel`；编排 step 边界检查。
+- 特性开关 **`wenjin.features.plan-enabled`**：开发默认 `true`；生产默认 `false`（`WENJIN_FEATURE_PLAN`）。
+
+相关代码：
+
+- `wenjin-server/src/main/resources/db/migration/V14__agent_plan.sql`
+- `wenjin-server/src/main/java/com/wenjin/support/plan/PlanAlgorithm.java`
+- `wenjin-server/src/main/java/com/wenjin/service/plan/`
+- `wenjin-server/src/main/java/com/wenjin/service/companion/DraftStudyPlanTool.java`
+- `wenjin-server/src/main/java/com/wenjin/service/companion/GetPlanProgressTool.java`
+
+配置明细见 **`DEPLOYMENT.md`**（`plan-enabled`、`limits.plan.*`、`wenjin.plan.replan-cron`、V14）。
+
 ## 测试与验收
 
 后端测试：

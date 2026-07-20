@@ -1,0 +1,28 @@
+{
+  "code": "S21",
+  "title": "对话引用计划进度",
+  "status": "PENDING",
+  "pendingReason": "M10-planning-golden",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": [],
+    "note": "M10 — get_plan_progress 正确、无计划空态不编造（golden 待录）"
+  },
+  "script": [
+    {"user": "我今天的学习计划还剩多少？"}
+  ],
+  "hard": {
+    "mustCallTools": ["get_plan_progress"],
+    "mustNotCallTools": [],
+    "maxToolCalls": 4,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "graph_truth", "desc": "是否编造图谱外节点/关系", "threshold": 3},
+      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+    ]
+  }
+}

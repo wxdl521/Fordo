@@ -121,6 +121,12 @@ wenjin:
       max-io-chars: 8000                         # agent_step I/O 截断阈值（超出加 [truncated]）
     tools:
       max-result-chars: 4000                     # 工具结果字符上限（Phase 3）
+    plan:                                        # 学习计划算法 / brief（M10）
+      daily-task-cap: 3                          # 每日任务上限
+      weak-threshold: 60                         # weak：effective < 此值（0–100；规格 0.6→60）
+      backlog-threshold: 5                       # daily-brief 复习积压置顶阈值
+      max-scope-nodes: 42                        # draft_study_plan scope 上限
+      weak-drop-limit: 2                         # brief 弱跌节点最多展示数
 
   features:                                      # 功能开关（开发/测试默认开；生产见 application-prod.yml）
     fixed-diagnostic-enabled: true
@@ -132,6 +138,9 @@ wenjin:
     rag-enabled: true                            # RAG 语料检索（M8；关则 RETRIEVAL 空、工具下架）
     reflection-enabled: true                     # M9 反思探针 / 换策略重讲
     companion-llm-enabled: true                  # M9 伴侣 LLM（关则零 LLM 降级模板）
+    plan-enabled: true                           # M10 学习计划（关则工具下架、scheduler 不跑）
+  plan:
+    replan-cron: "0 30 4 * * *"                  # 每日 re-plan（默认 04:30）
   eval:                                          # 伴侣评测（M6）
     judge-model: ${WENJIN_EVAL_JUDGE_MODEL:}     # LLM-as-judge 模型；空则回落 wenjin.ai.model
   jobs:                                          # AI 异步作业 worker

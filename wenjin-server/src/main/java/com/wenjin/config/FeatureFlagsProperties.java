@@ -41,4 +41,9 @@ public class FeatureFlagsProperties {
      * 伴侣 LLM 调用（M9 紧急 kill switch；关闭时走 CompanionDegradeService 零 LLM 模板）。
      */
     private boolean companionLlmEnabled = true;
+
+    /**
+     * 学习计划（M10；关闭时工具下架、scheduler 不跑、brief 隐藏计划段、ACTIVE 冻结不删）。
+     */
+    private boolean planEnabled = true;
 }

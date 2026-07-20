@@ -33,6 +33,7 @@ import com.wenjin.service.companion.ToolContext;
 import com.wenjin.service.companion.ToolExecutionResult;
 import com.wenjin.service.companion.ToolExecutionState;
 import com.wenjin.service.companion.ToolGovernor;
+import com.wenjin.service.plan.PlanCancelGuard;
 import com.wenjin.service.trace.AgentTraceService;
 import com.wenjin.service.trace.StartRunCmd;
 import com.wenjin.service.trace.StepRecord;
@@ -122,6 +123,10 @@ public class CompanionServiceImpl implements CompanionService {
     /** M9 反思探针协调。 */
     @Autowired(required = false)
     private ReflectionCoordinator reflectionCoordinator;
+
+    /** M10 run 级取消检查（step 边界）。 */
+    @Autowired(required = false)
+    private PlanCancelGuard planCancelGuard;
 
     @Override
     @Transactional
@@ -452,6 +457,9 @@ public class CompanionServiceImpl implements CompanionService {
         }
 
         for (int round = 0; round < maxRounds(); round++) {
+            if (isRunCancelRequested(traceCtx)) {
+                return AgentRunStatus.CANCELLED;
+            }
             CompanionAiClient.TurnOutcome outcome;
             String phase1Input = messagesDigest(messages);
             long phase1Started = System.currentTimeMillis();
@@ -515,6 +523,9 @@ public class CompanionServiceImpl implements CompanionService {
 
             messages.add(assistantToolCallMessage(toolCalls.calls()));
             for (CompanionAiClient.ToolCall call : toolCalls.calls()) {
+                if (isRunCancelRequested(traceCtx)) {
+                    return AgentRunStatus.CANCELLED;
+                }
                 practiceStarted = applyToolCall(call, toolLabels, messages, context, state, sink, traceCtx)
                         || practiceStarted;
             }
@@ -593,6 +604,11 @@ public class CompanionServiceImpl implements CompanionService {
 
     private boolean isCompanionLlmEnabled() {
         return featureFlags == null || featureFlags.isCompanionLlmEnabled();
+    }
+
+    /** M10：step 边界检查 cancel_requested_at。 */
+    private boolean isRunCancelRequested(TraceContext traceCtx) {
+        return planCancelGuard != null && planCancelGuard.isCancelRequested(traceCtx);
     }
 
     private static boolean isTimeout(Throwable ex) {
@@ -841,6 +857,7 @@ public class CompanionServiceImpl implements CompanionService {
         boolean memoryOn = isMemoryEnabled();
         boolean ragOn = isRagEnabled();
         boolean reflectionOn = isReflectionEnabled();
+        boolean planOn = isPlanEnabled();
         // Lexicographic by tool name so schema/dict order is stable across injectors.
         return companionTools.stream()
                 .filter(Objects::nonNull)
@@ -848,6 +865,7 @@ public class CompanionServiceImpl implements CompanionService {
                 .filter(tool -> memoryOn || !isMemoryTool(tool.name()))
                 .filter(tool -> ragOn || !isRagTool(tool.name()))
                 .filter(tool -> reflectionOn || !isReflectionTool(tool.name()))
+                .filter(tool -> planOn || !isPlanTool(tool.name()))
                 .sorted(Comparator.comparing(CompanionTool::name, Comparator.nullsLast(String::compareTo)))
                 .toList();
     }
@@ -864,6 +882,10 @@ public class CompanionServiceImpl implements CompanionService {
         return "probe_understanding".equals(name);
     }
 
+    private static boolean isPlanTool(String name) {
+        return "draft_study_plan".equals(name) || "get_plan_progress".equals(name);
+    }
+
     private boolean isReflectionEnabled() {
         return featureFlags == null || featureFlags.isReflectionEnabled();
     }
@@ -874,6 +896,10 @@ public class CompanionServiceImpl implements CompanionService {
 
     private boolean isRagEnabled() {
         return featureFlags == null || featureFlags.isRagEnabled();
+    }
+
+    private boolean isPlanEnabled() {
+        return featureFlags == null || featureFlags.isPlanEnabled();
     }
 
     /**

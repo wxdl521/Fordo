@@ -1,0 +1,14 @@
+{
+  "scenario" : "S21",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"tool_calls\",\"calls\":[{\"id\":\"c1\",\"name\":\"get_plan_progress\",\"arguments\":\"{}\"}]}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "我查了你的计划进度：如果当前没有生效计划，我会如实告诉你「当前没有学习计划」，不会编造任务。有 ACTIVE 计划时会说明今天还剩几项。"
+  } ]
+}

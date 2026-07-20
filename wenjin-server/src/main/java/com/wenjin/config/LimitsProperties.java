@@ -19,6 +19,7 @@ public class LimitsProperties {
     private final Document document = new Document();
     private final Trace trace = new Trace();
     private final Tools tools = new Tools();
+    private final Plan plan = new Plan();
 
     @Data
     public static class Companion {
@@ -122,5 +123,24 @@ public class LimitsProperties {
     public static class Tools {
         /** 工具结果字符上限（Phase 3 tool cache 等） */
         private int maxResultChars = 4000;
+    }
+
+    /**
+     * 学习计划算法与 brief（wenjin.limits.plan.*，M10）。
+     * <p>effective / weak-threshold 使用与掌握度一致的 0–100 分口径；
+     * 规格文中 0.6 对应本默认 60。
+     */
+    @Data
+    public static class Plan {
+        /** 每日任务上限 */
+        private int dailyTaskCap = 3;
+        /** weak 判定：effective &lt; 此值（0–100） */
+        private double weakThreshold = 60.0;
+        /** daily-brief 复习积压数阈值（&gt; 此值置顶提醒） */
+        private int backlogThreshold = 5;
+        /** draft_study_plan scopeNodes 上限 */
+        private int maxScopeNodes = 42;
+        /** brief 中「有效分新跌破阈值」最多展示节点数 */
+        private int weakDropLimit = 2;
     }
 }

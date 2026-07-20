@@ -1,0 +1,14 @@
+{
+  "scenario" : "S20",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"tool_calls\",\"calls\":[{\"id\":\"c1\",\"name\":\"draft_study_plan\",\"arguments\":\"{\\\"targetDate\\\":\\\"2026-08-03\\\"}\"}]}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "已为你生成考试复习计划草稿（DRAFT）。确认前不会进入每日简报，也不会被自动重排。请在计划页点确认后开始执行；若范围过大我会返回可容纳的建议节点集。"
+  } ]
+}

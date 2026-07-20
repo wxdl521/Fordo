@@ -28,6 +28,7 @@ wenjin:
     rag-enabled: ${WENJIN_FEATURE_RAG:false}
     reflection-enabled: ${WENJIN_FEATURE_REFLECTION:false}
     companion-llm-enabled: ${WENJIN_FEATURE_COMPANION_LLM:true}
+    plan-enabled: ${WENJIN_FEATURE_PLAN:false}
 
 # Actuator 仅暴露无详情的健康检查
 management:
