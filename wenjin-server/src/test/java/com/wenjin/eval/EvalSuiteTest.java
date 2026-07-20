@@ -53,8 +53,8 @@ class EvalSuiteTest {
                 .count();
         assertThat(enabled + pending).isEqualTo(docs.size());
         assertThat(enabled).isEqualTo(EnabledScenarioStepsFactory.enabledCodes().size());
-        assertThat(pending).isEqualTo(5); // S07,S12,S13,S16,S18
-        assertThat(docs.stream().map(EvalScenarioDocument::code)).contains("S01", "S09", "S18");
+        assertThat(pending).isEqualTo(3); // S07,S12,S18
+        assertThat(docs.stream().map(EvalScenarioDocument::code)).contains("S01", "S09", "S13", "S18", "S19");
     }
 
     @Test

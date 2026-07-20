@@ -1,18 +1,19 @@
 {
   "code": "S13",
   "title": "讲解带引用",
-  "status": "PENDING",
-  "pendingReason": "M8-retrieval",
+  "status": "ENABLED",
   "persona": {
-    "masteryOverrides": [],
+    "masteryOverrides": [
+      {"nodeCode": "SE-3.2", "raw": 0.45, "effective": 0.40}
+    ],
     "reviewQueue": [],
-    "note": "stub PENDING(M8) — citations 合法 ⊆ 注入集"
+    "note": "M8 — citations 合法 ⊆ 注入集；空检索不造引用（骨架，LIVE 断言后续加强）"
   },
   "script": [
-    {"user": "结合教材讲一下需求规格"}
+    {"user": "结合教材讲一下用例图的核心概念"}
   ],
   "hard": {
-    "mustCallTools": [],
+    "mustCallTools": ["get_node_detail"],
     "mustNotCallTools": [],
     "maxToolCalls": 6,
     "jsonContractValid": true,

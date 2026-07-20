@@ -1,0 +1,14 @@
+{
+  "scenario" : "S13",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"tool_calls\",\"calls\":[{\"id\":\"c1\",\"name\":\"get_node_detail\",\"arguments\":\"{\\\"nodeCode\\\":\\\"SE-3.2\\\"}\"}]}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "结合资料，SE-3.2 用例图的核心是参与者、用例与系统边界（可参考资料 #101）。你先用一句话说明「参与者」是谁？我不会编造未注入的出处。"
+  } ]
+}

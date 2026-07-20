@@ -1,0 +1,14 @@
+{
+  "scenario" : "S19",
+  "recordedAt" : "2026-07-20T12:00:00Z",
+  "model" : "deepseek-chat",
+  "llmCalls" : [ {
+    "idx" : 0,
+    "name" : "phase1",
+    "output" : "{\"type\":\"tool_calls\",\"calls\":[{\"id\":\"c1\",\"name\":\"search_materials\",\"arguments\":\"{\\\"query\\\":\\\"用例图 数据流图\\\",\\\"topK\\\":3}\"}]}"
+  }, {
+    "idx" : 1,
+    "name" : "phase2",
+    "output" : "查了课程材料：资料 #101 侧重 SE-3.2 用例图的参与者与边界；资料 #102 侧重 SE-3.1 数据流图的加工与数据存储。你想先对照哪一张图？"
+  } ]
+}

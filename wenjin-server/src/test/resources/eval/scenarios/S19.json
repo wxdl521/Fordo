@@ -1,0 +1,27 @@
+{
+  "code": "S19",
+  "title": "跨节点资料问答",
+  "status": "ENABLED",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": [],
+    "note": "M8 — search_materials 正确触发与引用"
+  },
+  "script": [
+    {"user": "用例图和数据流图在资料里分别强调什么？帮我查一下课程材料。"}
+  ],
+  "hard": {
+    "mustCallTools": ["search_materials"],
+    "mustNotCallTools": [],
+    "maxToolCalls": 4,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "graph_truth", "desc": "是否编造图谱外节点/关系", "threshold": 3},
+      {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
+    ]
+  }
+}

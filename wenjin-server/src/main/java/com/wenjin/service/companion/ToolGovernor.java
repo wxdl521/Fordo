@@ -54,7 +54,8 @@ public class ToolGovernor {
             "get_review_queue",
             "get_learning_frontier",
             "trace_prerequisites",
-            "recall_student_context");
+            "recall_student_context",
+            "search_materials");
 
     /** Side-effecting memory write tools with a separate per-run write budget. */
     public static final Set<String> MEMORY_WRITE_TOOLS = Set.of(
