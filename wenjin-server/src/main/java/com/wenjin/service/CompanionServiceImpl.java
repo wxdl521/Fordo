@@ -48,6 +48,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -612,9 +613,11 @@ public class CompanionServiceImpl implements CompanionService {
         if (companionTools == null || companionTools.isEmpty()) {
             return List.of();
         }
+        // Lexicographic by tool name so schema/dict order is stable across injectors.
         return companionTools.stream()
                 .filter(Objects::nonNull)
                 .filter(tool -> tool.schema() != null)
+                .sorted(Comparator.comparing(CompanionTool::name, Comparator.nullsLast(String::compareTo)))
                 .toList();
     }
 
