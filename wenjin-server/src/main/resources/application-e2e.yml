@@ -13,5 +13,12 @@ wenjin:
     rag-enabled: true
     plan-enabled: true
     multi-agent-enabled: false
-    companion-llm-enabled: false
-    reflection-enabled: false
+    companion-llm-enabled: true
+    reflection-enabled: true
+  companion:
+    tools:
+      enabled: true
+  ai:
+    enabled: true
+    # deepseek-v4-pro 思考模式要求回传 reasoning_content；e2e 用 chat 模型更稳
+    model: ${WENJIN_AI_MODEL:deepseek-chat}
