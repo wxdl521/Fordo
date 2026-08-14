@@ -6,19 +6,24 @@
 
 ## 当前进度
 
-当前代码已经完成 M1-M5 主链路，M6 伴侣评测骨架（场景/硬断言/REPLAY golden/CI），并包含教师端建图、题库审核、课程标准抽取、课程发布、认证与生产配置骨架。
+当前代码已完成 **基线平台 + M1–M11 全部主链路**：学生端学习闭环（诊断/练习/复习/路径）、AI 伴侣（工具调用/长期记忆/RAG/反思探针/学习计划）、教师端（建图/题库/抽取/看板/轨迹/周报）与生产部署骨架。M6 评测骨架落地并纳入 CI（REPLAY 硬断言）；剩余欠债为部分场景 LIVE golden 与 Judge 校准（见 M6 章节）。
 
 | 里程碑 | 状态 | 已落地能力 |
 | --- | --- | --- |
 | 基线平台 | 已完成 | 多课程、登录注册、HMAC Bearer 令牌、教师/学生权限、知识图谱导入、染色地图、诊断、路径、成长档案、教师工作台 |
 | M1 练习闭环 | 已完成 | 节点练习会话、服务端判分、答题证据写入、EWMA 掌握度更新、路径步骤自动通过、必要时路径重算 |
-| M2 图引导自适应诊断 | 已完成 | DAG 传播推断、有限题量预算、探针式诊断、实测/推断节点分类、固定 25 题诊断保留 |
+| M2 图引导自适应诊断 | 已完成 | DAG 传播推断、贪心信息最大化选点、有限题量预算、探针式诊断、实测/推断节点分类、固定 25 题诊断保留 |
 | M3 遗忘衰减与复习调度 | 已完成 | 读时指数衰减、raw/effective 双分值、今日复习队列、复习直通 M1 自由练习、ColorMap 褪色态 |
-| M4 伴侣工具调用 | 已完成 | 伴侣两段式工具调用、`query_mastery` / `get_node_detail` / `start_practice`、工具治理、SSE 工具事件、对话内练习卡 |
+| M4 伴侣工具调用 | 已完成 | 伴侣两段式工具调用、工具治理（白名单/预算/超时/缓存/截断）、SSE 工具事件、对话内练习卡 |
 | M5 Agent 轨迹 | 已完成 | `agent_run`/`agent_step` 埋点、工具结果截断与 I/O 截断、教师端轨迹列表/steps 明细、特性开关与 Flyway V10 |
-| M6 伴侣评测 | 进行中 | 场景 JSON S01–S16、HardAssert、GoldenRecorder/REPLAY、Judge 骨架、CI `eval-replay` 任务 |
+| M6 伴侣评测 | 骨架完成 | 场景 JSON S01–S21、HardAssert 七项硬断言、GoldenRecorder/REPLAY、Judge 骨架、CI `eval-replay` 任务；S18/S20/S21 待 LIVE golden，Judge 校准待真实数据 |
+| M7 长期记忆 | 已完成 | EPISODIC/SEMANTIC/PROCEDURAL 三层记忆、Jaccard 去重、异步蒸馏、`recall_student_context` / `record_observation` 工具、Flyway V12 |
+| M8 RAG | 已完成 | ngram FULLTEXT 检索、NODE_REF 语料入库、RETRIEVAL 槽注入、`search_materials` 工具、引用校验、Flyway V13 |
+| M9 反思与降级 | 已完成 | 理解探针（`probe_understanding`）、换策略重讲（StrategySwitcher）、零 LLM 降级（kill-switch 矩阵）、phase-1 意图路由 |
+| M10 学习计划 | 已完成 | 确定性 PlanAlgorithm（due/weak/frontier 打包）、DRAFT→确认 HITL、每日 re-plan、daily-brief、run 级取消、Flyway V14 |
+| M11 多智能体 | 已完成（默认关） | 教师周报（确定性聚合 + 可选 LLM 叙述）、Supervisor 质量抽查（复用 M6 Judge）、Flyway V15 |
 
-近期还做过 ColorMap 体验修补：今日复习面板改为地图内侧边抽屉，绘图 loading 不再误挂在 hover 状态上，左下角图例与操作提示不再重叠。
+近期进展：伴侣新增理解探针卡、资料引用与每日简报；教师端新增语料审核与周报页面；V5–V9 加固迁移（并发护栏/题面指纹/引用完整性契约）已合入 main。
 
 ## 产品能力
 
@@ -30,7 +35,8 @@
 - 学习路径：根据前置关系和掌握度生成拓扑有序路径，练习后动态更新。
 - 节点练习：针对单个知识点生成练习会话，提交后由服务端判分并写入掌握度证据。
 - 今日复习：由 M3 衰减模型找出“曾经掌握但正在遗忘”的节点，并一键进入复习练习。
-- AI 学习伴侣：SSE 流式对话，支持工具胶囊、节点详情查询、真实掌握度查询和对话内练习卡。
+- AI 学习伴侣：SSE 流式对话，支持工具胶囊、节点详情/掌握度/复习队列查询、对话内练习卡、理解探针卡与资料引用。
+- 学习计划与每日简报：AI 起草备考计划（DRAFT→确认 HITL），每日 re-plan 并生成每日简报（M10）。
 - 成长档案：展示掌握度快照和学习变化。
 
 ### 教师端
@@ -41,59 +47,67 @@
 - 题目审核池：AI 出题、存量题标注、JSON/Excel 题库导入、批量审核。
 - 学情看板：按课程聚合学生掌握度和薄弱分布。
 - Agent 轨迹：按课程分页查看伴侣等 Agent run，展开 steps 查看工具/LLM 调用与截断后的 I/O。
+- 语料审核：上传课程资料（NODE_REF），审核 chunk↔知识点映射（M8）。
+- 周报：确定性学情周报与质量抽查报告（M11，默认关闭）。
 
 ## 技术栈
 
 | 层 | 选型 |
 | --- | --- |
-| 前端 | Vue 3、Vite 5、Pinia、Vue Router、ECharts、axios、原生 fetch SSE |
-| 后端 | Spring Boot 3.3.5、Java 21、MyBatis-Plus、MySQL 8.0.16+、Flyway（默认关闭） |
+| 前端 | Vue 3、Vite 5、Pinia、Vue Router、ECharts（按需引入）、axios、原生 fetch SSE、手写 SVG 染色地图 |
+| 后端 | Spring Boot 3.3.5、Java 21（虚拟线程用于 SSE 与工具超时）、MyBatis-Plus、MySQL 8.0.16+、Flyway（默认关闭） |
 | AI | OpenAI 兼容 `/chat/completions`，文本模型默认 DeepSeek，视觉模型默认 GLM，可用环境变量替换 |
 | 文档解析 | Apache POI、PDFBox |
-| 安全 | 自研 HMAC Bearer 令牌、BCrypt 密码、教师拦截器、学生资源归属校验 |
-| 测试 | JUnit 5、Mockito、Spring Boot Test、Testcontainers MySQL、Vitest + V8 coverage、Playwright |
+| 安全 | 自研 HMAC Bearer 令牌（常量时间比对）、BCrypt 密码、教师/管理员拦截器、学生资源归属校验（404 防枚举） |
+| 测试 | JUnit 5、Mockito、Spring Boot Test、Testcontainers MySQL、Vitest + V8 coverage（80/70 门禁）、Playwright + axe、bundle 预算门禁 |
 
 ## 目录结构
 
 ```text
 Fordo/
-├─ wenjin-server/                    # Spring Boot 后端
+├─ wenjin-server/                      # Spring Boot 后端
 │  ├─ src/main/java/com/wenjin/
-│  │  ├─ controller/                  # 学生端、教师端、管理端 API
-│  │  ├─ service/                     # 诊断、练习、路径、复习、伴侣、抽取等业务
-│  │  ├─ service/companion/           # M4 伴侣工具与治理管道
-│  │  ├─ service/trace/               # M5 Agent 执行轨迹埋点
-│  │  ├─ support/                     # 判分、自适应引擎、图方向、演示播种等支撑
-│  │  ├─ security/                    # HMAC 令牌与生产密钥守卫
-│  │  └─ config/                      # 拦截器、当前用户、AI/工具配置
+│  │  ├─ controller/                   # 学生端、教师端、管理端 API
+│  │  ├─ service/                      # 诊断、练习、路径、复习、伴侣、作业等业务
+│  │  │  ├─ companion/                 # M4 伴侣工具与治理管道（13 个白名单工具）
+│  │  │  ├─ trace/                     # M5 Agent 执行轨迹埋点
+│  │  │  ├─ memory/                    # M7 长期记忆蒸馏/去重/注入
+│  │  │  ├─ rag/                       # M8 检索与语料入库
+│  │  │  ├─ plan/                      # M10 计划、re-plan、取消护栏
+│  │  │  └─ multiagent/                # M11 周报与抽查
+│  │  ├─ eval/                         # M6 评测：scenario/golden/hard/judge/replay/fixture
+│  │  ├─ support/                      # 纯算法支撑：判分、AdaptiveEngine、PlanAlgorithm、PromptAssembler 等
+│  │  ├─ security/                     # HMAC 令牌、密钥守卫、课程归属校验
+│  │  └─ config/                       # 拦截器、当前用户、AI/工具/特性开关配置
 │  ├─ src/main/resources/
-│  │  ├─ db/migration/                # Flyway 版本化迁移（V1 baseline + 增量）
-│  │  ├─ schema.sql                   # 仅本地空库重建快照（会删数据，生产禁用）
-│  │  ├─ data.sql                     # 本地演示账号和课程
-│  │  └─ application*.yml             # 开发/生产配置
-│  └─ seed/                           # 软件工程图谱与题库种子
-├─ wenjin-web/                        # Vue 前端
-│  ├─ src/views/                      # 学生端与教师端页面
-│  ├─ src/components/                 # 练习卡、复习面板、顶部导航等
-│  ├─ src/api/                        # API 封装，companion.js 负责 SSE
-│  ├─ test/                           # 前端纯逻辑/模板回归测试
-│  └─ e2e/                            # 真机验收脚本
-├─ 00-总纲-闭环路线图.md              # M1-M4 总体路线
-├─ 01-M1-练习闭环.md
-├─ 02-M2-图引导自适应诊断.md
-├─ 03-M3-遗忘衰减与复习调度.md
-├─ 04-M4-伴侣工具调用.md
-├─ M4-GOAL.md                         # M4 最终目标说明
-├─ DEPLOYMENT.md                      # 生产部署与加固指南
-└─ 测试截图/                           # 阶段验收截图
+│  │  ├─ db/migration/                 # Flyway 版本化迁移 V1–V15（护栏、记忆、RAG、计划、周报）
+│  │  ├─ schema.sql                    # 仅本地空库重建快照（会删数据，生产禁用）
+│  │  ├─ data.sql                      # 本地演示账号和课程
+│  │  └─ application*.yml              # 开发/生产配置
+│  ├─ src/test/                        # 单元/集成测试（Testcontainers + M6 评测场景）
+│  └─ seed/                            # 软件工程图谱与题库种子
+├─ wenjin-web/                         # Vue 前端
+│  ├─ src/views/                       # 学生端与教师端页面
+│  ├─ src/components/                  # 练习卡、复习面板、顶部导航等
+│  ├─ src/api/                         # API 封装，companion.js 负责 SSE
+│  ├─ src/store、composables、utils/   # Pinia store、latest-request 竞态门、图谱布局/渲染
+│  ├─ test/                            # 前端纯逻辑/模板回归测试
+│  └─ e2e/                             # 真机验收脚本（Playwright + *.mjs）
+├─ ops/sql/                            # 生产 SQL：迁移预检、完整性审计、ngram 预检等
+├─ docs/                               # 质量基线、发布 runbook、规划文档
+├─ .github/workflows/ci.yml            # CI：后端 verify / eval-replay / 前端 check / Playwright
+├─ DEPLOYMENT.md                       # 生产部署与加固指南
+└─ 问津_软件工程图谱_v0.3.{json,xlsx}   # 演示图谱导出件（教师审阅用）
 ```
 
 ## 数据与种子
 
-- **生产 / CI schema 演进**：`wenjin-server/src/main/resources/db/migration/`（Flyway）。
+- **生产 / CI schema 演进**：`wenjin-server/src/main/resources/db/migration/`（Flyway，共 15 个迁移）。
   - `V1__baseline_schema.sql`：空库建全部 20 张表（`CREATE TABLE IF NOT EXISTS`，无 DROP / 种子）。
   - `V2__legacy_milestones.sql`：标记 m01/m02 已并入 V1（`SELECT 1;`）；既有库 `baseline-version: 2` 后从 V3 起。
-  - 应用默认 `spring.flyway.enabled=false`（`WENJIN_FLYWAY_ENABLED`）；发布流水线用 migrator 凭据单独跑迁移，成功后再启普通应用实例。
+  - `V3–V9`（加固）：固定诊断冻结、软归档、路径并发护栏、题面 SHA-256 指纹、AI 作业表、伴侣摘要列、关系完整性契约（物理 FK + SIGNAL 预检）。
+  - `V10–V15`（功能）：Agent 轨迹、评测、长期记忆、RAG、学习计划、多智能体周报。
+  - 应用默认 `spring.flyway.enabled=false`（`WENJIN_FLYWAY_ENABLED`）；发布流水线用 migrator 凭据单独跑迁移（expand V3–V8 与 contract V9 分窗口部署，`SPRING_FLYWAY_TARGET` 封顶），成功后再启普通应用实例。
 - `schema.sql`：仅本地空库重建快照（含 `DROP TABLE`，**会删数据**），与 V1 最终 DDL 同步；**生产禁用**。
 - 软件工程演示图谱：`wenjin-server/seed/问津_软件工程图谱_v0.3.json`，42 个节点，53 条边。
 - 软件工程演示题库：`wenjin-server/seed/问津_软件工程题库_v0.1.json`，25 道种子题。
@@ -216,7 +230,7 @@ npm run dev
 
 | 模块 | 路径 | 用途 |
 | --- | --- | --- |
-| 登录注册 | `/api/login`、`/api/register` | 用户身份与令牌 |
+| 登录注册 | `/api/login`、`/api/register` | 用户身份与令牌（公开注册固定为学生角色） |
 | 课程 | `/api/course` | 可选课程、我的课程、选课 |
 | 图谱查询 | `/api/graph/{courseId}` | ColorMap 所需节点、边、掌握度 |
 | 固定诊断 | `/api/diagnostic` | 固定卷组卷、提交、结果 |
@@ -225,6 +239,10 @@ npm run dev
 | 练习 | `/api/practice` | M1 节点练习开始、提交、历史 |
 | 复习 | `/api/review/today` | M3 今日复习队列 |
 | AI 伴侣 | `/api/companion` | SSE 对话、会话列表、会话删除 |
+| 理解探针 | `/api/companion/probe/{sessionId}/submit` | M9 探针作答（EWMA 隔离，不写掌握度） |
+| run 取消 | `/api/companion/runs/{id}/cancel` | M10 编排转向/取消 |
+| 学习计划 | `/api/student/plans/*`、`/api/student/daily-brief` | M10 计划确认/取消/当前计划/每日简报 |
+| 资料引用 | `/api/student/chunks` | 伴侣引用胶囊抽屉（M8） |
 | 图谱管理 | `/api/admin/graph` | JSON/Excel 导入、课程标准抽取与提交 |
 | 题目管理 | `/api/admin/question` | AI 出题、标注、JSON/Excel 题库导入 |
 | 教师课程 | `/api/teacher/courses` | 建课、删课、发布/下架 |
@@ -232,6 +250,9 @@ npm run dev
 | 教师题目 | `/api/teacher/questions` | 题目审核池 |
 | 教师看板 | `/api/teacher/dashboard` | 学情聚合 |
 | 教师 Agent 轨迹 | `/api/teacher/agent-runs` | M5 run 列表与 steps 明细（教师/管理员） |
+| 教师语料 | `/api/teacher/rag` | M8 语料与 chunk↔节点映射审核 |
+| 教师周报 | `/api/teacher/reports` | M11 周报/抽查报告（`multi-agent-enabled` 开启后） |
+| 管理用户 | `/api/system-admin/users` | 角色开通/变更（仅 ADMIN） |
 
 ## M4 伴侣工具调用
 
@@ -244,6 +265,8 @@ M4 把 AI 伴侣从“读取上下文并回答”升级为“按白名单工具�
 - `get_node_detail` 查询节点元数据、前置节点和后继节点。
 - `start_practice` 通过 nodeCode 或 nodeName 发起 M1 自由练习，默认 2 题，夹紧到 1-3 题，并通过 SSE 推送 `practice_card`。
 - 前端 `Companion.vue` 渲染 `tool_start`、`tool_result` 和 `practice_card`，内嵌 `QuestionAnswerCard` 完成作答提交。
+
+> 工具集随里程碑扩展至 **13 个**：M7 增加 `recall_student_context` / `record_observation`；M8 增加 `search_materials`；M9 增加 `probe_understanding`；M10 增加 `draft_study_plan` / `get_plan_progress`；另有 `get_review_queue` / `get_learning_frontier` / `trace_prerequisites` / `schedule_review`。详见各里程碑章节。
 
 相关代码：
 
@@ -287,17 +310,17 @@ M6 用场景脚本 + 硬断言 +（可选）LLM-as-judge 回归伴侣行为。CI
 
 | 构件 | 位置 |
 | --- | --- |
-| 场景（事实源） | `wenjin-server/src/test/resources/eval/scenarios/S01.json` … `S19.json` |
-| Golden（REPLAY） | `wenjin-server/src/test/resources/eval/golden/{code}.json`（ENABLED 场景） |
-| 硬断言 / 执行器 | `com.wenjin.eval.hard`、`runner`、`golden`、`replay` |
+| 场景（事实源） | `wenjin-server/src/test/resources/eval/scenarios/S01.json` … `S21.json` |
+| Golden（REPLAY） | `wenjin-server/src/test/resources/eval/golden/{code}.json`（20 份，缺 S18） |
+| 硬断言 / 执行器 | `com.wenjin.eval.hard`、`runner`、`golden`、`replay`、`fixture` |
 | 报告 | `wenjin-server/target/eval-report.md`（评测测试写出） |
-| Judge 校准草稿 | `wenjin-server/docs/quality/judge-calibration-v1.md` |
+| Judge 校准草稿 | `wenjin-server/docs/quality/judge-calibration-v1.md`（当前为 placeholder 合成集） |
 
-- **ENABLED**（CI 硬断言）：S01–S07、S08–S12、**S13**、S14、S15、**S16**、**S17**、**S19**  
-- **PENDING**：**S18**（跨会话记忆引用，待 LIVE golden）  
+- **ENABLED**（CI 硬断言，18 个）：S01–S17、**S19**  
+- **PENDING**（3 个）：**S18**（跨会话记忆引用）、**S20** / **S21**（M10 学习计划；golden 文件已生成，待 LIVE golden 后启用）  
 - S02：`guidance` 阈值 4；system prompt 强化「索要直接答案 → 分步引导」  
 - 开关：`wenjin.features.eval-enabled`（生产默认关，`WENJIN_FEATURE_EVAL`）  
-- Judge 模型：`wenjin.eval.judge-model`（可选，见 DEPLOYMENT）
+- Judge 模型：`wenjin.eval.judge-model`（可选，见 DEPLOYMENT；Judge threshold 目前只写入提示词，未强制判罚）
 
 本地 REPLAY（与 CI `eval-replay` 一致）：
 
@@ -360,6 +383,34 @@ M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `R
 - `wenjin-server/src/main/java/com/wenjin/service/companion/SearchMaterialsTool.java`
 
 配置明细见 **`DEPLOYMENT.md`**（`rag-enabled`、`limits.rag.*`、V13、ngram 预检）。
+
+## M9 反思与降级（probe 探针 + kill-switch 矩阵）
+
+M9 为伴侣补齐「确认听懂」与「紧急熔断」两个回路。
+
+### 能力摘要
+
+- **理解探针**：`probe_understanding` 工具发起单题探针（EWMA 隔离，不写掌握度），经 SSE 推送 `probe_card`；作答未通过时可「换个方式再讲」（StrategySwitcher 换策略重讲）。
+- **phase-1 意图路由**：伴侣第一阶段决策输出 `intent ∈ {EXPLAIN, QUERY, PRACTICE, CHAT}`（缺省 CHAT）；EXPLAIN 后可自动发起探针；练习意图命中时短路到 `start_practice`。
+- **零 LLM 降级**：`companion-llm-enabled=false` 或运行时 LLM 连续失败 → `CompanionDegradeService` 模板话术 + 练习卡（due → weak → frontier），run 记 `DEGRADED`。
+- **kill-switch 矩阵**：
+
+| 开关 | 关闭时的行为 |
+| --- | --- |
+| `companion-llm-enabled` | 零 LLM 降级模板 + 练习卡；`agent_run.status=DEGRADED` |
+| `reflection-enabled` | 不下发 `probe_understanding`、不自动探针、无换策略回路 |
+| `memory-enabled` | MEMORY 槽为空、记忆工具下架、不派发蒸馏 |
+| `rag-enabled` | RETRIEVAL 槽为空、`search_materials` 下架 |
+| `plan-enabled` | 计划工具下架、re-plan 不跑、brief 隐藏计划段 |
+
+相关代码：
+
+- `wenjin-server/src/main/java/com/wenjin/service/companion/ReflectionCoordinator.java`
+- `wenjin-server/src/main/java/com/wenjin/service/companion/StrategySwitcher.java`
+- `wenjin-server/src/main/java/com/wenjin/service/companion/CompanionDegradeService.java`
+- `wenjin-server/src/main/java/com/wenjin/support/Phase1DecisionParser.java`
+
+配置明细见 **`DEPLOYMENT.md`**（4.2.1 紧急 kill switch 矩阵）。
 
 ## M10 学习计划（确定性算法 + HITL）
 
@@ -448,7 +499,7 @@ npm run test -- test/m4-e2e-script-contract.test.js
 npm run test -- test/m5-e2e-script-contract.test.js
 ```
 
-当前仓库中后端测试文件约 60+ 个，`@Test` 用例约 580 个；前端包含 Vitest 单元/覆盖率门禁与多条 Playwright 验收脚本。验收截图集中在 `测试截图/`（M5 为 `m5-agent-trace.png`）。
+当前仓库后端测试文件 171 个、`@Test` 用例约 1200 处（测试代码与主代码行数比约 0.94:1）；前端包含 Vitest 单元/覆盖率门禁（store/composables/api/utils 行 80% / 分支 70%）与 Playwright 验收脚本（CI 门禁为 accessibility + mobile-map 两条 spec，其余 `e2e/*.mjs` 验收脚本需后端就绪后人工触发）。
 
 ## 生产部署注意
 
@@ -460,10 +511,12 @@ npm run test -- test/m5-e2e-script-contract.test.js
 - 不要把 AI Key 写入配置文件或提交到仓库。
 - 推荐由 nginx 托管前端静态文件，并反向代理 `/api` 到后端，只对外暴露 HTTPS。
 - `application-prod.yml` 已关闭 SQL 打印并收紧日志；CORS 生产域名通过 `WENJIN_CORS_ORIGINS` 配置。
+- **单进程拓扑约束**：AI 作业 payload 存本地磁盘、生命周期靠进程内锁协调，当前仅支持单应用实例；水平扩展前需先实现共享对象存储 + 分布式生命周期协调（DEPLOYMENT.md §6.1）。
 
 ## 后续建议
 
-- 把 M4/M5 真机验收纳入发布前检查清单：M4 工具预算与降级；M5 教师轨迹列表/展开与学生越权 403。
-- 生产开启 `WENJIN_FEATURE_AGENT_TRACE` 前确认已 migrate V10，并复核 I/O / 工具结果截断阈值。
-- 继续补充课程标准抽取和教师审核的端到端验收脚本。
-- 若要上公网，优先完成 `DEPLOYMENT.md` 中的 CORS、账号、密钥和数据库权限加固。
+- **评测补全**：S18（跨会话记忆）与 S20/S21（学习计划）录制 LIVE golden 后转 ENABLED；用真实 LIVE 数据完成 Judge 校准（人机一致率 ≥80%），并把 threshold 判罚落到报告口径。
+- **可靠性**：把 `ProbeSessionStore` / `ReviewScheduleStore`（当前为进程内存态，重启丢失）持久化；多实例部署前完成 AiJob payload 共享存储与分布式协调。
+- **上线检查**：生产开启任一 feature 前确认对应迁移已跑（V10 轨迹、V12 记忆、V13 RAG（先执行 `ops/sql/preflight-ngram.sql`）、V14 计划、V15 周报）；M4/M5 真机验收（工具预算/降级、教师轨迹学生越权 403）纳入发布清单。
+- **前端**：把依赖后端的 `e2e/*.mjs` 验收脚本逐步并入 CI；继续拆分 ColorMap / Companion / TeacherGraphReview 等大文件。
+- **文档同步**：场景清单、API 表等随里程碑更新（本文件为 M11 截止的现状）。
