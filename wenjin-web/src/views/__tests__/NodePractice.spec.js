@@ -68,7 +68,7 @@ async function mountPractice(initialCourseId = 1) {
   const wrapper = mount(NodePractice, {
     global: {
       plugins: [pinia, router],
-      stubs: { RouterLink: { template: '<a><slot /></a>' } }
+      stubs: { RouterLink: { props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot /></a>' } }
     }
   })
   await nextTick()
@@ -220,5 +220,40 @@ describe('NodePractice session ownership', () => {
     expect(mocks.startPractice).toHaveBeenCalledTimes(1)
     pending.resolve(startData('late', 303))
     await flushPromises()
+  })
+})
+
+describe('NodePractice review-mistakes entry', () => {
+  beforeEach(() => {
+    mocks.startPractice.mockReset()
+    mocks.submitPractice.mockReset()
+  })
+  afterEach(() => { delete window.__wjPractice })
+
+  async function finish(graded) {
+    mocks.startPractice.mockResolvedValue(startData('N7', 303))
+    mocks.submitPractice.mockResolvedValue({ masteryBefore: 0.4, masteryAfter: 0.5, graded })
+    const { wrapper } = await mountPractice(5)
+    await flushPromises()
+    await wrapper.vm.$.setupState.doSubmit([{ questionId: 303, studentAnswer: 'A' }])
+    await flushPromises()
+    return wrapper
+  }
+
+  it('shows 复盘错题 with the right query when there are wrong answers', async () => {
+    const wrapper = await finish([{ questionId: 303, correct: false }])
+    const link = wrapper.find('[data-testid="np-review-mistakes"]')
+    expect(link.exists()).toBe(true)
+    expect(JSON.parse(link.attributes('data-to'))).toEqual({
+      path: '/companion',
+      query: { courseId: 5, nodeCode: 'N7', review: 303 }
+    })
+    wrapper.unmount()
+  })
+
+  it('hides the button when everything is correct', async () => {
+    const wrapper = await finish([{ questionId: 303, correct: true }])
+    expect(wrapper.find('[data-testid="np-review-mistakes"]').exists()).toBe(false)
+    wrapper.unmount()
   })
 })
