@@ -968,6 +968,36 @@ class CompanionServiceImplTest {
     }
 
     @Test
+    void cancelDuringParallelBatchSkipsApplyingResults() {
+        Long conversationId = 324L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("我的情况")));
+        configureTools(true, 2, 4, List.of(
+                fakeTool("query_mastery", "查询掌握度", Map.of("type", "object", "properties", Map.of())),
+                fakeTool("get_node_detail", "节点详情", Map.of("type", "object", "properties", Map.of()))));
+        java.util.concurrent.atomic.AtomicBoolean cancel = new java.util.concurrent.atomic.AtomicBoolean();
+        com.wenjin.service.plan.PlanCancelGuard guard =
+                org.mockito.Mockito.mock(com.wenjin.service.plan.PlanCancelGuard.class);
+        when(guard.isCancelRequested(any(com.wenjin.service.trace.TraceContext.class)))
+                .thenAnswer(inv -> cancel.get());
+        ReflectionTestUtils.setField(service, "planCancelGuard", guard);
+        scriptTurns(
+                tools(new CompanionAiClient.ToolCall("call-a", "query_mastery", "{}"),
+                        new CompanionAiClient.ToolCall("call-b", "get_node_detail", "{}")),
+                text("综合来看"));
+        when(toolGovernor.execute(any(), any(), any(), any())).thenAnswer(inv -> {
+            CompanionAiClient.ToolCall call = inv.getArgument(1);
+            cancel.set(true); // 学生在工具执行期间点了停止
+            return new ToolExecutionResult(call.id(), call.name(), true, "{}");
+        });
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(conversationId, sink);
+
+        assertThat(sink.events).noneMatch(e -> e.startsWith("tool_result"));
+        verify(aiClient, times(1)).streamTurn(any(), any(), any(), any());
+    }
+
+    @Test
     void streamReplyWhenToolFailsAppendsToolErrorAndStillStreamsFinalReply() {
         Long conversationId = 303L;
         stubConversationAndPrompt(conversationId, List.of(userMessage("给我建议")));

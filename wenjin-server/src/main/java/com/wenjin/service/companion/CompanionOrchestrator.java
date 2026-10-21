@@ -344,8 +344,16 @@ public final class CompanionOrchestrator {
                     }));
                 }
             }
+            List<TimedResult> results = new ArrayList<>(calls.size());
+            for (Future<TimedResult> future : futures) {
+                results.add(await(future));
+            }
+            // 批次执行期间学生已取消：不再回放结果（与顺序执行"每个工具前检查"的语义对齐）
+            if (shell.cancelRequested()) {
+                return false;
+            }
             for (int i = 0; i < calls.size(); i++) {
-                TimedResult timed = await(futures.get(i));
+                TimedResult timed = results.get(i);
                 applyResult(calls.get(i), timed.result(), timed.elapsedMs());
             }
             return true;
