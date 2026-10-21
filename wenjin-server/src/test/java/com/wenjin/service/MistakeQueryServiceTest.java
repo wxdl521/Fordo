@@ -90,6 +90,48 @@ class MistakeQueryServiceTest {
     }
 
     @Test
+    @DisplayName("nodeCode 过滤下推到 SQL（参数化子查询），扫描上限内不会漏掉该节点更早的错题")
+    void nodeFilter_pushedDownToSqlAsBoundParameters() {
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+                AnswerRecord.class);
+        question(1L, QuestionType.SINGLE, "题", "A", 100L);
+        option(1L, "A", "对", true, null);
+        option(1L, "B", "错", false, "SE-2.1");
+        answer(11L, 1L, "B", 2, 55L, LocalDateTime.of(2026, 10, 20, 9, 0));
+
+        service.report(STUDENT, COURSE, "SE-2.1' OR 1=1 --", null, 3);
+        service.report(STUDENT, COURSE, "SE-2.1", null, 3);
+
+        org.mockito.ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AnswerRecord>> cap =
+                org.mockito.ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper.class);
+        org.mockito.Mockito.verify(answerRecordMapper, org.mockito.Mockito.times(2)).selectList(cap.capture());
+        for (var w : cap.getAllValues()) {
+            String sql = w.getSqlSegment();
+            assertThat(sql).contains("question_option").contains("point_node_code").contains("question_node");
+            assertThat(sql).doesNotContain("SE-2.1");
+        }
+        assertThat(cap.getAllValues().get(1).getParamNameValuePairs()).containsValue("SE-2.1");
+        assertThat(cap.getAllValues().get(1).getParamNameValuePairs()).containsValue(COURSE);
+    }
+
+    @Test
+    @DisplayName("无 nodeCode：不加节点子查询")
+    void noNodeFilter_noSubquery() {
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+                AnswerRecord.class);
+        answer(11L, 1L, "B", 2, 55L, LocalDateTime.of(2026, 10, 20, 9, 0));
+        service.report(STUDENT, COURSE, null, null, 3);
+        org.mockito.ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AnswerRecord>> cap =
+                org.mockito.ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper.class);
+        org.mockito.Mockito.verify(answerRecordMapper).selectList(cap.capture());
+        assertThat(cap.getValue().getSqlSegment()).doesNotContain("question_option");
+    }
+
+    @Test
     @DisplayName("单选错题：所选/正确选项带文本，误区节点来自所选干扰项的 point_node_code，题干截断")
     void singleChoice_mapsChosenCorrectAndMisconception() {
         question(1L, QuestionType.SINGLE, "很长的题干".repeat(30), "A", 100L);

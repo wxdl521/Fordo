@@ -49,7 +49,7 @@ public class MistakeQueryService {
     public static final int OPTION_TEXT_MAX_CHARS = 60;
     public static final int MAX_LIMIT = 20;
     public static final int TOP_MISCONCEPTIONS = 3;
-    /** 单次最多扫描的最近错题作答行（命中 V21 idx_student_course_time）。 */
+    /** 单次最多扫描的最近错题作答行（命中 V21 idx_student_course_time；有 nodeCode 时先在 SQL 里按节点预筛）。 */
     static final int SCAN_CAP = 200;
 
     static final int SCENE_DIAGNOSTIC = 1;
@@ -99,7 +99,7 @@ public class MistakeQueryService {
         int lim = Math.max(1, Math.min(MAX_LIMIT, limit));
         String nodeFilter = StringUtils.hasText(nodeCode) ? nodeCode.trim() : null;
 
-        List<AnswerRecord> records = loadWrongRecords(studentId, courseId, practiceSessionId);
+        List<AnswerRecord> records = loadWrongRecords(studentId, courseId, practiceSessionId, nodeFilter);
         if (records.isEmpty()) {
             return MistakeReport.empty();
         }
@@ -166,11 +166,24 @@ public class MistakeQueryService {
 
     // ── loading ──
 
-    private List<AnswerRecord> loadWrongRecords(Long studentId, Long courseId, Long practiceSessionId) {
+    /** nodeCode 过滤的 SQL 预筛：主节点为该节点的题 ∪ 有干扰项指向该节点的题（参数绑定，非拼接）。 */
+    private static final String NODE_PREFILTER_SQL =
+            "(question_id IN (SELECT qn.question_id FROM question_node qn JOIN kg_node kn ON kn.id = qn.node_id"
+                    + " WHERE qn.weight = 1 AND kn.course_id = {0} AND kn.node_code = {1})"
+                    + " OR question_id IN (SELECT qo.question_id FROM question_option qo"
+                    + " WHERE qo.point_node_code = {1}))";
+
+    private List<AnswerRecord> loadWrongRecords(Long studentId, Long courseId, Long practiceSessionId,
+                                                String nodeFilter) {
         LambdaQueryWrapper<AnswerRecord> wrapper = new LambdaQueryWrapper<AnswerRecord>()
                 .eq(AnswerRecord::getStudentId, studentId)
                 .eq(AnswerRecord::getCourseId, courseId)
                 .eq(AnswerRecord::getIsCorrect, 0);
+        if (nodeFilter != null) {
+            // 下推节点过滤：SCAN_CAP 只作用于可能涉及该节点的错题，不会被其他节点的新错题挤掉；
+            // 精确判定（所选干扰项是否真指向该节点）仍在内存里做
+            wrapper.apply(NODE_PREFILTER_SQL, courseId, nodeFilter);
+        }
         if (practiceSessionId != null) {
             wrapper.eq(AnswerRecord::getScene, SCENE_PRACTICE)
                     .eq(AnswerRecord::getSessionId, practiceSessionId);
