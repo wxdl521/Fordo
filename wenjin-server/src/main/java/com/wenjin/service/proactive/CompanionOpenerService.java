@@ -114,25 +114,35 @@ public class CompanionOpenerService {
 
         CompanionOpenerVO vo = new CompanionOpenerVO();
         vo.setActions(buildActions(sig));
-        List<CompanionOpenerVO.Hint> hints = selectVisibleHints(sig, buildHintCandidates(sig));
-        for (CompanionOpenerVO.Hint h : hints) {
+        List<VisibleHint> visible = selectVisibleHints(sig, buildHintCandidates(sig));
+        for (VisibleHint v : visible) {
+            if (!v.fresh()) {
+                continue; // 粘性重展示不刷新 shown_at：冷却/每日上限按首次展示计
+            }
+            CompanionOpenerVO.Hint h = v.hint();
             try {
                 hintMapper.upsertShown(studentId, courseId, h.getHintKey(), h.getHintType(), now);
             } catch (Exception e) {
                 log.warn("record hint shown failed key={}: {}", h.getHintKey(), e.getMessage());
             }
         }
-        vo.setHints(hints);
+        vo.setHints(visible.stream().map(VisibleHint::hint).toList());
         vo.setGreeting(greeting(now, !vo.getActions().isEmpty()));
         return vo;
     }
 
-    /** 当前可见提示数（只读，不记 shown）；供导航小红点。 */
+    /**
+     * 新提示数（只读，不记 shown）；供导航小红点：只数当前可见且尚未展示过的提示，
+     * 学生看过 opener 后即清零（粘性提示仍在 opener 里，但不再计入）。
+     */
     public int hintCount(long studentId, long courseId) {
         requireEnabled();
         Signals sig = new Signals(studentId, courseId, LocalDateTime.now(clock));
-        return selectVisibleHints(sig, buildHintCandidates(sig)).size();
+        return (int) selectVisibleHints(sig, buildHintCandidates(sig)).stream().filter(VisibleHint::fresh).count();
     }
+
+    /** @param fresh true = 首次出现（尚无日志行） */
+    private record VisibleHint(CompanionOpenerVO.Hint hint, boolean fresh) {}
 
     /** 关闭提示。studentId 必须来自登录主体（控制器保证）。 */
     public void dismiss(long studentId, long courseId, String hintKey) {
@@ -497,7 +507,7 @@ public class CompanionOpenerService {
         return out;
     }
 
-    private List<CompanionOpenerVO.Hint> selectVisibleHints(Signals sig, List<CompanionOpenerVO.Hint> candidates) {
+    private List<VisibleHint> selectVisibleHints(Signals sig, List<CompanionOpenerVO.Hint> candidates) {
         if (candidates.isEmpty()) {
             return List.of();
         }
@@ -518,12 +528,12 @@ public class CompanionOpenerService {
                 .filter(l -> l.getShownAt() != null && l.getShownAt().toLocalDate().equals(sig.today))
                 .count();
 
-        List<CompanionOpenerVO.Hint> out = new ArrayList<>();
+        List<VisibleHint> out = new ArrayList<>();
         for (CompanionOpenerVO.Hint cand : candidates) {
             CompanionHintLog existing = byKey.get(cand.getHintKey());
             if (existing != null) {
                 if (existing.getDismissedAt() == null) {
-                    out.add(cand); // 粘性：已展示未关闭，继续展示
+                    out.add(new VisibleHint(cand, false)); // 粘性：已展示未关闭，继续展示
                 }
                 continue;
             }
@@ -533,7 +543,7 @@ public class CompanionOpenerService {
                 continue;
             }
             shownToday++;
-            out.add(cand);
+            out.add(new VisibleHint(cand, true));
         }
         return out;
     }

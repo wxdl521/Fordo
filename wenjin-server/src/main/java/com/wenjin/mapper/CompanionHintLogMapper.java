@@ -14,11 +14,11 @@ import java.time.LocalDateTime;
 @Mapper
 public interface CompanionHintLogMapper extends BaseMapper<CompanionHintLog> {
 
-    /** 记为已展示：同键只一行，再次展示仅更新 shown_at（不动 dismissed_at）。 */
+    /** 记为已展示：同键只一行，shown_at 只记首次展示（重复调用为空操作，不把冷却往后推）。 */
     @Insert("""
             INSERT INTO companion_hint_log (student_id, course_id, hint_key, hint_type, shown_at)
             VALUES (#{studentId}, #{courseId}, #{hintKey}, #{hintType}, #{now})
-            ON DUPLICATE KEY UPDATE shown_at = VALUES(shown_at)
+            ON DUPLICATE KEY UPDATE shown_at = shown_at
             """)
     int upsertShown(@Param("studentId") Long studentId,
                     @Param("courseId") Long courseId,

@@ -406,13 +406,13 @@ class CompanionOpenerServiceTest {
     }
 
     @Test
-    @DisplayName("已展示未关闭的同键提示继续展示（粘性），并刷新 shown_at")
+    @DisplayName("已展示未关闭的同键提示继续展示（粘性），但不刷新 shown_at（不把冷却往后推）")
     void hints_stickyUntilDismissed() {
         when(reviewService.getToday(SID, CID)).thenReturn(review(3, dueItem("N1", "变量", 82, 61, 9.0)));
         when(hintMapper.selectList(any())).thenReturn(List.of(
                 log("DECAY:2026-10-21", "DECAY", NOW.minusHours(3), null)));
         assertThat(service.build(SID, CID).getHints()).hasSize(1);
-        verify(hintMapper).upsertShown(SID, CID, "DECAY:2026-10-21", "DECAY", NOW);
+        verify(hintMapper, never()).upsertShown(anyLong(), anyLong(), anyString(), anyString(), any());
     }
 
     @Test
@@ -452,6 +452,22 @@ class CompanionOpenerServiceTest {
         givenActivePlanWithTasks(task(1, TODAY.minusDays(1), "N3", 1));
         assertThat(service.hintCount(SID, CID)).isEqualTo(2);
         verify(hintMapper, never()).upsertShown(anyLong(), anyLong(), anyString(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("hintCount：只数尚未展示过的新提示；看过 opener 后小红点清零（粘性提示不计）")
+    void hintCount_onlyUnseen() {
+        when(reviewService.getToday(SID, CID)).thenReturn(review(3, dueItem("N1", "变量", 82, 61, 9.0)));
+        givenActivePlanWithTasks(task(1, TODAY.minusDays(1), "N3", 1));
+        when(hintMapper.selectList(any())).thenReturn(List.of(
+                log("DECAY:2026-10-21", "DECAY", NOW.minusHours(1), null)));
+        // DECAY 已展示（粘性仍可见）不计；PLAN_BEHIND 是新的
+        assertThat(service.hintCount(SID, CID)).isEqualTo(1);
+
+        when(hintMapper.selectList(any())).thenReturn(List.of(
+                log("DECAY:2026-10-21", "DECAY", NOW.minusHours(1), null),
+                log("PLAN_BEHIND:plan:7:2026-10-21", "PLAN_BEHIND", NOW.minusMinutes(5), null)));
+        assertThat(service.hintCount(SID, CID)).isZero();
     }
 
     // ───────── dismiss ─────────
