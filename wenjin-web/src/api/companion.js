@@ -47,6 +47,37 @@ export function deleteConversation(id, config = {}) {
 }
 
 /**
+ * 会话开场：问候 + 数据驱动的建议动作 + 主动提示。
+ * 功能关闭时后端返回 404，调用方应回退到静态 starters。
+ * GET /api/companion/opener?courseId=
+ * @param {number} courseId
+ * @param {{ signal?: AbortSignal }} [config]
+ */
+export function fetchOpener(courseId, config = {}) {
+  return http.get('/companion/opener', { ...config, params: { courseId } })
+}
+
+/**
+ * 未关闭主动提示数量（只读，供顶部导航小红点）。
+ * GET /api/companion/hints/count?courseId=
+ * @param {number} courseId
+ * @returns {Promise<{ count: number }>}
+ */
+export function fetchHintsCount(courseId, config = {}) {
+  return http.get('/companion/hints/count', { ...config, params: { courseId } })
+}
+
+/**
+ * 关闭一条主动提示。
+ * POST /api/companion/hints/dismiss
+ * @param {number} courseId
+ * @param {string} hintKey
+ */
+export function dismissHint(courseId, hintKey) {
+  return http.post('/companion/hints/dismiss', { courseId, hintKey })
+}
+
+/**
  * 提交理解探针作答。
  * POST /api/companion/probe/{sessionId}/submit
  * @param {string} sessionId
