@@ -57,6 +57,7 @@ async function mountLogin() {
     routes: [
       { path: '/', name: 'login', component: Login },
       { path: '/teacher/graph', name: 'teacher', component: { template: '<div />' } },
+      { path: '/admin', name: 'admin', component: { template: '<div />' } },
       { path: '/map', name: 'map', component: { template: '<div />' } },
       { path: '/diagnostic', name: 'diagnostic', component: { template: '<div />' } },
       { path: '/growth', name: 'growth', component: { template: '<div />' } }
@@ -252,6 +253,75 @@ describe('Login registration security', () => {
     expect(courseApi.getAvailableCourses).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('Course B')
     expect(wrapper.text()).not.toContain('Course A')
+    wrapper.unmount()
+  })
+})
+
+describe('Login admin routing', () => {
+  const adminUser = { id: 1, username: 'root', realName: '系统管理员', role: 3, status: 1 }
+
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    courseApi.getMyCourses.mockResolvedValue([])
+    courseApi.getAvailableCourses.mockResolvedValue([])
+  })
+
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('sends an administrator straight to /admin after login, skipping the course page data', async () => {
+    userApi.login.mockResolvedValue({ token: 'admin-token', user: adminUser })
+
+    const wrapper = await mountLogin()
+    const inputs = wrapper.findAll('input')
+    await inputs[0].setValue('root')
+    await inputs[1].setValue('admin-password')
+    await wrapper.find('.wj-btn-acc').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.vm.$router.currentRoute.value.path).toBe('/admin')
+    expect(courseApi.getMyCourses).not.toHaveBeenCalled()
+    expect(useSessionStore().isAdmin).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('keeps students on the course page after login (no admin redirect)', async () => {
+    userApi.login.mockResolvedValue(loginResult('student-token', 7, '小明'))
+
+    const wrapper = await mountLogin()
+    const inputs = wrapper.findAll('input')
+    await inputs[0].setValue('student-7')
+    await inputs[1].setValue('student-password')
+    await wrapper.find('.wj-btn-acc').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.vm.$router.currentRoute.value.path).toBe('/')
+    expect(courseApi.getMyCourses).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['administrator', { ...adminUser }, { admin: true, teacher: true }],
+    ['teacher', { id: 2, username: 't', realName: '老师', role: 1, status: 1 }, { admin: false, teacher: true }],
+    ['student', { id: 3, username: 's', realName: '同学', role: 2, status: 1 }, { admin: false, teacher: false }]
+  ])('course page entries for a restored %s session', async (_label, user, expected) => {
+    localStorage.setItem('wj_token', 'restored-token')
+    localStorage.setItem('wj_user', JSON.stringify(user))
+    userApi.me.mockResolvedValue(user)
+
+    const wrapper = await mountLogin()
+    await flushPromises()
+
+    // 已登录状态回到 / → 课程页；管理员有「进入管理后台」入口，且不会被自动弹走
+    expect(wrapper.vm.$router.currentRoute.value.path).toBe('/')
+    expect(wrapper.find('[data-testid="enter-admin"]').exists()).toBe(expected.admin)
+    expect(wrapper.text().includes('进入教师端')).toBe(expected.teacher)
+    if (expected.admin) {
+      expect(wrapper.get('[data-testid="enter-admin"]').attributes('href')).toBe('/admin')
+    }
     wrapper.unmount()
   })
 })

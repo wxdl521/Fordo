@@ -1,6 +1,6 @@
 <template>
   <div :style="{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }">
-    <!-- 全局顶栏：登录页隐藏 -->
+    <!-- 全局顶栏：登录页与管理后台（/admin，自带独立布局）隐藏 -->
     <TopBar v-if="showTopBar" />
 
     <!-- 路由出口 -->
@@ -25,8 +25,13 @@ import TopBar from './components/TopBar.vue'
 
 const route = useRoute()
 
-// 登录页不显示 TopBar
-const showTopBar = computed(() => route.path !== '/')
+// 登录页、管理后台不显示 TopBar（管理后台由 AdminLayout 自带顶栏）
+const showTopBar = computed(() => {
+  const path = route.path
+  if (path === '/') return false
+  if (path === '/admin' || path.startsWith('/admin/')) return false
+  return true
+})
 </script>
 
 <style>

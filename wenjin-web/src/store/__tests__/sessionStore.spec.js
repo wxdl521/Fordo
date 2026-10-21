@@ -86,6 +86,26 @@ describe('sessionStore', () => {
     expect(localStorage.getItem(TEACHER_COURSE_KEY)).toBeNull()
   })
 
+  it('isAdmin / isTeacher getters follow the role code (3=admin, 1|3=teacher side)', () => {
+    const session = useSessionStore()
+    expect(session.isAdmin).toBe(false)
+
+    session.setSession({ token: 't', user: { id: 1, role: 3 } })
+    expect(session.isAdmin).toBe(true)
+    expect(session.isTeacher).toBe(true)
+
+    session.setSession({ token: 't', user: { id: 2, role: 1 } })
+    expect(session.isAdmin).toBe(false)
+    expect(session.isTeacher).toBe(true)
+
+    session.setSession({ token: 't', user: { id: 3, role: 2 } })
+    expect(session.isAdmin).toBe(false)
+    expect(session.isTeacher).toBe(false)
+
+    session.clearSession()
+    expect(session.isAdmin).toBe(false)
+  })
+
   it('refreshMe success updates user; failure clears session (401 path)', async () => {
     const session = useSessionStore()
     session.setSession({ token: 't', user: { id: 1, role: 2 } })

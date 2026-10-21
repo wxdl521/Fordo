@@ -90,8 +90,33 @@ export function unwrapSuccess(resp) {
   return body
 }
 
+function isBlob(value) {
+  return typeof Blob !== 'undefined' && value instanceof Blob
+}
+
+/**
+ * responseType: 'blob' 的请求失败时，服务端的 JSON Result 体也是 Blob；
+ * 读出来解析成对象，业务 message / code 才不会丢。非 JSON 或读取失败 → undefined（走通用错误）。
+ * @param {Blob} blob
+ * @returns {Promise<unknown>}
+ */
+function readBlobJson(blob) {
+  if (typeof blob.text !== 'function') return Promise.resolve(undefined)
+  return blob.text().then(
+    (text) => {
+      try {
+        return JSON.parse(text)
+      } catch {
+        return undefined
+      }
+    },
+    () => undefined
+  )
+}
+
 /**
  * 错误响应：网络错误不伪装成业务失败；有 Result 体则 unwrapFailure。
+ * 2xx 的 Blob 下载响应不经此处（unwrapSuccess 对无 code 字段的对象原样返回）。
  */
 export function unwrapError(error) {
   if (!error || !error.response) {
@@ -104,7 +129,14 @@ export function unwrapError(error) {
     err.isNetworkError = true
     return Promise.reject(err)
   }
-  const body = error.response.data
+  const raw = error.response.data
+  if (isBlob(raw)) {
+    return readBlobJson(raw).then((parsed) => rejectWithBody(error, parsed))
+  }
+  return rejectWithBody(error, raw)
+}
+
+function rejectWithBody(error, body) {
   const expectedToken = requestAuthToken(error.config, error.response.config)
   if (body && typeof body === 'object' && 'code' in body) {
     return unwrapFailure(error.response, body, expectedToken)

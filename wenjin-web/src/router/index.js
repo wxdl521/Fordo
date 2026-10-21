@@ -21,6 +21,8 @@ const TeacherRag = () => import('../views/TeacherRag.vue')
 const TeacherReports = () => import('../views/TeacherReports.vue')
 const GraphExtractReview = () => import('../views/GraphExtractReview.vue')
 const NodePractice = () => import('../views/NodePractice.vue')
+const AdminLayout = () => import('../layouts/AdminLayout.vue')
+const AdminUsers = () => import('../views/AdminUsers.vue')
 
 const routes = [
   { path: '/', name: 'login', component: Login, meta: { title: '登录 / 课程选择', public: true } },
@@ -42,6 +44,15 @@ const routes = [
   { path: '/teacher/reports', name: 'teacher-reports', component: TeacherReports, meta: { title: '周报' } },
   { path: '/teacher/graph-extract-review', name: 'teacher-graph-extract-review', component: GraphExtractReview, meta: { title: '抽取审核' } },
   { path: '/practice', name: 'practice', component: NodePractice, meta: { title: '节点练习' } },
+  // 系统管理后台：独立布局（不带学生/教师 TopBar），仅 role===3 可进入
+  {
+    path: '/admin',
+    component: AdminLayout,
+    children: [
+      { path: '', redirect: '/admin/users' },
+      { path: 'users', name: 'admin-users', component: AdminUsers, meta: { title: '用户管理' } }
+    ]
+  },
 ]
 
 export const router = createRouter({
@@ -57,7 +68,11 @@ function canAccessTeacher(user) {
   return user && (user.role === 1 || user.role === 3)
 }
 
-// 路由守卫：启动刷新会话；无身份跳登录；教师端仅允许教师/管理员。
+function isAdminPath(path) {
+  return path === '/admin' || path.startsWith('/admin/')
+}
+
+// 路由守卫：启动刷新会话；无身份跳登录；教师端仅允许教师/管理员；管理后台仅允许管理员。
 router.beforeEach(async (to) => {
   const session = useSessionStore(pinia)
   const course = useCourseStore(pinia)
@@ -73,6 +88,12 @@ router.beforeEach(async (to) => {
 
   if (to.path.startsWith('/teacher')) {
     if (!canAccessTeacher(session.user)) {
+      return { path: '/' }
+    }
+  }
+
+  if (isAdminPath(to.path)) {
+    if (!session.isAdmin) {
       return { path: '/' }
     }
   }

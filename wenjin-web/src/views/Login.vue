@@ -126,10 +126,15 @@
 
           <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px' }">
             <button @click="handleLogout" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' }">退出登录</button>
-            <!-- 教师端入口仅对教师（role === 1）可见 -->
+            <!-- 教师端入口仅对教师/管理员可见（role 1 或 3） -->
             <template v-if="isTeacher">
               <span :style="{ width: '1px', height: '12px', background: 'var(--line)' }"></span>
               <router-link to="/teacher/graph" class="wj-underline" :style="{ color: 'var(--mut)', fontSize: '12.5px', textDecoration: 'underline', textUnderlineOffset: '3px' }">我是教师 · 进入教师端</router-link>
+            </template>
+            <!-- 管理后台入口仅对管理员（role === 3）可见 -->
+            <template v-if="isAdmin">
+              <span :style="{ width: '1px', height: '12px', background: 'var(--line)' }"></span>
+              <router-link to="/admin" data-testid="enter-admin" class="wj-underline" :style="{ color: 'var(--mut)', fontSize: '12.5px', textDecoration: 'underline', textUnderlineOffset: '3px' }">进入管理后台</router-link>
             </template>
           </div>
         </div>
@@ -141,6 +146,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia'
+import { useRouter } from 'vue-router'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import { useViewport } from '../composables/useViewport.js'
 import { login as apiLogin, register as apiRegister } from '../api/user.js'
@@ -151,6 +157,7 @@ import { createLatestRequest } from '../utils/latestRequest.js'
 
 const serif = "'Noto Serif SC', serif"
 const { width } = useViewport()
+const router = useRouter()
 const session = useSessionStore()
 const courseStore = useCourseStore()
 const { user: currentUser } = storeToRefs(session)
@@ -191,8 +198,25 @@ function commitLogin(data, request) {
   session.setSession({ token: data.token, user: data.user })
   session.resetRefreshGate()
   step.value = 'course'
+  if (session.isAdmin) {
+    // 管理员登录后直接进管理后台，不再展示学生课程选择页
+    void enterAdminConsole()
+    return true
+  }
   void loadCourses()
   return true
+}
+
+async function enterAdminConsole() {
+  courseLoading.value = true // 跳转期间显示「加载中」，避免闪一下空课程页
+  try {
+    const failure = await router.push('/admin')
+    if (!failure) return
+  } catch {
+    /* 路由异常 → 退回课程页 */
+  }
+  if (disposed) return
+  void loadCourses()
 }
 
 function showRegister() {
@@ -216,6 +240,8 @@ const displayName = computed(() => {
 
 // 是否教师/管理员（role 1 或 3）——决定课程页是否显示「进入教师端」入口
 const isTeacher = computed(() => session.isTeacher)
+// 是否管理员（role 3）——决定课程页是否显示「进入管理后台」入口
+const isAdmin = computed(() => session.isAdmin)
 
 
 function masteryPercent(c) {

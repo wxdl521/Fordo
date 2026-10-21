@@ -42,7 +42,9 @@ export const useSessionStore = defineStore('session', {
     isTeacher: (state) => {
       const r = state.user && state.user.role
       return r === 1 || r === 3
-    }
+    },
+    /** 系统管理员（role === 3）：与后端 AdminAuthInterceptor 一致。 */
+    isAdmin: (state) => !!state.user && state.user.role === 3
   },
 
   actions: {
