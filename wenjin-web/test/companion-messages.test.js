@@ -6,6 +6,7 @@ import {
   createPracticeMessage,
   createToolMessage,
   normalizeConversationMessage,
+  parseCitationSegments,
   restoreTypedMessagesFromSnapshot
 } from '../src/utils/companionMessages.js'
 import {
@@ -127,6 +128,52 @@ describe('companionMessages', () => {
     expect(msgs.map((m) => m.role).join(',')).toBe('user,assistant,user,tool,practice,assistant')
     expect(msgs[1].content).toBe('old reply')
     expect(msgs[5].content).toBe('练习已生成')
+  })
+
+  it('puts post-tool text in a new bubble after the tool capsule', () => {
+    let msgs = [{ role: 'user', content: 'q' }]
+    msgs = appendAssistantToken(msgs, '先')
+    msgs = appendAssistantToken(msgs, '查一下')
+    msgs = [...msgs, createToolMessage({ name: 'query_mastery', label: 'Q' })]
+    msgs = applyToolResult(msgs, { name: 'query_mastery', ok: true })
+    msgs = appendAssistantToken(msgs, '结果')
+    msgs = appendAssistantToken(msgs, '如下')
+    expect(msgs.map((m) => m.role).join(',')).toBe('user,assistant,tool,assistant')
+    expect(msgs[1].content).toBe('先查一下')
+    expect(msgs[3].content).toBe('结果如下')
+  })
+
+  it('puts text after a practice card in a new bubble', () => {
+    let msgs = [{ role: 'user', content: 'q' }]
+    msgs = appendAssistantToken(msgs, 'a')
+    msgs.push({ role: 'practice', card: { sessionId: 1, questions: [] } })
+    msgs = appendAssistantToken(msgs, 'b')
+    expect(msgs.map((m) => m.role).join(',')).toBe('user,assistant,practice,assistant')
+    expect(msgs[3].content).toBe('b')
+  })
+
+  it('streams many tokens into one bubble without mutating input', () => {
+    const start = [{ role: 'user', content: 'q' }]
+    let msgs = start
+    for (let i = 0; i < 50; i++) msgs = appendAssistantToken(msgs, 'x')
+    expect(msgs).toHaveLength(2)
+    expect(msgs[1].content).toBe('x'.repeat(50))
+    expect(start).toHaveLength(1)
+  })
+
+  it('pairs two parallel same-name tools in start order', () => {
+    let msgs = [
+      createToolMessage({ name: 'query_mastery' }),
+      createToolMessage({ name: 'query_mastery' })
+    ]
+    msgs = applyToolResult(msgs, { name: 'query_mastery', ok: true })
+    expect(msgs.map((m) => m.ok)).toEqual([true, null])
+    msgs = applyToolResult(msgs, { name: 'query_mastery', ok: false })
+    expect(msgs.map((m) => m.ok)).toEqual([true, false])
+  })
+
+  it('keeps citation parsing working per bubble', () => {
+    expect(parseCitationSegments('见资料 #7。').map((s) => s.type)).toEqual(['text', 'citation', 'text'])
   })
 
   it('restores typed snapshot only when transcript still matches', () => {
