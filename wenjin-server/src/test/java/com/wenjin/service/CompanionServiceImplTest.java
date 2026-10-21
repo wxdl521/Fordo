@@ -1151,6 +1151,163 @@ class CompanionServiceImplTest {
         assertThat(persistedReply()).startsWith("第一段");
     }
 
+    // ── T7 错因辅导 ───────────────────────────────────────────────────────
+
+    @Test
+    void toolPrompt_listsRecentMistakesToolAndMisconceptionRules() {
+        String prompt = CompanionServiceImpl.buildSystemPrompt("软件工程", List.of("用例图（nodeCode: SE-3.2）"),
+                List.of(), null, null, null, null, null);
+        assertThat(prompt).contains("get_recent_mistakes").contains("## 错因辅导").contains("为什么会选错");
+        assertThat(prompt.indexOf("## 错因辅导")).isLessThan(prompt.indexOf("## 课程知识点范围"));
+    }
+
+    @Test
+    void reviewPracticeSession_flowsIntoToolContextAndPrompt() {
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "get_recent_mistakes", "正在翻看你的错题…", Map.of("type", "object", "properties", Map.of()))));
+        stubConversationAndPrompt(610L, List.of(userMessage("帮我复盘一下刚才那次练习的错题")));
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
+                new ToolExecutionResult("c1", "get_recent_mistakes", true, "{\"mistakes\":[],\"note\":\"近期没有错题\"}"));
+        scriptTurns(tools(new CompanionAiClient.ToolCall("c1", "get_recent_mistakes", "{}")), text("这次没有错题"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(610L, 77L, new RecordingSink());
+
+        ArgumentCaptor<ToolContext> ctxCaptor = ArgumentCaptor.forClass(ToolContext.class);
+        verify(toolGovernor).execute(ctxCaptor.capture(), any(), any(), any());
+        assertThat(ctxCaptor.getValue().reviewPracticeSessionId()).isEqualTo(77L);
+        assertThat(String.valueOf(turnMessages.get(0).get(0).get("content")))
+                .contains("## 本轮复盘").contains("#77");
+    }
+
+    @Test
+    void withoutReviewSession_promptHasNoReviewSection() {
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "get_recent_mistakes", "正在翻看你的错题…", Map.of("type", "object", "properties", Map.of()))));
+        stubConversationAndPrompt(611L, List.of(userMessage("你好")));
+        scriptTurns(text("你好呀"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(611L, new RecordingSink());
+
+        assertThat(String.valueOf(turnMessages.get(0).get(0).get("content"))).doesNotContain("## 本轮复盘");
+    }
+
+    @Test
+    void mistakesTurn_autoProbeTargetsFirstMisconceptionNode() {
+        com.wenjin.service.companion.ProbeService probeService =
+                org.mockito.Mockito.mock(com.wenjin.service.companion.ProbeService.class);
+        FeatureFlagsProperties flags = new FeatureFlagsProperties();
+        ReflectionTestUtils.setField(service, "featureFlags", flags);
+        ReflectionTestUtils.setField(service, "reflectionCoordinator",
+                new com.wenjin.service.companion.ReflectionCoordinator(flags, probeService));
+        ProbeStartVO probe = new ProbeStartVO();
+        when(probeService.startProbe(1L, 10L, "KT05")).thenReturn(probe);
+
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "get_recent_mistakes", "正在翻看你的错题…", Map.of("type", "object", "properties", Map.of()))));
+        stubConversationAndPrompt(612L, List.of(userMessage("帮我复盘一下错题")));
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(new ToolExecutionResult("c1",
+                "get_recent_mistakes", true,
+                "{\"mistakes\":[{\"questionId\":1}],\"topMisconceptions\":[{\"nodeCode\":\"KT05\",\"name\":\"一次函数\",\"hits\":2},"
+                        + "{\"nodeCode\":\"KT06\",\"name\":\"x\",\"hits\":1}]}"));
+        scriptTurns(tools(new CompanionAiClient.ToolCall("c1", "get_recent_mistakes", "{}")),
+                text("你把一次函数和二次函数混了"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(612L, sink);
+
+        assertThat(sink.probeCards).containsExactly(probe);
+        verify(probeService).startProbe(1L, 10L, "KT05");
+        verify(probeService, never()).startProbe(1L, 10L, "KT12");
+    }
+
+    @Test
+    void mistakesTurn_withoutMisconceptions_probesConversationNode() {
+        com.wenjin.service.companion.ProbeService probeService =
+                org.mockito.Mockito.mock(com.wenjin.service.companion.ProbeService.class);
+        FeatureFlagsProperties flags = new FeatureFlagsProperties();
+        ReflectionTestUtils.setField(service, "featureFlags", flags);
+        ReflectionTestUtils.setField(service, "reflectionCoordinator",
+                new com.wenjin.service.companion.ReflectionCoordinator(flags, probeService));
+        when(probeService.startProbe(1L, 10L, "KT12")).thenReturn(new ProbeStartVO());
+
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "get_recent_mistakes", "正在翻看你的错题…", Map.of("type", "object", "properties", Map.of()))));
+        stubConversationAndPrompt(613L, List.of(userMessage("帮我复盘一下错题")));
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(new ToolExecutionResult("c1",
+                "get_recent_mistakes", true, "{\"mistakes\":[],\"note\":\"近期没有错题\"}"));
+        scriptTurns(tools(new CompanionAiClient.ToolCall("c1", "get_recent_mistakes", "{}")), text("没有错题"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(613L, new RecordingSink());
+
+        verify(probeService).startProbe(1L, 10L, "KT12");
+    }
+
+    @Test
+    void failedProbe_nextTurnInjectsStrategySwitchAndReprobes() {
+        com.wenjin.service.companion.ProbeService probeService =
+                org.mockito.Mockito.mock(com.wenjin.service.companion.ProbeService.class);
+        FeatureFlagsProperties flags = new FeatureFlagsProperties();
+        com.wenjin.service.companion.ProbeOutcomeStore outcomes = new com.wenjin.service.companion.ProbeOutcomeStore();
+        outcomes.recordProbeResult(1L, 10L, "KT12", false);
+        ReflectionTestUtils.setField(service, "featureFlags", flags);
+        ReflectionTestUtils.setField(service, "reflectionCoordinator",
+                new com.wenjin.service.companion.ReflectionCoordinator(flags, probeService, outcomes));
+        ProbeStartVO probe = new ProbeStartVO();
+        when(probeService.startProbe(1L, 10L, "KT12")).thenReturn(probe);
+
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "query_mastery", "查询掌握度", Map.of("type", "object", "properties", Map.of()))));
+        // frontend "换个方式再讲" style message without explain keywords → classifier says CHAT
+        stubConversationAndPrompt(614L, List.of(userMessage("我还是不太懂，换个方式再来一遍")));
+        scriptTurns(text("打个比方…"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(614L, sink);
+
+        String systemPrompt = String.valueOf(turnMessages.get(0).get(0).get("content"));
+        assertThat(systemPrompt).contains("## 换种讲法").contains("『类比』").contains("KT12")
+                .contains("避免重复上次的讲法");
+        assertThat(sink.probeCards).containsExactly(probe);
+        assertThat(outcomes.latest(1L, 10L, "KT12").orElseThrow().switchConsumed()).isTrue();
+
+        // the same failure does not switch again on the following turn
+        turnMessages.clear();
+        service.streamReply(614L, new RecordingSink());
+        assertThat(String.valueOf(turnMessages.get(0).get(0).get("content"))).doesNotContain("## 换种讲法");
+    }
+
+    @Test
+    void reflectionDisabled_noStrategySwitchInjected() {
+        com.wenjin.service.companion.ProbeService probeService =
+                org.mockito.Mockito.mock(com.wenjin.service.companion.ProbeService.class);
+        FeatureFlagsProperties flags = new FeatureFlagsProperties();
+        flags.setReflectionEnabled(false);
+        com.wenjin.service.companion.ProbeOutcomeStore outcomes = new com.wenjin.service.companion.ProbeOutcomeStore();
+        outcomes.recordProbeResult(1L, 10L, "KT12", false);
+        ReflectionTestUtils.setField(service, "featureFlags", flags);
+        ReflectionTestUtils.setField(service, "reflectionCoordinator",
+                new com.wenjin.service.companion.ReflectionCoordinator(flags, probeService, outcomes));
+
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "query_mastery", "查询掌握度", Map.of("type", "object", "properties", Map.of()))));
+        stubConversationAndPrompt(615L, List.of(userMessage("我还是不太懂，换个方式再来一遍")));
+        scriptTurns(text("好的"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(615L, sink);
+
+        assertThat(String.valueOf(turnMessages.get(0).get(0).get("content"))).doesNotContain("## 换种讲法");
+        assertThat(sink.probeCards).isEmpty();
+        verify(probeService, never()).startProbe(any(), any(), any());
+        assertThat(outcomes.latest(1L, 10L, "KT12").orElseThrow().switchConsumed()).isFalse();
+    }
+
     @Test
     void explainIntentTriggersAutoProbeButChatDoesNot() {
         com.wenjin.service.companion.ProbeService probeService =
