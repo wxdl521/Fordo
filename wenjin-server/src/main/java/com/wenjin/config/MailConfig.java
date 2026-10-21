@@ -10,16 +10,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 
-import java.time.Clock;
 import java.util.Properties;
 
 @Configuration
 public class MailConfig {
-
-    @Bean
-    Clock clock() {
-        return Clock.systemUTC();
-    }
 
     @Bean
     EmailSender emailSender(

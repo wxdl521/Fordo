@@ -5,6 +5,10 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 vi.mock('../components/TopBar.vue', () => ({
   default: { name: 'TopBar', template: '<div data-testid="global-topbar" />' }
 }))
+// 新手导览依赖 Pinia，与本用例（只测顶栏显隐）无关
+vi.mock('../components/SpotlightTour.vue', () => ({
+  default: { name: 'SpotlightTour', template: '<div />' }
+}))
 
 import App from '../App.vue'
 

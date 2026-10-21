@@ -10,6 +10,7 @@ import com.wenjin.security.PrincipalLoader;
 import com.wenjin.security.TokenService;
 import com.wenjin.security.UserRole;
 import com.wenjin.service.LoginLogService;
+import com.wenjin.service.VerificationCodeService;
 import com.wenjin.service.impl.AdminUserServiceImpl;
 import com.wenjin.service.impl.UserServiceImpl;
 import org.junit.jupiter.api.AfterEach;
@@ -84,7 +85,7 @@ class TokenRevocationChainTest {
         LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
         validator.afterPropertiesSet();
         mvc = MockMvcBuilders.standaloneSetup(new UserController(
-                        new UserServiceImpl(userMapper, encoder, tokenService), mock(LoginLogService.class)))
+                        new UserServiceImpl(userMapper, encoder, tokenService, mock(VerificationCodeService.class)), mock(LoginLogService.class)))
                 .addInterceptors(new AuthContextInterceptor(tokenService, new PrincipalLoader(userMapper)))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setValidator(validator)

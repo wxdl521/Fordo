@@ -256,6 +256,8 @@ class DtoValidationTest {
         r.setUsername("student01");
         r.setPassword("password1");
         r.setRealName("张三");
+        r.setEmail("student01@example.com");
+        r.setCode("123456");
         return r;
     }
 

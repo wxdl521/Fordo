@@ -6,6 +6,7 @@ import com.wenjin.entity.SysUser;
 import com.wenjin.mapper.SysUserMapper;
 import com.wenjin.security.TokenService;
 import com.wenjin.service.LoginLogService;
+import com.wenjin.service.VerificationCodeService;
 import com.wenjin.service.impl.UserServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -21,6 +22,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 
+import static org.mockito.Mockito.mock;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -50,7 +52,8 @@ class UserControllerLoginLogTest {
     void setUp() {
         LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
         validator.afterPropertiesSet();
-        UserServiceImpl userService = new UserServiceImpl(userMapper, encoder, new TokenService("test-secret", 3600));
+        UserServiceImpl userService = new UserServiceImpl(userMapper, encoder, new TokenService("test-secret", 3600),
+                mock(VerificationCodeService.class));
         mvc = MockMvcBuilders.standaloneSetup(new UserController(userService, loginLogService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setValidator(validator)
