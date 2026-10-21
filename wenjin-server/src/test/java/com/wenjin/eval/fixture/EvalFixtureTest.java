@@ -1,6 +1,7 @@
 package com.wenjin.eval.fixture;
 
 import com.wenjin.eval.scenario.EvalScenarioDocument.MasteryOverride;
+import com.wenjin.eval.scenario.EvalScenarioDocument.MistakeSeed;
 import com.wenjin.eval.scenario.EvalScenarioDocument.Persona;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -54,6 +55,30 @@ class EvalFixtureTest {
                 .isLessThan(result.rawByCode().get("SE-3.2"));
         assertThat(result.effectiveByCode().get("SE-3.2"))
                 .isCloseTo(0.30, within(0.03));
+    }
+
+    @Test
+    @DisplayName("applyPersona: mistakes 经错题端口写入（靠前者更近），未知节点记入 missing")
+    void applyPersona_seedsMistakes() {
+        InMemoryEvalMistakePort mistakePort = new InMemoryEvalMistakePort();
+        EvalFixture withMistakes = new EvalFixture(
+                new EvalWorld(1L, 2L, 3L, "EVAL_COURSE", java.util.Set.of("SE-3.2", "SE-2.1", "KT01")),
+                masteryPort, reviewPort, sessionPort,
+                new MapEvalNodeLookup(3L, Map.of("SE-3.2", 10L, "SE-2.1", 11L, "KT01", 12L)),
+                mistakePort);
+
+        EvalFixture.PersonaInjectionResult result = withMistakes.applyPersona(new Persona(
+                List.of(), List.of(), "mistakes",
+                List.of(new MistakeSeed("SE-3.2", "SE-2.1"),
+                        new MistakeSeed("KT01", "SE-2.1"),
+                        new MistakeSeed("NOPE", "SE-2.1"))));
+
+        assertThat(result.appliedMistakeCodes()).containsExactly("SE-3.2", "KT01");
+        assertThat(result.missingNodeCodes()).containsExactly("NOPE");
+        assertThat(mistakePort.seeds()).extracting(InMemoryEvalMistakePort.Seed::nodeId).containsExactly(10L, 12L);
+        assertThat(mistakePort.seeds().get(0).misconceptionNodeCode()).isEqualTo("SE-2.1");
+        assertThat(mistakePort.seeds().get(0).minutesAgo()).isLessThan(mistakePort.seeds().get(1).minutesAgo());
+        assertThat(mistakePort.seeds()).allMatch(s -> s.studentId() == 2L && s.courseId() == 3L);
     }
 
     @Test

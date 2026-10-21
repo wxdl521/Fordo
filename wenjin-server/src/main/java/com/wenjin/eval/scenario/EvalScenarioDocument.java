@@ -38,10 +38,26 @@ public record EvalScenarioDocument(
             Integer maxToolCalls
     ) {}
 
+    /**
+     * @param mistakes 可选：近期错题（错因辅导场景）；夹具为每条在 {@code nodeCode} 的一道评测题上写入一次
+     *                 错误作答，所选错误选项标注 {@code misconceptionNodeCode} 为误区节点。
+     */
     public record Persona(
             List<MasteryOverride> masteryOverrides,
             List<String> reviewQueue,
-            String note
+            String note,
+            List<MistakeSeed> mistakes
+    ) {
+        /** 兼容旧调用方（无 mistakes）。 */
+        public Persona(List<MasteryOverride> masteryOverrides, List<String> reviewQueue, String note) {
+            this(masteryOverrides, reviewQueue, note, null);
+        }
+    }
+
+    /** 一道错题种子：在 nodeCode 的题上选错，所选干扰项指向 misconceptionNodeCode。 */
+    public record MistakeSeed(
+            String nodeCode,
+            String misconceptionNodeCode
     ) {}
 
     public record MasteryOverride(
