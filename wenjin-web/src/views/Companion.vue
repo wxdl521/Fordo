@@ -295,6 +295,7 @@ import {
 import { submitPractice } from '../api/practice.js'
 import { fetchStudentChunk } from '../api/student.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
+import { useAutoReview } from '../composables/useAutoReview.js'
 import { buildCompanionChatPayload, readCompanionNodeCode } from '../utils/companionContext.js'
 import { createDebouncedPersist } from '../utils/companionPersistence.js'
 import { createLatestRequest } from '../utils/latestRequest.js'
@@ -1034,21 +1035,23 @@ watch(() => route.query.nodeCode, (value) => {
   ctxNodeCode.value = readCompanionNodeCode(value)
 }, { immediate: true })
 
-/** ?review=<practiceSessionId>：courseId 就绪后自动发起一次错题复盘，并清掉 URL 参数防刷新重发。 */
-const autoReviewHandled = new Set()
-watch([courseId, () => route.query.review], ([cid, raw]) => {
-  const reviewId = Number(Array.isArray(raw) ? raw[0] : raw)
-  if (!cid || !Number.isInteger(reviewId) || reviewId <= 0) return
-  if (autoReviewHandled.has(reviewId)) return
-  autoReviewHandled.add(reviewId)
-  const { review: _drop, ...rest } = route.query
-  router.replace({ path: route.path, query: rest })
-  nextTick(() => sendProactive({
+/**
+ * ?review=<practiceSessionId>：自动发起一次错题复盘（每个 id 恰好一次），并清掉 URL 参数防刷新重发；
+ * 正在输出 / 加载会话 / courseId 未就绪时延后到空闲再发，不丢弃。
+ */
+useAutoReview({
+  reviewQuery: () => route.query.review,
+  ready: () => !!courseId.value && !typing.value && conversationLoadingTarget.value === null,
+  clearQuery: () => {
+    const { review: _drop, ...rest } = route.query
+    router.replace({ path: route.path, query: rest })
+  },
+  send: (reviewId) => sendProactive({
     text: REVIEW_PROMPT,
     reviewPracticeSessionId: reviewId,
     nodeCode: ctxNodeCode.value
-  }))
-}, { immediate: true })
+  })
+})
 
 watch(msgs, () => {
   scheduleTypedSnapshot()
