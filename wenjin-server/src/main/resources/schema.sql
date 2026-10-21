@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════
 --  问津 · 知识图谱驱动的个性化学习导航系统
---  本地空库重建快照（当前最终 DDL，含 V3–V21；共 42 张业务表）
+--  本地空库重建快照（当前最终 DDL，含 V3–V22；共 43 张业务表）
 --
 --  ⚠ 仅本地空库 / 会删数据 / 生产禁用
 --    · 本脚本含 DROP TABLE IF EXISTS，会清空目标库业务表数据。
---    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V21）。
+--    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V22）。
 --    · 新增版本化迁移（Vn）后，必须把最终 DDL 同步回本文件，保持本地快照一致。
 --    · 应用启动默认 spring.flyway.enabled=false（WENJIN_FLYWAY_ENABLED），
 --      普通应用账号只有 DML；发布流水线用 migrator 凭据单独跑迁移作业。
