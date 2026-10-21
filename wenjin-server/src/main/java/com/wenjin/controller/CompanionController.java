@@ -10,6 +10,7 @@ import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.dto.ProbeStartVO;
 import com.wenjin.service.CompanionService;
 import com.wenjin.service.CourseService;
+import com.wenjin.service.MistakeQueryService;
 import jakarta.annotation.PreDestroy;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
@@ -45,12 +46,16 @@ public class CompanionController {
 
     private final CompanionService companionService;
     private final CourseService courseService;
+    private final MistakeQueryService mistakeQueryService;
     // 虚拟线程：每次 SSE 请求独立一个虚拟线程，避免 newCachedThreadPool 在高并发下无界扩张平台线程
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
-    public CompanionController(CompanionService companionService, CourseService courseService) {
+    public CompanionController(CompanionService companionService,
+                               CourseService courseService,
+                               MistakeQueryService mistakeQueryService) {
         this.companionService = companionService;
         this.courseService = courseService;
+        this.mistakeQueryService = mistakeQueryService;
     }
 
     @PreDestroy
@@ -80,6 +85,11 @@ public class CompanionController {
         long studentId = AccessGuard.requireSelfStudent(req.getStudentId());
         req.setStudentId(studentId);
         courseService.assertAccessibleByStudent(studentId, req.getCourseId());
+        // 复盘会话须属于本人本课（否则 404）；同样必须在请求线程校验
+        final Long reviewPracticeSessionId = req.getReviewPracticeSessionId();
+        if (reviewPracticeSessionId != null) {
+            mistakeQueryService.assertPracticeSessionOwned(studentId, req.getCourseId(), reviewPracticeSessionId);
+        }
         SseEmitter emitter = new SseEmitter(180_000L); // 3 minutes timeout
 
         // 在请求线程取出身份，透传给虚拟线程（ThreadLocal 不跨线程）
@@ -98,7 +108,7 @@ public class CompanionController {
                         .data(Map.of("conversationId", conversationId)));
 
                 // 3. 流式生成回复，逐 token 发送
-                companionService.streamReply(conversationId, new CompanionService.CompanionStreamSink() {
+                CompanionService.CompanionStreamSink sink = new CompanionService.CompanionStreamSink() {
                     @Override
                     public void token(String token) {
                         sendEvent(emitter, "token", Map.of("t", token), "token");
@@ -123,7 +133,12 @@ public class CompanionController {
                     public void probeCard(ProbeStartVO card) {
                         sendEvent(emitter, "probe_card", card, "probe_card");
                     }
-                });
+                };
+                if (reviewPracticeSessionId != null) {
+                    companionService.streamReply(conversationId, reviewPracticeSessionId, sink);
+                } else {
+                    companionService.streamReply(conversationId, sink);
+                }
 
                 // 4. 完成，发送 done 事件
                 emitter.send(SseEmitter.event()
