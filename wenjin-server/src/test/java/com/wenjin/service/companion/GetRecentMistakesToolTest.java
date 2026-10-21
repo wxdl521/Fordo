@@ -85,6 +85,30 @@ class GetRecentMistakesToolTest {
     }
 
     @Test
+    @DisplayName("结果保持完整 JSON 且不超上限：topMisconceptions 在前，超长时从最旧错题丢弃")
+    void resultStaysUnderCapWithMisconceptionsFirst() throws Exception {
+        String longText = "很长的选项文本".repeat(40);
+        List<MistakeVO> many = new java.util.ArrayList<>();
+        for (long i = 1; i <= 5; i++) {
+            many.add(new MistakeVO(i, "题干" + i, 2,
+                    List.of(new MistakeVO.OptionRef("A", longText), new MistakeVO.OptionRef("B", longText)),
+                    List.of(new MistakeVO.OptionRef("C", longText), new MistakeVO.OptionRef("D", longText)),
+                    List.of(new MistakeVO.NodeRef("SE-2.1", "需求获取")),
+                    new MistakeVO.NodeRef("SE-3.2", "用例图"), "2026-10-20T09:00:00", "PRACTICE", 1L));
+        }
+        when(mistakeQueryService.report(any(), any(), any(), any(), anyInt())).thenReturn(new MistakeReport(
+                many, List.of(new MisconceptionSummary("SE-2.1", "需求获取", 5))));
+
+        String raw = tool.execute(new ToolContext(1L, 10L), objectMapper.createObjectNode().put("limit", 5));
+
+        assertThat(raw.length()).isLessThanOrEqualTo(GetRecentMistakesTool.MAX_RESULT_CHARS);
+        assertThat(raw).startsWith("{\"topMisconceptions\"");
+        JsonNode json = objectMapper.readTree(raw);
+        assertThat(json.path("mistakes").size()).isBetween(1, 4);
+        assertThat(json.at("/mistakes/0/questionId").asLong()).isEqualTo(1L);
+    }
+
+    @Test
     @DisplayName("无错题 → {mistakes:[], note:近期没有错题}")
     void emptyResultHasNote() throws Exception {
         when(mistakeQueryService.report(eq(1L), eq(10L), isNull(), isNull(), eq(3)))

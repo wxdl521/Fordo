@@ -27,6 +27,11 @@ public class GetRecentMistakesTool implements CompanionTool {
     static final int DEFAULT_LIMIT = 3;
     static final int MAX_LIMIT = 5;
     static final String EMPTY_NOTE = "近期没有错题";
+    /**
+     * 序列化结果上限：低于 governor 的工具结果截断阈值（默认 4000），保证结果始终是完整 JSON；
+     * 超出时从最旧的错题开始丢弃。
+     */
+    static final int MAX_RESULT_CHARS = 3500;
 
     private final MistakeQueryService mistakeQueryService;
     private final ObjectMapper objectMapper;
@@ -98,13 +103,27 @@ public class GetRecentMistakesTool implements CompanionTool {
                 : DEFAULT_LIMIT;
 
         MistakeReport report = mistakeQueryService.report(ctx.studentId(), ctx.courseId(), nodeCode, sessionId, limit);
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("mistakes", report.mistakes());
         if (report.mistakes().isEmpty()) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("mistakes", List.of());
             body.put("note", EMPTY_NOTE);
-        } else {
-            body.put("topMisconceptions", report.topMisconceptions());
+            return toJson(body);
         }
+        List<?> mistakes = report.mistakes();
+        while (true) {
+            // topMisconceptions 在前：即使下游再截断，误区节点也最先保留
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("topMisconceptions", report.topMisconceptions());
+            body.put("mistakes", mistakes);
+            String json = toJson(body);
+            if (json.length() <= MAX_RESULT_CHARS || mistakes.size() <= 1) {
+                return json;
+            }
+            mistakes = mistakes.subList(0, mistakes.size() - 1);
+        }
+    }
+
+    private String toJson(Map<String, Object> body) throws ToolException {
         try {
             return objectMapper.writeValueAsString(body);
         } catch (JsonProcessingException e) {

@@ -46,6 +46,7 @@ import java.util.Set;
 public class MistakeQueryService {
 
     public static final int STEM_MAX_CHARS = 80;
+    public static final int OPTION_TEXT_MAX_CHARS = 60;
     public static final int MAX_LIMIT = 20;
     public static final int TOP_MISCONCEPTIONS = 3;
     /** 单次最多扫描的最近错题作答行（命中 V21 idx_student_course_time）。 */
@@ -362,15 +363,19 @@ public class MistakeQueryService {
     }
 
     private static String optionText(QuestionOption option) {
-        return option == null ? null : option.getOptionText();
+        return option == null ? null : truncate(option.getOptionText(), OPTION_TEXT_MAX_CHARS);
     }
 
     private static String truncate(String stem) {
-        if (stem == null) {
+        return truncate(stem, STEM_MAX_CHARS);
+    }
+
+    private static String truncate(String text, int max) {
+        if (text == null) {
             return null;
         }
-        String s = stem.strip();
-        return s.length() <= STEM_MAX_CHARS ? s : s.substring(0, STEM_MAX_CHARS) + "…";
+        String s = text.strip();
+        return s.length() <= max ? s : s.substring(0, max) + "…";
     }
 
     private static boolean isObjective(Integer type) {
