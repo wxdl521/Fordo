@@ -1,4 +1,5 @@
 import { test as base, expect } from '@playwright/test'
+import { storageKey } from '../src/onboarding/tourSteps.js'
 
 const COURSE_ID = 1
 
@@ -179,12 +180,18 @@ async function installApiMocks(page, user, token) {
 async function installSession(page, user, token, courseKey) {
   await installApiMocks(page, user, token)
   await page.addInitScript(
-    ({ authToken, currentCourseKey }) => {
+    ({ authToken, currentCourseKey, tourKeys }) => {
       localStorage.setItem('wj_token', authToken)
       localStorage.removeItem('wj_user')
       localStorage.setItem(currentCourseKey, '1')
+      // 新手导览（SpotlightTour）首次登录会自动弹出遮罩、拦截点击；冒烟用例不测导览，预先标记已看过
+      for (const key of tourKeys) localStorage.setItem(key, '1')
     },
-    { authToken: token, currentCourseKey: courseKey }
+    {
+      authToken: token,
+      currentCourseKey: courseKey,
+      tourKeys: [storageKey(user.id, false), storageKey(user.id, true)]
+    }
   )
 }
 

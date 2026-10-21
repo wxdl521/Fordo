@@ -3,13 +3,14 @@ package com.wenjin.integration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration;
 import org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration;
 import org.springframework.boot.autoconfigure.sql.init.SqlInitializationAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
@@ -57,7 +58,18 @@ class SchedulingPoolIT {
                 .isGreaterThanOrEqualTo(3);
     }
 
-    @SpringBootApplication(exclude = {
+    /**
+     * 必须是普通 {@code @Configuration}：
+     * <ul>
+     *   <li>不能是 {@code @SpringBootApplication}——同包其他 {@code @SpringBootTest} 向上查找
+     *       {@code @SpringBootConfiguration} 时会误用它启动（缺 DataSource / 业务 Bean），见 IntegrationConfigDiscoveryTest；</li>
+     *   <li>也不能是 {@code @TestConfiguration}——{@code classes} 全是测试配置时 Spring Boot 会额外加载正式启动类，
+     *       本用例就不再是轻量上下文。</li>
+     * </ul>
+     * 作为测试类的内嵌类，它会被 TestTypeExcludeFilter 排除在其他 IT 的组件扫描之外。
+     */
+    @Configuration(proxyBeanMethods = false)
+    @EnableAutoConfiguration(exclude = {
             DataSourceAutoConfiguration.class,
             DataSourceTransactionManagerAutoConfiguration.class,
             FlywayAutoConfiguration.class,

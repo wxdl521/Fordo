@@ -247,7 +247,8 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(columnExists("doc_chunk", "content")).isTrue();
         assertThat(columnExists("chunk_node_map", "review_status")).isTrue();
         assertThat(constraintExists("doc_chunk", "uk_chunk_seq")).isTrue();
-        assertThat(constraintExists("doc_chunk", "ft_chunk_content")).isTrue();
+        // FULLTEXT 索引不登记在 table_constraints，只能查 statistics
+        assertThat(indexExists("doc_chunk", "ft_chunk_content")).isTrue();
         assertThat(constraintExists("chunk_node_map", "uk_map_chunk_node")).isTrue();
         assertThat(columnExists("kg_node", "archived_by_course")).isTrue();
         assertThat(columnExists("kg_edge", "archived_by_course")).isTrue();
@@ -802,6 +803,20 @@ class SchemaMigrationIT extends MySqlContainerSupport {
                              + "AND constraint_name = ?")) {
             ps.setString(1, table);
             ps.setString(2, constraintName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static boolean indexExists(String table, String indexName) throws Exception {
+        try (Connection conn = MYSQL.createConnection("");
+             var ps = conn.prepareStatement(
+                     "SELECT 1 FROM information_schema.statistics "
+                             + "WHERE table_schema = DATABASE() AND table_name = ? "
+                             + "AND index_name = ?")) {
+            ps.setString(1, table);
+            ps.setString(2, indexName);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
             }

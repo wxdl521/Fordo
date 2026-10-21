@@ -30,4 +30,3 @@ export function submitPractice(sessionId, payload, config) {
     ? http.post(`/practice/${sessionId}/submit`, body, config)
     : http.post(`/practice/${sessionId}/submit`, body)
 }
-
