@@ -28,11 +28,10 @@ import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.companion.CompanionDegradeService;
+import com.wenjin.service.companion.CompanionOrchestrator;
 import com.wenjin.service.companion.CompanionTool;
 import com.wenjin.service.companion.ReflectionCoordinator;
 import com.wenjin.service.companion.ToolContext;
-import com.wenjin.service.companion.ToolExecutionResult;
-import com.wenjin.service.companion.ToolExecutionState;
 import com.wenjin.service.companion.ToolGovernor;
 import com.wenjin.service.plan.PlanCancelGuard;
 import com.wenjin.service.trace.AgentTraceService;
@@ -42,11 +41,10 @@ import com.wenjin.service.trace.TraceContext;
 import com.wenjin.support.AgentRunStatus;
 import com.wenjin.support.AgentStepStatus;
 import com.wenjin.support.AgentStepType;
-import com.wenjin.support.CompanionFinalTextSanitizer;
 import com.wenjin.support.CompanionIntent;
+import com.wenjin.support.CompanionIntentClassifier;
 import com.wenjin.support.ConversationContextBuilder;
 import com.wenjin.support.Phase1Decision;
-import com.wenjin.support.Phase1DecisionParser;
 import com.wenjin.support.PracticeIntent;
 import com.wenjin.support.PracticeIntentDetector;
 import lombok.RequiredArgsConstructor;
@@ -61,7 +59,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -256,13 +253,14 @@ public class CompanionServiceImpl implements CompanionService {
                 conversation.getStudentId(), conversation.getCourseId());
 
         // RETRIEVAL 槽：rag-enabled 且有命中时注入不可信包裹块
+        String latestUser = latestUserContent(history);
         List<String> retrievalBlocks = loadRetrievalBlocks(
                 conversation.getCourseId(),
                 conversation.getNodeCode(),
-                latestUserContent(history));
+                latestUser);
 
         // 一次学生消息的完整编排 = 一个 run；SSE 异常断开也必须 finishRun
-        TraceContext traceCtx = startCompanionTrace(conversation, latestUserContent(history));
+        TraceContext traceCtx = startCompanionTrace(conversation, latestUser);
         int runStatus = AgentRunStatus.SUCCEEDED;
         String errorCode = null;
         try {
@@ -277,8 +275,15 @@ public class CompanionServiceImpl implements CompanionService {
                         retrievalBlocks, sink, traceCtx);
                 return;
             }
-            runStatus = streamWithTools(conversationId, conversation, systemPrompt, history, ctx,
-                    memoryLines, retrievalBlocks, usableTools, sink, traceCtx);
+            CompanionOrchestrator.Outcome outcome = streamWithTools(conversationId, conversation, systemPrompt,
+                    latestUser, ctx, memoryLines, retrievalBlocks, usableTools, sink, traceCtx);
+            runStatus = outcome.runStatus();
+            errorCode = outcome.errorCode();
+            if (runStatus == AgentRunStatus.SUCCEEDED) {
+                // M9：本 turn 结束后确定性判定意图，EXPLAIN 时按需追发理解探针
+                maybeAutoProbeAfterExplain(conversation,
+                        CompanionIntentClassifier.classify(latestUser, outcome.toolsCalled()), sink);
+            }
         } catch (RuntimeException ex) {
             runStatus = AgentRunStatus.FAILED;
             errorCode = "UNEXPECTED";
@@ -338,23 +343,6 @@ public class CompanionServiceImpl implements CompanionService {
     private void streamWithLegacyPath(Long conversationId,
                                       String systemPrompt,
                                       ConversationContextBuilder.BuiltContext ctx,
-                                      CompanionStreamSink sink,
-                                      TraceContext traceCtx) {
-        streamWithLegacyPath(conversationId, systemPrompt, ctx, List.of(), List.of(), sink, traceCtx);
-    }
-
-    private void streamWithLegacyPath(Long conversationId,
-                                      String systemPrompt,
-                                      ConversationContextBuilder.BuiltContext ctx,
-                                      List<String> memoryLines,
-                                      CompanionStreamSink sink,
-                                      TraceContext traceCtx) {
-        streamWithLegacyPath(conversationId, systemPrompt, ctx, memoryLines, List.of(), sink, traceCtx);
-    }
-
-    private void streamWithLegacyPath(Long conversationId,
-                                      String systemPrompt,
-                                      ConversationContextBuilder.BuiltContext ctx,
                                       List<String> memoryLines,
                                       List<String> retrievalBlocks,
                                       CompanionStreamSink sink,
@@ -372,7 +360,7 @@ public class CompanionServiceImpl implements CompanionService {
                 truncatingTokenConsumer(fullReply, sink, maxOut));
         String reply = fullReply.toString();
         saveAiMessage(conversationId, reply);
-        recordPhase2Step(traceCtx, inputDigest, reply, started);
+        recordLegacyStep(traceCtx, inputDigest, reply, started);
     }
 
     private Consumer<String> truncatingTokenConsumer(StringBuilder fullReply,
@@ -409,149 +397,81 @@ public class CompanionServiceImpl implements CompanionService {
         };
     }
 
-    private static final String FALLBACK_AFTER_PRACTICE =
-            "练习已生成，可以直接在上方卡片里作答。有问题随时问我。";
-    private static final String FALLBACK_AFTER_TOOLS =
-            "我已根据工具结果整理完毕。你还想继续了解哪一块？";
-
-    private int streamWithTools(Long conversationId,
-                                CompanionConversation conversation,
-                                String systemPrompt,
-                                List<CompanionMessage> history,
-                                ConversationContextBuilder.BuiltContext ctx,
-                                List<String> memoryLines,
-                                List<CompanionTool> tools,
-                                CompanionStreamSink sink,
-                                TraceContext traceCtx) {
-        return streamWithTools(conversationId, conversation, systemPrompt, history, ctx,
-                memoryLines, List.of(), tools, sink, traceCtx);
-    }
-
     /**
-     * @return run status ({@link AgentRunStatus#SUCCEEDED} or {@link AgentRunStatus#DEGRADED})
+     * 工具编排路径：组装消息与外壳回调，委托 {@link CompanionOrchestrator} 单循环真流式执行。
      */
-    private int streamWithTools(Long conversationId,
-                                CompanionConversation conversation,
-                                String systemPrompt,
-                                List<CompanionMessage> history,
-                                ConversationContextBuilder.BuiltContext ctx,
-                                List<String> memoryLines,
-                                List<String> retrievalBlocks,
-                                List<CompanionTool> tools,
-                                CompanionStreamSink sink,
-                                TraceContext traceCtx) {
+    private CompanionOrchestrator.Outcome streamWithTools(Long conversationId,
+                                                          CompanionConversation conversation,
+                                                          String systemPrompt,
+                                                          String latestUser,
+                                                          ConversationContextBuilder.BuiltContext ctx,
+                                                          List<String> memoryLines,
+                                                          List<String> retrievalBlocks,
+                                                          List<CompanionTool> tools,
+                                                          CompanionStreamSink sink,
+                                                          TraceContext traceCtx) {
         List<Map<String, Object>> messages = contextBuilder.toToolMessages(
                 systemPrompt,
                 ctx,
                 memoryLines == null ? List.of() : memoryLines,
                 retrievalBlocks == null ? List.of() : retrievalBlocks);
-        List<Map<String, Object>> toolSchemas = tools.stream().map(CompanionTool::schema).toList();
-        Map<String, String> toolLabels = buildToolLabels(tools);
-        ToolExecutionState state = new ToolExecutionState(maxToolCalls());
-        ToolContext context = new ToolContext(
+        ToolContext toolContext = new ToolContext(
                 conversation.getStudentId(),
                 conversation.getCourseId(),
                 conversation.getNodeCode());
-        boolean practiceStarted = false;
-        int llmFailures = 0;
-        CompanionIntent lastIntent = CompanionIntent.CHAT;
+        CompanionOrchestrator.Request request = new CompanionOrchestrator.Request(
+                messages,
+                tools,
+                toolContext,
+                forcedPracticeCall(conversation, latestUser, tools),
+                maxRounds(),
+                maxToolCalls(),
+                limits.getCompanion().getMaxAiOutputChars(),
+                contextBuilder.outputTruncationNotice(),
+                traceCtx);
 
-        if (tryForceStartPracticeFromIntent(
-                conversationId, conversation, history, tools, toolLabels, messages, context, state, sink, traceCtx)) {
-            return AgentRunStatus.SUCCEEDED;
-        }
+        CompanionOrchestrator.Shell shell = new CompanionOrchestrator.Shell() {
+            private String fallbackPrompt;
 
-        for (int round = 0; round < maxRounds(); round++) {
-            if (isRunCancelRequested(traceCtx)) {
-                return AgentRunStatus.CANCELLED;
+            @Override
+            public int degrade(CompanionStreamSink out, String reason) {
+                return streamDegraded(conversationId, conversation, out, traceCtx, reason);
             }
-            CompanionAiClient.TurnOutcome outcome;
-            String phase1Input = messagesDigest(messages);
-            long phase1Started = System.currentTimeMillis();
-            try {
-                outcome = aiClient.completeWithTools(messages, toolSchemas);
-                lastIntent = Phase1DecisionParser.extractIntent(aiClient.lastPhase1Raw());
-                recordPhase1Step(traceCtx, phase1Input, outcome, AgentStepStatus.OK, phase1Started, null);
-            } catch (Exception ex) {
-                llmFailures++;
-                recordPhase1Step(traceCtx, phase1Input, null, AgentStepStatus.FAILED, phase1Started, "PHASE1_ERROR");
-                log.warn("Companion tool resolution failed for conversationId={} (failures={})",
-                        conversationId, llmFailures, ex);
-                if (llmFailures >= 2 || isTimeout(ex)) {
-                    return streamDegraded(conversationId, conversation, sink, traceCtx,
-                            isTimeout(ex)
-                                    ? CompanionDegradeService.REASON_LLM_TIMEOUT
-                                    : CompanionDegradeService.REASON_LLM_FAILURES);
+
+            @Override
+            public void streamLegacy(CompanionStreamSink out) {
+                streamWithLegacyPath(conversationId, fallbackSystemPrompt(), ctx, memoryLines,
+                        retrievalBlocks, out, traceCtx);
+            }
+
+            @Override
+            public String fallbackSystemPrompt() {
+                if (fallbackPrompt == null) {
+                    fallbackPrompt = buildSystemPromptForStudent(
+                            conversation.getStudentId(),
+                            conversation.getCourseId(),
+                            conversation.getNodeCode(),
+                            false);
                 }
-                String fallbackPrompt = buildSystemPromptForStudent(
-                        conversation.getStudentId(),
-                        conversation.getCourseId(),
-                        conversation.getNodeCode(),
-                        false);
-                if (hasToolContext(messages)) {
-                    try {
-                        streamFinalMessages(conversationId, withSystemPrompt(messages, fallbackPrompt),
-                                practiceStarted, sink, traceCtx);
-                        return AgentRunStatus.SUCCEEDED;
-                    } catch (Exception phase2Ex) {
-                        llmFailures++;
-                        if (llmFailures >= 2 || isTimeout(phase2Ex)) {
-                            return streamDegraded(conversationId, conversation, sink, traceCtx,
-                                    isTimeout(phase2Ex)
-                                            ? CompanionDegradeService.REASON_LLM_TIMEOUT
-                                            : CompanionDegradeService.REASON_LLM_FAILURES);
-                        }
-                        throw phase2Ex instanceof RuntimeException re ? re : new RuntimeException(phase2Ex);
-                    }
-                }
-                try {
-                    streamWithLegacyPath(conversationId, fallbackPrompt, ctx, memoryLines,
-                            retrievalBlocks, sink, traceCtx);
-                    return AgentRunStatus.SUCCEEDED;
-                } catch (Exception legacyEx) {
-                    llmFailures++;
-                    if (llmFailures >= 2 || isTimeout(legacyEx)) {
-                        return streamDegraded(conversationId, conversation, sink, traceCtx,
-                                isTimeout(legacyEx)
-                                        ? CompanionDegradeService.REASON_LLM_TIMEOUT
-                                        : CompanionDegradeService.REASON_LLM_FAILURES);
-                    }
-                    throw legacyEx instanceof RuntimeException re ? re : new RuntimeException(legacyEx);
-                }
-            }
-            if (outcome instanceof CompanionAiClient.FinalText) {
-                break;
-            }
-            if (!(outcome instanceof CompanionAiClient.ToolCalls toolCalls) || toolCalls.calls().isEmpty()) {
-                break;
+                return fallbackPrompt;
             }
 
-            messages.add(assistantToolCallMessage(toolCalls.calls()));
-            for (CompanionAiClient.ToolCall call : toolCalls.calls()) {
-                if (isRunCancelRequested(traceCtx)) {
-                    return AgentRunStatus.CANCELLED;
-                }
-                practiceStarted = applyToolCall(call, toolLabels, messages, context, state, sink, traceCtx)
-                        || practiceStarted;
+            @Override
+            public void persist(String text) {
+                saveAiMessage(conversationId, text);
             }
-        }
 
-        try {
-            streamFinalMessages(conversationId, messages, practiceStarted, sink, traceCtx);
-        } catch (Exception phase2Ex) {
-            llmFailures++;
-            if (llmFailures >= 2 || isTimeout(phase2Ex)) {
-                return streamDegraded(conversationId, conversation, sink, traceCtx,
-                        isTimeout(phase2Ex)
-                                ? CompanionDegradeService.REASON_LLM_TIMEOUT
-                                : CompanionDegradeService.REASON_LLM_FAILURES);
+            @Override
+            public boolean cancelRequested() {
+                return isRunCancelRequested(traceCtx);
             }
-            throw phase2Ex instanceof RuntimeException re ? re : new RuntimeException(phase2Ex);
-        }
 
-        // M9: after EXPLAIN phase2, optionally auto-issue understanding probe
-        maybeAutoProbeAfterExplain(conversation, lastIntent, sink);
-        return AgentRunStatus.SUCCEEDED;
+            @Override
+            public void step(StepRecord record) {
+                safeStep(traceCtx, record);
+            }
+        };
+        return new CompanionOrchestrator(aiClient, toolGovernor, shell).run(request, sink);
     }
 
     private void maybeAutoProbeAfterExplain(CompanionConversation conversation,
@@ -616,45 +536,20 @@ public class CompanionServiceImpl implements CompanionService {
         return planCancelGuard != null && planCancelGuard.isCancelRequested(traceCtx);
     }
 
-    private static boolean isTimeout(Throwable ex) {
-        Throwable t = ex;
-        while (t != null) {
-            String name = t.getClass().getName();
-            String msg = t.getMessage() == null ? "" : t.getMessage().toLowerCase();
-            if (name.contains("Timeout") || msg.contains("timeout") || msg.contains("timed out")) {
-                return true;
-            }
-            t = t.getCause();
-        }
-        return false;
-    }
-
     /**
-     * 自然语言练习意图：强制合成 start_practice，走既有 governor/sink 路径后 final 总结，跳过 completeWithTools。
+     * 自然语言练习意图：合成 start_practice 调用，由编排器先执行再一轮 NONE 总结。
      *
-     * @return true 表示本请求已处理完毕
+     * @return 合成调用；无练习意图 / 路由关闭 / 无 start_practice 工具时为 null
      */
-    private boolean tryForceStartPracticeFromIntent(Long conversationId,
-                                                    CompanionConversation conversation,
-                                                    List<CompanionMessage> history,
-                                                    List<CompanionTool> tools,
-                                                    Map<String, String> toolLabels,
-                                                    List<Map<String, Object>> messages,
-                                                    ToolContext context,
-                                                    ToolExecutionState state,
-                                                    CompanionStreamSink sink,
-                                                    TraceContext traceCtx) {
+    private CompanionAiClient.ToolCall forcedPracticeCall(CompanionConversation conversation,
+                                                          String latestUser,
+                                                          List<CompanionTool> tools) {
         if (toolProperties == null || !toolProperties.isIntentRoutingEnabled()) {
-            return false;
+            return null;
         }
         if (tools == null || tools.stream().noneMatch(tool -> "start_practice".equals(tool.name()))) {
-            return false;
+            return null;
         }
-
-        String latestUser = (history == null || history.isEmpty())
-                ? null
-                : history.get(history.size() - 1).getContent();
-
         List<PracticeIntentDetector.NodeRef> nodeRefs = loadCourseNodeRefs(conversation.getCourseId());
         String focusCode = conversation.getNodeCode();
         String focusName = resolveFocusName(focusCode, nodeRefs);
@@ -662,39 +557,12 @@ public class CompanionServiceImpl implements CompanionService {
         PracticeIntent intent = PracticeIntentDetector.detect(latestUser, nodeRefs, focusCode, focusName)
                 .orElse(null);
         if (intent == null) {
-            return false;
+            return null;
         }
-
-        CompanionAiClient.ToolCall call = new CompanionAiClient.ToolCall(
+        return new CompanionAiClient.ToolCall(
                 "intent-start-practice",
                 "start_practice",
                 buildStartPracticeArgsJson(intent));
-
-        messages.add(assistantToolCallMessage(List.of(call)));
-        boolean practiceStarted = applyToolCall(call, toolLabels, messages, context, state, sink, traceCtx);
-        streamFinalMessages(conversationId, messages, practiceStarted, sink, traceCtx);
-        return true;
-    }
-
-    private boolean applyToolCall(CompanionAiClient.ToolCall call,
-                                  Map<String, String> toolLabels,
-                                  List<Map<String, Object>> messages,
-                                  ToolContext context,
-                                  ToolExecutionState state,
-                                  CompanionStreamSink sink,
-                                  TraceContext traceCtx) {
-        String toolName = call.name() == null ? "" : call.name();
-        sink.toolStart(toolName, toolLabels.getOrDefault(toolName, toolName));
-        long started = System.currentTimeMillis();
-        ToolExecutionResult result = toolGovernor.execute(context, call, state, traceCtx);
-        recordToolStep(traceCtx, call, result, started);
-        messages.add(toolMessage(result));
-        sink.toolResult(toolName, result.ok());
-        if (result.practiceCard() != null) {
-            sink.practiceCard(result.practiceCard());
-            return true;
-        }
-        return result.ok() && "start_practice".equals(toolName);
     }
 
     private List<PracticeIntentDetector.NodeRef> loadCourseNodeRefs(Long courseId) {
@@ -731,118 +599,15 @@ public class CompanionServiceImpl implements CompanionService {
         boolean hasCode = intent.nodeCode() != null && !intent.nodeCode().isBlank();
         boolean hasName = intent.nodeName() != null && !intent.nodeName().isBlank();
         if (hasCode) {
-            sb.append("\"nodeCode\":\"").append(escapeJson(intent.nodeCode())).append('"');
+            sb.append("\"nodeCode\":\"").append(CompanionOrchestrator.escapeJson(intent.nodeCode())).append('"');
         } else if (hasName) {
-            sb.append("\"nodeName\":\"").append(escapeJson(intent.nodeName())).append('"');
+            sb.append("\"nodeName\":\"").append(CompanionOrchestrator.escapeJson(intent.nodeName())).append('"');
         }
         if (hasCode || hasName) {
             sb.append(',');
         }
         sb.append("\"size\":").append(intent.size()).append('}');
         return sb.toString();
-    }
-
-    private static String escapeJson(String raw) {
-        if (raw == null) {
-            return "";
-        }
-        return raw
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
-    }
-
-    private void streamFinalMessages(Long conversationId,
-                                     List<Map<String, Object>> messages,
-                                     boolean practiceStarted,
-                                     CompanionStreamSink sink,
-                                     TraceContext traceCtx) {
-        StringBuilder fullReply = new StringBuilder();
-        int maxOut = limits.getCompanion().getMaxAiOutputChars();
-        long started = System.currentTimeMillis();
-        String inputDigest = messagesDigest(messages);
-        aiClient.streamMessages(messages, token -> contextBuilder.appendOutputToken(fullReply, token, maxOut));
-        boolean hitCap = fullReply.length() >= maxOut;
-        String clean = CompanionFinalTextSanitizer.sanitize(fullReply.toString());
-        if (clean.isEmpty()) {
-            clean = practiceStarted ? FALLBACK_AFTER_PRACTICE : FALLBACK_AFTER_TOOLS;
-        } else if (hitCap && !clean.contains("回复已截断")) {
-            clean = clean + contextBuilder.outputTruncationNotice();
-        }
-        sink.token(clean);
-        saveAiMessage(conversationId, clean);
-        recordPhase2Step(traceCtx, inputDigest, clean, started);
-    }
-
-    private boolean hasToolContext(List<Map<String, Object>> messages) {
-        return messages.stream().anyMatch(message -> Objects.equals(message.get("role"), "tool"));
-    }
-
-    private List<Map<String, Object>> withSystemPrompt(List<Map<String, Object>> messages, String systemPrompt) {
-        List<Map<String, Object>> copy = new ArrayList<>(messages);
-        if (!copy.isEmpty()) {
-            Map<String, Object> system = new LinkedHashMap<>();
-            system.put("role", "system");
-            system.put("content", systemPrompt);
-            copy.set(0, system);
-        }
-        return copy;
-    }
-
-    private List<Map<String, Object>> buildMessages(String systemPrompt, List<CompanionMessage> history) {
-        List<Map<String, Object>> messages = new ArrayList<>();
-        messages.add(Map.of("role", "system", "content", systemPrompt));
-        for (CompanionMessage message : history) {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("role", toRole(message));
-            item.put("content", message.getContent());
-            messages.add(item);
-        }
-        return messages;
-    }
-
-    private Map<String, Object> assistantToolCallMessage(List<CompanionAiClient.ToolCall> calls) {
-        Map<String, Object> message = new LinkedHashMap<>();
-        message.put("role", "assistant");
-        message.put("content", "");
-        message.put("tool_calls", calls.stream().map(this::toolCallPayload).toList());
-        return message;
-    }
-
-    private Map<String, Object> toolMessage(ToolExecutionResult result) {
-        Map<String, Object> message = new LinkedHashMap<>();
-        message.put("role", "tool");
-        message.put("tool_call_id", result.toolCallId());
-        message.put("content", result.content());
-        return message;
-    }
-
-    private Map<String, Object> toolCallPayload(CompanionAiClient.ToolCall call) {
-        Map<String, Object> function = new LinkedHashMap<>();
-        function.put("name", call.name());
-        function.put("arguments", call.argumentsJson() == null ? "{}" : call.argumentsJson());
-
-        Map<String, Object> item = new LinkedHashMap<>();
-        item.put("id", call.id() == null ? "" : call.id());
-        item.put("type", "function");
-        item.put("function", function);
-        return item;
-    }
-
-    private Map<String, String> buildToolLabels(List<CompanionTool> tools) {
-        Map<String, String> labels = new LinkedHashMap<>();
-        if (tools == null) {
-            return labels;
-        }
-        for (CompanionTool tool : tools) {
-            if (tool == null || tool.name() == null || tool.name().isBlank()) {
-                continue;
-            }
-            labels.put(tool.name(), tool.label());
-        }
-        return labels;
     }
 
     private boolean toolOrchestrationAvailable(List<CompanionTool> tools) {
@@ -1030,34 +795,10 @@ public class CompanionServiceImpl implements CompanionService {
         }
     }
 
-    private void recordPhase1Step(TraceContext ctx,
-                                  String inputDigest,
-                                  CompanionAiClient.TurnOutcome outcome,
-                                  int status,
-                                  long startedMs,
-                                  String errorCode) {
-        String output = phase1OutputJson(outcome);
-        int tokensIn = estimateTokens(inputDigest);
-        int tokensOut = estimateTokens(output);
-        if (ctx != null && !ctx.isNoop() && (tokensIn > 0 || tokensOut > 0)) {
-            ctx.markTokensEstimated();
-        }
-        safeStep(ctx, new StepRecord(
-                AgentStepType.LLM_CALL,
-                "phase1",
-                status,
-                inputDigest,
-                output,
-                tokensIn,
-                tokensOut,
-                elapsedMs(startedMs),
-                errorCode));
-    }
-
-    private void recordPhase2Step(TraceContext ctx, String inputDigest, String output, long startedMs) {
-        int tokensIn = estimateTokens(inputDigest);
-        int tokensOut = estimateTokens(output);
-        // 流式无 usage：chars/2 估算并标记 tokens_estimated
+    /** legacy（工具关闭）路径的单次流式调用；无 usage → chars/2 估算并标记 tokens_estimated。 */
+    private void recordLegacyStep(TraceContext ctx, String inputDigest, String output, long startedMs) {
+        int tokensIn = CompanionOrchestrator.estimateTokens(inputDigest);
+        int tokensOut = CompanionOrchestrator.estimateTokens(output);
         if (ctx != null && !ctx.isNoop()) {
             ctx.markTokensEstimated();
         }
@@ -1073,63 +814,6 @@ public class CompanionServiceImpl implements CompanionService {
                 null));
     }
 
-    private void recordToolStep(TraceContext ctx,
-                                CompanionAiClient.ToolCall call,
-                                ToolExecutionResult result,
-                                long startedMs) {
-        String toolName = call == null || call.name() == null || call.name().isBlank()
-                ? "unknown"
-                : call.name();
-        String input = call == null ? null : call.argumentsJson();
-        String output = result == null ? null : result.content();
-        int status;
-        if (result != null && result.cached()) {
-            status = AgentStepStatus.CACHED;
-        } else if (result != null && result.ok()) {
-            status = AgentStepStatus.OK;
-        } else {
-            status = AgentStepStatus.FAILED;
-        }
-        String errorCode = status == AgentStepStatus.FAILED
-                ? extractToolErrorCode(result)
-                : null;
-        // Governor intercepts (budget/whitelist/args/timeout) → GUARD; actual execution → TOOL_CALL
-        String stepType = result != null && result.guarded()
-                ? AgentStepType.GUARD
-                : AgentStepType.TOOL_CALL;
-        safeStep(ctx, new StepRecord(
-                stepType,
-                toolName,
-                status,
-                input,
-                output,
-                0,
-                0,
-                elapsedMs(startedMs),
-                errorCode));
-    }
-
-    /** Prefer envelope {@code code}; fall back to legacy TOOL_FAILED. */
-    private static String extractToolErrorCode(ToolExecutionResult result) {
-        if (result == null || result.content() == null || result.content().isBlank()) {
-            return "TOOL_FAILED";
-        }
-        String content = result.content();
-        // Lightweight extract without ObjectMapper dependency here.
-        int codeIdx = content.indexOf("\"code\"");
-        if (codeIdx < 0) {
-            return "TOOL_FAILED";
-        }
-        int colon = content.indexOf(':', codeIdx);
-        int firstQuote = content.indexOf('"', colon + 1);
-        int secondQuote = firstQuote < 0 ? -1 : content.indexOf('"', firstQuote + 1);
-        if (firstQuote < 0 || secondQuote < 0) {
-            return "TOOL_FAILED";
-        }
-        String code = content.substring(firstQuote + 1, secondQuote);
-        return code.isBlank() ? "TOOL_FAILED" : code;
-    }
-
     private static String latestUserContent(List<CompanionMessage> history) {
         if (history == null || history.isEmpty()) {
             return null;
@@ -1142,63 +826,6 @@ public class CompanionServiceImpl implements CompanionService {
         }
         CompanionMessage last = history.get(history.size() - 1);
         return last == null ? null : last.getContent();
-    }
-
-    private static String messagesDigest(List<Map<String, Object>> messages) {
-        if (messages == null || messages.isEmpty()) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder();
-        sb.append("msgs=").append(messages.size());
-        for (Map<String, Object> message : messages) {
-            if (message == null) {
-                continue;
-            }
-            Object role = message.get("role");
-            Object content = message.get("content");
-            String c = content == null ? "" : String.valueOf(content);
-            sb.append('|').append(role).append(':').append(truncateForTrace(c, 80));
-            if (message.containsKey("tool_calls")) {
-                sb.append("+tool_calls");
-            }
-            if (sb.length() > 500) {
-                sb.append("…");
-                break;
-            }
-        }
-        return sb.toString();
-    }
-
-    private static String phase1OutputJson(CompanionAiClient.TurnOutcome outcome) {
-        if (outcome == null) {
-            return null;
-        }
-        if (outcome instanceof CompanionAiClient.FinalText finalText) {
-            String text = finalText.text() == null ? "" : finalText.text();
-            return "{\"type\":\"final_text\",\"text\":\"" + escapeJson(truncateForTrace(text, 200)) + "\"}";
-        }
-        if (outcome instanceof CompanionAiClient.ToolCalls toolCalls) {
-            StringBuilder names = new StringBuilder();
-            if (toolCalls.calls() != null) {
-                for (int i = 0; i < toolCalls.calls().size(); i++) {
-                    if (i > 0) {
-                        names.append(',');
-                    }
-                    CompanionAiClient.ToolCall call = toolCalls.calls().get(i);
-                    names.append('"').append(escapeJson(call == null ? "" : call.name())).append('"');
-                }
-            }
-            return "{\"type\":\"tool_calls\",\"names\":[" + names + "]}";
-        }
-        return "{\"type\":\"unknown\"}";
-    }
-
-    /** 无上游 usage 时按 chars/2 估算 token。 */
-    static int estimateTokens(String text) {
-        if (text == null || text.isEmpty()) {
-            return 0;
-        }
-        return text.length() / 2;
     }
 
     private static int elapsedMs(long startedMs) {
@@ -1523,10 +1150,6 @@ public class CompanionServiceImpl implements CompanionService {
 
     private static String fmtScore(Double score) {
         return score == null ? "暂无" : String.valueOf(Math.round(score));
-    }
-
-    private static String toRole(CompanionMessage message) {
-        return message.getRole() == ROLE_USER ? "user" : "assistant";
     }
 
     private static CompanionToolProperties disabledToolProperties() {
