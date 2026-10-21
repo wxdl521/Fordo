@@ -44,14 +44,33 @@ class CompanionOpenerControllerTest {
     @Mock CourseService courseService;
 
     private final TokenService tokenService = new TokenService("test-secret", 3600);
+    private final com.wenjin.config.FeatureFlagsProperties flags = new com.wenjin.config.FeatureFlagsProperties();
     private MockMvc mvc;
 
     @BeforeEach
     void setup() {
-        mvc = MockMvcBuilders.standaloneSetup(new CompanionOpenerController(openerService, courseService))
+        mvc = MockMvcBuilders.standaloneSetup(new CompanionOpenerController(openerService, courseService, flags))
                 .addInterceptors(TestPrincipalSupport.authInterceptor(tokenService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
+    }
+
+    @Test
+    @DisplayName("开关关闭：三个端点先 404，不做课程访问校验也不碰 service")
+    void featureOff_404BeforeCourseAccess() throws Exception {
+        flags.setProactiveEnabled(false);
+        doThrow(new BusinessException(ResultCode.FORBIDDEN, "未选课"))
+                .when(courseService).assertAccessibleByStudent(anyLong(), anyLong());
+        mvc.perform(get("/api/companion/opener").param("courseId", "1").header("Authorization", student()))
+                .andExpect(jsonPath("$.code").value(404));
+        mvc.perform(get("/api/companion/hints/count").param("courseId", "1").header("Authorization", student()))
+                .andExpect(jsonPath("$.code").value(404));
+        mvc.perform(post("/api/companion/hints/dismiss").header("Authorization", student())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"courseId\":1,\"hintKey\":\"DECAY:x\"}"))
+                .andExpect(jsonPath("$.code").value(404));
+        verify(courseService, never()).assertAccessibleByStudent(anyLong(), anyLong());
+        verify(openerService, never()).build(anyLong(), anyLong());
     }
 
     @AfterEach
