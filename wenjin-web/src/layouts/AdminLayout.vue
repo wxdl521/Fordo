@@ -1,13 +1,13 @@
 <template>
   <div data-testid="admin-layout" :style="rootStyle">
     <!-- 顶栏 -->
-    <header data-testid="admin-topbar" :style="topbarStyle">
+    <header data-testid="admin-topbar" class="wj-admin-topbar" :style="topbarStyle">
       <router-link to="/admin" :style="brandLinkStyle">
         <span :style="brandStyle">问津</span>
-        <span :style="brandSubStyle">· 管理后台</span>
+        <span class="wj-admin-brand-sub" :style="brandSubStyle">· 管理后台</span>
       </router-link>
 
-      <div :style="rightGroupStyle">
+      <div class="wj-admin-right" :style="rightGroupStyle">
         <span v-if="adminName" data-testid="admin-name" class="wj-admin-name" :style="nameStyle" :title="adminName">{{ adminName }}</span>
         <router-link
           to="/teacher/graph"
@@ -15,7 +15,10 @@
           class="wj-admin-link"
           :style="linkBtnStyle"
         >进入教师端</router-link>
-        <ThemeToggle small />
+        <!-- 外包一层：窄屏下不让主题开关被压扁、文字换行（ThemeToggle 学生 / 教师端共用，不改它本身） -->
+        <div class="wj-admin-theme" :style="themeBoxStyle">
+          <ThemeToggle small />
+        </div>
         <button
           type="button"
           data-testid="admin-logout"
@@ -63,10 +66,12 @@ const session = useSessionStore()
 
 const serif = "'Noto Serif SC', serif"
 
-// 后续模块（课程与班级、系统配置…）往这里加
+// 后续模块（系统配置…）往这里加
 const navItems = [
   { to: '/admin/overview', label: '平台总览', testid: 'admin-nav-overview' },
   { to: '/admin/users', label: '用户管理', testid: 'admin-nav-users' },
+  { to: '/admin/courses', label: '课程管理', testid: 'admin-nav-courses' },
+  { to: '/admin/clazzes', label: '班级管理', testid: 'admin-nav-clazzes' },
   { to: '/admin/audit-logs', label: '操作日志', testid: 'admin-nav-audit-logs' },
   { to: '/admin/login-logs', label: '登录日志', testid: 'admin-nav-login-logs' }
 ]
@@ -139,6 +144,12 @@ const rightGroupStyle = {
   alignItems: 'center',
   gap: '12px',
   minWidth: 0
+}
+
+const themeBoxStyle = {
+  flex: 'none',
+  display: 'flex',
+  alignItems: 'center'
 }
 
 const nameStyle = {
@@ -231,8 +242,24 @@ const mainStyle = {
   color: var(--ink) !important;
 }
 
-/* 窄屏：侧边栏退化为顶部横向导航条 */
+/* 主题开关永远单行、不被 flex 压缩（否则 390px 宽时「墨夜 / 暖纸」会竖排换行） */
+.wj-admin-theme :deep(.seg) {
+  flex: none;
+}
+.wj-admin-theme :deep(button) {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* 窄屏：侧边栏退化为顶部横向导航条；顶栏收紧间距，让右侧四个控件放得下 */
 @media (max-width: 720px) {
+  .wj-admin-topbar {
+    padding: 0 12px !important;
+    gap: 8px !important;
+  }
+  .wj-admin-right {
+    gap: 8px !important;
+  }
   .wj-admin-body {
     flex-direction: column !important;
   }
@@ -247,6 +274,13 @@ const mainStyle = {
     overflow-x: auto;
   }
   .wj-admin-name {
+    display: none;
+  }
+}
+
+/* 手机宽度：品牌只留「问津」，腾出位置给右侧控件 */
+@media (max-width: 480px) {
+  .wj-admin-brand-sub {
     display: none;
   }
 }

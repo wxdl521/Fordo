@@ -36,6 +36,20 @@ class AuditedInventoryTest {
             "TeacherCourseController#delete=COURSE_DELETE:COURSE",
             "TeacherCourseController#restore=COURSE_RESTORE:COURSE",
             "TeacherCourseController#setStatus=COURSE_STATUS:COURSE",
+            // 管理后台课程（发布 / 归档 / 恢复委托教师端逻辑，沿用同名动作）
+            "SystemAdminCourseController#create=COURSE_ADMIN_CREATE:COURSE",
+            "SystemAdminCourseController#transferOwner=COURSE_TRANSFER:COURSE",
+            "SystemAdminCourseController#setStatus=COURSE_STATUS:COURSE",
+            "SystemAdminCourseController#archive=COURSE_DELETE:COURSE",
+            "SystemAdminCourseController#restore=COURSE_RESTORE:COURSE",
+            // 管理后台班级
+            "SystemAdminClazzController#create=CLAZZ_CREATE:CLAZZ",
+            "SystemAdminClazzController#update=CLAZZ_UPDATE:CLAZZ",
+            "SystemAdminClazzController#delete=CLAZZ_DELETE:CLAZZ",
+            "SystemAdminClazzController#addStudents=CLAZZ_STUDENT_ADD:CLAZZ",
+            "SystemAdminClazzController#removeStudent=CLAZZ_STUDENT_REMOVE:CLAZZ",
+            "SystemAdminClazzController#addCourse=CLAZZ_COURSE_ADD:CLAZZ",
+            "SystemAdminClazzController#removeCourse=CLAZZ_COURSE_REMOVE:CLAZZ",
             // 图谱
             "GraphAdminController#importGraph=GRAPH_IMPORT:GRAPH",
             "GraphAdminController#importGraphFromExcel=GRAPH_IMPORT:GRAPH",

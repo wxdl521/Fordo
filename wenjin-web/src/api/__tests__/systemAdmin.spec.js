@@ -19,19 +19,35 @@ describe('systemAdmin API contracts', () => {
     vi.clearAllMocks()
   })
 
-  it('exports exactly the user-management and audit/monitor operations', () => {
+  it('exports exactly the user / audit / course / class operations', () => {
     expect(Object.keys(systemAdmin).sort()).toEqual([
+      'addClazzCourse',
+      'addClazzStudents',
+      'archiveAdminCourse',
       'changeUserRole',
+      'createAdminCourse',
+      'createClazz',
       'createUser',
+      'deleteClazz',
       'downloadImportTemplate',
+      'getClazzDetail',
       'getOverview',
       'importUsers',
+      'listAdminCourses',
       'listAuditActions',
       'listAuditLogs',
+      'listClazzes',
       'listLoginLogs',
+      'listTeachers',
       'listUsers',
+      'removeClazzCourse',
+      'removeClazzStudent',
       'resetUserPassword',
+      'restoreAdminCourse',
+      'setAdminCoursePublished',
       'setUserStatus',
+      'transferCourseOwner',
+      'updateClazz',
       'updateUser'
     ])
   })
@@ -131,5 +147,78 @@ describe('systemAdmin API contracts', () => {
       ['/system-admin/overview', { signal, params: { days: 14 } }],
       ['/system-admin/overview', { params: {} }]
     ])
+  })
+
+  describe('courses and classes (A3)', () => {
+    it('listAdminCourses keeps archived=false / status=0 but drops empty filters', () => {
+      const signal = new AbortController().signal
+      systemAdmin.listAdminCourses({ keyword: '软件', status: 0, archived: false, teacherId: 4, page: 2, size: 20 }, { signal })
+      systemAdmin.listAdminCourses({ keyword: '', status: '', archived: '', teacherId: '', page: 1, size: 20 })
+
+      expect(http.get.mock.calls).toEqual([
+        ['/system-admin/courses', { signal, params: { keyword: '软件', status: 0, archived: false, teacherId: 4, page: 2, size: 20 } }],
+        ['/system-admin/courses', { params: { page: 1, size: 20 } }]
+      ])
+    })
+
+    it('maps course create / transfer / publish / archive / restore / teachers to the contract', () => {
+      const signal = new AbortController().signal
+      systemAdmin.createAdminCourse({ name: '数据结构', teacherId: 3, extra: 'ignored' })
+      systemAdmin.transferCourseOwner(8, 5)
+      systemAdmin.setAdminCoursePublished(8, true)
+      systemAdmin.setAdminCoursePublished(8, 0)
+      systemAdmin.archiveAdminCourse(8)
+      systemAdmin.restoreAdminCourse(8)
+      systemAdmin.listTeachers({ signal })
+
+      expect(http.post.mock.calls).toEqual([
+        ['/system-admin/courses', { name: '数据结构', teacherId: 3 }],
+        ['/system-admin/courses/8/archive'],
+        ['/system-admin/courses/8/restore']
+      ])
+      expect(http.patch.mock.calls).toEqual([
+        ['/system-admin/courses/8/owner', { teacherId: 5 }],
+        ['/system-admin/courses/8/status', { published: true }],
+        ['/system-admin/courses/8/status', { published: false }]
+      ])
+      expect(http.get.mock.calls).toEqual([['/system-admin/teachers', { signal }]])
+    })
+
+    it('maps class CRUD, detail and the student / course membership calls', () => {
+      const signal = new AbortController().signal
+      systemAdmin.listClazzes({ keyword: '2201', page: 1, size: 20 }, { signal })
+      systemAdmin.getClazzDetail(6, { signal })
+      systemAdmin.createClazz({ name: '软工2201', description: '示例', extra: 'ignored' })
+      systemAdmin.updateClazz(6, { name: '软工2202', description: '' })
+      systemAdmin.deleteClazz(6)
+      systemAdmin.removeClazzStudent(6, 11)
+      systemAdmin.addClazzCourse(6, 5)
+      systemAdmin.removeClazzCourse(6, 5)
+
+      expect(http.get.mock.calls).toEqual([
+        ['/system-admin/clazzes', { signal, params: { keyword: '2201', page: 1, size: 20 } }],
+        ['/system-admin/clazzes/6', { signal }]
+      ])
+      expect(http.post.mock.calls).toEqual([
+        ['/system-admin/clazzes', { name: '软工2201', description: '示例' }],
+        ['/system-admin/clazzes/6/courses', { courseId: 5 }]
+      ])
+      expect(http.put.mock.calls).toEqual([['/system-admin/clazzes/6', { name: '软工2202', description: '' }]])
+      expect(http.delete.mock.calls).toEqual([
+        ['/system-admin/clazzes/6'],
+        ['/system-admin/clazzes/6/students/11'],
+        ['/system-admin/clazzes/6/courses/5']
+      ])
+    })
+
+    it('addClazzStudents sends usernames or studentIds (one of the two)', () => {
+      systemAdmin.addClazzStudents(6, { usernames: ['a', 'b'] })
+      systemAdmin.addClazzStudents(6, { studentIds: [1, 2] })
+
+      expect(http.post.mock.calls).toEqual([
+        ['/system-admin/clazzes/6/students', { usernames: ['a', 'b'] }],
+        ['/system-admin/clazzes/6/students', { studentIds: [1, 2] }]
+      ])
+    })
   })
 })

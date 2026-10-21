@@ -198,3 +198,56 @@ export function tagStyle(tone) {
   if (tone === 'warn') return { ...tagBase(), color: 'var(--warn)', background: 'var(--warnSoft)' }
   return { ...tagBase(), color: 'var(--mut)', background: 'var(--card2)', border: '1px solid var(--line)' }
 }
+
+// ───────── 行内操作按钮 / 弹窗表单（课程、班级等页共用） ─────────
+
+/** 表格行内操作按钮容器。 */
+export const actionsStyle = {
+  display: 'flex',
+  gap: '6px',
+  flexWrap: 'wrap'
+}
+
+/** 表格行内操作按钮（配合 class="wj-admin-act" 获得 hover / disabled 态）。 */
+export const actBtnStyle = {
+  height: '26px',
+  padding: '0 9px',
+  background: 'transparent',
+  border: '1px solid var(--line)',
+  borderRadius: '6px',
+  color: 'var(--ink)',
+  fontSize: '12px',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap'
+}
+
+export const actDangerStyle = { ...actBtnStyle, color: 'var(--acc)' }
+export const actOkStyle = { ...actBtnStyle, color: 'var(--ok)' }
+
+/** 弹窗表单：纵向排列。 */
+export const formStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '8px'
+}
+
+export const labelStyle = {
+  fontSize: '12px',
+  color: 'var(--mut)',
+  marginTop: '4px'
+}
+
+export const hintLineStyle = {
+  fontSize: '12.5px',
+  color: 'var(--mut)',
+  lineHeight: 1.7
+}
+
+export const modalErrorStyle = {
+  fontSize: '12.5px',
+  color: 'var(--acc)',
+  background: 'var(--accSoft)',
+  borderRadius: '8px',
+  padding: '8px 12px',
+  marginTop: '4px'
+}

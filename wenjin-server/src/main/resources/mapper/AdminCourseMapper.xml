@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.wenjin.mapper.AdminCourseMapper">
+
+    <!--
+      节点数：生效节点 + 随课程归档的节点（archived_by_course=1），这样归档课程也能看到自己的规模；
+      单独删除的节点（archived_by_course=0 且已归档）不算。
+    -->
+    <sql id="selectCourse">
+        SELECT c.id,
+               c.code,
+               c.name,
+               c.teacher_id,
+               u.username                AS teacher_username,
+               u.real_name               AS teacher_real_name,
+               c.status,
+               c.archived_at,
+               c.created_at,
+               COALESCE(nc.cnt, 0)       AS node_count,
+               COALESCE(sc.cnt, 0)       AS student_count,
+               COALESCE(cc.cnt, 0)       AS clazz_count
+        FROM course c
+        LEFT JOIN sys_user u ON u.id = c.teacher_id
+        LEFT JOIN (SELECT course_id, COUNT(*) AS cnt
+                   FROM kg_node
+                   WHERE archived_at IS NULL OR archived_by_course = 1
+                   GROUP BY course_id) nc ON nc.course_id = c.id
+        LEFT JOIN (SELECT course_id, COUNT(*) AS cnt
+                   FROM student_course
+                   GROUP BY course_id) sc ON sc.course_id = c.id
+        LEFT JOIN (SELECT course_id, COUNT(*) AS cnt
+                   FROM clazz_course
+                   GROUP BY course_id) cc ON cc.course_id = c.id
+    </sql>
+
+    <sql id="courseFilter">
+        <where>
+            <if test="q.keyword != null">
+                AND (c.name LIKE CONCAT('%', #{q.keyword}, '%') OR c.code LIKE CONCAT('%', #{q.keyword}, '%'))
+            </if>
+            <if test="q.status != null">
+                AND c.status = #{q.status}
+            </if>
+            <if test="q.archived != null">
+                <if test="q.archived">AND c.archived_at IS NOT NULL</if>
+                <if test="!q.archived">AND c.archived_at IS NULL</if>
+            </if>
+            <if test="q.teacherId != null">
+                AND c.teacher_id = #{q.teacherId}
+            </if>
+        </where>
+    </sql>
+
+    <select id="countCourses" resultType="long">
+        SELECT COUNT(*) FROM course c
+        <include refid="courseFilter"/>
+    </select>
+
+    <select id="selectCoursePage" resultType="com.wenjin.dto.AdminRows$CourseRow">
+        <include refid="selectCourse"/>
+        <include refid="courseFilter"/>
+        ORDER BY c.id DESC
+        LIMIT #{q.offset}, #{q.size}
+    </select>
+
+    <select id="selectCourseById" resultType="com.wenjin.dto.AdminRows$CourseRow">
+        <include refid="selectCourse"/>
+        WHERE c.id = #{id}
+    </select>
+
+</mapper>

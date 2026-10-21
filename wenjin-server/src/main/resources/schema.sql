@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════
 --  问津 · 知识图谱驱动的个性化学习导航系统
---  本地空库重建快照（当前最终 DDL，含 V3–V16；共 37 张业务表）
+--  本地空库重建快照（当前最终 DDL，含 V3–V17；共 40 张业务表）
 --
 --  ⚠ 仅本地空库 / 会删数据 / 生产禁用
 --    · 本脚本含 DROP TABLE IF EXISTS，会清空目标库业务表数据。
---    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V16）。
+--    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V17）。
 --    · 新增版本化迁移（Vn）后，必须把最终 DDL 同步回本文件，保持本地快照一致。
 --    · 应用启动默认 spring.flyway.enabled=false（WENJIN_FLYWAY_ENABLED），
 --      普通应用账号只有 DML；发布流水线用 migrator 凭据单独跑迁移作业。
@@ -21,7 +21,8 @@
 --    9. V14 增 agent_plan / agent_plan_task / tool_effect_key（M10 规划）。
 --   10. V15 增 agent_report（M11 多智能体周报 / 抽查，可选）。
 --   11. V16 增 audit_log / login_log（管理后台审计与监控，无物理 FK）；sys_user 增 token_valid_after。
---   12. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--   12. V17 增 clazz / clazz_student / clazz_course（管理后台班级；含物理 FK，删班级级联删成员与课程关联行）。
+--   13. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -690,5 +691,45 @@ CREATE TABLE `login_log` (
     KEY `idx_login_time` (`created_at`),
     KEY `idx_login_user` (`user_id`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='登录日志【V16】';
+
+-- ───────────────────────────── 组：班级【V17】─────────────────────────────
+--  班级是"批量选课"的手段，不替代学生自选；移除学生 / 解除课程 / 删除班级都不动 student_course。
+
+DROP TABLE IF EXISTS `clazz`;
+CREATE TABLE `clazz` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '班级ID',
+    `name`        VARCHAR(64)  NOT NULL                COMMENT '班级名，如 软件工程2201',
+    `description` VARCHAR(255) NULL                    COMMENT '班级说明',
+    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_clazz_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='班级【V17】';
+
+DROP TABLE IF EXISTS `clazz_student`;
+CREATE TABLE `clazz_student` (
+    `id`         BIGINT   NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `clazz_id`   BIGINT   NOT NULL                COMMENT '班级（物理外键→clazz.id，级联删除）',
+    `student_id` BIGINT   NOT NULL                COMMENT '学生（物理外键→sys_user.id；唯一：一个学生至多一个班级）',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '加入时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_clazz_student_student` (`student_id`),
+    KEY `idx_clazz_student_clazz` (`clazz_id`),
+    CONSTRAINT `fk_cs_clazz` FOREIGN KEY (`clazz_id`) REFERENCES `clazz` (`id`) ON DELETE CASCADE,
+    CONSTRAINT `fk_cs_student` FOREIGN KEY (`student_id`) REFERENCES `sys_user` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='班级成员（一个学生至多一个班级）【V17】';
+
+DROP TABLE IF EXISTS `clazz_course`;
+CREATE TABLE `clazz_course` (
+    `id`         BIGINT   NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `clazz_id`   BIGINT   NOT NULL                COMMENT '班级（物理外键→clazz.id，级联删除）',
+    `course_id`  BIGINT   NOT NULL                COMMENT '课程（物理外键→course.id）',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '关联时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_clazz_course` (`clazz_id`, `course_id`),
+    KEY `idx_clazz_course_course` (`course_id`),
+    CONSTRAINT `fk_cc_clazz` FOREIGN KEY (`clazz_id`) REFERENCES `clazz` (`id`) ON DELETE CASCADE,
+    CONSTRAINT `fk_cc_course` FOREIGN KEY (`course_id`) REFERENCES `course` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='班级关联课程【V17】';
 
 SET FOREIGN_KEY_CHECKS = 1;

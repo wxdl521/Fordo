@@ -24,6 +24,9 @@ const NodePractice = () => import('../views/NodePractice.vue')
 const AdminLayout = () => import('../layouts/AdminLayout.vue')
 const AdminOverview = () => import('../views/AdminOverview.vue')
 const AdminUsers = () => import('../views/AdminUsers.vue')
+const AdminCourses = () => import('../views/AdminCourses.vue')
+const AdminClazzes = () => import('../views/AdminClazzes.vue')
+const AdminClazzDetail = () => import('../views/AdminClazzDetail.vue')
 const AdminAuditLogs = () => import('../views/AdminAuditLogs.vue')
 const AdminLoginLogs = () => import('../views/AdminLoginLogs.vue')
 
@@ -55,6 +58,9 @@ const routes = [
       { path: '', redirect: '/admin/overview' },
       { path: 'overview', name: 'admin-overview', component: AdminOverview, meta: { title: '平台总览' } },
       { path: 'users', name: 'admin-users', component: AdminUsers, meta: { title: '用户管理' } },
+      { path: 'courses', name: 'admin-courses', component: AdminCourses, meta: { title: '课程管理' } },
+      { path: 'clazzes', name: 'admin-clazzes', component: AdminClazzes, meta: { title: '班级管理' } },
+      { path: 'clazzes/:id', name: 'admin-clazz-detail', component: AdminClazzDetail, meta: { title: '班级详情' } },
       { path: 'audit-logs', name: 'admin-audit-logs', component: AdminAuditLogs, meta: { title: '操作日志' } },
       { path: 'login-logs', name: 'admin-login-logs', component: AdminLoginLogs, meta: { title: '登录日志' } }
     ]

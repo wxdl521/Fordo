@@ -33,12 +33,15 @@ describe('admin route guard', () => {
     session._refreshPromise = null
   })
 
-  it('registers /admin with nested overview / users / audit / login-log pages and a default redirect', () => {
+  it('registers /admin with nested overview / users / courses / classes / audit / login-log pages and a default redirect', () => {
     const routes = router.getRoutes()
     expect(routes.find((r) => r.path === '/admin')).toBeTruthy()
     const expected = [
       ['admin-overview', '/admin/overview', '平台总览'],
       ['admin-users', '/admin/users', '用户管理'],
+      ['admin-courses', '/admin/courses', '课程管理'],
+      ['admin-clazzes', '/admin/clazzes', '班级管理'],
+      ['admin-clazz-detail', '/admin/clazzes/:id', '班级详情'],
       ['admin-audit-logs', '/admin/audit-logs', '操作日志'],
       ['admin-login-logs', '/admin/login-logs', '登录日志']
     ]
@@ -61,7 +64,16 @@ describe('admin route guard', () => {
     ['teacher', { id: 2, role: 1 }]
   ])('kicks a %s out of every /admin page to /', async (_label, user) => {
     signIn(user)
-    for (const path of ['/admin', '/admin/overview', '/admin/users', '/admin/audit-logs', '/admin/login-logs']) {
+    for (const path of [
+      '/admin',
+      '/admin/overview',
+      '/admin/users',
+      '/admin/courses',
+      '/admin/clazzes',
+      '/admin/clazzes/3',
+      '/admin/audit-logs',
+      '/admin/login-logs'
+    ]) {
       expect(await visit(path), path).toBe('/')
     }
   })
@@ -78,6 +90,17 @@ describe('admin route guard', () => {
     expect(router.currentRoute.value.name).toBe('admin-audit-logs')
     expect(await visit('/admin/login-logs')).toBe('/admin/login-logs')
     expect(router.currentRoute.value.name).toBe('admin-login-logs')
+  })
+
+  it('lets an administrator open the course and class pages (incl. the class detail route)', async () => {
+    signIn({ id: 1, role: 3, username: 'root', realName: '管理员' })
+    expect(await visit('/admin/courses')).toBe('/admin/courses')
+    expect(router.currentRoute.value.name).toBe('admin-courses')
+    expect(await visit('/admin/clazzes')).toBe('/admin/clazzes')
+    expect(router.currentRoute.value.name).toBe('admin-clazzes')
+    expect(await visit('/admin/clazzes/7')).toBe('/admin/clazzes/7')
+    expect(router.currentRoute.value.name).toBe('admin-clazz-detail')
+    expect(router.currentRoute.value.params.id).toBe('7')
   })
 
   it('keeps the existing teacher-side rule: admins and teachers pass, students do not', async () => {

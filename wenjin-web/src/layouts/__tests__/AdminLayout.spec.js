@@ -21,6 +21,9 @@ async function mountLayout(startPath = '/admin/users') {
       { path: '/admin', redirect: '/admin/overview' },
       { path: '/admin/overview', component: { template: '<div data-testid="child-page">总览页</div>' } },
       { path: '/admin/users', component: { template: '<div data-testid="child-page">用户页</div>' } },
+      { path: '/admin/courses', component: { template: '<div data-testid="child-page">课程页</div>' } },
+      { path: '/admin/clazzes', component: { template: '<div data-testid="child-page">班级页</div>' } },
+      { path: '/admin/clazzes/:id', component: { template: '<div data-testid="child-page">班级详情页</div>' } },
       { path: '/admin/audit-logs', component: { template: '<div data-testid="child-page">操作日志页</div>' } },
       { path: '/admin/login-logs', component: { template: '<div data-testid="child-page">登录日志页</div>' } }
     ]
@@ -50,25 +53,48 @@ describe('AdminLayout', () => {
     wrapper.unmount()
   })
 
-  it('lists the sidebar in order: overview, users, audit logs, login logs', async () => {
+  it('lists the sidebar in order: overview, users, courses, classes, audit logs, login logs', async () => {
     const { wrapper } = await mountLayout('/admin/audit-logs')
 
     const links = wrapper.findAll('nav a')
-    expect(links.map((a) => a.text())).toEqual(['平台总览', '用户管理', '操作日志', '登录日志'])
+    expect(links.map((a) => a.text())).toEqual(['平台总览', '用户管理', '课程管理', '班级管理', '操作日志', '登录日志'])
     expect(links.map((a) => a.attributes('href'))).toEqual([
       '/admin/overview',
       '/admin/users',
+      '/admin/courses',
+      '/admin/clazzes',
       '/admin/audit-logs',
       '/admin/login-logs'
     ])
     expect(links.map((a) => a.attributes('data-testid'))).toEqual([
       'admin-nav-overview',
       'admin-nav-users',
+      'admin-nav-courses',
+      'admin-nav-clazzes',
       'admin-nav-audit-logs',
       'admin-nav-login-logs'
     ])
     // 只有当前页高亮
-    expect(links.map((a) => a.attributes('aria-current'))).toEqual([undefined, undefined, 'page', undefined])
+    expect(links.map((a) => a.attributes('aria-current'))).toEqual([undefined, undefined, undefined, undefined, 'page', undefined])
+    wrapper.unmount()
+  })
+
+  it('keeps the class nav item highlighted on a class detail page', async () => {
+    const { wrapper } = await mountLayout('/admin/clazzes/12')
+
+    expect(wrapper.get('[data-testid="child-page"]').text()).toBe('班级详情页')
+    expect(wrapper.get('[data-testid="admin-nav-clazzes"]').attributes('aria-current')).toBe('page')
+    expect(wrapper.get('[data-testid="admin-nav-courses"]').attributes('aria-current')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('wraps the shared theme toggle so the narrow top bar can keep it on one line', async () => {
+    const { wrapper } = await mountLayout()
+
+    const box = wrapper.get('.wj-admin-theme')
+    expect(box.text()).toBe('墨夜暖纸')
+    // flex: none —— 窄屏下不允许被压缩
+    expect(box.element.style.flexShrink).toBe('0')
     wrapper.unmount()
   })
 

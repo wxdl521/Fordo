@@ -153,3 +153,140 @@ export function listLoginLogs(query = {}, config = {}) {
 export function getOverview(query = {}, config = {}) {
   return http.get('/system-admin/overview', { ...config, params: compact(query) })
 }
+
+// ───────── 课程与班级（A3） ─────────
+
+/**
+ * 课程分页列表（管理员全量，含已归档）。
+ * @param {{ keyword?: string, status?: 0|1|'', archived?: boolean|'', teacherId?: number|'', page?: number, size?: number }} [query]
+ *   archived 为空 = 全部；true = 仅已归档；false = 仅未归档
+ * @param {object} [config] axios 额外配置（如 signal）
+ * @returns {Promise<{ records: AdminCourseVO[], total: number, page: number, size: number }>}
+ */
+export function listAdminCourses(query = {}, config = {}) {
+  return http.get('/system-admin/courses', { ...config, params: compact(query) })
+}
+
+/**
+ * 以指定教师为 owner 新建课程（teacherId 必须是启用中的教师）。
+ * @param {{ name: string, teacherId: number }} payload
+ * @returns {Promise<AdminCourseVO>}
+ */
+export function createAdminCourse({ name, teacherId }) {
+  return http.post('/system-admin/courses', { name, teacherId })
+}
+
+/**
+ * 转让课程 owner。
+ * @param {number} id
+ * @param {number} teacherId 新任课教师（启用中的教师）
+ * @returns {Promise<AdminCourseVO>}
+ */
+export function transferCourseOwner(id, teacherId) {
+  return http.patch(`/system-admin/courses/${id}/owner`, { teacherId })
+}
+
+/**
+ * 发布 / 下架课程。
+ * @param {number} id
+ * @param {boolean} published true=发布 false=下架
+ * @returns {Promise<AdminCourseVO>}
+ */
+export function setAdminCoursePublished(id, published) {
+  return http.patch(`/system-admin/courses/${id}/status`, { published: Boolean(published) })
+}
+
+/** 归档课程（软删除，可恢复）。 */
+export function archiveAdminCourse(id) {
+  return http.post(`/system-admin/courses/${id}/archive`)
+}
+
+/** 恢复已归档课程。 */
+export function restoreAdminCourse(id) {
+  return http.post(`/system-admin/courses/${id}/restore`)
+}
+
+/**
+ * 启用中的教师（建课 / 转让 / 筛选下拉用）。
+ * @param {object} [config] axios 额外配置
+ * @returns {Promise<{ id: number, username: string, realName: string }[]>}
+ */
+export function listTeachers(config = {}) {
+  return http.get('/system-admin/teachers', config)
+}
+
+/**
+ * 班级分页列表。
+ * @param {{ keyword?: string, page?: number, size?: number }} [query]
+ * @param {object} [config] axios 额外配置（如 signal）
+ * @returns {Promise<{ records: ClazzVO[], total: number, page: number, size: number }>}
+ */
+export function listClazzes(query = {}, config = {}) {
+  return http.get('/system-admin/clazzes', { ...config, params: compact(query) })
+}
+
+/**
+ * 新建班级（班级名唯一）。
+ * @param {{ name: string, description?: string }} payload
+ * @returns {Promise<ClazzVO>}
+ */
+export function createClazz({ name, description }) {
+  return http.post('/system-admin/clazzes', { name, description })
+}
+
+/**
+ * 修改班级名称 / 描述（整体替换）。
+ * @param {number} id
+ * @param {{ name: string, description?: string }} payload
+ * @returns {Promise<ClazzVO>}
+ */
+export function updateClazz(id, { name, description }) {
+  return http.put(`/system-admin/clazzes/${id}`, { name, description })
+}
+
+/** 删除班级（连同成员 / 课程关联行；学生已有的选课记录保留）。 */
+export function deleteClazz(id) {
+  return http.delete(`/system-admin/clazzes/${id}`)
+}
+
+/**
+ * 班级详情：基本信息 + 学生 + 关联课程。
+ * @param {number} id
+ * @param {object} [config] axios 额外配置（如 signal）
+ * @returns {Promise<ClazzDetailVO>}
+ */
+export function getClazzDetail(id, config = {}) {
+  return http.get(`/system-admin/clazzes/${id}`, config)
+}
+
+/**
+ * 批量添加学生：传 usernames（字符串数组）或 studentIds（数字数组）二选一，≤500。
+ * 已在别的班的学生会被转班；不存在 / 非学生的用户名放进 notFound。
+ * @param {number} id
+ * @param {{ usernames?: string[], studentIds?: number[] }} payload
+ * @returns {Promise<{ added: number, movedFrom: { studentId: number, fromClazzName: string }[], notFound: string[], enrolled: number }>}
+ */
+export function addClazzStudents(id, { usernames, studentIds }) {
+  const body = Array.isArray(usernames) ? { usernames } : { studentIds }
+  return http.post(`/system-admin/clazzes/${id}/students`, body)
+}
+
+/** 把学生移出班级（不删除其选课记录）。 */
+export function removeClazzStudent(id, studentId) {
+  return http.delete(`/system-admin/clazzes/${id}/students/${studentId}`)
+}
+
+/**
+ * 班级关联课程：为班级内全部学生补选课。
+ * @param {number} id
+ * @param {number} courseId
+ * @returns {Promise<{ enrolled: number }>} enrolled 为新增的选课行数
+ */
+export function addClazzCourse(id, courseId) {
+  return http.post(`/system-admin/clazzes/${id}/courses`, { courseId })
+}
+
+/** 解除班级与课程的关联（不删除已有选课记录）。 */
+export function removeClazzCourse(id, courseId) {
+  return http.delete(`/system-admin/clazzes/${id}/courses/${courseId}`)
+}

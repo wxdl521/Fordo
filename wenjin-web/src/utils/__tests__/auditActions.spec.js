@@ -10,6 +10,9 @@ import {
 const PLANNED_ACTIONS = [
   'USER_CREATE', 'USER_UPDATE', 'USER_STATUS', 'USER_RESET_PASSWORD', 'USER_IMPORT', 'USER_ROLE',
   'COURSE_CREATE', 'COURSE_DELETE', 'COURSE_RESTORE', 'COURSE_STATUS',
+  'COURSE_ADMIN_CREATE', 'COURSE_TRANSFER',
+  'CLAZZ_CREATE', 'CLAZZ_UPDATE', 'CLAZZ_DELETE',
+  'CLAZZ_STUDENT_ADD', 'CLAZZ_STUDENT_REMOVE', 'CLAZZ_COURSE_ADD', 'CLAZZ_COURSE_REMOVE',
   'GRAPH_IMPORT', 'GRAPH_EXTRACT_COMMIT',
   'GRAPH_NODE_CREATE', 'GRAPH_NODE_UPDATE', 'GRAPH_NODE_DELETE',
   'GRAPH_EDGE_CREATE', 'GRAPH_EDGE_ACCEPT', 'GRAPH_EDGE_REJECT',
@@ -31,6 +34,19 @@ describe('auditActions', () => {
     expect(auditActionLabel('USER_CREATE')).toBe('新建用户')
     expect(auditActionLabel('USER_RESET_PASSWORD')).toBe('重置用户密码')
     expect(auditActionLabel('COURSE_DELETE')).toBe('删除课程')
+    expect(auditActionLabel('COURSE_TRANSFER')).toBe('转让课程教师')
+    expect(auditActionLabel('CLAZZ_STUDENT_ADD')).toBe('添加班级学生')
+    expect(auditActionLabel('CLAZZ_COURSE_REMOVE')).toBe('班级解除课程')
+  })
+
+  it('keeps the A3 actions in a stable order right after the course actions', () => {
+    const keys = Object.keys(AUDIT_ACTION_LABELS)
+    const from = keys.indexOf('COURSE_STATUS')
+    expect(keys.slice(from + 1, from + 10)).toEqual([
+      'COURSE_ADMIN_CREATE', 'COURSE_TRANSFER',
+      'CLAZZ_CREATE', 'CLAZZ_UPDATE', 'CLAZZ_DELETE',
+      'CLAZZ_STUDENT_ADD', 'CLAZZ_STUDENT_REMOVE', 'CLAZZ_COURSE_ADD', 'CLAZZ_COURSE_REMOVE'
+    ])
   })
 
   it('shows unknown actions as-is and blanks as a dash (no prototype leaks)', () => {
@@ -43,6 +59,7 @@ describe('auditActions', () => {
   it('maps target types and login failure reasons', () => {
     expect(auditTargetLabel('USER')).toBe('用户')
     expect(auditTargetLabel('COURSE')).toBe('课程')
+    expect(auditTargetLabel('CLAZZ')).toBe('班级')
     expect(auditTargetLabel('WEIRD')).toBe('WEIRD')
     expect(auditTargetLabel(null)).toBe('—')
 

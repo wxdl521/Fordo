@@ -21,15 +21,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
 public class TeacherCourseServiceImpl implements TeacherCourseService {
-
-    private static final SecureRandom RANDOM = new SecureRandom();
 
     private final CourseMapper courseMapper;
     private final KgNodeMapper nodeMapper;
@@ -75,7 +72,7 @@ public class TeacherCourseServiceImpl implements TeacherCourseService {
             throw new BusinessException(ResultCode.BAD_REQUEST, "课程名不能为空");
         }
         Course c = new Course();
-        c.setCode(generateUniqueCode());
+        c.setCode(CourseCodes.generateUnique(courseMapper));
         c.setName(name.trim());
         // 始终以当前主体为 owner，禁止客户端指定 teacherId
         c.setTeacherId(principal.userId());
@@ -172,27 +169,5 @@ public class TeacherCourseServiceImpl implements TeacherCourseService {
         if (featureFlags == null || !featureFlags.isGraphReconcileEnabled()) {
             throw new BusinessException(ResultCode.SERVICE_UNAVAILABLE, "图谱对账/导入功能暂未开放");
         }
-    }
-
-    private String generateUniqueCode() {
-        for (int i = 0; i < 20; i++) {
-            String code = randomCode();
-            Long n = courseMapper.selectCount(
-                    new LambdaQueryWrapper<Course>().eq(Course::getCode, code));
-            if (n == null || n == 0) {
-                return code;
-            }
-        }
-        throw new BusinessException(ResultCode.INTERNAL_ERROR, "课程编码生成失败，请重试");
-    }
-
-    static String randomCode() {
-        byte[] b = new byte[5];
-        RANDOM.nextBytes(b);
-        StringBuilder sb = new StringBuilder(10);
-        for (byte x : b) {
-            sb.append(String.format("%02X", x));
-        }
-        return sb.toString();
     }
 }

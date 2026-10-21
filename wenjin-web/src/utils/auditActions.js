@@ -15,6 +15,15 @@ export const AUDIT_ACTION_LABELS = {
   COURSE_DELETE: '删除课程',
   COURSE_RESTORE: '恢复课程',
   COURSE_STATUS: '发布 / 下架课程',
+  COURSE_ADMIN_CREATE: '管理员新建课程',
+  COURSE_TRANSFER: '转让课程教师',
+  CLAZZ_CREATE: '新建班级',
+  CLAZZ_UPDATE: '修改班级',
+  CLAZZ_DELETE: '删除班级',
+  CLAZZ_STUDENT_ADD: '添加班级学生',
+  CLAZZ_STUDENT_REMOVE: '移除班级学生',
+  CLAZZ_COURSE_ADD: '班级关联课程',
+  CLAZZ_COURSE_REMOVE: '班级解除课程',
   GRAPH_IMPORT: '导入知识图谱',
   GRAPH_EXTRACT_COMMIT: '提交图谱抽取结果',
   GRAPH_NODE_CREATE: '新增知识点',
@@ -36,6 +45,7 @@ export const AUDIT_ACTION_LABELS = {
 export const AUDIT_TARGET_LABELS = {
   USER: '用户',
   COURSE: '课程',
+  CLAZZ: '班级',
   GRAPH: '图谱',
   QUESTION: '题目',
   RAG: '语料'

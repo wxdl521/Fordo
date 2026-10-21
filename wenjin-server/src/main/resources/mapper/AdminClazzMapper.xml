@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.wenjin.mapper.AdminClazzMapper">
+
+    <sql id="selectClazz">
+        SELECT z.id,
+               z.name,
+               z.description,
+               z.created_at,
+               COALESCE(s.cnt, 0) AS student_count,
+               COALESCE(k.cnt, 0) AS course_count
+        FROM clazz z
+        LEFT JOIN (SELECT clazz_id, COUNT(*) AS cnt
+                   FROM clazz_student
+                   GROUP BY clazz_id) s ON s.clazz_id = z.id
+        LEFT JOIN (SELECT clazz_id, COUNT(*) AS cnt
+                   FROM clazz_course
+                   GROUP BY clazz_id) k ON k.clazz_id = z.id
+    </sql>
+
+    <select id="countClazzes" resultType="long">
+        SELECT COUNT(*) FROM clazz z
+        <where>
+            <if test="keyword != null">
+                AND z.name LIKE CONCAT('%', #{keyword}, '%')
+            </if>
+        </where>
+    </select>
+
+    <select id="selectClazzPage" resultType="com.wenjin.dto.AdminRows$ClazzRow">
+        <include refid="selectClazz"/>
+        <where>
+            <if test="keyword != null">
+                AND z.name LIKE CONCAT('%', #{keyword}, '%')
+            </if>
+        </where>
+        ORDER BY z.id DESC
+        LIMIT #{offset}, #{size}
+    </select>
+
+    <select id="selectClazzById" resultType="com.wenjin.dto.AdminRows$ClazzRow">
+        <include refid="selectClazz"/>
+        WHERE z.id = #{id}
+    </select>
+
+    <select id="selectMembers" resultType="com.wenjin.dto.ClazzStudentVO">
+        SELECT u.id, u.username, u.real_name, u.status
+        FROM clazz_student cs
+        JOIN sys_user u ON u.id = cs.student_id
+        WHERE cs.clazz_id = #{clazzId}
+        ORDER BY u.username
+    </select>
+
+    <select id="selectLinkedCourses" resultType="com.wenjin.dto.ClazzCourseVO">
+        SELECT c.id, c.name, c.status, (c.archived_at IS NOT NULL) AS archived
+        FROM clazz_course cc
+        JOIN course c ON c.id = cc.course_id
+        WHERE cc.clazz_id = #{clazzId}
+        ORDER BY cc.id
+    </select>
+
+</mapper>
