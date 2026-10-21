@@ -24,7 +24,8 @@
 --   12. V17 增 clazz / clazz_student / clazz_course（管理后台班级；含物理 FK，删班级级联删成员与课程关联行）。
 --   13. V18 增 sys_config（管理后台系统配置覆盖层；secret 存 AES-GCM 密文，无物理 FK）。
 --   14. V19 增 review_pin（今日复习置顶）；V20 增 sys_user.email（注册邮箱，可空唯一）。
---   15. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--   15. V22 增 companion_hint_log（主动陪伴提示条展示/关闭日志，无物理 FK）。
+--   16. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -765,5 +766,22 @@ CREATE TABLE `review_pin` (
     UNIQUE KEY `uk_review_pin` (`student_id`, `course_id`, `pin_date`, `node_code`),
     KEY `idx_review_pin_lookup` (`student_id`, `course_id`, `pin_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='今日复习手动置顶（伴侣 schedule_review）【V19】';
+
+-- ───────────────────────────── 组：主动陪伴提示日志【V22】─────────────────────────────
+
+DROP TABLE IF EXISTS `companion_hint_log`;
+
+CREATE TABLE `companion_hint_log` (
+    `id`           BIGINT       NOT NULL AUTO_INCREMENT,
+    `student_id`   BIGINT       NOT NULL COMMENT '学生 sys_user.id',
+    `course_id`    BIGINT       NOT NULL COMMENT '课程 course.id',
+    `hint_key`     VARCHAR(96)  NOT NULL COMMENT '提示实例键，如 ERROR_BURST:session:123',
+    `hint_type`    VARCHAR(32)  NOT NULL COMMENT 'ERROR_BURST / DECAY / PLAN_BEHIND',
+    `shown_at`     DATETIME     NOT NULL COMMENT '最近一次展示时间',
+    `dismissed_at` DATETIME     NULL COMMENT '学生关闭时间；非空则不再展示',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_companion_hint` (`student_id`, `course_id`, `hint_key`),
+    KEY `idx_companion_hint_shown` (`student_id`, `course_id`, `shown_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='伴侣主动提示条展示/关闭日志【V22】';
 
 SET FOREIGN_KEY_CHECKS = 1;

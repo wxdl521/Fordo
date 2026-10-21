@@ -54,4 +54,9 @@ public class FeatureFlagsProperties {
      * 多智能体周报 / 抽查（M11；默认关闭。关则零调度、报告 API 404）。
      */
     private volatile boolean multiAgentEnabled = false;
+
+    /**
+     * 主动陪伴（方向 4）：伴侣空会话 opener、事件型提示条、导航小红点。关闭时 /api/companion/opener|hints/** 返回 404。
+     */
+    private volatile boolean proactiveEnabled = true;
 }

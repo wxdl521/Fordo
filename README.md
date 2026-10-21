@@ -37,6 +37,7 @@
 - 今日复习：由 M3 衰减模型找出“曾经掌握但正在遗忘”的节点，并一键进入复习练习。
 - AI 学习伴侣：SSE 流式对话，支持工具胶囊、节点详情/掌握度/复习队列查询、对话内练习卡、理解探针卡与资料引用。
 - 学习计划与每日简报：AI 起草备考计划（DRAFT→确认 HITL），每日 re-plan 并生成每日简报（M10）。
+- 主动陪伴：伴侣空会话 opener（时段问候 + 最多 2 张动作卡：错题复盘 / 到期复习 / 计划任务 / 薄弱节点 / 学习前沿）与事件型提示条（错题爆发 / 知识遗忘 / 计划落后，带冷却与每日上限、可关闭），导航小红点。确定性读时聚合，零 LLM；`proactive-enabled` 关闭则接口 404、前端回退固定话术。
 - 成长档案：展示掌握度快照和学习变化。
 
 ### 教师端
@@ -239,6 +240,7 @@ npm run dev
 | 练习 | `/api/practice` | M1 节点练习开始、提交、历史 |
 | 复习 | `/api/review/today` | M3 今日复习队列 |
 | AI 伴侣 | `/api/companion` | SSE 对话、会话列表、会话删除 |
+| 主动陪伴 | `/api/companion/opener`、`/api/companion/hints/count`、`/api/companion/hints/dismiss` | opener（问候+动作卡+提示条）、提示条数量（小红点，只读）、关闭提示；`proactive-enabled` 关则 404 |
 | 理解探针 | `/api/companion/probe/{sessionId}/submit` | M9 探针作答（EWMA 隔离，不写掌握度） |
 | run 取消 | `/api/companion/runs/{id}/cancel` | M10 编排转向/取消 |
 | 学习计划 | `/api/student/plans/*`、`/api/student/daily-brief` | M10 计划确认/取消/当前计划/每日简报 |
