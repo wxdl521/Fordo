@@ -51,6 +51,14 @@ public class FakeAiConfiguration {
             public void streamMessages(List<Map<String, Object>> messages, Consumer<String> onToken) {
                 throw disabled();
             }
+
+            @Override
+            public StreamTurnResult streamTurn(List<Map<String, Object>> messages,
+                                               List<Map<String, Object>> toolSchemas,
+                                               ToolChoice toolChoice,
+                                               Consumer<String> onContentDelta) {
+                throw disabled();
+            }
         };
     }
 

@@ -36,6 +36,24 @@ public interface CompanionAiClient {
 
     void streamMessages(List<Map<String, Object>> messages, Consumer<String> onToken);
 
+    enum ToolChoice { AUTO, NONE }
+
+    /** Token usage reported by the provider; cachedPromptTokens may be null. */
+    record Usage(int promptTokens, int completionTokens, Integer cachedPromptTokens) {}
+
+    /** Result of one streamed LLM turn. usage is nullable. */
+    record StreamTurnResult(String content, List<ToolCall> toolCalls, Usage usage, String finishReason) {}
+
+    /**
+     * Streams one LLM turn with optional tools. Content deltas are forwarded immediately to
+     * onContentDelta; tool_call deltas are accumulated. Exceptions thrown by onContentDelta
+     * surface as {@link SinkFailureException} (never as AI_ERROR).
+     */
+    StreamTurnResult streamTurn(List<Map<String, Object>> messages,
+                                List<Map<String, Object>> toolSchemas,
+                                ToolChoice toolChoice,
+                                Consumer<String> onContentDelta);
+
     /**
      * Raw phase-1 model output from the most recent {@link #completeWithTools} call, if available.
      * Used by M9 {@code Phase1DecisionParser} to read {@code intent}. Default: null.
