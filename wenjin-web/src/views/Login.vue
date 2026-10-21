@@ -57,7 +57,22 @@
           <input v-model="regConfirm" type="password" placeholder="请再次输入密码" class="wj-input" :style="inputStyle" />
 
           <label :style="{ fontSize: '12px', color: 'var(--mut)', marginBottom: '7px' }">真实姓名</label>
-          <input v-model="regRealName" placeholder="请输入真实姓名" class="wj-input" :style="{ ...inputStyle, marginBottom: '20px' }" />
+          <input v-model="regRealName" placeholder="请输入真实姓名" class="wj-input" :style="inputStyle" />
+
+          <label :style="{ fontSize: '12px', color: 'var(--mut)', marginBottom: '7px' }">邮箱</label>
+          <input v-model="regEmail" placeholder="请输入邮箱" class="wj-input" :style="inputStyle" />
+
+          <label :style="{ fontSize: '12px', color: 'var(--mut)', marginBottom: '7px' }">验证码</label>
+          <div :style="{ display: 'flex', gap: '8px', marginBottom: '20px' }">
+            <input v-model="regCode" placeholder="6位验证码" class="wj-input" :style="{ ...inputStyle, flex: 1, marginBottom: 0 }" />
+            <button
+              type="button"
+              :disabled="codeWait > 0 || sendingCode"
+              @click="handleSendCode"
+              class="wj-hover-card2"
+              :style="{ height: '44px', padding: '0 12px', border: '1px solid var(--line)', borderRadius: '10px', background: 'var(--card)', color: 'var(--ink)', fontSize: '13px', cursor: codeWait > 0 || sendingCode ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }"
+            >{{ codeWait > 0 ? codeWait + 's' : '发送验证码' }}</button>
+          </div>
 
           <button @click="handleRegister" class="wj-btn-acc" :style="{ height: '46px', background: 'var(--acc)', border: 'none', borderRadius: '10px', color: '#FFFDF8', fontSize: '14.5px', fontWeight: 500, cursor: 'pointer', marginBottom: '16px' }">注 册</button>
           <button @click="showLogin" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px', alignSelf: 'center' }">已有账号？登录</button>
@@ -88,13 +103,13 @@
               <div v-if="c.masteredCount > 0 || c.weakCount > 0" :style="{ fontSize: '12.5px', color: 'var(--mut)', marginBottom: '14px' }">
                 已掌握 {{ c.masteredCount }} / {{ c.masteredCount + c.weakCount + c.unlearnedCount }} 个节点 · 待修薄弱点 {{ c.weakCount }} 个
               </div>
-              <div v-else :style="{ fontSize: '12.5px', color: 'var(--mut)', marginBottom: '16px' }">先做一次入口诊断（约 25 题 · 15 分钟），问津才能为你点亮这张地图。</div>
+              <div v-else :style="{ fontSize: '12.5px', color: 'var(--mut)', marginBottom: '16px' }">先看一眼地图。这是示例染色，随后再做入口诊断点亮你的学情。</div>
               <div v-if="c.masteredCount > 0 || c.weakCount > 0" :style="{ height: '5px', background: 'var(--card2)', borderRadius: '99px', overflow: 'hidden', marginBottom: '16px' }">
                 <div :style="{ height: '100%', width: masteryPercent(c) + '%', background: 'var(--ok)', borderRadius: '99px' }"></div>
               </div>
               <div :style="{ display: 'flex', alignItems: 'center', gap: '12px' }">
                 <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" :to="{ path: '/map', query: { courseId: c.courseId } }" @click="rememberStudentCourse(c.courseId)" class="wj-btn-acc" :style="{ height: '40px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', padding: '0 24px', background: 'var(--acc)', borderRadius: '9px', color: '#FFFDF8', fontSize: '13.5px', fontWeight: 500, textDecoration: 'none' }">进入课程</router-link>
-                <router-link v-else :to="{ path: '/diagnostic', query: { courseId: c.courseId } }" @click="rememberStudentCourse(c.courseId)" class="wj-hover-card2" :style="{ height: '40px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', padding: '0 20px', border: '1px solid var(--line)', borderRadius: '9px', color: 'var(--ink)', fontSize: '13px', textDecoration: 'none' }">开始入口诊断</router-link>
+                <router-link v-else :to="{ path: '/map', query: { courseId: c.courseId, tour: '1' } }" @click="rememberStudentCourse(c.courseId)" class="wj-hover-card2" :style="{ height: '40px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', padding: '0 20px', border: '1px solid var(--line)', borderRadius: '9px', color: 'var(--ink)', fontSize: '13px', textDecoration: 'none' }">先看地图</router-link>
                 <router-link v-if="c.masteredCount > 0 || c.weakCount > 0" :to="{ path: '/growth', query: { courseId: c.courseId } }" @click="rememberStudentCourse(c.courseId)" class="wj-underline" :style="{ fontSize: '12.5px', color: 'var(--mut)', textDecoration: 'underline', textUnderlineOffset: '3px' }">成长档案</router-link>
               </div>
             </div>
@@ -124,7 +139,7 @@
             </div>
           </div>
 
-          <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px' }">
+          <div :style="{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px', flexWrap: 'wrap' }">
             <button @click="handleLogout" class="wj-underline" :style="{ background: 'transparent', border: 'none', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' }">退出登录</button>
             <!-- 教师端入口仅对教师/管理员可见（role 1 或 3） -->
             <template v-if="isTeacher">
@@ -149,7 +164,7 @@ import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import { useViewport } from '../composables/useViewport.js'
-import { login as apiLogin, register as apiRegister } from '../api/user.js'
+import { login as apiLogin, register as apiRegister, sendEmailCode as apiSendEmailCode } from '../api/user.js'
 import { getMyCourses, getAvailableCourses, enroll } from '../api/course.js'
 import { useSessionStore } from '../store/session.js'
 import { useCourseStore } from '../store/course.js'
@@ -172,7 +187,12 @@ const regUsername = ref('')
 const regPassword = ref('')
 const regConfirm = ref('')
 const regRealName = ref('')
+const regEmail = ref('')
+const regCode = ref('')
+const codeWait = ref(0)
+const sendingCode = ref(false)
 const regError = ref('')
+let codeTimer = null
 
 const courses = ref([])
 const availableCourses = ref([])
@@ -243,7 +263,6 @@ const isTeacher = computed(() => session.isTeacher)
 // 是否管理员（role 3）——决定课程页是否显示「进入管理后台」入口
 const isAdmin = computed(() => session.isAdmin)
 
-
 function masteryPercent(c) {
   const total = c.masteredCount + c.weakCount + c.unlearnedCount
   if (total === 0) return 0
@@ -308,9 +327,37 @@ async function handleDemoLogin() {
   }
 }
 
+async function handleSendCode() {
+  regError.value = ''
+  if (!regEmail.value) {
+    regError.value = '请先填写邮箱'
+    return
+  }
+  sendingCode.value = true
+  try {
+    await apiSendEmailCode({ email: regEmail.value })
+    codeWait.value = 60
+    if (codeTimer) clearInterval(codeTimer)
+    codeTimer = setInterval(() => {
+      if (codeWait.value <= 1) {
+        codeWait.value = 0
+        clearInterval(codeTimer)
+        codeTimer = null
+        return
+      }
+      codeWait.value -= 1
+    }, 1000)
+  } catch (e) {
+    if (isAbortError(e)) return
+    regError.value = e.message || '验证码发送失败'
+  } finally {
+    sendingCode.value = false
+  }
+}
+
 async function handleRegister() {
   regError.value = ''
-  if (!regUsername.value || !regPassword.value || !regConfirm.value || !regRealName.value) {
+  if (!regUsername.value || !regPassword.value || !regConfirm.value || !regRealName.value || !regEmail.value || !regCode.value) {
     regError.value = '请填写所有字段'
     return
   }
@@ -323,7 +370,9 @@ async function handleRegister() {
     await apiRegister({
       username: regUsername.value,
       password: regPassword.value,
-      realName: regRealName.value
+      realName: regRealName.value,
+      email: regEmail.value,
+      code: regCode.value
     }, { signal: request.signal })
     if (disposed || !request.isCurrent()) return
     // 注册不发令牌，紧接着用同一凭据登录拿令牌（保持"注册即进入"的体验）
@@ -417,6 +466,10 @@ onBeforeUnmount(() => {
   disposed = true
   authRequest.cancel()
   coursesRequest.cancel()
+  if (codeTimer) {
+    clearInterval(codeTimer)
+    codeTimer = null
+  }
 })
 </script>
 

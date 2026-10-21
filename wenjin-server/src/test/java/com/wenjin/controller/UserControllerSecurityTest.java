@@ -9,6 +9,7 @@ import com.wenjin.security.TokenService;
 import com.wenjin.security.UserRole;
 import com.wenjin.service.LoginLogService;
 import com.wenjin.service.UserService;
+import com.wenjin.service.VerificationCodeService;
 import com.wenjin.service.impl.UserServiceImpl;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,13 +45,16 @@ class UserControllerSecurityTest {
     @Mock
     private LoginLogService loginLogService;
 
+    @Mock
+    private VerificationCodeService verificationCodeService;
+
     private final PasswordEncoder encoder = new BCryptPasswordEncoder();
     private final TokenService tokenService = new TokenService("test-secret", 3600);
     private MockMvc mvc;
 
     @BeforeEach
     void setup() {
-        UserService userService = new UserServiceImpl(userMapper, encoder, tokenService);
+        UserService userService = new UserServiceImpl(userMapper, encoder, tokenService, verificationCodeService);
         mvc = MockMvcBuilders.standaloneSetup(new UserController(userService, loginLogService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
@@ -77,6 +81,8 @@ class UserControllerSecurityTest {
                                   "username": "attacker",
                                   "password": "safe-password-123",
                                   "realName": "提权尝试",
+                                  "email": "attacker@example.com",
+                                  "code": "123456",
                                   "role": 1
                                 }
                                 """))
@@ -106,6 +112,8 @@ class UserControllerSecurityTest {
                                   "username": "wannabe_admin",
                                   "password": "safe-password-123",
                                   "realName": "管理员尝试",
+                                  "email": "admin-try@example.com",
+                                  "code": "123456",
                                   "role": 3
                                 }
                                 """))
@@ -122,7 +130,7 @@ class UserControllerSecurityTest {
     @DisplayName("GET /api/user/{id} 已移除，返回 404")
     void publicUserById_isNotMapped() throws Exception {
         // 不挂 GlobalExceptionHandler，避免 NoHandlerFound 被兜底成 500
-        UserService userService = new UserServiceImpl(userMapper, encoder, tokenService);
+        UserService userService = new UserServiceImpl(userMapper, encoder, tokenService, verificationCodeService);
         MockMvc bare = MockMvcBuilders.standaloneSetup(new UserController(userService, loginLogService)).build();
         bare.perform(get("/api/user/2"))
                 .andExpect(status().isNotFound());

@@ -12,6 +12,7 @@ import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.MasteryDecayCalculator;
+import com.wenjin.service.companion.ReviewScheduleStore;
 import com.wenjin.service.impl.ReviewServiceImpl;
 import com.wenjin.support.QuestionStatus;
 import org.junit.jupiter.api.BeforeEach;
@@ -78,7 +79,8 @@ class ReviewServiceImplTest {
     private ReviewServiceImpl implWithDecay(boolean decayEnabled, int dailySize) {
         ReviewServiceImpl impl = new ReviewServiceImpl(
                 studentMasteryMapper, kgNodeMapper, kgEdgeMapper,
-                questionNodeMapper, questionMapper, calculator(decayEnabled));
+                questionNodeMapper, questionMapper, calculator(decayEnabled),
+                new ReviewScheduleStore());
         ReflectionTestUtils.setField(impl, "dailySize", dailySize);
         return impl;
     }

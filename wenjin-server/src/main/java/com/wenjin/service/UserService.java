@@ -19,6 +19,13 @@ public interface UserService {
     UserVO register(RegisterRequest request);
 
     /**
+     * 向邮箱发送注册验证码。
+     *
+     * @param email 收件邮箱
+     */
+    void sendRegisterEmailCode(String email);
+
+    /**
      * 登录。
      *
      * @param request 登录信息

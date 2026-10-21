@@ -13,6 +13,7 @@ import com.wenjin.mapper.SysUserMapper;
 import com.wenjin.security.TokenService;
 import com.wenjin.security.UserRole;
 import com.wenjin.service.UserService;
+import com.wenjin.service.VerificationCodeService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -25,33 +26,47 @@ public class UserServiceImpl implements UserService {
     private final SysUserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final TokenService tokenService;
+    private final VerificationCodeService verificationCodeService;
 
     public UserServiceImpl(SysUserMapper userMapper, PasswordEncoder passwordEncoder,
-                           TokenService tokenService) {
+                           TokenService tokenService, VerificationCodeService verificationCodeService) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.tokenService = tokenService;
+        this.verificationCodeService = verificationCodeService;
     }
 
     @Override
     public UserVO register(RegisterRequest request) {
-        // 检查用户名是否已存在
+        String email = VerificationCodeService.normalize(request.getEmail());
         Long count = userMapper.selectCount(
                 new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, request.getUsername()));
         if (count > 0) {
             throw new BusinessException(ResultCode.USER_EXISTS, "用户名已存在");
         }
+        Long emailCount = userMapper.selectCount(
+                new LambdaQueryWrapper<SysUser>().eq(SysUser::getEmail, email));
+        if (emailCount > 0) {
+            throw new BusinessException(ResultCode.USER_EXISTS, "该邮箱已被注册");
+        }
+        verificationCodeService.consume(email, request.getCode());
 
         SysUser user = new SysUser();
         user.setUsername(request.getUsername());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setRealName(request.getRealName());
+        user.setEmail(email);
         // 公开注册无条件学生：忽略客户端遗留 role / ignoredRole，杜绝自助提权
         user.setRole(UserRole.STUDENT.code());
         user.setStatus(1);
         userMapper.insert(user);
 
         return toVO(user);
+    }
+
+    @Override
+    public void sendRegisterEmailCode(String email) {
+        verificationCodeService.send(email);
     }
 
     @Override

@@ -42,7 +42,7 @@ describe('API endpoint contracts', () => {
 
   it('audits every export in the endpoint modules', () => {
     const expectedExports = new Map([
-      [user, ['register', 'login', 'me']],
+      [user, ['register', 'sendEmailCode', 'login', 'me']],
       [course, ['getMyCourses', 'getAvailableCourses', 'enroll']],
       [graph, ['fetchGraph']],
       [diagnostic, [
@@ -120,8 +120,8 @@ describe('API endpoint contracts', () => {
       expect(Object.keys(module).sort()).toEqual([...names].sort())
       exportCount += names.length
     }
-    // 61 baseline + 8 teacher RAG/reports + 1 companion submitProbe + 2 student = 72
-    expect(exportCount).toBe(72)
+    // 61 baseline + 8 teacher RAG/reports + 1 companion submitProbe + 2 student + 1 sendEmailCode = 73
+    expect(exportCount).toBe(73)
   })
 
   it('maps user and course operations without forwarding privilege fields', () => {
@@ -129,9 +129,12 @@ describe('API endpoint contracts', () => {
       username: 'alice',
       password: 'secret',
       realName: 'Alice',
+      email: 'alice@example.com',
+      code: '123456',
       role: 1,
       studentId: 99
     })
+    user.sendEmailCode({ email: 'alice@example.com' })
     user.login({ username: 'alice', password: 'secret', role: 1 })
     user.me()
     course.getMyCourses()
@@ -144,7 +147,8 @@ describe('API endpoint contracts', () => {
       ['/course/available']
     ])
     expect(http.post.mock.calls).toEqual([
-      ['/register', { username: 'alice', password: 'secret', realName: 'Alice' }],
+      ['/register', { username: 'alice', password: 'secret', realName: 'Alice', email: 'alice@example.com', code: '123456' }],
+      ['/register/email-code', { email: 'alice@example.com' }],
       ['/login', { username: 'alice', password: 'secret' }],
       ['/course/enroll', { courseId: 17 }]
     ])
@@ -154,13 +158,13 @@ describe('API endpoint contracts', () => {
     const signal = new AbortController().signal
     const config = { signal }
 
-    user.register({ username: 'alice', password: 'secret', realName: 'Alice' }, config)
+    user.register({ username: 'alice', password: 'secret', realName: 'Alice', email: 'alice@example.com', code: '123456' }, config)
     user.login({ username: 'alice', password: 'secret' }, config)
     course.getMyCourses(config)
     course.getAvailableCourses(config)
 
     expect(http.post.mock.calls).toEqual([
-      ['/register', { username: 'alice', password: 'secret', realName: 'Alice' }, config],
+      ['/register', { username: 'alice', password: 'secret', realName: 'Alice', email: 'alice@example.com', code: '123456' }, config],
       ['/login', { username: 'alice', password: 'secret' }, config]
     ])
     expect(http.get.mock.calls).toEqual([

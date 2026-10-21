@@ -1,9 +1,15 @@
 import { http } from './http.js'
 
 /** 注册（公开注册仅学生；不接受/不提交 role，防止客户端提权） */
-export function register({ username, password, realName }, config) {
-  const body = { username, password, realName }
+export function register({ username, password, realName, email, code }, config) {
+  const body = { username, password, realName, email, code }
   return config ? http.post('/register', body, config) : http.post('/register', body)
+}
+
+/** 发送注册邮箱验证码 */
+export function sendEmailCode({ email }, config) {
+  const body = { email }
+  return config ? http.post('/register/email-code', body, config) : http.post('/register/email-code', body)
 }
 
 /** 登录 */

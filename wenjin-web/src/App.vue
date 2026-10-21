@@ -2,6 +2,7 @@
   <div :style="{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }">
     <!-- 全局顶栏：登录页与管理后台（/admin，自带独立布局）隐藏 -->
     <TopBar v-if="showTopBar" />
+    <SpotlightTour />
 
     <!-- 路由出口 -->
     <!-- 注意：不要用 <transition mode="out-in">。out-in 在「旧页 leave 完成后再挂载新页」的
@@ -22,6 +23,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import TopBar from './components/TopBar.vue'
+import SpotlightTour from './components/SpotlightTour.vue'
 
 const route = useRoute()
 

@@ -9,6 +9,7 @@ import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.LoginRequest;
 import com.wenjin.dto.LoginVO;
 import com.wenjin.dto.RegisterRequest;
+import com.wenjin.dto.SendEmailCodeRequest;
 import com.wenjin.dto.UserVO;
 import com.wenjin.service.LoginLogService;
 import com.wenjin.service.UserService;
@@ -44,6 +45,16 @@ public class UserController {
     @PostMapping("/register")
     public Result<UserVO> register(@Valid @RequestBody RegisterRequest request) {
         return Result.ok(userService.register(request));
+    }
+
+    /**
+     * 发送注册邮箱验证码。
+     * POST /api/register/email-code
+     */
+    @PostMapping("/register/email-code")
+    public Result<Void> sendEmailCode(@Valid @RequestBody SendEmailCodeRequest request) {
+        userService.sendRegisterEmailCode(request.getEmail());
+        return Result.ok();
     }
 
     /**

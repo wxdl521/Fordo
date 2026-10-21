@@ -1,13 +1,15 @@
 package com.wenjin.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 /**
  * 注册请求体。
- * <p>公开注册仅接受用户名/密码/真实姓名。遗留 JSON 字段 {@code role} 在兼容窗口内
+ * <p>公开注册仅接受用户名/密码/真实姓名/已验证邮箱。遗留 JSON 字段 {@code role} 在兼容窗口内
  * 仅可反序列化到 {@link #ignoredRole}，不得作为业务输入（服务端强制学生角色）。
  */
 @Data
@@ -24,6 +26,15 @@ public class RegisterRequest {
     /** 真实姓名可选；空串允许，最长 64。 */
     @Size(max = 64, message = "真实姓名长度不能超过 64")
     private String realName;
+
+    @NotBlank(message = "邮箱不能为空")
+    @Email(message = "邮箱格式不正确")
+    @Size(max = 255, message = "邮箱过长")
+    private String email;
+
+    @NotBlank(message = "验证码不能为空")
+    @Pattern(regexp = "\\d{6}", message = "验证码为 6 位数字")
+    private String code;
 
     /**
      * 兼容旧客户端提交的 role 字段；WRITE_ONLY 且业务层忽略。

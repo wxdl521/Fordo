@@ -1068,4 +1068,11 @@ describe('TeacherGraphReview edge create', () => {
     expect(fetchTeacherGraphMock).not.toHaveBeenCalled()
     expect(fetchPendingEdgesMock).not.toHaveBeenCalled()
   })
+
+  it('exposes teacher spotlight tour targets on toolbar controls', async () => {
+    const wrapper = await mountReview()
+    expect(wrapper.get('[data-testid="course-switch"]').attributes('data-tour')).toBe('teacher-course')
+    expect(wrapper.get('[data-tour="teacher-graph-ops"]').text()).toContain('图谱操作')
+    expect(wrapper.get('[data-testid="link-mode-toggle"]').attributes('data-tour')).toBe('teacher-link')
+  })
 })

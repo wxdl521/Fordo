@@ -34,6 +34,7 @@
           v-for="link in teacherLinks"
           :key="link.to"
           :to="link.to"
+          :data-tour="teacherTourId(link.to)"
           :style="navLinkStyle($route.path === link.to)"
         >{{ link.label }}</router-link>
       </template>
@@ -42,6 +43,7 @@
           v-for="link in studentLinks"
           :key="link.to"
           :to="{ path: link.to, query: link.query }"
+          :data-tour="studentTourId(link.to)"
           :style="navLinkStyle($route.path === link.to)"
         >{{ link.label }}</router-link>
       </template>
@@ -96,6 +98,30 @@ const studentLinks = computed(() => {
 })
 
 // 教师端导航
+function studentTourId(path) {
+  const map = {
+    '/map': 'nav-map',
+    '/diagnostic': 'nav-diagnostic',
+    '/result': 'nav-result',
+    '/path': 'nav-path',
+    '/companion': 'nav-companion',
+    '/growth': 'nav-growth',
+  }
+  return map[path] || undefined
+}
+
+function teacherTourId(path) {
+  const map = {
+    '/teacher/graph': 'nav-graph',
+    '/teacher/questions': 'nav-questions',
+    '/teacher/dashboard': 'nav-dashboard',
+    '/teacher/agent-runs': 'nav-agent',
+    '/teacher/rag': 'nav-rag',
+    '/teacher/reports': 'nav-reports',
+  }
+  return map[path] || undefined
+}
+
 const teacherLinks = [
   { to: '/teacher/graph', label: '图谱审核' },
   { to: '/teacher/questions', label: '题目审核' },

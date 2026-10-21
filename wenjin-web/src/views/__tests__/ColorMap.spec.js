@@ -344,4 +344,39 @@ describe('ColorMap session/course/graph wiring', () => {
 
     expect(fetchTodayReviewMock).not.toHaveBeenCalled()
   })
+
+  it('exposes data-tour targets on canvas, legend, review, and root for all-unlearned graphs', async () => {
+    graphData.value = {
+      nodes: [
+        {
+          id: 'a',
+          name: '节点A',
+          chapter: '软件工程概述',
+          mastery: 'unlearned',
+          masteryScore: null,
+          difficulty: 1,
+          is_key: false
+        },
+        {
+          id: 'b',
+          name: '节点B',
+          chapter: '软件工程概述',
+          mastery: 'unlearned',
+          masteryScore: null,
+          difficulty: 1,
+          is_key: false
+        }
+      ],
+      edges: []
+    }
+    const { wrapper } = await mountMap({ courseId: '5' })
+    await nextTick()
+
+    expect(wrapper.find('[data-tour="map-canvas"]').exists()).toBe(true)
+    expect(wrapper.find('[data-tour="map-legend"]').exists()).toBe(true)
+    expect(wrapper.find('[data-tour="map-review"]').exists()).toBe(true)
+    expect(wrapper.find('[data-tour="map-root"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('示例染色 · 诊断后变成你的学情')
+    wrapper.unmount()
+  })
 })

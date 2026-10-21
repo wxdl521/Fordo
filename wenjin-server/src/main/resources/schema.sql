@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════
 --  问津 · 知识图谱驱动的个性化学习导航系统
---  本地空库重建快照（当前最终 DDL，含 V3–V18；共 41 张业务表）
+--  本地空库重建快照（当前最终 DDL，含 V3–V20；共 42 张业务表）
 --
 --  ⚠ 仅本地空库 / 会删数据 / 生产禁用
 --    · 本脚本含 DROP TABLE IF EXISTS，会清空目标库业务表数据。
---    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V18）。
+--    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V20）。
 --    · 新增版本化迁移（Vn）后，必须把最终 DDL 同步回本文件，保持本地快照一致。
 --    · 应用启动默认 spring.flyway.enabled=false（WENJIN_FLYWAY_ENABLED），
 --      普通应用账号只有 DML；发布流水线用 migrator 凭据单独跑迁移作业。
@@ -23,7 +23,8 @@
 --   11. V16 增 audit_log / login_log（管理后台审计与监控，无物理 FK）；sys_user 增 token_valid_after。
 --   12. V17 增 clazz / clazz_student / clazz_course（管理后台班级；含物理 FK，删班级级联删成员与课程关联行）。
 --   13. V18 增 sys_config（管理后台系统配置覆盖层；secret 存 AES-GCM 密文，无物理 FK）。
---   14. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--   14. V19 增 review_pin（今日复习置顶）；V20 增 sys_user.email（注册邮箱，可空唯一）。
+--   15. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -41,6 +42,7 @@ CREATE TABLE `sys_user` (
     `username`   VARCHAR(64)  NOT NULL                COMMENT '登录名',
     `password`   VARCHAR(128) NOT NULL                COMMENT '密码（加密存储）',
     `real_name`  VARCHAR(64)  DEFAULT NULL            COMMENT '真实姓名',
+    `email`      VARCHAR(255) DEFAULT NULL            COMMENT '注册邮箱【V20】',
     `role`       TINYINT      NOT NULL                COMMENT '角色：1=教师, 2=学生, 3=管理员',
     `status`     TINYINT      NOT NULL DEFAULT 1      COMMENT '状态：1=正常, 0=禁用',
     `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP                          COMMENT '创建时间',
@@ -48,6 +50,7 @@ CREATE TABLE `sys_user` (
     `token_valid_after` DATETIME(3) NULL                 COMMENT '早于此刻签发的令牌一律无效（重置密码时写入）【V16】',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_username` (`username`),
+    UNIQUE KEY `uk_sys_user_email` (`email`),
     CONSTRAINT `chk_sys_user_role` CHECK (`role` IN (1, 2, 3))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表（教师/学生统一存储）';
 
@@ -745,5 +748,22 @@ CREATE TABLE `sys_config` (
     `updated_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最后修改时间',
     PRIMARY KEY (`config_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统配置覆盖层（白名单 key）【V18】';
+-- ───────────────────────────── 组：今日复习置顶【V19】─────────────────────────────
+
+DROP TABLE IF EXISTS `review_pin`;
+
+CREATE TABLE `review_pin` (
+    `id`           BIGINT       NOT NULL AUTO_INCREMENT,
+    `student_id`   BIGINT       NOT NULL COMMENT '学生 sys_user.id',
+    `course_id`    BIGINT       NOT NULL COMMENT '课程 course.id',
+    `pin_date`     DATE         NOT NULL COMMENT '置顶所属自然日（Asia/Shanghai）',
+    `node_code`    VARCHAR(32)  NOT NULL COMMENT '知识点 node_code',
+    `mode`         VARCHAR(16)  NOT NULL COMMENT 'TODAY / ADVANCE',
+    `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_review_pin` (`student_id`, `course_id`, `pin_date`, `node_code`),
+    KEY `idx_review_pin_lookup` (`student_id`, `course_id`, `pin_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='今日复习手动置顶（伴侣 schedule_review）【V19】';
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -52,10 +52,17 @@ public class OpenAiCompatibleImageToMarkdownAiClient implements ImageToMarkdownA
         String url = trimTrailingSlash(v.getBaseUrl()) + "/chat/completions";
         JsonNode root;
         try {
-            root = restClient.post().uri(url)
+            // 部分网关把 JSON 标成 application/octet-stream，避免 RestClient 直接反序列化 JsonNode 失败
+            byte[] raw = restClient.post().uri(url)
                     .header("Authorization", "Bearer " + v.getApiKey())
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(body).retrieve().body(JsonNode.class);
+                    .body(body).retrieve().body(byte[].class);
+            if (raw == null || raw.length == 0) {
+                throw new BusinessException(ResultCode.AI_ERROR, "视觉模型返回空响应");
+            }
+            root = MAPPER.readTree(raw);
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
             throw new BusinessException(ResultCode.AI_ERROR, "视觉模型调用失败：" + e.getMessage());
         }

@@ -25,6 +25,7 @@
       <!-- 今日复习 -->
       <button
         v-if="currentUser"
+        data-tour="map-review"
         @click="toggleReview"
         class="wj-hover-acc"
         :style="reviewOpen
@@ -35,7 +36,7 @@
       </button>
 
       <!-- 薄弱根因回溯 -->
-      <button @click="toggleRoot" class="wj-hover-acc" :style="rootCause
+      <button data-tour="map-root" @click="toggleRoot" class="wj-hover-acc" :style="rootCause
         ? { height: '34px', padding: '0 14px', background: 'var(--accSoft)', border: '1px solid var(--acc)', borderRadius: '8px', color: 'var(--acc)', fontSize: '12.5px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px', fontWeight: 500, whiteSpace: 'nowrap', flex: 'none' }
         : { height: '34px', padding: '0 14px', background: 'transparent', border: '1px solid var(--line)', borderRadius: '8px', color: 'var(--mut)', fontSize: '12.5px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px', whiteSpace: 'nowrap', flex: 'none' }">
         <span :style="{ width: '6px', height: '6px', borderRadius: '50%', background: rootCause ? 'var(--acc)' : 'var(--mut)', opacity: rootCause ? 1 : 0.5 }"></span>{{ width < 1080 ? '回溯' : '薄弱根因回溯' }}
@@ -43,7 +44,7 @@
     </div>
 
     <!-- 画布 -->
-    <div ref="canvasRef" class="wj-canvas-container" :style="{ flex: 1, position: 'relative', overflow: 'hidden', touchAction: 'none' }">
+    <div ref="canvasRef" class="wj-canvas-container" data-tour="map-canvas" :style="{ flex: 1, position: 'relative', overflow: 'hidden', touchAction: 'none' }">
 
       <!-- 每日简报（学生已登录且有课程） -->
       <DailyBriefCard
@@ -198,7 +199,7 @@
       </div>
 
       <!-- 图例 -->
-      <div v-if="!rootCause" :style="{ position: 'absolute', left: '20px', bottom: '20px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '12px', padding: '13px 16px', zIndex: 10, transition: 'background-color 0.35s, border-color 0.35s' }">
+      <div v-if="!rootCause" data-tour="map-legend" :style="{ position: 'absolute', left: '20px', bottom: '20px', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: '12px', padding: '13px 16px', zIndex: 10, transition: 'background-color 0.35s, border-color 0.35s' }">
         <div :style="{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }">
           <div :style="legendRow"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: 'var(--ok)' }"></span><span>已掌握</span></div>
           <div :style="legendRow"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: 'var(--ok)', opacity: 0.42 }"></span><span>正在遗忘</span></div>
@@ -208,6 +209,7 @@
         </div>
         <div :style="{ height: '1px', background: 'var(--line)', margin: '11px 0 9px' }"></div>
         <div :style="{ fontSize: '11.5px', color: 'var(--mut)' }">已掌握 {{ stats.ok }}<template v-if="stats.decaying"> · 正在遗忘 {{ stats.decaying }}</template> · 薄弱 {{ stats.warn }} · 未学 {{ stats.dim }}</div>
+        <div v-if="isTemplateMap" :style="{ marginTop: '8px', fontSize: '11px', color: 'var(--mut)', lineHeight: 1.5 }">示例染色 · 诊断后变成你的学情</div>
         <div v-show="width >= 640 && layout && currentUser" :style="{ marginTop: '7px', paddingTop: '7px', borderTop: '1px solid var(--line)', fontSize: '11.5px', color: 'var(--mut)', lineHeight: 1.55, maxWidth: '240px' }">滚轮缩放 · 拖动画布平移 · 右下角缩略图导航</div>
       </div>
 
@@ -287,6 +289,7 @@ import { fetchTodayReview } from '../api/review.js'
 import ReviewPanel from '../components/ReviewPanel.vue'
 import DailyBriefCard from '../components/DailyBriefCard.vue'
 import { createLatestRequest } from '../utils/latestRequest.js'
+import { withTemplateGraph } from '../onboarding/templateMastery.js'
 
 const serif = "'Noto Serif SC', serif"
 const { theme } = useTheme()
@@ -879,12 +882,14 @@ onUnmounted(() => {
   if (window.__wjColorMap?.loadReview === loadReview) delete window.__wjColorMap
 })
 
+const isTemplateMap = computed(() => !!withTemplateGraph(data.value)?.template)
+
 function buildLayout() {
   if (!data.value) {
     layout.value = null
     return
   }
-  layout.value = computeLayout(data.value)
+  layout.value = computeLayout(withTemplateGraph(data.value))
   setTimeout(() => {
     mapIn.value = true
     requestAnimationFrame(() => fitAll())

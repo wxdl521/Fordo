@@ -12,6 +12,7 @@
           ref="linkModeToggleRef"
           type="button"
           data-testid="link-mode-toggle"
+          data-tour="teacher-link"
           :aria-pressed="linkMode"
           @click="toggleLinkMode"
           @keydown="onLinkModeKeydown"
@@ -19,7 +20,7 @@
         >连线模式</button>
         <!-- 课程切换下拉（自定义，样式与下方两个菜单一致） -->
         <div :style="dropdownWrapStyle">
-          <button data-testid="course-switch" @click.stop="currentCourse && toggleMenu('switch')"
+          <button data-testid="course-switch" data-tour="teacher-course" @click.stop="currentCourse && toggleMenu('switch')"
                   :disabled="!currentCourse" :style="courseSwitchBtnStyle"
                   :aria-haspopup="true" :aria-expanded="openMenu === 'switch'" aria-controls="menu-switch">
             <span :style="courseSwitchNameStyle">{{ currentCourse?.name || '（暂无课程）' }}</span>
@@ -43,7 +44,7 @@
         <!-- 课程管理下拉：新增 / 删除 -->
         <div :style="dropdownWrapStyle">
           <button type="button" @click.stop="toggleMenu('course')" :style="importBtnHeaderStyle"
-                  :aria-haspopup="true" :aria-expanded="openMenu === 'course'" aria-controls="menu-course">课程管理 ▾</button>
+                  :aria-haspopup="true" :aria-expanded="openMenu === 'course'" aria-controls="menu-course" data-tour="teacher-course-admin">课程管理 ▾</button>
           <div v-if="openMenu === 'course'" id="menu-course" role="menu" :style="dropdownMenuStyle" @click.stop>
             <button type="button" role="menuitem" :style="dropdownItemStyle" @click="menuAction('addCourse')">+ 新增课程</button>
             <button type="button" role="menuitem"
@@ -63,7 +64,7 @@
         <!-- 图谱操作下拉：导入 / 抽取 / 预览 / 历史 -->
         <div :style="dropdownWrapStyle">
           <button type="button" @click.stop="toggleMenu('graph')" :style="importBtnHeaderStyle"
-                  :aria-haspopup="true" :aria-expanded="openMenu === 'graph'" aria-controls="menu-graph">图谱操作 ▾</button>
+                  :aria-haspopup="true" :aria-expanded="openMenu === 'graph'" aria-controls="menu-graph" data-tour="teacher-graph-ops">图谱操作 ▾</button>
           <div v-if="openMenu === 'graph'" id="menu-graph" role="menu" :style="dropdownMenuStyle" @click.stop>
             <button type="button" role="menuitem" :style="dropdownItemStyle" @click="menuAction('import')">导入图谱</button>
             <button type="button" role="menuitem" :style="dropdownItemStyle" @click="menuAction('syllabus')">从课程标准生成</button>
@@ -85,7 +86,7 @@
     <!-- 主体 -->
     <div :style="mainStyle">
       <!-- 图谱画布 -->
-      <div :style="{ ...canvasWrapStyle, cursor: linkMode ? 'crosshair' : 'default' }">
+      <div data-tour="teacher-canvas" :style="{ ...canvasWrapStyle, cursor: linkMode ? 'crosshair' : 'default' }">
         <div ref="chartEl" :style="chartStyle"></div>
         <div v-if="loading" :style="overlayStyle">加载中…</div>
         <div v-else-if="error" role="alert" :style="{ ...overlayStyle, color: 'var(--accent)' }">

@@ -87,7 +87,9 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
     private static final List<String> V18_TABLES = List.of("sys_config");
 
-    /** 空库跑完 V1…V18 后应有的业务表（V4–V6/V8–V9 为 ALTER；V7 增 ai_job；V10 增 agent_*；V11 增 eval_*；V12 增 student_memory；V13 增 RAG 三表；V14 增 plan 三表；V15 增 agent_report；V16 增 audit_log / login_log；V17 增班级三表；V18 增 sys_config）。 */
+    private static final List<String> V19_TABLES = List.of("review_pin");
+
+    /** 空库跑完 V1…V20 后应有的业务表（V4–V6/V8–V9 为 ALTER；V7 增 ai_job；V10 增 agent_*；V11 增 eval_*；V12 增 student_memory；V13 增 RAG 三表；V14 增 plan 三表；V15 增 agent_report；V16 增 audit_log / login_log；V17 增班级三表；V18 增 sys_config；V19 增 review_pin；V20 为 sys_user.email）。 */
     private static final List<String> EXPECTED_TABLES_AFTER_ALL;
 
     /** V9 完成后必须存在的完整命名外键矩阵（V9 42 个 + V3 2 个 + V5 1 个）。 */
@@ -163,6 +165,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         all.addAll(V16_TABLES);
         all.addAll(V17_TABLES);
         all.addAll(V18_TABLES);
+        all.addAll(V19_TABLES);
         EXPECTED_TABLES_AFTER_ALL = List.copyOf(all);
 
         List<String> fks = new ArrayList<>(EXPECTED_FKS_AFTER_V9);
@@ -202,18 +205,18 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     }
 
     @Test
-    @DisplayName("空库：V1…V18 建出全部表；二次 migrate 无变更且 checksum 稳定；V9 约束、V10–V18 就绪")
-    void emptyDatabase_appliesV1ThroughV18_idempotent() throws Exception {
+    @DisplayName("空库：V1…V20 建出全部表；二次 migrate 无变更且 checksum 稳定；V9 约束、V10–V20 就绪")
+    void emptyDatabase_appliesV1ThroughV20_idempotent() throws Exception {
         Flyway flyway = createFlyway();
 
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        assertThat(first.migrationsExecuted).isEqualTo(18);
+        assertThat(first.migrationsExecuted).isEqualTo(20);
 
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
         Map<String, Integer> checksumsAfterFirst = successChecksums();
         assertThat(checksumsAfterFirst.keySet())
-                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20");
         assertThat(checksumsAfterFirst.get("1")).isNotNull();
         assertThat(checksumsAfterFirst.get("2")).isNotNull();
         assertThat(checksumsAfterFirst.get("3")).isNotNull();
@@ -232,6 +235,8 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(checksumsAfterFirst.get("16")).isNotNull();
         assertThat(checksumsAfterFirst.get("17")).isNotNull();
         assertThat(checksumsAfterFirst.get("18")).isNotNull();
+        assertThat(checksumsAfterFirst.get("19")).isNotNull();
+        assertThat(checksumsAfterFirst.get("20")).isNotNull();
         assertThat(columnExists("companion_conversation", "summary_text")).isTrue();
         assertThat(columnExists("companion_conversation", "summary_through_message_id")).isTrue();
         assertThat(columnExists("companion_conversation", "distilled_through_message_id")).isTrue();
@@ -264,6 +269,9 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(constraintExists("tool_effect_key", "uk_effect")).isTrue();
         assertThat(columnExists("agent_report", "payload_json")).isTrue();
         assertThat(columnExists("agent_report", "period_start")).isTrue();
+        assertThat(columnExists("review_pin", "node_code")).isTrue();
+        assertThat(columnExists("sys_user", "email")).isTrue();
+        assertThat(constraintExists("sys_user", "uk_sys_user_email")).isTrue();
         assertThat(constraintExists("agent_report", "uk_report_period")).isTrue();
         assertThat(columnExists("audit_log", "operator_name")).isTrue();
         assertThat(columnExists("audit_log", "request_id")).isTrue();
@@ -289,7 +297,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
         Map<String, Integer> checksumsAfterSecond = successChecksums();
         assertThat(checksumsAfterSecond).isEqualTo(checksumsAfterFirst);
-        assertThat(countSuccessHistoryRows()).isEqualTo(18);
+        assertThat(countSuccessHistoryRows()).isEqualTo(20);
     }
 
     @Test
@@ -312,7 +320,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     }
 
     @Test
-    @DisplayName("遗留库：V1 结构 + baseline@2 接管，执行 V3…V18；二次 migrate 无变更")
+    @DisplayName("遗留库：V1 结构 + baseline@2 接管，执行 V3…V20；二次 migrate 无变更")
     void legacySchema_baselinesAtVersion2_onlyFutureMigrations() throws Exception {
         applyLegacyBaselineSchema();
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(BASELINE_TABLES);
@@ -320,13 +328,13 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         Flyway flyway = createFlyway();
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        // baseline@2 后执行 V3…V18
-        assertThat(first.migrationsExecuted).isEqualTo(16);
+        // baseline@2 后执行 V3…V20
+        assertThat(first.migrationsExecuted).isEqualTo(18);
 
         Map<String, Integer> history = successChecksums();
-        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3–V18
+        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3–V20
         assertThat(history.keySet()).doesNotContain("1");
-        assertThat(history.keySet()).contains("2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18");
+        assertThat(history.keySet()).contains("2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20");
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
         assertThat(columnExists("companion_conversation", "summary_text")).isTrue();
         assertThat(columnExists("companion_conversation", "distilled_through_message_id")).isTrue();

@@ -11,7 +11,8 @@ import { useSessionStore } from '../../store/session.js'
 vi.mock('../../api/user.js', () => ({
   login: vi.fn(),
   register: vi.fn(),
-  me: vi.fn()
+  me: vi.fn(),
+  sendEmailCode: vi.fn()
 }))
 
 vi.mock('../../api/course.js', () => ({
@@ -122,18 +123,19 @@ describe('Login registration security', () => {
     wrapper.unmount()
   })
 
-  it('register request body contains only username, password, realName', async () => {
+  it('register request body contains username, password, realName, email and code', async () => {
     const wrapper = await mountLogin()
     const switchBtn = wrapper.findAll('button').find((b) => b.text().includes('没有账号？注册'))
     await switchBtn.trigger('click')
     await nextTick()
 
     const inputs = wrapper.findAll('input')
-    // 用户名、密码、确认密码、真实姓名
     await inputs[0].setValue('new_student')
     await inputs[1].setValue('safe-password-123')
     await inputs[2].setValue('safe-password-123')
     await inputs[3].setValue('新学生')
+    await inputs[4].setValue('new@example.com')
+    await inputs[5].setValue('123456')
 
     const registerBtn = wrapper.findAll('button').find((b) => b.text().includes('注 册'))
     await registerBtn.trigger('click')
@@ -144,10 +146,27 @@ describe('Login registration security', () => {
     expect(payload).toEqual({
       username: 'new_student',
       password: 'safe-password-123',
-      realName: '新学生'
+      realName: '新学生',
+      email: 'new@example.com',
+      code: '123456'
     })
-    expect(Object.keys(payload).sort()).toEqual(['password', 'realName', 'username'])
+    expect(Object.keys(payload).sort()).toEqual(['code', 'email', 'password', 'realName', 'username'])
     expect(payload).not.toHaveProperty('role')
+    wrapper.unmount()
+  })
+
+  it('sends email code before register', async () => {
+    userApi.sendEmailCode.mockResolvedValue({})
+    const wrapper = await mountLogin()
+    const switchBtn = wrapper.findAll('button').find((b) => b.text().includes('没有账号？注册'))
+    await switchBtn.trigger('click')
+    await nextTick()
+    const inputs = wrapper.findAll('input')
+    await inputs[4].setValue('new@example.com')
+    const sendBtn = wrapper.findAll('button').find((b) => b.text().includes('发送验证码'))
+    await sendBtn.trigger('click')
+    await flushPromises()
+    expect(userApi.sendEmailCode).toHaveBeenCalledWith({ email: 'new@example.com' })
     wrapper.unmount()
   })
 

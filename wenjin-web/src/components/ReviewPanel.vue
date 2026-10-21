@@ -27,9 +27,12 @@
     </div>
 
     <div v-else class="wj-review-list">
-      <div v-for="item in items" :key="item.nodeId" class="wj-review-item">
+      <div v-for="item in items" :key="item.nodeId || item.nodeCode" class="wj-review-item">
         <div class="wj-review-item-main">
-          <div class="wj-review-item-name">{{ item.name }}</div>
+          <div class="wj-review-item-name">
+            {{ item.name }}
+            <span v-if="item.forced" class="wj-review-pin" title="AI 伴侣手动置顶">置顶</span>
+          </div>
           <div class="wj-review-item-meta">
             <span v-if="item.chapter">{{ item.chapter }}</span>
             <span v-if="item.chapter && item.nodeCode"> · </span>
@@ -270,6 +273,21 @@ function goPractice(item) {
   font-size: 14px;
   font-weight: 600;
   color: var(--ink);
+  line-height: 1.4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.wj-review-pin {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--acc);
+  background: var(--accSoft, color-mix(in srgb, var(--acc) 16%, transparent));
+  border: 1px solid var(--acc);
+  border-radius: 999px;
+  padding: 1px 8px;
   line-height: 1.4;
 }
 

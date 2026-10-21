@@ -23,6 +23,9 @@ public class SysUser {
 
     private String realName;
 
+    /** 注册邮箱；存量用户可为空 */
+    private String email;
+
     /** 1=teacher, 2=student, 3=admin */
     private Integer role;
 

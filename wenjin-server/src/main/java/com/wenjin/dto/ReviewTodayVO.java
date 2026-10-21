@@ -31,5 +31,9 @@ public class ReviewTodayVO {
         private Double urgency;
         /** 已审核且关联该节点的可用练习题数；0 时前端标「暂无练习题」 */
         private Integer availableQuestions;
+        /** 是否由伴侣 schedule_review 手动置顶 */
+        private Boolean forced;
+        /** 置顶模式 TODAY / ADVANCE；非置顶为 null */
+        private String pinMode;
     }
 }

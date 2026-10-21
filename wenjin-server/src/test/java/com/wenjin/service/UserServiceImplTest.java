@@ -13,6 +13,7 @@ import com.wenjin.mapper.SysUserMapper;
 import com.wenjin.security.TokenService;
 import com.wenjin.security.UserRole;
 import com.wenjin.service.impl.UserServiceImpl;
+import com.wenjin.service.VerificationCodeService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -32,10 +33,23 @@ class UserServiceImplTest {
     @Mock
     private SysUserMapper userMapper;
 
+    @Mock
+    private VerificationCodeService verificationCodeService;
+
     private final PasswordEncoder encoder = new BCryptPasswordEncoder();
     private final TokenService tokenService = new TokenService("test-secret", 3600);
     private UserServiceImpl service() {
-        return new UserServiceImpl(userMapper, encoder, tokenService);
+        return new UserServiceImpl(userMapper, encoder, tokenService, verificationCodeService);
+    }
+
+    private static RegisterRequest newRegister(String username) {
+        RegisterRequest req = new RegisterRequest();
+        req.setUsername(username);
+        req.setPassword("pass123");
+        req.setRealName("新同学");
+        req.setEmail(username + "@example.com");
+        req.setCode("123456");
+        return req;
     }
 
     @Test
@@ -46,9 +60,7 @@ class UserServiceImplTest {
             return 1;
         });
 
-        RegisterRequest req = new RegisterRequest();
-        req.setUsername("newuser");
-        req.setPassword("pass123");
+        RegisterRequest req = newRegister("newuser");
         req.setRealName("新同学");
 
         UserVO vo = service().register(req);
@@ -61,6 +73,8 @@ class UserServiceImplTest {
         assertThat(stored).startsWith("$2");           // 落库是 bcrypt 哈希
         assertThat(encoder.matches("pass123", stored)).isTrue();
         assertThat(captor.getValue().getRole()).isEqualTo(UserRole.STUDENT.code());
+        assertThat(captor.getValue().getEmail()).isEqualTo("newuser@example.com");
+        verify(verificationCodeService).consume("newuser@example.com", "123456");
     }
 
     /**
@@ -74,9 +88,7 @@ class UserServiceImplTest {
             return 1;
         });
 
-        RegisterRequest req = new RegisterRequest();
-        req.setUsername("new_student");
-        req.setPassword("safe-password-123");
+        RegisterRequest req = newRegister("new_student");
         req.setRealName("新学生");
         req.setIgnoredRole(1);
 
@@ -91,13 +103,24 @@ class UserServiceImplTest {
     @Test
     void register_duplicateUsername_throws() {
         when(userMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(1L);
-        RegisterRequest req = new RegisterRequest();
-        req.setUsername("demo_student");
+        RegisterRequest req = newRegister("demo_student");
         req.setPassword("pass");
         req.setRealName("test");
         assertThatThrownBy(() -> service().register(req))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("用户名已存在");
+        verify(verificationCodeService, never()).consume(any(), any());
+    }
+
+    @Test
+    void register_duplicateEmail_throws() {
+        when(userMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L, 1L);
+        RegisterRequest req = newRegister("another");
+        assertThatThrownBy(() -> service().register(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("该邮箱已被注册");
+        verify(userMapper, never()).insert(any(SysUser.class));
+        verify(verificationCodeService, never()).consume(any(), any());
     }
 
     @Test

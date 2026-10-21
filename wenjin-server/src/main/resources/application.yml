@@ -8,6 +8,8 @@ server:
 spring:
   application:
     name: wenjin-server
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.mail.MailSenderAutoConfiguration
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     # 数据库名 wenjin，请先用 schema.sql 建库建表（见根目录 README）
@@ -178,6 +180,19 @@ wenjin:
   auth:                                          # 令牌认证配置
     secret: ${WENJIN_AUTH_SECRET:dev-secret-change-me-in-prod}
     ttl-seconds: 604800                          # 令牌有效期 7 天
+  mail:                                          # 注册验证码（个人实名走 SES API 模板；企业才可用 SMTP）
+    enabled: ${WENJIN_MAIL_ENABLED:false}
+    host: ${WENJIN_MAIL_HOST:gz-smtp.qcloudmail.com}
+    port: ${WENJIN_MAIL_PORT:465}
+    username: ${WENJIN_MAIL_USERNAME:}
+    password: ${WENJIN_MAIL_PASSWORD:}
+    from: ${WENJIN_MAIL_FROM:fordo@mail.thingxue.com}
+    from-name: ${WENJIN_MAIL_FROM_NAME:问津项目组}
+    ses:
+      secret-id: ${WENJIN_SES_SECRET_ID:}
+      secret-key: ${WENJIN_SES_SECRET_KEY:}
+      region: ${WENJIN_SES_REGION:ap-guangzhou}
+      template-id: ${WENJIN_SES_TEMPLATE_ID:0}
   bootstrap:                                     # 一次性首个 ADMIN 引导（见 DEPLOYMENT.md 2.3.1）；生产禁止常开
     admin:
       enabled: ${WENJIN_BOOTSTRAP_ADMIN_ENABLED:false}
