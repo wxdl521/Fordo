@@ -60,6 +60,7 @@ final class ScenarioDriver {
         String executionError = null;
 
         EvalCaseOutcome outcome;
+        VirtualMachineError fatal = null;
         try {
             hooks.beforeScenario(scenario);
             for (ScriptTurn turn : scenario.script()) {
@@ -113,7 +114,11 @@ final class ScenarioDriver {
                     lastReply.text(),
                     List.copyOf(toolsCalled),
                     EvalCaseMetrics.fromSteps(allSteps, ttftMs, totalMs));
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
+            // Throwable（含 AssertionError 等 Error）：afterScenario 必须执行以恢复共享覆盖（如 maxToolCalls）
+            if (e instanceof VirtualMachineError vme) {
+                fatal = vme;
+            }
             outcome = EvalCaseOutcome.completed(
                     scenario.code(),
                     mode,
@@ -126,6 +131,9 @@ final class ScenarioDriver {
                     EvalCaseMetrics.fromSteps(allSteps, ttftMs, totalMs));
         }
         outcome = hooks.afterScenario(scenario, outcome);
+        if (fatal != null) {
+            throw fatal; // 已恢复共享状态；JVM 级错误不吞
+        }
         return new ScenarioRun(outcome, exchanges);
     }
 
