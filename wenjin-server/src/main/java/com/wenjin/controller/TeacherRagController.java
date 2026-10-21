@@ -1,5 +1,6 @@
 package com.wenjin.controller;
 
+import com.wenjin.audit.Audited;
 import com.wenjin.common.Result;
 import com.wenjin.dto.BatchApproveMapsRequest;
 import com.wenjin.dto.ChunkNodeMapPageVO;
@@ -56,6 +57,7 @@ public class TeacherRagController {
     }
 
     /** POST /api/teacher/rag/mappings/{id}/approve */
+    @Audited(action = "RAG_MAPPING_APPROVE", target = "RAG")
     @PostMapping("/mappings/{id}/approve")
     public Result<Void> approve(@PathVariable("id") @Positive Long id) {
         teacherRagService.approve(id);
@@ -63,6 +65,7 @@ public class TeacherRagController {
     }
 
     /** POST /api/teacher/rag/mappings/{id}/reject */
+    @Audited(action = "RAG_MAPPING_REJECT", target = "RAG")
     @PostMapping("/mappings/{id}/reject")
     public Result<Void> reject(@PathVariable("id") @Positive Long id) {
         teacherRagService.reject(id);
@@ -73,6 +76,7 @@ public class TeacherRagController {
      * POST /api/teacher/rag/mappings/batch-approve?courseId=
      * body: { nodeCode?, minConfidence? }
      */
+    @Audited(action = "RAG_MAPPING_BATCH_APPROVE", target = "RAG")
     @PostMapping("/mappings/batch-approve")
     public Result<Map<String, Integer>> batchApprove(
             @RequestParam @Positive Long courseId,

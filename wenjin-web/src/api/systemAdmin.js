@@ -1,7 +1,7 @@
 import { http } from './http.js'
 
 /**
- * 系统管理后台 · 用户管理接口（/api/system-admin，仅管理员，后端 AdminAuthInterceptor 保护）。
+ * 系统管理后台 · 用户管理 + 审计与监控接口（/api/system-admin，仅管理员，后端 AdminAuthInterceptor 保护）。
  * 所有函数返回已被 http 拦截器剥掉 Result 信封后的 data；失败 reject Error(message)。
  */
 
@@ -110,4 +110,46 @@ export function importUsers(file, config = {}) {
     ...config,
     headers: { 'Content-Type': 'multipart/form-data', ...(config.headers || {}) }
   })
+}
+
+// ───────── 审计与监控（A2） ─────────
+
+/**
+ * 操作日志分页列表（倒序）。
+ * @param {{ operator?: string, action?: string, success?: 0|1|'', from?: string, to?: string, page?: number, size?: number }} [query]
+ *   from / to 为 yyyy-MM-dd（含当日）；operator 为用户名模糊匹配
+ * @param {object} [config] axios 额外配置（如 signal）
+ * @returns {Promise<{ records: AuditLogVO[], total: number, page: number, size: number }>}
+ */
+export function listAuditLogs(query = {}, config = {}) {
+  return http.get('/system-admin/audit-logs', { ...config, params: compact(query) })
+}
+
+/**
+ * 库里出现过的操作类型（去重），供筛选下拉。
+ * @param {object} [config] axios 额外配置
+ * @returns {Promise<string[]>}
+ */
+export function listAuditActions(config = {}) {
+  return http.get('/system-admin/audit-logs/actions', config)
+}
+
+/**
+ * 登录日志分页列表（倒序，成功与失败都有）。
+ * @param {{ username?: string, success?: 0|1|'', from?: string, to?: string, page?: number, size?: number }} [query]
+ * @param {object} [config] axios 额外配置
+ * @returns {Promise<{ records: LoginLogVO[], total: number, page: number, size: number }>}
+ */
+export function listLoginLogs(query = {}, config = {}) {
+  return http.get('/system-admin/login-logs', { ...config, params: compact(query) })
+}
+
+/**
+ * 平台总览：用户 / 课程计数、近 N 天活跃趋势、AI 用量。
+ * @param {{ days?: number }} [query] days 默认 7，范围 1–30
+ * @param {object} [config] axios 额外配置
+ * @returns {Promise<AdminOverviewVO>}
+ */
+export function getOverview(query = {}, config = {}) {
+  return http.get('/system-admin/overview', { ...config, params: compact(query) })
 }

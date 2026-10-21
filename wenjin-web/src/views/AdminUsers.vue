@@ -1,16 +1,12 @@
 <template>
   <div data-testid="admin-users-page" :style="pageStyle">
     <!-- 标题 -->
-    <div :style="headingRowStyle">
-      <div>
-        <h1 :style="h1Style">用户管理</h1>
-        <div :style="subStyle">新建账号、启用 / 禁用、重置密码、调整教师与学生角色，或用 Excel 批量导入。</div>
-      </div>
-      <div :style="headingActionsStyle">
+    <AdminPageHeader title="用户管理" subtitle="新建账号、启用 / 禁用、重置密码、调整教师与学生角色，或用 Excel 批量导入。">
+      <template #actions>
         <button type="button" data-testid="admin-user-import" class="wj-admin-btn" :style="ghostBtnStyle" @click="openImport">批量导入</button>
         <button type="button" data-testid="admin-user-create" class="wj-admin-btn" :style="primaryBtnStyle" @click="openCreate">新建用户</button>
-      </div>
-    </div>
+      </template>
+    </AdminPageHeader>
 
     <!-- 筛选栏 -->
     <div data-testid="admin-users-filters" :style="filterBarStyle">
@@ -44,69 +40,59 @@
     <div v-if="loadError" data-testid="admin-users-error" role="alert" :style="errorStyle">{{ loadError }}</div>
 
     <!-- 表格 -->
-    <div :style="tableCardStyle">
-      <div :style="tableScrollStyle">
-        <table data-testid="admin-users-table" :style="usersTableStyle">
-          <thead>
-            <tr>
-              <th v-for="col in columns" :key="col.key" scope="col" :style="thStyle(col)">{{ col.label }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in records" :key="row.id" :data-testid="'admin-user-row-' + row.id" class="wj-admin-row">
-              <td :style="tdStyle">{{ row.id }}</td>
-              <td :style="{ ...tdStyle, fontWeight: 500 }">
-                {{ row.username }}
-                <span v-if="isSelf(row)" :style="selfTagStyle">你</span>
-              </td>
-              <td :style="tdStyle">{{ row.realName || '—' }}</td>
-              <td :style="tdStyle">
-                <span :data-testid="'admin-user-role-tag-' + row.id" :style="roleTagStyle(row.role)">{{ roleLabel(row.role) }}</span>
-              </td>
-              <td :style="tdStyle">
-                <span :data-testid="'admin-user-status-tag-' + row.id" :style="statusTagStyle(row.status)">{{ row.status === 1 ? '启用' : '禁用' }}</span>
-              </td>
-              <td :style="{ ...tdStyle, color: 'var(--mut)', whiteSpace: 'nowrap' }">{{ formatTime(row.createdAt) }}</td>
-              <td :style="tdStyle">
-                <div :style="actionsStyle">
-                  <button type="button" :data-testid="'admin-user-edit-' + row.id" class="wj-admin-act" :style="actBtnStyle" :disabled="busyId !== null" @click="openEdit(row)">编辑姓名</button>
-                  <button
-                    type="button"
-                    :data-testid="'admin-user-toggle-' + row.id"
-                    class="wj-admin-act"
-                    :style="row.status === 1 ? actDangerStyle : actOkStyle"
-                    :disabled="busyId !== null || (isSelf(row) && row.status === 1)"
-                    :title="isSelf(row) && row.status === 1 ? '不能禁用自己' : ''"
-                    @click="toggleStatus(row)"
-                  >{{ row.status === 1 ? '禁用' : '启用' }}</button>
-                  <button type="button" :data-testid="'admin-user-reset-' + row.id" class="wj-admin-act" :style="actBtnStyle" :disabled="busyId !== null" @click="openReset(row)">重置密码</button>
-                  <button
-                    v-if="row.role === 1 || row.role === 2"
-                    type="button"
-                    :data-testid="'admin-user-role-' + row.id"
-                    class="wj-admin-act"
-                    :style="actBtnStyle"
-                    :disabled="busyId !== null"
-                    @click="changeRole(row)"
-                  >{{ row.role === 1 ? '改为学生' : '改为教师' }}</button>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div v-if="loading" data-testid="admin-users-loading" :style="hintStyle">加载中…</div>
-      <div v-else-if="!loadError && records.length === 0" data-testid="admin-users-empty" :style="hintStyle">没有符合条件的用户。</div>
-    </div>
+    <AdminTableCard testid-prefix="admin-users" :loading="loading" :empty="!loadError && records.length === 0" empty-text="没有符合条件的用户。">
+      <table data-testid="admin-users-table" :style="usersTableStyle">
+        <thead>
+          <tr>
+            <th v-for="col in columns" :key="col.key" scope="col" :style="thStyle(col)">{{ col.label }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in records" :key="row.id" :data-testid="'admin-user-row-' + row.id" class="wj-admin-row">
+            <td :style="tdStyle">{{ row.id }}</td>
+            <td :style="{ ...tdStyle, fontWeight: 500 }">
+              {{ row.username }}
+              <span v-if="isSelf(row)" :style="selfTagStyle">你</span>
+            </td>
+            <td :style="tdStyle">{{ row.realName || '—' }}</td>
+            <td :style="tdStyle">
+              <span :data-testid="'admin-user-role-tag-' + row.id" :style="roleTagStyle(row.role)">{{ roleLabel(row.role) }}</span>
+            </td>
+            <td :style="tdStyle">
+              <span :data-testid="'admin-user-status-tag-' + row.id" :style="statusTagStyle(row.status)">{{ row.status === 1 ? '启用' : '禁用' }}</span>
+            </td>
+            <td :style="{ ...tdStyle, color: 'var(--mut)', whiteSpace: 'nowrap' }">{{ formatDateTime(row.createdAt) }}</td>
+            <td :style="tdStyle">
+              <div :style="actionsStyle">
+                <button type="button" :data-testid="'admin-user-edit-' + row.id" class="wj-admin-act" :style="actBtnStyle" :disabled="busyId !== null" @click="openEdit(row)">编辑姓名</button>
+                <button
+                  type="button"
+                  :data-testid="'admin-user-toggle-' + row.id"
+                  class="wj-admin-act"
+                  :style="row.status === 1 ? actDangerStyle : actOkStyle"
+                  :disabled="busyId !== null || (isSelf(row) && row.status === 1)"
+                  :title="isSelf(row) && row.status === 1 ? '不能禁用自己' : ''"
+                  @click="toggleStatus(row)"
+                >{{ row.status === 1 ? '禁用' : '启用' }}</button>
+                <button type="button" :data-testid="'admin-user-reset-' + row.id" class="wj-admin-act" :style="actBtnStyle" :disabled="busyId !== null" @click="openReset(row)">重置密码</button>
+                <button
+                  v-if="row.role === 1 || row.role === 2"
+                  type="button"
+                  :data-testid="'admin-user-role-' + row.id"
+                  class="wj-admin-act"
+                  :style="actBtnStyle"
+                  :disabled="busyId !== null"
+                  @click="changeRole(row)"
+                >{{ row.role === 1 ? '改为学生' : '改为教师' }}</button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </AdminTableCard>
 
     <!-- 分页 -->
-    <div v-if="total > 0" data-testid="admin-users-pagination" :style="paginationStyle">
-      <span data-testid="admin-users-total" :style="pageInfoStyle">共 {{ total }} 条</span>
-      <button type="button" data-testid="admin-users-prev" class="wj-admin-btn" :style="pageBtnStyle(page <= 1 || loading)" :disabled="page <= 1 || loading" @click="goPage(page - 1)">上一页</button>
-      <span data-testid="admin-users-page-info" :style="pageInfoStyle">第 {{ page }} / {{ totalPages }} 页</span>
-      <button type="button" data-testid="admin-users-next" class="wj-admin-btn" :style="pageBtnStyle(page >= totalPages || loading)" :disabled="page >= totalPages || loading" @click="goPage(page + 1)">下一页</button>
-    </div>
+    <AdminPager testid-prefix="admin-users" :total="total" :page="page" :page-size="PAGE_SIZE" :loading="loading" @change="goPage" />
 
     <!-- 弹窗：新建用户 -->
     <AdminModal v-if="modal === 'create'" title="新建用户" testid="admin-user-create-modal" @close="closeModal">
@@ -221,8 +207,26 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { onBeforeUnmount, reactive, ref } from 'vue'
 import AdminModal from '../components/AdminModal.vue'
+import AdminPageHeader from '../components/admin/AdminPageHeader.vue'
+import AdminPager from '../components/admin/AdminPager.vue'
+import AdminTableCard from '../components/admin/AdminTableCard.vue'
+import {
+  errorStyle,
+  fieldStyle,
+  filterBarStyle,
+  ghostBtnStyle,
+  noticeStyle,
+  pageStyle,
+  primaryBtnStyle,
+  tableStyle,
+  tagBase,
+  tdStyle,
+  thStyle
+} from '../components/admin/adminStyle.js'
+import { formatDateTime, onEnter } from '../components/admin/adminUtils.js'
+import { usePagedList } from '../components/admin/usePagedList.js'
 import { useSessionStore } from '../store/session.js'
 import {
   changeUserRole,
@@ -235,7 +239,6 @@ import {
   updateUser
 } from '../api/systemAdmin.js'
 import { saveBlob } from '../utils/downloadBlob.js'
-import { createLatestRequest } from '../utils/latestRequest.js'
 import { ROLE_ADMIN, ROLE_STUDENT, ROLE_TEACHER, roleLabel } from '../utils/roles.js'
 
 const session = useSessionStore()
@@ -255,21 +258,25 @@ const columns = [
 
 // ── 列表状态 ──
 // draft 是输入框里正在编辑的筛选；applied 是上一次点「搜索」时生效的筛选（翻页沿用它）
-const draft = reactive({ keyword: '', role: '', status: '' })
-const applied = ref({ keyword: '', role: '', status: '' })
-const page = ref(1)
-const data = ref(null)
-const loading = ref(false)
-const loadError = ref('')
 const notice = ref('')
 const actionError = ref('')
 const busyId = ref(null)
-const listRequest = createLatestRequest()
 let disposed = false
 
-const records = computed(() => data.value?.records || [])
-const total = computed(() => data.value?.total || 0)
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
+const { draft, page, loading, loadError, records, total, load, search: runSearch, goPage } = usePagedList({
+  initialFilters: { keyword: '', role: '', status: '' },
+  pageSize: PAGE_SIZE,
+  errorMessage: '加载用户列表失败',
+  fetchPage: listUsers,
+  toQuery({ keyword, role, status }) {
+    const query = {}
+    const kw = String(keyword || '').trim()
+    if (kw) query.keyword = kw
+    if (role !== '' && role != null) query.role = Number(role)
+    if (status !== '' && status != null) query.status = Number(status)
+    return query
+  }
+})
 
 // ── 弹窗状态 ──
 const modal = ref(null) // 'create' | 'edit' | 'reset' | 'import' | null
@@ -289,10 +296,6 @@ const importResult = ref(null)
 const templateLoading = ref(false)
 
 // ── 工具 ──
-function isAbortError(err) {
-  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED'
-}
-
 function displayName(row) {
   return row.realName ? `${row.realName}（${row.username}）` : row.username
 }
@@ -301,76 +304,15 @@ function isSelf(row) {
   return session.userId != null && row.id === session.userId
 }
 
-function pad(n) {
-  return String(n).padStart(2, '0')
-}
-
-function formatTime(value) {
-  if (!value) return '—'
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return String(value)
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-/** 回车提交；输入法组字中的回车（选词）不算。 */
-function onEnter(event, fn) {
-  if (event.isComposing || event.keyCode === 229) return
-  fn()
-}
-
 function clearFeedback() {
   notice.value = ''
   actionError.value = ''
 }
 
 // ── 加载 ──
-function buildQuery() {
-  const query = { page: page.value, size: PAGE_SIZE }
-  const { keyword, role, status } = applied.value
-  const kw = String(keyword || '').trim()
-  if (kw) query.keyword = kw
-  if (role !== '' && role != null) query.role = Number(role)
-  if (status !== '' && status != null) query.status = Number(status)
-  return query
-}
-
-async function load() {
-  if (disposed) return
-  const request = listRequest.next()
-  loading.value = true
-  loadError.value = ''
-  try {
-    const res = await listUsers(buildQuery(), { signal: request.signal })
-    if (!request.isCurrent()) return
-    data.value = {
-      records: Array.isArray(res?.records) ? res.records : [],
-      total: Number(res?.total) || 0
-    }
-    // 当前页被清空（如禁用后在「仅启用」筛选下少了一页）→ 退回最后一页
-    if (data.value.records.length === 0 && page.value > 1 && data.value.total > 0) {
-      page.value = Math.max(1, Math.ceil(data.value.total / PAGE_SIZE))
-      await load()
-      return
-    }
-  } catch (err) {
-    if (!request.isCurrent() || isAbortError(err)) return
-    loadError.value = err?.message || '加载用户列表失败'
-  } finally {
-    if (request.isCurrent()) loading.value = false
-  }
-}
-
 function search() {
   clearFeedback()
-  applied.value = { keyword: draft.keyword, role: draft.role, status: draft.status }
-  page.value = 1
-  return load()
-}
-
-function goPage(next) {
-  if (next < 1 || next > totalPages.value || next === page.value) return
-  page.value = next
-  return load()
+  return runSearch()
 }
 
 // ── 行内操作 ──
@@ -649,153 +591,13 @@ async function submitImport() {
 
 onBeforeUnmount(() => {
   disposed = true
-  listRequest.cancel()
 })
 
 load()
 
-// ── 样式 ──
-const pageStyle = {
-  padding: '24px clamp(16px, 3vw, 32px) 48px',
-  maxWidth: '1280px',
-  boxSizing: 'border-box'
-}
-
-const headingRowStyle = {
-  display: 'flex',
-  alignItems: 'flex-start',
-  justifyContent: 'space-between',
-  gap: '16px',
-  flexWrap: 'wrap',
-  marginBottom: '18px'
-}
-
-const h1Style = {
-  margin: '0 0 6px',
-  fontFamily: "'Noto Serif SC', serif",
-  fontSize: '22px',
-  fontWeight: 600,
-  letterSpacing: '1px'
-}
-
-const subStyle = {
-  fontSize: '12.5px',
-  color: 'var(--mut)'
-}
-
-const headingActionsStyle = {
-  display: 'flex',
-  gap: '10px'
-}
-
-const filterBarStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '10px',
-  flexWrap: 'wrap',
-  marginBottom: '14px'
-}
-
-const fieldStyle = {
-  height: '34px',
-  boxSizing: 'border-box',
-  padding: '0 10px',
-  background: 'var(--card)',
-  color: 'var(--ink)',
-  border: '1px solid var(--line)',
-  borderRadius: '8px',
-  fontSize: '13px',
-  outline: 'none',
-  width: '100%',
-  transition: 'border-color 0.18s, background-color 0.35s'
-}
-
-const primaryBtnStyle = {
-  height: '34px',
-  padding: '0 18px',
-  background: 'var(--acc)',
-  border: 'none',
-  borderRadius: '8px',
-  color: '#FFFDF8',
-  fontSize: '13px',
-  fontWeight: 500,
-  cursor: 'pointer',
-  whiteSpace: 'nowrap'
-}
-
-const ghostBtnStyle = {
-  height: '34px',
-  padding: '0 16px',
-  background: 'transparent',
-  border: '1px solid var(--line)',
-  borderRadius: '8px',
-  color: 'var(--ink)',
-  fontSize: '13px',
-  cursor: 'pointer',
-  whiteSpace: 'nowrap'
-}
-
-const noticeStyle = {
-  fontSize: '13px',
-  color: 'var(--ok)',
-  background: 'var(--okSoft)',
-  border: '1px solid var(--ok)',
-  borderRadius: '8px',
-  padding: '8px 12px',
-  margin: '0 0 12px'
-}
-
-const errorStyle = {
-  fontSize: '13px',
-  color: 'var(--acc)',
-  background: 'var(--accSoft)',
-  border: '1px solid var(--acc)',
-  borderRadius: '8px',
-  padding: '8px 12px',
-  margin: '0 0 12px'
-}
-
-const tableCardStyle = {
-  background: 'var(--card)',
-  border: '1px solid var(--line)',
-  borderRadius: '12px',
-  overflow: 'hidden',
-  transition: 'background-color 0.35s, border-color 0.35s'
-}
-
-const tableScrollStyle = {
-  overflowX: 'auto'
-}
-
-const tableStyle = {
-  width: '100%',
-  borderCollapse: 'collapse',
-  fontSize: '13px'
-}
-
+// ── 样式（共用部分见 components/admin/adminStyle.js） ──
 // 主表格有最小宽度：窄屏下由外层 overflow-x 横向滚动，而不是把姓名列挤成竖排
 const usersTableStyle = { ...tableStyle, minWidth: '880px' }
-
-function thStyle(col) {
-  return {
-    textAlign: 'left',
-    padding: '10px 14px',
-    fontSize: '12px',
-    fontWeight: 500,
-    color: 'var(--mut)',
-    background: 'var(--card2)',
-    borderBottom: '1px solid var(--line)',
-    whiteSpace: 'nowrap',
-    width: col.width || 'auto'
-  }
-}
-
-const tdStyle = {
-  padding: '10px 14px',
-  borderBottom: '1px solid var(--line)',
-  verticalAlign: 'middle',
-  color: 'var(--ink)'
-}
 
 const actionsStyle = {
   display: 'flex',
@@ -828,16 +630,6 @@ const selfTagStyle = {
   padding: '0 7px'
 }
 
-function tagBase() {
-  return {
-    display: 'inline-block',
-    fontSize: '11.5px',
-    borderRadius: '999px',
-    padding: '2px 10px',
-    whiteSpace: 'nowrap'
-  }
-}
-
 function roleTagStyle(role) {
   if (role === ROLE_ADMIN) return { ...tagBase(), color: 'var(--acc)', background: 'var(--accSoft)' }
   if (role === ROLE_TEACHER) return { ...tagBase(), color: 'var(--ok)', background: 'var(--okSoft)' }
@@ -847,37 +639,6 @@ function roleTagStyle(role) {
 function statusTagStyle(status) {
   if (status === 1) return { ...tagBase(), color: 'var(--ok)', background: 'var(--okSoft)' }
   return { ...tagBase(), color: 'var(--mut)', background: 'var(--card2)', border: '1px solid var(--line)' }
-}
-
-const hintStyle = {
-  textAlign: 'center',
-  padding: '36px 16px',
-  fontSize: '13px',
-  color: 'var(--mut)'
-}
-
-const paginationStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'flex-end',
-  gap: '12px',
-  marginTop: '14px'
-}
-
-const pageInfoStyle = {
-  fontSize: '12.5px',
-  color: 'var(--mut)'
-}
-
-function pageBtnStyle(disabled) {
-  return {
-    ...ghostBtnStyle,
-    height: '30px',
-    padding: '0 14px',
-    fontSize: '12.5px',
-    opacity: disabled ? 0.5 : 1,
-    cursor: disabled ? 'not-allowed' : 'pointer'
-  }
 }
 
 // ── 弹窗内样式 ──
@@ -941,41 +702,3 @@ const errorTableWrapStyle = {
   borderRadius: '8px'
 }
 </script>
-
-<style scoped>
-.wj-admin-field:focus {
-  border-color: var(--acc) !important;
-}
-.wj-admin-field option {
-  background: var(--card);
-  color: var(--ink);
-}
-.wj-admin-file::file-selector-button {
-  height: 30px;
-  margin-right: 10px;
-  padding: 0 12px;
-  background: var(--card2);
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  font-size: 12.5px;
-  cursor: pointer;
-}
-.wj-admin-btn:not(:disabled):hover {
-  filter: brightness(1.06);
-}
-.wj-admin-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed !important;
-}
-.wj-admin-act:not(:disabled):hover {
-  background: var(--card2) !important;
-}
-.wj-admin-act:disabled {
-  opacity: 0.45;
-  cursor: not-allowed !important;
-}
-.wj-admin-row:hover td {
-  background: var(--card2);
-}
-</style>

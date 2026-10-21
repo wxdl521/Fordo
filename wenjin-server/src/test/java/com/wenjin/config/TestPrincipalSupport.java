@@ -23,6 +23,9 @@ public final class TestPrincipalSupport {
         PrincipalLoader loader = mock(PrincipalLoader.class);
         when(loader.load(anyLong())).thenAnswer(inv ->
                 Optional.of(new CurrentPrincipal(inv.getArgument(0), UserRole.STUDENT)));
+        // AuthContextInterceptor 走带令牌签发时间的重载
+        when(loader.load(anyLong(), anyLong())).thenAnswer(inv ->
+                Optional.of(new CurrentPrincipal(inv.getArgument(0), UserRole.STUDENT)));
         return loader;
     }
 

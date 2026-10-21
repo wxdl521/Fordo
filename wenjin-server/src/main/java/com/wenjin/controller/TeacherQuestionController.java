@@ -1,5 +1,6 @@
 package com.wenjin.controller;
 
+import com.wenjin.audit.Audited;
 import com.wenjin.common.Result;
 import com.wenjin.dto.QuestionReviewRequest;
 import com.wenjin.dto.ReviewAllRequest;
@@ -56,6 +57,7 @@ public class TeacherQuestionController {
      * @param req      审核请求（ids + action: pass/reject）
      * @return 受影响行数
      */
+    @Audited(action = "QUESTION_REVIEW", target = "QUESTION")
     @PostMapping("/review")
     public Result<Integer> review(
             @RequestParam @Positive Long courseId,
@@ -73,6 +75,7 @@ public class TeacherQuestionController {
      * @param req      全量审批请求（status/conf/nodeCode 筛选 + action: pass/reject）
      * @return 受影响行数
      */
+    @Audited(action = "QUESTION_REVIEW_ALL", target = "QUESTION")
     @PostMapping("/review-all")
     public Result<Integer> reviewAll(
             @RequestParam @Positive Long courseId,

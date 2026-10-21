@@ -57,7 +57,8 @@ async function mountLogin() {
     routes: [
       { path: '/', name: 'login', component: Login },
       { path: '/teacher/graph', name: 'teacher', component: { template: '<div />' } },
-      { path: '/admin', name: 'admin', component: { template: '<div />' } },
+      { path: '/admin', name: 'admin', redirect: '/admin/overview' },
+      { path: '/admin/overview', name: 'admin-overview', component: { template: '<div />' } },
       { path: '/map', name: 'map', component: { template: '<div />' } },
       { path: '/diagnostic', name: 'diagnostic', component: { template: '<div />' } },
       { path: '/growth', name: 'growth', component: { template: '<div />' } }
@@ -272,7 +273,7 @@ describe('Login admin routing', () => {
     localStorage.clear()
   })
 
-  it('sends an administrator straight to /admin after login, skipping the course page data', async () => {
+  it('sends an administrator straight to the admin overview after login, skipping the course page data', async () => {
     userApi.login.mockResolvedValue({ token: 'admin-token', user: adminUser })
 
     const wrapper = await mountLogin()
@@ -282,7 +283,7 @@ describe('Login admin routing', () => {
     await wrapper.find('.wj-btn-acc').trigger('click')
     await flushPromises()
 
-    expect(wrapper.vm.$router.currentRoute.value.path).toBe('/admin')
+    expect(wrapper.vm.$router.currentRoute.value.path).toBe('/admin/overview')
     expect(courseApi.getMyCourses).not.toHaveBeenCalled()
     expect(useSessionStore().isAdmin).toBe(true)
     wrapper.unmount()

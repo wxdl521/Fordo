@@ -1,0 +1,43 @@
+/* 管理后台各页共用的交互态样式（类名统一带 wj-admin- 前缀，避免污染其它页面）。
+   静态样式走内联 style + CSS 变量；hover / focus / disabled 这类伪类写在这里。 */
+.wj-admin-field {
+  color-scheme: light;
+}
+:root[data-theme='ink'] .wj-admin-field {
+  color-scheme: dark;
+}
+.wj-admin-field:focus {
+  border-color: var(--acc) !important;
+}
+.wj-admin-field option {
+  background: var(--card);
+  color: var(--ink);
+}
+.wj-admin-file::file-selector-button {
+  height: 30px;
+  margin-right: 10px;
+  padding: 0 12px;
+  background: var(--card2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.wj-admin-btn:not(:disabled):hover {
+  filter: brightness(1.06);
+}
+.wj-admin-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed !important;
+}
+.wj-admin-act:not(:disabled):hover {
+  background: var(--card2) !important;
+}
+.wj-admin-act:disabled {
+  opacity: 0.45;
+  cursor: not-allowed !important;
+}
+.wj-admin-row:hover td {
+  background: var(--card2);
+}

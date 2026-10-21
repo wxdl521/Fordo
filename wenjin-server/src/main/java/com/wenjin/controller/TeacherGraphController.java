@@ -1,5 +1,6 @@
 package com.wenjin.controller;
 
+import com.wenjin.audit.Audited;
 import com.wenjin.common.Result;
 import com.wenjin.dto.EdgeCreateRequest;
 import com.wenjin.dto.NodeUpsertRequest;
@@ -46,6 +47,7 @@ public class TeacherGraphController {
     /**
      * 创建边（归属 + 自环/重复/前置环路校验）
      */
+    @Audited(action = "GRAPH_EDGE_CREATE", target = "GRAPH")
     @PostMapping("/edges")
     public Result<Long> createEdge(@RequestParam @Positive Long courseId,
                                    @Valid @RequestBody EdgeCreateRequest req) {
@@ -56,6 +58,7 @@ public class TeacherGraphController {
     /**
      * 采纳边（去除待复核标记）
      */
+    @Audited(action = "GRAPH_EDGE_ACCEPT", target = "GRAPH")
     @PostMapping("/edges/{id}/accept")
     public Result<Void> acceptEdge(@PathVariable @Positive Long id) {
         teacherGraphService.acceptEdge(id);
@@ -65,6 +68,7 @@ public class TeacherGraphController {
     /**
      * 驳回边（删除）
      */
+    @Audited(action = "GRAPH_EDGE_REJECT", target = "GRAPH")
     @PostMapping("/edges/{id}/reject")
     public Result<Void> rejectEdge(@PathVariable @Positive Long id) {
         teacherGraphService.rejectEdge(id);
@@ -74,6 +78,7 @@ public class TeacherGraphController {
     /**
      * 创建节点
      */
+    @Audited(action = "GRAPH_NODE_CREATE", target = "GRAPH")
     @PostMapping("/nodes")
     public Result<Long> createNode(@RequestParam @Positive Long courseId,
                                    @Valid @RequestBody NodeUpsertRequest req) {
@@ -84,6 +89,7 @@ public class TeacherGraphController {
     /**
      * 更新节点
      */
+    @Audited(action = "GRAPH_NODE_UPDATE", target = "GRAPH")
     @PutMapping("/nodes/{id}")
     public Result<Void> updateNode(@PathVariable @Positive Long id,
                                    @Valid @RequestBody NodeUpsertRequest req) {
@@ -94,6 +100,7 @@ public class TeacherGraphController {
     /**
      * 删除节点（级联删除边和题目关联）
      */
+    @Audited(action = "GRAPH_NODE_DELETE", target = "GRAPH")
     @DeleteMapping("/nodes/{id}")
     public Result<Void> deleteNode(@PathVariable @Positive Long id) {
         teacherGraphService.deleteNode(id);

@@ -7,6 +7,7 @@ import com.wenjin.mapper.SysUserMapper;
 import com.wenjin.security.CurrentPrincipal;
 import com.wenjin.security.TokenService;
 import com.wenjin.security.UserRole;
+import com.wenjin.service.LoginLogService;
 import com.wenjin.service.UserService;
 import com.wenjin.service.impl.UserServiceImpl;
 import org.junit.jupiter.api.AfterEach;
@@ -40,6 +41,8 @@ class UserControllerSecurityTest {
 
     @Mock
     private SysUserMapper userMapper;
+    @Mock
+    private LoginLogService loginLogService;
 
     private final PasswordEncoder encoder = new BCryptPasswordEncoder();
     private final TokenService tokenService = new TokenService("test-secret", 3600);
@@ -48,7 +51,7 @@ class UserControllerSecurityTest {
     @BeforeEach
     void setup() {
         UserService userService = new UserServiceImpl(userMapper, encoder, tokenService);
-        mvc = MockMvcBuilders.standaloneSetup(new UserController(userService))
+        mvc = MockMvcBuilders.standaloneSetup(new UserController(userService, loginLogService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -120,7 +123,7 @@ class UserControllerSecurityTest {
     void publicUserById_isNotMapped() throws Exception {
         // 不挂 GlobalExceptionHandler，避免 NoHandlerFound 被兜底成 500
         UserService userService = new UserServiceImpl(userMapper, encoder, tokenService);
-        MockMvc bare = MockMvcBuilders.standaloneSetup(new UserController(userService)).build();
+        MockMvc bare = MockMvcBuilders.standaloneSetup(new UserController(userService, loginLogService)).build();
         bare.perform(get("/api/user/2"))
                 .andExpect(status().isNotFound());
     }

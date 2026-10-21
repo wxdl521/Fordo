@@ -22,7 +22,10 @@ const TeacherReports = () => import('../views/TeacherReports.vue')
 const GraphExtractReview = () => import('../views/GraphExtractReview.vue')
 const NodePractice = () => import('../views/NodePractice.vue')
 const AdminLayout = () => import('../layouts/AdminLayout.vue')
+const AdminOverview = () => import('../views/AdminOverview.vue')
 const AdminUsers = () => import('../views/AdminUsers.vue')
+const AdminAuditLogs = () => import('../views/AdminAuditLogs.vue')
+const AdminLoginLogs = () => import('../views/AdminLoginLogs.vue')
 
 const routes = [
   { path: '/', name: 'login', component: Login, meta: { title: '登录 / 课程选择', public: true } },
@@ -49,8 +52,11 @@ const routes = [
     path: '/admin',
     component: AdminLayout,
     children: [
-      { path: '', redirect: '/admin/users' },
-      { path: 'users', name: 'admin-users', component: AdminUsers, meta: { title: '用户管理' } }
+      { path: '', redirect: '/admin/overview' },
+      { path: 'overview', name: 'admin-overview', component: AdminOverview, meta: { title: '平台总览' } },
+      { path: 'users', name: 'admin-users', component: AdminUsers, meta: { title: '用户管理' } },
+      { path: 'audit-logs', name: 'admin-audit-logs', component: AdminAuditLogs, meta: { title: '操作日志' } },
+      { path: 'login-logs', name: 'admin-login-logs', component: AdminLoginLogs, meta: { title: '登录日志' } }
     ]
   },
 ]

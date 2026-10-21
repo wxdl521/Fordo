@@ -33,13 +33,21 @@ describe('admin route guard', () => {
     session._refreshPromise = null
   })
 
-  it('registers /admin with a nested users page and a default redirect', () => {
+  it('registers /admin with nested overview / users / audit / login-log pages and a default redirect', () => {
     const routes = router.getRoutes()
     expect(routes.find((r) => r.path === '/admin')).toBeTruthy()
-    const users = routes.find((r) => r.name === 'admin-users')
-    expect(users).toBeTruthy()
-    expect(users.path).toBe('/admin/users')
-    expect(users.meta.title).toBe('用户管理')
+    const expected = [
+      ['admin-overview', '/admin/overview', '平台总览'],
+      ['admin-users', '/admin/users', '用户管理'],
+      ['admin-audit-logs', '/admin/audit-logs', '操作日志'],
+      ['admin-login-logs', '/admin/login-logs', '登录日志']
+    ]
+    for (const [name, path, title] of expected) {
+      const route = routes.find((r) => r.name === name)
+      expect(route, name).toBeTruthy()
+      expect(route.path).toBe(path)
+      expect(route.meta.title).toBe(title)
+    }
   })
 
   it('sends an anonymous visitor back to the login page', async () => {
@@ -51,16 +59,25 @@ describe('admin route guard', () => {
   it.each([
     ['student', { id: 3, role: 2 }],
     ['teacher', { id: 2, role: 1 }]
-  ])('kicks a %s out of /admin and /admin/users to /', async (_label, user) => {
+  ])('kicks a %s out of every /admin page to /', async (_label, user) => {
     signIn(user)
-    expect(await visit('/admin')).toBe('/')
-    expect(await visit('/admin/users')).toBe('/')
+    for (const path of ['/admin', '/admin/overview', '/admin/users', '/admin/audit-logs', '/admin/login-logs']) {
+      expect(await visit(path), path).toBe('/')
+    }
   })
 
-  it('lets an administrator in; /admin lands on /admin/users', async () => {
+  it('lets an administrator in; /admin lands on /admin/overview', async () => {
     signIn({ id: 1, role: 3, username: 'root', realName: '管理员' })
-    expect(await visit('/admin')).toBe('/admin/users')
-    expect(router.currentRoute.value.name).toBe('admin-users')
+    expect(await visit('/admin')).toBe('/admin/overview')
+    expect(router.currentRoute.value.name).toBe('admin-overview')
+  })
+
+  it('lets an administrator open the audit and login log pages directly', async () => {
+    signIn({ id: 1, role: 3, username: 'root', realName: '管理员' })
+    expect(await visit('/admin/audit-logs')).toBe('/admin/audit-logs')
+    expect(router.currentRoute.value.name).toBe('admin-audit-logs')
+    expect(await visit('/admin/login-logs')).toBe('/admin/login-logs')
+    expect(router.currentRoute.value.name).toBe('admin-login-logs')
   })
 
   it('keeps the existing teacher-side rule: admins and teachers pass, students do not', async () => {

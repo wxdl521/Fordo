@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════
 --  问津 · 知识图谱驱动的个性化学习导航系统
---  本地空库重建快照（当前最终 DDL，含 V3–V15；共 35 张业务表）
+--  本地空库重建快照（当前最终 DDL，含 V3–V16；共 37 张业务表）
 --
 --  ⚠ 仅本地空库 / 会删数据 / 生产禁用
 --    · 本脚本含 DROP TABLE IF EXISTS，会清空目标库业务表数据。
---    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V15）。
+--    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V16）。
 --    · 新增版本化迁移（Vn）后，必须把最终 DDL 同步回本文件，保持本地快照一致。
 --    · 应用启动默认 spring.flyway.enabled=false（WENJIN_FLYWAY_ENABLED），
 --      普通应用账号只有 DML；发布流水线用 migrator 凭据单独跑迁移作业。
@@ -20,7 +20,8 @@
 --    8. V13 增 doc_source / doc_chunk / chunk_node_map（M8 RAG；FULLTEXT ngram）。
 --    9. V14 增 agent_plan / agent_plan_task / tool_effect_key（M10 规划）。
 --   10. V15 增 agent_report（M11 多智能体周报 / 抽查，可选）。
---   11. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--   11. V16 增 audit_log / login_log（管理后台审计与监控，无物理 FK）；sys_user 增 token_valid_after。
+--   12. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -42,6 +43,7 @@ CREATE TABLE `sys_user` (
     `status`     TINYINT      NOT NULL DEFAULT 1      COMMENT '状态：1=正常, 0=禁用',
     `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP                          COMMENT '创建时间',
     `updated_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `token_valid_after` DATETIME(3) NULL                 COMMENT '早于此刻签发的令牌一律无效（重置密码时写入）【V16】',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_username` (`username`),
     CONSTRAINT `chk_sys_user_role` CHECK (`role` IN (1, 2, 3))
@@ -649,5 +651,44 @@ CREATE TABLE `agent_report` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_report_period` (`course_id`, `kind`, `period_start`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='多智能体产出【V15】';
+
+-- ───────────────────────────── 组：审计与监控【V16】─────────────────────────────
+
+DROP TABLE IF EXISTS `audit_log`;
+CREATE TABLE `audit_log` (
+    `id`            BIGINT       NOT NULL AUTO_INCREMENT COMMENT '审计日志ID',
+    `operator_id`   BIGINT       NULL                    COMMENT '操作人 sys_user.id；匿名为 NULL',
+    `operator_name` VARCHAR(64)  NULL                    COMMENT '冗余用户名，防用户删改后无从追溯',
+    `operator_role` TINYINT      NULL                    COMMENT '操作人角色：1=教师, 2=学生, 3=管理员',
+    `action`        VARCHAR(64)  NOT NULL                COMMENT '动作编码，如 USER_CREATE / COURSE_DELETE',
+    `target_type`   VARCHAR(32)  NULL                    COMMENT '对象类型：USER/COURSE/GRAPH/QUESTION/RAG',
+    `target_id`     VARCHAR(64)  NULL                    COMMENT '对象ID，取自路径变量 id/courseId/draftId',
+    `http_method`   VARCHAR(8)   NOT NULL                COMMENT 'HTTP 方法',
+    `path`          VARCHAR(255) NOT NULL                COMMENT '请求路径（不含查询串）',
+    `http_status`   INT          NOT NULL                COMMENT 'HTTP 响应状态码',
+    `success`       TINYINT      NOT NULL                COMMENT '1=状态码<400 且无异常, 0=失败',
+    `ip`            VARCHAR(64)  NULL                    COMMENT '客户端 IP（优先 X-Forwarded-For 首段）',
+    `request_id`    VARCHAR(64)  NULL                    COMMENT '请求ID（关联 RequestIdFilter）',
+    `created_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_audit_time` (`created_at`),
+    KEY `idx_audit_operator` (`operator_id`, `created_at`),
+    KEY `idx_audit_action` (`action`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='关键操作审计日志【V16】';
+
+DROP TABLE IF EXISTS `login_log`;
+CREATE TABLE `login_log` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '登录日志ID',
+    `user_id`     BIGINT       NULL                    COMMENT '用户ID；用户名不存在时为 NULL',
+    `username`    VARCHAR(64)  NOT NULL                COMMENT '尝试登录的用户名（截断到64）',
+    `success`     TINYINT      NOT NULL                COMMENT '1=成功, 0=失败',
+    `fail_reason` VARCHAR(64)  NULL                    COMMENT '失败原因：BAD_CREDENTIALS / DISABLED',
+    `ip`          VARCHAR(64)  NULL                    COMMENT '客户端 IP（优先 X-Forwarded-For 首段）',
+    `user_agent`  VARCHAR(255) NULL                    COMMENT '浏览器 User-Agent（截断到255）',
+    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '登录时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_login_time` (`created_at`),
+    KEY `idx_login_user` (`user_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='登录日志【V16】';
 
 SET FOREIGN_KEY_CHECKS = 1;

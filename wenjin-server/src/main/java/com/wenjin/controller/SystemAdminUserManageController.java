@@ -1,5 +1,6 @@
 package com.wenjin.controller;
 
+import com.wenjin.audit.Audited;
 import com.wenjin.common.Result;
 import com.wenjin.dto.AdminChangeStatusRequest;
 import com.wenjin.dto.AdminCreateUserRequest;
@@ -63,12 +64,14 @@ public class SystemAdminUserManageController {
     }
 
     /** POST /api/system-admin/users */
+    @Audited(action = "USER_CREATE", target = "USER")
     @PostMapping("/users")
     public Result<AdminUserVO> create(@Valid @RequestBody AdminCreateUserRequest request) {
         return Result.ok(userService.create(request));
     }
 
     /** PUT /api/system-admin/users/{id} */
+    @Audited(action = "USER_UPDATE", target = "USER")
     @PutMapping("/users/{id}")
     public Result<AdminUserVO> update(@PathVariable("id") @Positive Long id,
                                       @Valid @RequestBody AdminUpdateUserRequest request) {
@@ -76,6 +79,7 @@ public class SystemAdminUserManageController {
     }
 
     /** PATCH /api/system-admin/users/{id}/status */
+    @Audited(action = "USER_STATUS", target = "USER")
     @PatchMapping("/users/{id}/status")
     public Result<AdminUserVO> changeStatus(@PathVariable("id") @Positive Long id,
                                             @Valid @RequestBody AdminChangeStatusRequest request) {
@@ -83,6 +87,7 @@ public class SystemAdminUserManageController {
     }
 
     /** POST /api/system-admin/users/{id}/reset-password（body 可省略） */
+    @Audited(action = "USER_RESET_PASSWORD", target = "USER")
     @PostMapping("/users/{id}/reset-password")
     public Result<AdminResetPasswordVO> resetPassword(
             @PathVariable("id") @Positive Long id,
@@ -108,6 +113,7 @@ public class SystemAdminUserManageController {
      * 有错误行时仍返回 200 + {created:0, errors:[...]}（全有或全无，一行不写）。
      * file 声明为可选，缺失时由 service 给出清晰的 400，而不是框架层的 500。
      */
+    @Audited(action = "USER_IMPORT", target = "USER")
     @PostMapping("/users/import")
     public Result<AdminUserImportResultVO> importUsers(@RequestParam(value = "file", required = false) MultipartFile file) {
         return Result.ok(importService.importUsers(file));

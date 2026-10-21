@@ -210,7 +210,7 @@ function commitLogin(data, request) {
 async function enterAdminConsole() {
   courseLoading.value = true // 跳转期间显示「加载中」，避免闪一下空课程页
   try {
-    const failure = await router.push('/admin')
+    const failure = await router.push('/admin/overview')
     if (!failure) return
   } catch {
     /* 路由异常 → 退回课程页 */

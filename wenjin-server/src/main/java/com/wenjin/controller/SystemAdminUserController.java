@@ -1,6 +1,7 @@
 package com.wenjin.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wenjin.audit.Audited;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.Result;
 import com.wenjin.common.ResultCode;
@@ -44,6 +45,7 @@ public class SystemAdminUserController {
      * <p>事务内对目标用户 {@code SELECT ... FOR UPDATE}；若降级启用管理员，
      * 再锁定全部启用管理员行，保证并发降级不会把 ADMIN 清零。</p>
      */
+    @Audited(action = "USER_ROLE", target = "USER")
     @PatchMapping("/users/{id}/role")
     @Transactional(rollbackFor = Exception.class)
     public Result<UserVO> changeRole(@PathVariable("id") @Positive Long id,

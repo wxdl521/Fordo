@@ -19,12 +19,16 @@ describe('systemAdmin API contracts', () => {
     vi.clearAllMocks()
   })
 
-  it('exports exactly the user-management operations', () => {
+  it('exports exactly the user-management and audit/monitor operations', () => {
     expect(Object.keys(systemAdmin).sort()).toEqual([
       'changeUserRole',
       'createUser',
       'downloadImportTemplate',
+      'getOverview',
       'importUsers',
+      'listAuditActions',
+      'listAuditLogs',
+      'listLoginLogs',
       'listUsers',
       'resetUserPassword',
       'setUserStatus',
@@ -98,5 +102,34 @@ describe('systemAdmin API contracts', () => {
     )
 
     await expect(systemAdmin.downloadImportTemplate()).rejects.toThrow('模板生成失败')
+  })
+
+  it('listAuditLogs / listLoginLogs send only non-empty filters (success 0 is kept) and forward config', () => {
+    const signal = new AbortController().signal
+    systemAdmin.listAuditLogs(
+      { operator: 'root', action: 'USER_CREATE', success: 0, from: '2026-10-01', to: '', page: 2, size: 20 },
+      { signal }
+    )
+    systemAdmin.listAuditLogs({ operator: '', action: '', success: '', page: 1, size: 20 })
+    systemAdmin.listLoginLogs({ username: 'stu', success: 1, from: '2026-10-01', to: '2026-10-07', page: 3, size: 20 })
+
+    expect(http.get.mock.calls).toEqual([
+      ['/system-admin/audit-logs', { signal, params: { operator: 'root', action: 'USER_CREATE', success: 0, from: '2026-10-01', page: 2, size: 20 } }],
+      ['/system-admin/audit-logs', { params: { page: 1, size: 20 } }],
+      ['/system-admin/login-logs', { params: { username: 'stu', success: 1, from: '2026-10-01', to: '2026-10-07', page: 3, size: 20 } }]
+    ])
+  })
+
+  it('listAuditActions and getOverview hit the contract paths', () => {
+    const signal = new AbortController().signal
+    systemAdmin.listAuditActions({ signal })
+    systemAdmin.getOverview({ days: 14 }, { signal })
+    systemAdmin.getOverview()
+
+    expect(http.get.mock.calls).toEqual([
+      ['/system-admin/audit-logs/actions', { signal }],
+      ['/system-admin/overview', { signal, params: { days: 14 } }],
+      ['/system-admin/overview', { params: {} }]
+    ])
   })
 })

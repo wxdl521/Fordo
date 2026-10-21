@@ -12,8 +12,9 @@ import org.springframework.web.servlet.AsyncHandlerInterceptor;
  * 轻量认证上下文拦截器，挂载 {@code /api/**}。
  *
  * <p>从 {@code Authorization: Bearer <token>} 校验令牌（{@link TokenService}），
- * 再经 {@link PrincipalLoader} 回查数据库：仅启用且角色可识别的用户写入
- * {@link CurrentUser}；无头/伪造/过期/禁用/不存在一律保持匿名、不抛异常——
+ * 再经 {@link PrincipalLoader} 回查数据库：仅启用、角色可识别且令牌未被吊销
+ * （签发时间不早于用户的 {@code token_valid_after}）的用户写入
+ * {@link CurrentUser}；无头/伪造/过期/吊销/禁用/不存在一律保持匿名、不抛异常——
  * 是否拒绝交由各端点的 {@code AccessGuard.assertSelf} 或角色拦截器按需决定。</p>
  *
  * <p>每次调度开始、异步处理交接和请求完成时清除 {@link CurrentUser}，
@@ -41,7 +42,7 @@ public class AuthContextInterceptor implements AsyncHandlerInterceptor {
         String header = request.getHeader("Authorization");
         if (header != null && header.startsWith(BEARER)) {
             tokenService.verify(header.substring(BEARER.length()).trim())
-                    .flatMap(claims -> principalLoader.load(claims.uid()))
+                    .flatMap(claims -> principalLoader.load(claims.uid(), claims.iatMs()))
                     .ifPresent(CurrentUser::set);
         }
         // 始终放行；鉴权拒绝由 AccessGuard / 角色拦截器在各端点按需触发

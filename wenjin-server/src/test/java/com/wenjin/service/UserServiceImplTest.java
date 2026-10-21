@@ -2,6 +2,8 @@ package com.wenjin.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.common.BusinessException;
+import com.wenjin.common.LoginFailedException;
+import com.wenjin.common.ResultCode;
 import com.wenjin.dto.LoginRequest;
 import com.wenjin.dto.LoginVO;
 import com.wenjin.dto.RegisterRequest;
@@ -217,5 +219,70 @@ class UserServiceImplTest {
         assertThatThrownBy(() -> service().getUserById(999L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("用户不存在");
+    }
+
+    // ───────────────────────── 登录失败原因（供登录日志区分） ─────────────────────────
+
+    private static LoginRequest loginReq(String username, String password) {
+        LoginRequest req = new LoginRequest();
+        req.setUsername(username);
+        req.setPassword(password);
+        return req;
+    }
+
+    private SysUser bcryptUser(long id, String username, String rawPassword, int status) {
+        SysUser user = new SysUser();
+        user.setId(id);
+        user.setUsername(username);
+        user.setPassword(encoder.encode(rawPassword));
+        user.setRole(2);
+        user.setStatus(status);
+        return user;
+    }
+
+    @Test
+    void login_unknownUser_failsWithBadCredentialsAndNoUserId() {
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        assertThatThrownBy(() -> service().login(loginReq("nope", "x")))
+                .isInstanceOfSatisfying(LoginFailedException.class, ex -> {
+                    assertThat(ex.getReason()).isEqualTo(LoginFailedException.Reason.BAD_CREDENTIALS);
+                    assertThat(ex.getUserId()).isNull();
+                    assertThat(ex.getCode()).isEqualTo(ResultCode.LOGIN_FAIL.getCode());
+                });
+    }
+
+    @Test
+    void login_wrongPassword_failsWithBadCredentialsAndUserId() {
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(bcryptUser(8L, "alice", "right", 1));
+
+        assertThatThrownBy(() -> service().login(loginReq("alice", "wrong")))
+                .isInstanceOfSatisfying(LoginFailedException.class, ex -> {
+                    assertThat(ex.getReason()).isEqualTo(LoginFailedException.Reason.BAD_CREDENTIALS);
+                    assertThat(ex.getUserId()).isEqualTo(8L);
+                    assertThat(ex.getMessage()).isEqualTo("用户名或密码错误");
+                });
+    }
+
+    @Test
+    void login_disabledUserWithRightPassword_failsWithDisabled() {
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(bcryptUser(9L, "bob", "pass", 0));
+
+        assertThatThrownBy(() -> service().login(loginReq("bob", "pass")))
+                .isInstanceOfSatisfying(LoginFailedException.class, ex -> {
+                    assertThat(ex.getReason()).isEqualTo(LoginFailedException.Reason.DISABLED);
+                    assertThat(ex.getUserId()).isEqualTo(9L);
+                    assertThat(ex.getMessage()).isEqualTo("账号已被禁用");
+                });
+    }
+
+    @Test
+    void login_disabledUserWithWrongPassword_doesNotRevealDisabled() {
+        // 密码校验先于禁用判断：没猜对密码的人看不到"账号已禁用"
+        when(userMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(bcryptUser(9L, "bob", "pass", 0));
+
+        assertThatThrownBy(() -> service().login(loginReq("bob", "wrong")))
+                .isInstanceOfSatisfying(LoginFailedException.class, ex ->
+                        assertThat(ex.getReason()).isEqualTo(LoginFailedException.Reason.BAD_CREDENTIALS));
     }
 }

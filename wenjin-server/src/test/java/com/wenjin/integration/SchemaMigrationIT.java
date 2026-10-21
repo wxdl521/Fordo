@@ -29,10 +29,10 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 /**
  * 受控迁移两条路径：
  * <ul>
- *   <li>空库：执行 V1…V15 建出全部业务表与后续增量，二次 migrate 无变更且 checksum 稳定</li>
- *   <li>遗留库：先加载 V1 级结构（m01/m02），baseline version 2 接管，执行 V3+（含 V4–V15）</li>
+ *   <li>空库：执行 V1…V16 建出全部业务表与后续增量，二次 migrate 无变更且 checksum 稳定</li>
+ *   <li>遗留库：先加载 V1 级结构（m01/m02），baseline version 2 接管，执行 V3+（含 V4–V16）</li>
  * </ul>
- * <p>说明：本地 {@code schema.sql} 是「当前最终 DDL」快照（已含 V4–V15 对象与物理 FK），不能直接当作
+ * <p>说明：本地 {@code schema.sql} 是「当前最终 DDL」快照（已含 V4–V16 对象与物理 FK），不能直接当作
  * 遗留库输入，否则 baseline@2 后重跑 V4+ 会因列已存在而失败。遗留路径因此以
  * {@code V1__baseline_schema.sql} 模拟接入 Flyway 前的生产库。
  */
@@ -81,7 +81,9 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
     private static final List<String> V15_TABLES = List.of("agent_report");
 
-    /** 空库跑完 V1…V15 后应有的业务表（V4–V6/V8–V9 为 ALTER；V7 增 ai_job；V10 增 agent_*；V11 增 eval_*；V12 增 student_memory；V13 增 RAG 三表；V14 增 plan 三表；V15 增 agent_report）。 */
+    private static final List<String> V16_TABLES = List.of("audit_log", "login_log");
+
+    /** 空库跑完 V1…V16 后应有的业务表（V4–V6/V8–V9 为 ALTER；V7 增 ai_job；V10 增 agent_*；V11 增 eval_*；V12 增 student_memory；V13 增 RAG 三表；V14 增 plan 三表；V15 增 agent_report；V16 增 audit_log / login_log）。 */
     private static final List<String> EXPECTED_TABLES_AFTER_ALL;
 
     /** V9 完成后必须存在的完整命名外键矩阵（V9 42 个 + V3 2 个 + V5 1 个）。 */
@@ -143,6 +145,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         all.addAll(V13_TABLES);
         all.addAll(V14_TABLES);
         all.addAll(V15_TABLES);
+        all.addAll(V16_TABLES);
         EXPECTED_TABLES_AFTER_ALL = List.copyOf(all);
     }
 
@@ -178,18 +181,18 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     }
 
     @Test
-    @DisplayName("空库：V1…V15 建出全部表；二次 migrate 无变更且 checksum 稳定；V9 约束、V10–V15 就绪")
-    void emptyDatabase_appliesV1ThroughV15_idempotent() throws Exception {
+    @DisplayName("空库：V1…V16 建出全部表；二次 migrate 无变更且 checksum 稳定；V9 约束、V10–V16 就绪")
+    void emptyDatabase_appliesV1ThroughV16_idempotent() throws Exception {
         Flyway flyway = createFlyway();
 
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        assertThat(first.migrationsExecuted).isEqualTo(15);
+        assertThat(first.migrationsExecuted).isEqualTo(16);
 
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
         Map<String, Integer> checksumsAfterFirst = successChecksums();
         assertThat(checksumsAfterFirst.keySet())
-                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16");
         assertThat(checksumsAfterFirst.get("1")).isNotNull();
         assertThat(checksumsAfterFirst.get("2")).isNotNull();
         assertThat(checksumsAfterFirst.get("3")).isNotNull();
@@ -205,6 +208,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(checksumsAfterFirst.get("13")).isNotNull();
         assertThat(checksumsAfterFirst.get("14")).isNotNull();
         assertThat(checksumsAfterFirst.get("15")).isNotNull();
+        assertThat(checksumsAfterFirst.get("16")).isNotNull();
         assertThat(columnExists("companion_conversation", "summary_text")).isTrue();
         assertThat(columnExists("companion_conversation", "summary_through_message_id")).isTrue();
         assertThat(columnExists("companion_conversation", "distilled_through_message_id")).isTrue();
@@ -238,6 +242,14 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(columnExists("agent_report", "payload_json")).isTrue();
         assertThat(columnExists("agent_report", "period_start")).isTrue();
         assertThat(constraintExists("agent_report", "uk_report_period")).isTrue();
+        assertThat(columnExists("audit_log", "operator_name")).isTrue();
+        assertThat(columnExists("audit_log", "request_id")).isTrue();
+        assertThat(columnNullable("audit_log", "operator_id")).isTrue();
+        assertThat(columnNullable("audit_log", "action")).isFalse();
+        assertThat(columnExists("login_log", "fail_reason")).isTrue();
+        assertThat(columnNullable("login_log", "user_id")).isTrue();
+        assertThat(columnExists("sys_user", "token_valid_after")).isTrue();
+        assertThat(columnNullable("sys_user", "token_valid_after")).isTrue();
         assertThat(foreignKeyConstraintNames())
                 .containsExactlyInAnyOrderElementsOf(EXPECTED_FKS_AFTER_V9);
 
@@ -247,7 +259,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
         Map<String, Integer> checksumsAfterSecond = successChecksums();
         assertThat(checksumsAfterSecond).isEqualTo(checksumsAfterFirst);
-        assertThat(countSuccessHistoryRows()).isEqualTo(15);
+        assertThat(countSuccessHistoryRows()).isEqualTo(16);
     }
 
     @Test
@@ -270,7 +282,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     }
 
     @Test
-    @DisplayName("遗留库：V1 结构 + baseline@2 接管，执行 V3…V15；二次 migrate 无变更")
+    @DisplayName("遗留库：V1 结构 + baseline@2 接管，执行 V3…V16；二次 migrate 无变更")
     void legacySchema_baselinesAtVersion2_onlyFutureMigrations() throws Exception {
         applyLegacyBaselineSchema();
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(BASELINE_TABLES);
@@ -278,13 +290,13 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         Flyway flyway = createFlyway();
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        // baseline@2 后执行 V3…V15
-        assertThat(first.migrationsExecuted).isEqualTo(13);
+        // baseline@2 后执行 V3…V16
+        assertThat(first.migrationsExecuted).isEqualTo(14);
 
         Map<String, Integer> history = successChecksums();
-        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3–V15
+        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3–V16
         assertThat(history.keySet()).doesNotContain("1");
-        assertThat(history.keySet()).contains("2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15");
+        assertThat(history.keySet()).contains("2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16");
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
         assertThat(columnExists("companion_conversation", "summary_text")).isTrue();
         assertThat(columnExists("companion_conversation", "distilled_through_message_id")).isTrue();
@@ -308,6 +320,9 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(columnExists("tool_effect_key", "request_key")).isTrue();
         assertThat(columnExists("agent_report", "kind")).isTrue();
         assertThat(constraintExists("agent_report", "uk_report_period")).isTrue();
+        assertThat(columnExists("audit_log", "target_id")).isTrue();
+        assertThat(columnExists("login_log", "user_agent")).isTrue();
+        assertThat(columnExists("sys_user", "token_valid_after")).isTrue();
 
         MigrateResult second = flyway.migrate();
         assertThat(second.success).isTrue();
@@ -606,7 +621,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
     /**
      * 加载 V1 baseline DDL，模拟「已有 m01/m02 结构、尚未跑 V3+」的遗留库。
-     * <p>不用当前 {@code schema.sql}：该文件是本地最终快照，已含 V4–V15 对象与约束。
+     * <p>不用当前 {@code schema.sql}：该文件是本地最终快照，已含 V4–V16 对象与约束。
      */
     private static void applyLegacyBaselineSchema() throws Exception {
         final String raw;

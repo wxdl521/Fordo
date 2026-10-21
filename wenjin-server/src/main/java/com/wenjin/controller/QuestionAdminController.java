@@ -1,6 +1,7 @@
 package com.wenjin.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wenjin.audit.Audited;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.Result;
 import com.wenjin.common.ResultCode;
@@ -60,6 +61,7 @@ public class QuestionAdminController {
      *
      * POST /api/admin/question/generate?courseId=1&nodeCode=KT07&count=5
      */
+    @Audited(action = "QUESTION_GENERATE", target = "QUESTION")
     @PostMapping("/generate")
     public ResponseEntity<Result<AiJobVO>> generate(
             @RequestParam("courseId") @Positive Long courseId,
@@ -92,6 +94,7 @@ public class QuestionAdminController {
      *
      * POST /api/admin/question/import/json?courseId=1
      */
+    @Audited(action = "QUESTION_IMPORT", target = "QUESTION")
     @PostMapping("/import/json")
     public Result<ImportBankResult> importJson(@RequestParam("courseId") @Positive Long courseId,
                                                @RequestParam("file") MultipartFile file) {
@@ -112,6 +115,7 @@ public class QuestionAdminController {
      *
      * POST /api/admin/question/import/excel?courseId=1
      */
+    @Audited(action = "QUESTION_IMPORT", target = "QUESTION")
     @PostMapping("/import/excel")
     public ResponseEntity<Result<AiJobVO>> importExcel(
             @RequestParam("courseId") @Positive Long courseId,

@@ -63,9 +63,12 @@ const session = useSessionStore()
 
 const serif = "'Noto Serif SC', serif"
 
-// 后续模块（审计、课程与班级、系统配置…）往这里加
+// 后续模块（课程与班级、系统配置…）往这里加
 const navItems = [
-  { to: '/admin/users', label: '用户管理', testid: 'admin-nav-users' }
+  { to: '/admin/overview', label: '平台总览', testid: 'admin-nav-overview' },
+  { to: '/admin/users', label: '用户管理', testid: 'admin-nav-users' },
+  { to: '/admin/audit-logs', label: '操作日志', testid: 'admin-nav-audit-logs' },
+  { to: '/admin/login-logs', label: '登录日志', testid: 'admin-nav-login-logs' }
 ]
 
 const adminName = computed(() => {

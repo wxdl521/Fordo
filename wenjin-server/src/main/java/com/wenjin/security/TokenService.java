@@ -14,8 +14,12 @@ import java.util.Optional;
 /**
  * 无状态令牌服务：签发/校验两段式 HMAC 签名令牌 {@code payloadB64.signatureB64}。
  *
- * <p>载荷 {@link Claims} 仅含 uid/role/exp，base64url 无填充编码后用 HMAC-SHA256 签名；
+ * <p>载荷 {@link Claims} 仅含 uid/role/exp/iat，base64url 无填充编码后用 HMAC-SHA256 签名；
  * 校验时常量时间比对签名并查过期。无其它 Spring 依赖，可直接 {@code new} 出来做单测。</p>
+ *
+ * <p>{@code iat}（签发时间，epoch 秒）供"重置密码后吊销旧令牌"使用：
+ * {@link PrincipalLoader} 把它与 {@code sys_user.token_valid_after} 比较。
+ * 升级前签发、不含 iat 的旧令牌解析为 iat=0，仍可正常使用，直到该用户被重置密码。</p>
  */
 @Component
 public class TokenService {
@@ -26,8 +30,18 @@ public class TokenService {
      */
     public static final String DEFAULT_DEV_SECRET = "dev-secret-change-me-in-prod";
 
-    /** 令牌载荷：用户 id、角色、过期时间（epoch 秒）。 */
-    public record Claims(long uid, int role, long exp) {}
+    /**
+     * 令牌载荷：用户 id、角色、过期时间（epoch 秒）与签发时间 iatMs（epoch <b>毫秒</b>）。
+     * 签发时间用毫秒是为了让吊销水位线没有"同一秒内"的漏洞窗口。
+     * 缺失 iatMs 的旧令牌反序列化为 0（Jackson 对缺失的基本类型组件取默认值）。
+     */
+    public record Claims(long uid, int role, long exp, long iatMs) {
+
+        /** 兼容构造：不带签发时间（iatMs=0，等同升级前的旧令牌）。 */
+        public Claims(long uid, int role, long exp) {
+            this(uid, role, exp, 0L);
+        }
+    }
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Base64.Encoder B64 = Base64.getUrlEncoder().withoutPadding();
@@ -42,12 +56,13 @@ public class TokenService {
         this.ttlSeconds = ttlSeconds;
     }
 
-    /** 签发令牌：exp = now + ttl。 */
+    /** 签发令牌：iatMs = now（毫秒），exp = now（秒）+ ttl。 */
     public String issue(long uid, int role) {
-        long exp = System.currentTimeMillis() / 1000 + ttlSeconds;
+        long iatMs = System.currentTimeMillis();
+        long exp = iatMs / 1000 + ttlSeconds;
         String payloadJson;
         try {
-            payloadJson = MAPPER.writeValueAsString(new Claims(uid, role, exp));
+            payloadJson = MAPPER.writeValueAsString(new Claims(uid, role, exp, iatMs));
         } catch (Exception e) {
             throw new IllegalStateException("令牌载荷序列化失败", e);
         }

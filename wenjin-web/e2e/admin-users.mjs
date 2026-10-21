@@ -75,13 +75,15 @@ try {
   const admin = adminCreds()
   await page.goto(base, { waitUntil: 'networkidle' })
 
-  // 1. 管理员 UI 登录 → 直进 /admin/users
+  // 1. 管理员 UI 登录 → 落地后台(A2 起默认是平台总览) → 侧栏进用户管理
   await page.fill('input[placeholder="如 2023302481"]', admin.username)
   await page.fill('input[type="password"]', admin.password)
   await page.click('button:has-text("登 录")')
+  await page.waitForURL('**/admin/overview', { timeout: 10000 })
+  await page.click('[data-testid="admin-nav-users"]')
   await page.waitForURL('**/admin/users', { timeout: 10000 })
   await page.waitForSelector('[data-testid="admin-users-table"]')
-  check('管理员登录后直进 /admin/users', page.url().endsWith('/admin/users'))
+  check('管理员登录进后台,侧栏可进 /admin/users', page.url().endsWith('/admin/users'))
   check('后台顶栏显示管理员姓名', (await page.textContent('[data-testid="admin-name"]'))?.trim().length > 0)
   check('无学生/教师 TopBar(无「染色地图」导航)', (await page.locator('text=染色地图').count()) === 0)
   const adminToken = await page.evaluate(() => localStorage.getItem('wj_token'))

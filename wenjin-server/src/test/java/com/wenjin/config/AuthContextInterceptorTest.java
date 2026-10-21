@@ -15,6 +15,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -153,5 +155,63 @@ class AuthContextInterceptorTest {
         when(userMapper.selectById(5L)).thenReturn(user(5L, 99, 1));
         interceptor.preHandle(requestWithBearer("token"), response, new Object());
         assertThat(CurrentUser.get()).isNull();
+    }
+
+    // ───────────────────────── 令牌吊销（token_valid_after） ─────────────────────────
+
+    private static final LocalDateTime VALID_AFTER = LocalDateTime.of(2026, 10, 21, 12, 0, 0);
+
+    private static long epoch(LocalDateTime t) {
+        return t.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+    }
+
+    private static TokenService.Claims claimsIssuedAt(long uid, long iatMs) {
+        return new TokenService.Claims(uid, 2, System.currentTimeMillis() / 1000 + 3600, iatMs);
+    }
+
+    @Test
+    void tokenIssuedBeforeWatermark_remainsAnonymous() {
+        when(tokenService.verify("token")).thenReturn(Optional.of(claimsIssuedAt(7L, epoch(VALID_AFTER) - 5)));
+        SysUser u = user(7L, UserRole.STUDENT.code(), 1);
+        u.setTokenValidAfter(VALID_AFTER);
+        when(userMapper.selectById(7L)).thenReturn(u);
+
+        interceptor.preHandle(requestWithBearer("token"), response, new Object());
+
+        assertThat(CurrentUser.getPrincipal()).isNull();
+    }
+
+    @Test
+    void legacyTokenWithoutIat_afterWatermark_remainsAnonymous() {
+        when(tokenService.verify("token")).thenReturn(Optional.of(claims(7L)));
+        SysUser u = user(7L, UserRole.STUDENT.code(), 1);
+        u.setTokenValidAfter(VALID_AFTER);
+        when(userMapper.selectById(7L)).thenReturn(u);
+
+        interceptor.preHandle(requestWithBearer("token"), response, new Object());
+
+        assertThat(CurrentUser.getPrincipal()).isNull();
+    }
+
+    @Test
+    void tokenIssuedInWatermarkSecond_isAccepted() {
+        when(tokenService.verify("token")).thenReturn(Optional.of(claimsIssuedAt(7L, epoch(VALID_AFTER))));
+        SysUser u = user(7L, UserRole.STUDENT.code(), 1);
+        u.setTokenValidAfter(VALID_AFTER);
+        when(userMapper.selectById(7L)).thenReturn(u);
+
+        interceptor.preHandle(requestWithBearer("token"), response, new Object());
+
+        assertThat(CurrentUser.get()).isEqualTo(7L);
+    }
+
+    @Test
+    void legacyTokenWithoutIat_userNeverRevoked_isAccepted() {
+        when(tokenService.verify("token")).thenReturn(Optional.of(claims(7L)));
+        when(userMapper.selectById(7L)).thenReturn(user(7L, UserRole.STUDENT.code(), 1));
+
+        interceptor.preHandle(requestWithBearer("token"), response, new Object());
+
+        assertThat(CurrentUser.get()).isEqualTo(7L);
     }
 }

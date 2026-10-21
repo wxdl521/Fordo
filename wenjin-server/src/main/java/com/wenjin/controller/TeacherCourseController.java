@@ -1,5 +1,6 @@
 package com.wenjin.controller;
 
+import com.wenjin.audit.Audited;
 import com.wenjin.common.Result;
 import com.wenjin.dto.CreateCourseRequest;
 import com.wenjin.dto.TeacherCourseVO;
@@ -29,22 +30,26 @@ public class TeacherCourseController {
         return Result.ok(teacherCourseService.list());
     }
 
+    @Audited(action = "COURSE_CREATE", target = "COURSE")
     @PostMapping
     public Result<TeacherCourseVO> create(@Valid @RequestBody CreateCourseRequest req) {
         return Result.ok(teacherCourseService.create(req.getName()));
     }
 
+    @Audited(action = "COURSE_DELETE", target = "COURSE")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable @Positive Long id) {
         teacherCourseService.delete(id);
         return Result.ok();
     }
 
+    @Audited(action = "COURSE_RESTORE", target = "COURSE")
     @PatchMapping("/{id}/restore")
     public Result<TeacherCourseVO> restore(@PathVariable @Positive Long id) {
         return Result.ok(teacherCourseService.restore(id));
     }
 
+    @Audited(action = "COURSE_STATUS", target = "COURSE")
     @PatchMapping("/{id}/status")
     public Result<Void> setStatus(@PathVariable @Positive Long id,
                                   @Valid @RequestBody UpdateCourseStatusRequest req) {

@@ -22,7 +22,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -52,11 +55,13 @@ public class AdminUserServiceImpl implements AdminUserService {
 
     private final SysUserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
+    private final Clock clock;
     private final SecureRandom random = new SecureRandom();
 
-    public AdminUserServiceImpl(SysUserMapper userMapper, PasswordEncoder passwordEncoder) {
+    public AdminUserServiceImpl(SysUserMapper userMapper, PasswordEncoder passwordEncoder, Clock clock) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
+        this.clock = clock;
     }
 
     // ───────────────────────── 查询 ─────────────────────────
@@ -220,6 +225,10 @@ public class AdminUserServiceImpl implements AdminUserService {
 
     // ───────────────────────── 重置密码 ─────────────────────────
 
+    /**
+     * 重置密码，并同时写入令牌吊销水位线 {@code token_valid_after}（当前时间截断到毫秒）：
+     * 此刻之前签发的令牌（含无 iatMs 的旧令牌）立即失效，之后的新登录令牌有效。
+     */
     @Override
     public AdminResetPasswordVO resetPassword(Long id, String newPassword) {
         boolean generated = newPassword == null || newPassword.isEmpty();
@@ -232,6 +241,7 @@ public class AdminUserServiceImpl implements AdminUserService {
         SysUser patch = new SysUser();
         patch.setId(id);
         patch.setPassword(passwordEncoder.encode(raw));
+        patch.setTokenValidAfter(LocalDateTime.now(clock).truncatedTo(ChronoUnit.MILLIS));
         userMapper.updateById(patch);
         return new AdminResetPasswordVO(generated ? raw : null);
     }

@@ -58,7 +58,8 @@ class StudentAuthChainIntegrationTest {
 
     @BeforeEach
     void setup() {
-        when(principalLoader.load(anyLong())).thenAnswer(inv -> {
+        // AuthContextInterceptor 走带令牌签发时间的重载
+        when(principalLoader.load(anyLong(), anyLong())).thenAnswer(inv -> {
             long uid = inv.getArgument(0);
             // uid=8 模拟教师；其余默认学生
             UserRole role = uid == 8L ? UserRole.TEACHER : UserRole.STUDENT;

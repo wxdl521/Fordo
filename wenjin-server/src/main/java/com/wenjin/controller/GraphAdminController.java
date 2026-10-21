@@ -1,5 +1,6 @@
 package com.wenjin.controller;
 
+import com.wenjin.audit.Audited;
 import com.wenjin.common.Result;
 import com.wenjin.dto.AiJobVO;
 import com.wenjin.dto.ExtractCommitResult;
@@ -38,6 +39,7 @@ public class GraphAdminController {
         this.payloadSubmissionService = payloadSubmissionService;
     }
 
+    @Audited(action = "GRAPH_IMPORT", target = "GRAPH")
     @PostMapping("/import")
     public Result<GraphImportResult> importGraph(@RequestParam("courseCode") @NotBlank String courseCode,
                                                  @Valid @RequestBody GraphImportRequest request) {
@@ -45,6 +47,7 @@ public class GraphAdminController {
     }
 
     /** Excel 图谱导入（含 AI 清洗）→ 异步作业 202 */
+    @Audited(action = "GRAPH_IMPORT", target = "GRAPH")
     @PostMapping("/import/excel")
     public ResponseEntity<Result<AiJobVO>> importGraphFromExcel(
             @RequestParam("courseCode") @NotBlank String courseCode,
@@ -73,6 +76,7 @@ public class GraphAdminController {
     }
 
     /** 提交审核结果:全量替换导入 + 返回指标。 */
+    @Audited(action = "GRAPH_EXTRACT_COMMIT", target = "GRAPH")
     @PostMapping("/extract/{draftId}/commit")
     public Result<ExtractCommitResult> commit(@PathVariable @NotBlank String draftId,
                                               @Valid @RequestBody GraphImportRequest finalGraph) {

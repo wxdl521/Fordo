@@ -2,6 +2,7 @@ package com.wenjin.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.common.BusinessException;
+import com.wenjin.common.LoginFailedException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.dto.LoginRequest;
 import com.wenjin.dto.LoginVO;
@@ -59,11 +60,15 @@ public class UserServiceImpl implements UserService {
         SysUser user = userMapper.selectOne(
                 new LambdaQueryWrapper<SysUser>()
                         .eq(SysUser::getUsername, request.getUsername()));
-        if (user == null || !passwordMatches(request.getPassword(), user)) {
-            throw new BusinessException(ResultCode.LOGIN_FAIL, "用户名或密码错误");
+        // 异常携带失败原因与已定位的用户 ID，仅供登录日志区分；对外文案与状态码不变
+        if (user == null) {
+            throw new LoginFailedException(LoginFailedException.Reason.BAD_CREDENTIALS, null, "用户名或密码错误");
+        }
+        if (!passwordMatches(request.getPassword(), user)) {
+            throw new LoginFailedException(LoginFailedException.Reason.BAD_CREDENTIALS, user.getId(), "用户名或密码错误");
         }
         if (user.getStatus() != null && user.getStatus() == 0) {
-            throw new BusinessException(ResultCode.LOGIN_FAIL, "账号已被禁用");
+            throw new LoginFailedException(LoginFailedException.Reason.DISABLED, user.getId(), "账号已被禁用");
         }
         LoginVO vo = new LoginVO();
         vo.setToken(tokenService.issue(user.getId(), user.getRole() == null ? 0 : user.getRole()));

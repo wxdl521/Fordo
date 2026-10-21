@@ -32,4 +32,10 @@ public class SysUser {
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;
+
+    /**
+     * 令牌吊销水位线：早于此刻签发的令牌一律无效（管理员重置密码时写入，秒级精度）。
+     * NULL=从未吊销过。比较逻辑见 {@link com.wenjin.security.PrincipalLoader}。
+     */
+    private LocalDateTime tokenValidAfter;
 }

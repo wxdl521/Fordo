@@ -5,7 +5,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import AdminLayout from '../AdminLayout.vue'
 import { useSessionStore, TOKEN_KEY, USER_KEY } from '../../store/session.js'
 
-async function mountLayout() {
+async function mountLayout(startPath = '/admin/users') {
   const pinia = createPinia()
   setActivePinia(pinia)
   const session = useSessionStore()
@@ -18,11 +18,14 @@ async function mountLayout() {
     routes: [
       { path: '/', name: 'login', component: { template: '<div data-testid="login-page" />' } },
       { path: '/teacher/graph', component: { template: '<div />' } },
-      { path: '/admin', redirect: '/admin/users' },
-      { path: '/admin/users', component: { template: '<div data-testid="child-page">用户页</div>' } }
+      { path: '/admin', redirect: '/admin/overview' },
+      { path: '/admin/overview', component: { template: '<div data-testid="child-page">总览页</div>' } },
+      { path: '/admin/users', component: { template: '<div data-testid="child-page">用户页</div>' } },
+      { path: '/admin/audit-logs', component: { template: '<div data-testid="child-page">操作日志页</div>' } },
+      { path: '/admin/login-logs', component: { template: '<div data-testid="child-page">登录日志页</div>' } }
     ]
   })
-  await router.push('/admin/users')
+  await router.push(startPath)
   await router.isReady()
   const wrapper = mount(AdminLayout, { global: { plugins: [pinia, router] } })
   return { wrapper, router, session }
@@ -44,6 +47,37 @@ describe('AdminLayout', () => {
     expect(usersNav.text()).toBe('用户管理')
     expect(usersNav.attributes('href')).toBe('/admin/users')
     expect(usersNav.attributes('aria-current')).toBe('page')
+    wrapper.unmount()
+  })
+
+  it('lists the sidebar in order: overview, users, audit logs, login logs', async () => {
+    const { wrapper } = await mountLayout('/admin/audit-logs')
+
+    const links = wrapper.findAll('nav a')
+    expect(links.map((a) => a.text())).toEqual(['平台总览', '用户管理', '操作日志', '登录日志'])
+    expect(links.map((a) => a.attributes('href'))).toEqual([
+      '/admin/overview',
+      '/admin/users',
+      '/admin/audit-logs',
+      '/admin/login-logs'
+    ])
+    expect(links.map((a) => a.attributes('data-testid'))).toEqual([
+      'admin-nav-overview',
+      'admin-nav-users',
+      'admin-nav-audit-logs',
+      'admin-nav-login-logs'
+    ])
+    // 只有当前页高亮
+    expect(links.map((a) => a.attributes('aria-current'))).toEqual([undefined, undefined, 'page', undefined])
+    wrapper.unmount()
+  })
+
+  it('the brand link and a bare /admin land on the overview page', async () => {
+    const { wrapper, router } = await mountLayout('/admin')
+
+    expect(router.currentRoute.value.path).toBe('/admin/overview')
+    expect(wrapper.get('[data-testid="child-page"]').text()).toBe('总览页')
+    expect(wrapper.get('[data-testid="admin-nav-overview"]').attributes('aria-current')).toBe('page')
     wrapper.unmount()
   })
 

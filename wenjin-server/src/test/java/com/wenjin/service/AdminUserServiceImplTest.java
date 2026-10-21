@@ -26,7 +26,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -51,11 +53,16 @@ class AdminUserServiceImplTest {
     @Mock
     private PasswordEncoder passwordEncoder;
 
+    /** 固定时钟：2026-10-21 12:00:00.789123（带亚毫秒，用来验证水位线被截断到毫秒）。 */
+    private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
+    private static final Clock CLOCK = Clock.fixed(
+            LocalDateTime.of(2026, 10, 21, 12, 0, 0, 789_123_000).atZone(ZONE).toInstant(), ZONE);
+
     private AdminUserServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new AdminUserServiceImpl(userMapper, passwordEncoder);
+        service = new AdminUserServiceImpl(userMapper, passwordEncoder, CLOCK);
         CurrentUser.set(new CurrentPrincipal(ACTOR_ID, UserRole.ADMIN));
     }
 
@@ -426,6 +433,28 @@ class AdminUserServiceImplTest {
         assertThat(captor.getValue().getId()).isEqualTo(30L);
         assertThat(captor.getValue().getPassword()).isEqualTo("HASH");
         assertThat(captor.getValue().getStatus()).isNull();
+    }
+
+    @Test
+    @DisplayName("resetPassword：同时写入令牌吊销水位线 token_valid_after = 当前时间截断到毫秒（旧令牌随之失效）")
+    void resetPassword_stampsTokenValidAfterTruncatedToMillis() {
+        when(userMapper.selectById(34L)).thenReturn(user(34L, "u34", UserRole.STUDENT, 1));
+        when(passwordEncoder.encode(anyString())).thenReturn("HASH");
+        when(userMapper.updateById(any(SysUser.class))).thenReturn(1);
+
+        service.resetPassword(34L, "NewPass#123");
+
+        ArgumentCaptor<SysUser> captor = ArgumentCaptor.forClass(SysUser.class);
+        verify(userMapper).updateById(captor.capture());
+        assertThat(captor.getValue().getTokenValidAfter())
+                .isEqualTo(LocalDateTime.of(2026, 10, 21, 12, 0, 0, 789_000_000));
+    }
+
+    @Test
+    @DisplayName("resetPassword：校验失败/用户不存在时不写水位线（不吊销任何令牌）")
+    void resetPassword_rejected_doesNotRevoke() {
+        assertBadRequest(() -> service.resetPassword(35L, "short"));
+        verify(userMapper, never()).updateById(any(SysUser.class));
     }
 
     @Test
