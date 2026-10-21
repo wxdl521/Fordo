@@ -1222,6 +1222,49 @@ class CompanionServiceImplTest {
     }
 
     @Test
+    void thinkingModeReasoningIsReplayedOnAssistantToolCallMessageOnly() {
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "get_recent_mistakes", "正在翻看你的错题…", Map.of("type", "object", "properties", Map.of()))));
+        stubConversationAndPrompt(615L, List.of(userMessage("我最近哪里错得多")));
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
+                new ToolExecutionResult("c1", "get_recent_mistakes", true, "{\"mistakes\":[]}"));
+        java.util.concurrent.atomic.AtomicInteger idx = new java.util.concurrent.atomic.AtomicInteger();
+        when(aiClient.streamTurn(any(), any(), any(), any())).thenAnswer(inv -> {
+            List<Map<String, Object>> msgs = inv.getArgument(0);
+            turnMessages.add(new ArrayList<>(msgs));
+            if (idx.getAndIncrement() == 0) {
+                return new CompanionAiClient.StreamTurnResult("",
+                        List.of(new CompanionAiClient.ToolCall("c1", "get_recent_mistakes", "{}")),
+                        null, "tool_calls", "先查错题再回答");
+            }
+            Consumer<String> cb = inv.getArgument(3);
+            cb.accept("没有错题");
+            return new CompanionAiClient.StreamTurnResult("没有错题", List.of(), null, "stop");
+        });
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+        RecordingSink sink = new RecordingSink();
+
+        service.streamReply(615L, sink);
+
+        Map<String, Object> assistant = turnMessages.get(1).stream()
+                .filter(m -> "assistant".equals(m.get("role")) && m.containsKey("tool_calls"))
+                .findFirst().orElseThrow();
+        assertThat(assistant.get("reasoning_content")).isEqualTo("先查错题再回答");
+        assertThat(sink.tokens).containsExactly("没有错题");
+        assertThat(persistedReply()).isEqualTo("没有错题");
+    }
+
+    @Test
+    void assistantToolCallMessageOmitsReasoningWhenAbsent() {
+        Map<String, Object> plain = com.wenjin.service.companion.CompanionOrchestrator.assistantToolCallMessage(
+                "", List.of(new CompanionAiClient.ToolCall("c1", "x", "{}")), null);
+        assertThat(plain).doesNotContainKey("reasoning_content");
+        Map<String, Object> empty = com.wenjin.service.companion.CompanionOrchestrator.assistantToolCallMessage(
+                "", List.of(new CompanionAiClient.ToolCall("c1", "x", "{}")), "");
+        assertThat(empty).doesNotContainKey("reasoning_content");
+    }
+
+    @Test
     void withoutReviewSession_promptHasNoReviewSection() {
         configureTools(true, 2, 3, List.of(fakeTool(
                 "get_recent_mistakes", "正在翻看你的错题…", Map.of("type", "object", "properties", Map.of()))));

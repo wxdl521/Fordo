@@ -41,8 +41,17 @@ public interface CompanionAiClient {
     /** Token usage reported by the provider; cachedPromptTokens may be null. */
     record Usage(int promptTokens, int completionTokens, Integer cachedPromptTokens) {}
 
-    /** Result of one streamed LLM turn. usage is nullable. */
-    record StreamTurnResult(String content, List<ToolCall> toolCalls, Usage usage, String finishReason) {}
+    /**
+     * Result of one streamed LLM turn. usage is nullable. reasoningContent (nullable) is the
+     * thinking-mode {@code reasoning_content} (e.g. DeepSeek): never shown or persisted, only
+     * replayed on the assistant tool-call message within the same turn.
+     */
+    record StreamTurnResult(String content, List<ToolCall> toolCalls, Usage usage, String finishReason,
+                            String reasoningContent) {
+        public StreamTurnResult(String content, List<ToolCall> toolCalls, Usage usage, String finishReason) {
+            this(content, toolCalls, usage, finishReason, null);
+        }
+    }
 
     /**
      * Streams one LLM turn with optional tools. Content deltas are forwarded immediately to

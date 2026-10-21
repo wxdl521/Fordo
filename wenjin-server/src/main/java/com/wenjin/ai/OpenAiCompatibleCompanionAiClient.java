@@ -273,8 +273,8 @@ public class OpenAiCompatibleCompanionAiClient implements CompanionAiClient {
                             while ((line = reader.readLine()) != null) {
                                 acc.accept(line);
                             }
-                        } catch (SinkFailureException sfe) {
-                            throw sfe;
+                        } catch (SinkFailureException | BusinessException passThrough) {
+                            throw passThrough;
                         } catch (Exception streamErr) {
                             throw new BusinessException(ResultCode.AI_ERROR, "AI服务流处理失败：" + streamErr.getMessage());
                         }

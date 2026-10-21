@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.ai.CompanionAiClient.StreamTurnResult;
 import com.wenjin.ai.CompanionAiClient.ToolCall;
 import com.wenjin.ai.CompanionAiClient.Usage;
+import com.wenjin.common.BusinessException;
+import com.wenjin.common.ResultCode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -14,7 +16,8 @@ import java.util.function.Consumer;
 /**
  * Line-by-line SSE accumulator for one streamed chat-completions turn. Network-free, so it is
  * unit-testable. Content deltas are forwarded immediately; tool_call deltas are merged by index.
- * reasoning_content is ignored. Callback failures surface as {@link SinkFailureException}.
+ * reasoning_content is accumulated (never forwarded) for thinking-mode replay. Callback failures
+ * surface as {@link SinkFailureException}; provider error frames and empty streams as AI_ERROR.
  */
 final class StreamTurnAccumulator {
 
@@ -22,6 +25,7 @@ final class StreamTurnAccumulator {
 
     private final Consumer<String> onContentDelta;
     private final StringBuilder content = new StringBuilder();
+    private final StringBuilder reasoning = new StringBuilder();
     private final TreeMap<Integer, PartialCall> calls = new TreeMap<>();
     private String finishReason;
     private Usage usage;
@@ -58,6 +62,12 @@ final class StreamTurnAccumulator {
             return;
         }
 
+        JsonNode error = root.path("error");
+        if (!error.isMissingNode() && !error.isNull()) {
+            String msg = error.isObject() ? error.path("message").asText(error.toString()) : error.asText();
+            throw new BusinessException(ResultCode.AI_ERROR, "AI服务流返回错误：" + msg);
+        }
+
         JsonNode usageNode = root.path("usage");
         if (usageNode.isObject()) {
             usage = parseUsage(usageNode);
@@ -75,6 +85,10 @@ final class StreamTurnAccumulator {
                 String text = c.asText();
                 content.append(text);
                 forward(text);
+            }
+            JsonNode rc = delta.path("reasoning_content");
+            if (rc.isTextual()) {
+                reasoning.append(rc.asText());
             }
             JsonNode tcs = delta.path("tool_calls");
             if (tcs.isArray()) {
@@ -138,6 +152,10 @@ final class StreamTurnAccumulator {
             String args = pc.args.length() == 0 ? "{}" : pc.args.toString();
             out.add(new ToolCall(pc.id, pc.name, args));
         }
-        return new StreamTurnResult(content.toString(), List.copyOf(out), usage, finishReason);
+        if (finishReason == null && content.length() == 0 && out.isEmpty()) {
+            throw new BusinessException(ResultCode.AI_ERROR, "AI服务流提前结束：无内容、无工具调用、无 finish_reason");
+        }
+        return new StreamTurnResult(content.toString(), List.copyOf(out), usage, finishReason,
+                reasoning.length() == 0 ? null : reasoning.toString());
     }
 }

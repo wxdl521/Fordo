@@ -56,7 +56,8 @@ class StreamTurnAccumulatorTest {
         assertThat(noUsage.result().finishReason()).isNull();
 
         StreamTurnAccumulator noCache = new StreamTurnAccumulator(d -> { });
-        feed(noCache, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":1}}");
+        feed(noCache, "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}",
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":1}}");
         assertThat(noCache.result().usage()).isEqualTo(new CompanionAiClient.Usage(5, 1, null));
     }
 
@@ -153,5 +154,58 @@ class StreamTurnAccumulatorTest {
         assertThat(body.get("stream_options")).isEqualTo(Map.of("include_usage", true));
         assertThat(OpenAiCompatibleCompanionAiClient.buildStreamTurnRequestBody("m", 0.3, null, null, null))
                 .doesNotContainKeys("tools", "tool_choice");
+    }
+
+    @Test
+    void reasoningContentIsAccumulatedButNeverForwarded() {
+        List<String> deltas = new ArrayList<>();
+        StreamTurnAccumulator acc = new StreamTurnAccumulator(deltas::add);
+        feed(acc,
+                "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"先想\"}}]}",
+                "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"一想\"}}]}",
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\","
+                        + "\"function\":{\"name\":\"query_mastery\",\"arguments\":\"{}\"}}]}}]}",
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}");
+        StreamTurnResult r = acc.result();
+        assertThat(deltas).isEmpty();
+        assertThat(r.reasoningContent()).isEqualTo("先想一想");
+        assertThat(r.content()).isEmpty();
+    }
+
+    @Test
+    void noReasoningContentYieldsNull() {
+        StreamTurnAccumulator acc = new StreamTurnAccumulator(d -> { });
+        feed(acc, "data: {\"choices\":[{\"delta\":{\"content\":\"x\"},\"finish_reason\":\"stop\"}]}");
+        assertThat(acc.result().reasoningContent()).isNull();
+    }
+
+    @Test
+    void errorFrameRaisesAiError() {
+        List<String> deltas = new ArrayList<>();
+        StreamTurnAccumulator acc = new StreamTurnAccumulator(deltas::add);
+        acc.accept("data: {\"choices\":[{\"delta\":{\"content\":\"部分\"}}]}");
+        assertThatThrownBy(() -> acc.accept(
+                "data: {\"error\":{\"message\":\"overloaded\",\"type\":\"server_error\"}}"))
+                .isInstanceOf(com.wenjin.common.BusinessException.class)
+                .isNotInstanceOf(SinkFailureException.class)
+                .hasMessageContaining("overloaded")
+                .satisfies(e -> assertThat(((com.wenjin.common.BusinessException) e).getCode())
+                        .isEqualTo(com.wenjin.common.ResultCode.AI_ERROR.getCode()));
+    }
+
+    @Test
+    void emptyStreamWithoutFinishReasonIsLlmFailure() {
+        StreamTurnAccumulator acc = new StreamTurnAccumulator(d -> { });
+        feed(acc, ": keep-alive", "data: [DONE]");
+        assertThatThrownBy(acc::result)
+                .isInstanceOf(com.wenjin.common.BusinessException.class)
+                .isNotInstanceOf(SinkFailureException.class);
+    }
+
+    @Test
+    void emptyContentWithFinishReasonIsNotAFailure() {
+        StreamTurnAccumulator acc = new StreamTurnAccumulator(d -> { });
+        feed(acc, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}");
+        assertThat(acc.result().content()).isEmpty();
     }
 }

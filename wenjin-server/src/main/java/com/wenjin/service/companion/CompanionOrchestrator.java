@@ -221,7 +221,7 @@ public final class CompanionOrchestrator {
                 if (calls.isEmpty() || finalRound || text.capped()) {
                     break;
                 }
-                messages.add(assistantToolCallMessage(text.lastRoundSanitized(), calls));
+                messages.add(assistantToolCallMessage(text.lastRoundSanitized(), calls, result.reasoningContent()));
                 if (!executeTools(calls)) {
                     return cancelled();
                 }
@@ -634,9 +634,23 @@ public final class CompanionOrchestrator {
     }
 
     static Map<String, Object> assistantToolCallMessage(String content, List<CompanionAiClient.ToolCall> calls) {
+        return assistantToolCallMessage(content, calls, null);
+    }
+
+    /**
+     * @param reasoningContent thinking-mode reasoning of this round; DeepSeek requires it to be passed
+     *                         back within the same turn's follow-up rounds. Added only when non-empty,
+     *                         so non-thinking providers never see the field.
+     */
+    public static Map<String, Object> assistantToolCallMessage(String content,
+                                                               List<CompanionAiClient.ToolCall> calls,
+                                                               String reasoningContent) {
         Map<String, Object> message = new LinkedHashMap<>();
         message.put("role", "assistant");
         message.put("content", content == null ? "" : content);
+        if (reasoningContent != null && !reasoningContent.isEmpty()) {
+            message.put("reasoning_content", reasoningContent);
+        }
         message.put("tool_calls", calls.stream().map(CompanionOrchestrator::toolCallPayload).toList());
         return message;
     }
