@@ -57,6 +57,8 @@ export WENJIN_AUTH_SECRET="$(openssl rand -base64 48)"   # 强随机，妥善保
 
 > 令牌有效期 `wenjin.auth.ttl-seconds` 默认 604800（7 天），按需调整。
 
+> 时区：伴侣主动开场白（问候语、提示「今日」上限）使用 JVM 默认时区，部署时请设 `TZ=Asia/Shanghai`（或 `-Duser.timezone=Asia/Shanghai`）。
+
 ### 2.2 收紧 CORS（已配置化）
 
 **现状**：`WebConfig` 已读取 `wenjin.cors.allowed-origin-patterns`；开发环境默认 `*`，`application-prod.yml` 要求通过 `WENJIN_CORS_ORIGINS` 指定生产来源。
