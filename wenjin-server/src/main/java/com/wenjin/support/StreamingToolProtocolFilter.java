@@ -5,7 +5,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 流式工具伪协议净化器：在 token 流中即时剔除模型泄漏的 DSML / tool_calls / invoke / parameter 伪协议块。
+ * 流式工具伪协议净化器：在 token 流中即时剔除模型泄漏的 DSML / tool_calls / invoke / parameter 伪协议块，
+ * 以及 DeepSeek 原生 {@code <｜tool▁calls▁begin｜>…<｜tool▁calls▁end｜>} 工具调用块。
  *
  * <p>有状态、非线程安全、纯逻辑。只在缓冲尾部"可能是协议起始"时暂扣；确认是协议则整块丢弃到闭合标签
  * （未闭合则丢到流尾），确认不是则立即放行。不做任何空白折叠 / trim（已下发文本无法撤回）；
@@ -19,6 +20,13 @@ public final class StreamingToolProtocolFilter {
     private static final int BLOCK_TAIL = 96;
 
     private static final String[] TARGETS = {"tool_calls", "invoke", "parameter", "dsml"};
+
+    /** 竖线起始标签里视为协议的名字前缀（含 DeepSeek 原生 {@code tool▁calls▁begin} 等）。 */
+    private static final String[] PIPE_PROTOCOL_PREFIXES = {"dsml", "tool_calls", "invoke", "parameter", "tool▁", "tool_"};
+
+    /** DeepSeek 原生工具调用块起始：{@code <｜tool▁calls▁begin｜>} / {@code <｜tool▁call▁begin｜>}。 */
+    private static final Pattern NATIVE_BEGIN = Pattern.compile(
+            "^<[|｜]\\s*tool[▁_](calls?)[▁_]begin\\s*[|｜]?\\s*[>＞]$", Pattern.CASE_INSENSITIVE);
 
     private enum Decision { RELEASE, WAIT, PROTOCOL }
 
@@ -86,6 +94,14 @@ public final class StreamingToolProtocolFilter {
             // PROTOCOL：需要完整开标签
             int gt = tagEnd(pending);
             if (gt < 0) {
+                if (pipeStart(pending) && !pipeProtocolLike(pending)) {
+                    // 「a <| b」这类普通文本：超过暂扣上限（或流结束且含空白——特殊 token 不含空白）即放行
+                    if (last ? containsWhitespace(pending) : pending.length() > MAX_HOLD) {
+                        out.append('<');
+                        pending.deleteCharAt(0);
+                        continue;
+                    }
+                }
                 if (last) {
                     pending.setLength(0);
                 }
@@ -96,6 +112,15 @@ public final class StreamingToolProtocolFilter {
             String name = tagName(tag);
             boolean closing = tag.startsWith("</");
             boolean selfClosing = tag.endsWith("/>");
+            Matcher nativeBegin = NATIVE_BEGIN.matcher(tag);
+            if (nativeBegin.find()) {
+                inBlock = true;
+                closePattern = Pattern.compile(
+                        "<[|｜]\\s*tool[▁_]" + nativeBegin.group(1).toLowerCase(Locale.ROOT)
+                                + "[▁_]end\\s*[|｜]?\\s*[>＞]",
+                        Pattern.CASE_INSENSITIVE);
+                continue;
+            }
             if (!closing && !selfClosing && isBlockName(name)) {
                 inBlock = true;
                 closePattern = Pattern.compile(
@@ -107,6 +132,43 @@ public final class StreamingToolProtocolFilter {
 
     private static boolean isBlockName(String name) {
         return name.equals("tool_calls") || name.equals("invoke") || name.equals("parameter");
+    }
+
+    private static boolean pipeStart(CharSequence s) {
+        int j = 1;
+        if (j < s.length() && s.charAt(j) == '/') {
+            j++;
+        }
+        return j < s.length() && (s.charAt(j) == '|' || s.charAt(j) == '｜');
+    }
+
+    /** 竖线起始的未闭合标签是否（可能）为协议名：分隔符后为空、或以协议名前缀开头 / 为其前缀。 */
+    private static boolean pipeProtocolLike(CharSequence s) {
+        String str = s.toString();
+        int i = 1;
+        if (i < str.length() && str.charAt(i) == '/') {
+            i++;
+        }
+        i = skipSeparators(str, i);
+        if (i >= str.length()) {
+            return true;
+        }
+        String rest = str.substring(i).toLowerCase(Locale.ROOT);
+        for (String p : PIPE_PROTOCOL_PREFIXES) {
+            if (rest.startsWith(p) || p.startsWith(rest)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsWhitespace(CharSequence s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.isWhitespace(s.charAt(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int tagEnd(CharSequence s) {

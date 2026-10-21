@@ -59,6 +59,13 @@ class StreamingToolProtocolFilterTest {
                 Arguments.of("unclosed dsml with text inside", "你好<｜DSML｜tool_calls>\nfoo bar", "你好"),
                 Arguments.of("unfinished tag at end", "hi<invoke name=\"x", "hi"),
                 Arguments.of("two blocks", "a<tool_calls>1</tool_calls>b<tool_calls>2</tool_calls>c", "abc"),
+                Arguments.of("deepseek native tool calls",
+                        "前<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>query_mastery\n```json\n{\"nodeCode\":\"SE-1\"}\n```<｜tool▁call▁end｜><｜tool▁calls▁end｜>后",
+                        "前后"),
+                Arguments.of("deepseek native single call",
+                        "前<｜tool▁call▁begin｜>function<｜tool▁sep｜>get_x\n{}<｜tool▁call▁end｜>后",
+                        "前后"),
+                Arguments.of("deepseek native unclosed", "前<｜tool▁calls▁begin｜>function<｜tool▁sep｜>x", "前"),
                 Arguments.of("whitespace preserved", "  a \n\n<tool_calls>x</tool_calls>\n b  ", "  a \n\n\n b  "));
     }
 
@@ -84,7 +91,10 @@ class StreamingToolProtocolFilterTest {
                 "A｜B 中文｜竖线正常使用",
                 "a | b || c",
                 "Map<K, V> m; <parameters> <invokes>",
-                "tool_calls 这个词本身不带尖括号 DSML");
+                "tool_calls 这个词本身不带尖括号 DSML",
+                "a <| b",
+                "x <｜ 中文竖线 y",
+                "管道 <| 后面是一段很长很长的普通文字，没有任何闭合尖括号，也不是协议 end");
     }
 
     @ParameterizedTest
@@ -158,5 +168,15 @@ class StreamingToolProtocolFilterTest {
             }
             assertEquals(input, runChunks(chunks), "input=" + input);
         }
+    }
+
+    @Test
+    void pipeStartWithoutCloseIsReleasedOnceHoldCapExceeded() {
+        StreamingToolProtocolFilter f = new StreamingToolProtocolFilter();
+        String head = f.accept("a <| b");
+        String more = f.accept(" 这是一段足够长的普通文字，超过暂扣上限也没有闭合尖括号的情况");
+        // 不必等到 flush：超过 MAX_HOLD 即放行
+        assertEquals("a <| b 这是一段足够长的普通文字，超过暂扣上限也没有闭合尖括号的情况", head + more);
+        assertEquals("", f.flush());
     }
 }
