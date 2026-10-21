@@ -53,6 +53,14 @@ public final class ReplayCompanionAiClient implements CompanionAiClient {
     }
 
     @Override
+    public StreamTurnResult streamTurn(List<Map<String, Object>> messages,
+                                       List<Map<String, Object>> toolSchemas,
+                                       ToolChoice toolChoice,
+                                       Consumer<String> onContentDelta) {
+        throw new UnsupportedOperationException("T6b: replay v2");
+    }
+
+    @Override
     public TurnOutcome completeWithTools(List<Map<String, Object>> messages,
                                          List<Map<String, Object>> toolSchemas) {
         GoldenLlmCall call = next("phase1");

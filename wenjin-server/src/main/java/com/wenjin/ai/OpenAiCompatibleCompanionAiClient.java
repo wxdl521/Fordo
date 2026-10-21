@@ -244,6 +244,71 @@ public class OpenAiCompatibleCompanionAiClient implements CompanionAiClient {
         }
     }
 
+    @Override
+    public StreamTurnResult streamTurn(List<Map<String, Object>> messages,
+                                       List<Map<String, Object>> toolSchemas,
+                                       ToolChoice toolChoice,
+                                       Consumer<String> onContentDelta) {
+        ensureEnabledAndKey();
+
+        Map<String, Object> body = buildStreamTurnRequestBody(
+                properties.getModel(), temperature(), messages, toolSchemas, toolChoice);
+        StreamTurnAccumulator acc = new StreamTurnAccumulator(onContentDelta);
+
+        try {
+            restClient.post()
+                    .uri(chatCompletionsUrl())
+                    .header("Authorization", "Bearer " + properties.getApiKey())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .exchange((request, response) -> {
+                        if (!response.getStatusCode().is2xxSuccessful()) {
+                            throw new BusinessException(ResultCode.AI_ERROR,
+                                    "AI服务返回错误：HTTP " + response.getStatusCode().value() + " "
+                                            + readBody(response.getBody()));
+                        }
+                        try (InputStream is = response.getBody();
+                             BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                            String line;
+                            while ((line = reader.readLine()) != null) {
+                                acc.accept(line);
+                            }
+                        } catch (SinkFailureException sfe) {
+                            throw sfe;
+                        } catch (Exception streamErr) {
+                            throw new BusinessException(ResultCode.AI_ERROR, "AI服务流处理失败：" + streamErr.getMessage());
+                        }
+                        return null;
+                    });
+        } catch (SinkFailureException sfe) {
+            throw sfe;
+        } catch (BusinessException be) {
+            throw be;
+        } catch (Exception e) {
+            throw new BusinessException(ResultCode.AI_ERROR, "AI服务调用失败：" + e.getMessage());
+        }
+        return acc.result();
+    }
+
+    static Map<String, Object> buildStreamTurnRequestBody(
+            String model,
+            Double temperature,
+            List<Map<String, Object>> messages,
+            List<Map<String, Object>> toolSchemas,
+            ToolChoice toolChoice) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", model);
+        body.put("messages", messages == null ? List.of() : messages);
+        body.put("temperature", temperature);
+        body.put("stream", true);
+        body.put("stream_options", Map.of("include_usage", true));
+        if (toolSchemas != null && !toolSchemas.isEmpty()) {
+            body.put("tools", toolSchemas);
+            body.put("tool_choice", toolChoice == ToolChoice.NONE ? "none" : "auto");
+        }
+        return body;
+    }
+
     static TurnOutcome parseTurnOutcome(String body) {
         try {
             JsonNode root = MAPPER.readTree(body);
