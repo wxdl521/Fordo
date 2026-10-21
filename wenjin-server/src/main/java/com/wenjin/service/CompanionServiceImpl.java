@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.ai.CompanionAiClient;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.config.AiProperties;
 import com.wenjin.config.CompanionToolProperties;
 import com.wenjin.config.CurrentUser;
 import com.wenjin.config.FeatureFlagsProperties;
@@ -100,6 +101,10 @@ public class CompanionServiceImpl implements CompanionService {
     /** Agent 轨迹埋点；缺省 / 关闭时走 NOOP，失败不得影响主流程。 */
     @Autowired(required = false)
     private AgentTraceService agentTraceService;
+
+    /** 当前生效的 AI 配置；agent_run.model 取其调用时的 model（系统配置可热改，故不缓存启动值）。 */
+    @Autowired(required = false)
+    private AiProperties aiProperties;
 
     /** 摘要推进后派发 MEMORY_DISTILL / SUMMARY_REFRESH；缺省时跳过。 */
     @Autowired(required = false)
@@ -980,13 +985,27 @@ public class CompanionServiceImpl implements CompanionService {
                     courseId,
                     conversation.getId(),
                     "COMPANION_CHAT",
-                    null,
+                    currentModelForTrace(),
                     firstInput));
             return ctx == null ? TraceContext.NOOP : ctx;
         } catch (Exception e) {
             log.warn("startCompanionTrace failed, continuing with NOOP: {}", e.toString());
             return TraceContext.NOOP;
         }
+    }
+
+    /**
+     * 本次 run 实际会调用的模型名，写入 agent_run.model（管理后台「AI 按模型」统计依赖它）。
+     * <p>每次现取 {@code AiProperties.getModel()}：系统配置可运行时热改 wenjin.ai.model，不能用启动值。
+     * 零 LLM 模板路径（companion-llm-enabled=false）不会调用模型，保持 null；
+     * 未配置 / 空白模型名同样记 null，不写空串。
+     */
+    private String currentModelForTrace() {
+        if (aiProperties == null || !isCompanionLlmEnabled()) {
+            return null;
+        }
+        String model = aiProperties.getModel();
+        return model == null || model.isBlank() ? null : model.trim();
     }
 
     private void finishCompanionTrace(TraceContext ctx, int runStatus, String errorCode) {

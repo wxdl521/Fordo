@@ -2,12 +2,18 @@ package com.wenjin.service.plan;
 
 import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.entity.AgentPlan;
+import com.wenjin.service.trace.AgentTraceService;
+import com.wenjin.service.trace.StartRunCmd;
+import com.wenjin.service.trace.TraceContext;
+import com.wenjin.support.AgentRunStatus;
 import com.wenjin.support.plan.PlanStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -22,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -103,6 +110,30 @@ class PlanReplanSchedulerTest {
                 planService, flags, Clock.systemUTC());
         assertThat(scheduler.replanAllActive()).isEqualTo(2);
         assertThat(calls.get()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("PLAN_REPLAN 是纯算法、不调 LLM：run 的 model 保持 null（不冒充某个模型）")
+    void replanRunIsTracedWithoutModel() {
+        FeatureFlagsProperties flags = new FeatureFlagsProperties();
+        flags.setPlanEnabled(true);
+        AgentPlan p = plan(5L);
+        when(planService.listActivePlans()).thenReturn(List.of(p));
+        when(planService.replanOne(p)).thenReturn(false);
+        AgentTraceService trace = mock(AgentTraceService.class);
+        TraceContext ctx = TraceContext.active(77L);
+        when(trace.startRun(any(StartRunCmd.class))).thenReturn(ctx);
+
+        PlanReplanScheduler scheduler = new PlanReplanScheduler(
+                planService, flags, Clock.systemUTC());
+        ReflectionTestUtils.setField(scheduler, "agentTraceService", trace);
+        assertThat(scheduler.replanAllActive()).isEqualTo(1);
+
+        ArgumentCaptor<StartRunCmd> cmd = ArgumentCaptor.forClass(StartRunCmd.class);
+        verify(trace).startRun(cmd.capture());
+        assertThat(cmd.getValue().kind()).isEqualTo("PLAN_REPLAN");
+        assertThat(cmd.getValue().model()).isNull();
+        verify(trace).finishRun(ctx, AgentRunStatus.SUCCEEDED, null);
     }
 
     private static AgentPlan plan(long id) {

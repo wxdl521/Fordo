@@ -2,7 +2,9 @@ package com.wenjin.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.ai.CompanionAiClient;
+import com.wenjin.config.AiProperties;
 import com.wenjin.config.CompanionToolProperties;
+import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.dto.LearningPathVO;
 import com.wenjin.entity.CompanionConversation;
@@ -369,7 +371,105 @@ class CompanionTraceTest {
         verify(agentTraceService).finishRun(eq(activeCtx), eq(AgentRunStatus.SUCCEEDED), isNull());
     }
 
+    // ── agent_run.model：记录调用时的生效模型（A4 系统配置可热改 wenjin.ai.model）──────
+
+    @Test
+    @DisplayName("run records the model in effect now; hot-changed wenjin.ai.model is picked up by the next run")
+    void streamReply_recordsCurrentModel_followsHotChange() {
+        AiProperties aiProperties = new AiProperties();
+        aiProperties.setModel("deepseek-v4-pro");
+        ReflectionTestUtils.setField(service, "aiProperties", aiProperties);
+        configureTools(false, List.of());
+
+        stubLegacyStream(711L, "第一问");
+        service.streamReply(711L, t -> { });
+        aiProperties.setModel("glm-5");   // 运行时热改，模拟 A4 系统配置
+        stubLegacyStream(712L, "第二问");
+        service.streamReply(712L, t -> { });
+
+        ArgumentCaptor<StartRunCmd> startCap = ArgumentCaptor.forClass(StartRunCmd.class);
+        verify(agentTraceService, times(2)).startRun(startCap.capture());
+        assertThat(startCap.getAllValues()).extracting(StartRunCmd::model)
+                .containsExactly("deepseek-v4-pro", "glm-5");
+    }
+
+    @Test
+    @DisplayName("tools path records the model too")
+    void streamReplyWithTools_recordsCurrentModel() {
+        AiProperties aiProperties = new AiProperties();
+        aiProperties.setModel("deepseek-v4-pro");
+        ReflectionTestUtils.setField(service, "aiProperties", aiProperties);
+        Long conversationId = 713L;
+        stubConversation(conversationId, "查询我的掌握度");
+        configureTools(true, List.of(fakeTool("query_mastery", "正在查询…")));
+        when(aiClient.completeWithTools(any(), any())).thenReturn(new CompanionAiClient.FinalText("done"));
+        doAnswer(inv -> {
+            Consumer<String> onToken = inv.getArgument(1);
+            onToken.accept("好的");
+            return null;
+        }).when(aiClient).streamMessages(any(), any());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, t -> { });
+
+        ArgumentCaptor<StartRunCmd> startCap = ArgumentCaptor.forClass(StartRunCmd.class);
+        verify(agentTraceService).startRun(startCap.capture());
+        assertThat(startCap.getValue().model()).isEqualTo("deepseek-v4-pro");
+    }
+
+    @Test
+    @DisplayName("zero-LLM template path (companion-llm-enabled=false) keeps model null: no model is called")
+    void streamReply_llmKillSwitchOff_modelStaysNull() {
+        AiProperties aiProperties = new AiProperties();
+        aiProperties.setModel("deepseek-v4-pro");
+        ReflectionTestUtils.setField(service, "aiProperties", aiProperties);
+        FeatureFlagsProperties flags = new FeatureFlagsProperties();
+        flags.setCompanionLlmEnabled(false);
+        ReflectionTestUtils.setField(service, "featureFlags", flags);
+        configureTools(false, List.of());
+        Long conversationId = 714L;
+        stubConversation(conversationId, "kill switch");
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, t -> { });
+
+        ArgumentCaptor<StartRunCmd> startCap = ArgumentCaptor.forClass(StartRunCmd.class);
+        verify(agentTraceService).startRun(startCap.capture());
+        assertThat(startCap.getValue().model()).isNull();
+        verify(aiClient, never()).stream(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("blank / unset model is recorded as null, never as an empty string")
+    void streamReply_blankOrMissingModel_recordedAsNull() {
+        AiProperties aiProperties = new AiProperties();
+        aiProperties.setModel("   ");
+        ReflectionTestUtils.setField(service, "aiProperties", aiProperties);
+        configureTools(false, List.of());
+
+        stubLegacyStream(715L, "blank model");
+        service.streamReply(715L, t -> { });
+        ReflectionTestUtils.setField(service, "aiProperties", null);
+        stubLegacyStream(716L, "no properties bean");
+        service.streamReply(716L, t -> { });
+
+        ArgumentCaptor<StartRunCmd> startCap = ArgumentCaptor.forClass(StartRunCmd.class);
+        verify(agentTraceService, times(2)).startRun(startCap.capture());
+        assertThat(startCap.getAllValues()).extracting(StartRunCmd::model).containsOnlyNulls();
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    /** 旧路径（工具关闭）下一个能正常出流的会话。 */
+    private void stubLegacyStream(Long conversationId, String userText) {
+        stubConversation(conversationId, userText);
+        doAnswer(inv -> {
+            Consumer<String> onToken = inv.getArgument(3);
+            onToken.accept("ok");
+            return null;
+        }).when(aiClient).stream(any(), any(), any(), any());
+        lenient().when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+    }
 
     private void stubConversation(Long conversationId, String userText) {
         CompanionConversation conversation = new CompanionConversation();
