@@ -131,6 +131,12 @@ wenjin:
       weak-drop-limit: 2                         # brief 弱跌节点最多展示数
     supervisor:                                  # M11 Supervisor 抽查
       sample-size: 5                             # 每课程每周抽样 COMPANION_CHAT run 数
+    proactive:                                   # 方向 4 主动陪伴
+      max-opener-actions: 2                      # opener 动作卡上限
+      max-hints-per-day: 3                       # 每日新展示提示条上限
+      hint-cooldown-hours: 20                    # 同类型提示冷却小时数
+      error-burst-threshold: 2                   # 单次练习错题数 >= 此值触发复盘动作/提示
+      error-burst-window-hours: 24               # 错题爆发回看窗口
 
   features:                                      # 功能开关（开发/测试默认开；生产见 application-prod.yml）
     fixed-diagnostic-enabled: true
@@ -144,6 +150,7 @@ wenjin:
     companion-llm-enabled: true                  # M9 伴侣 LLM（关则零 LLM 降级模板）
     plan-enabled: true                           # M10 学习计划（关则工具下架、scheduler 不跑）
     multi-agent-enabled: false                   # M11 多智能体周报/抽查（默认关；关则零调度、报告 API 404）
+    proactive-enabled: true                      # 方向 4 主动陪伴（opener/提示条/小红点；关则接口 404）
   plan:
     replan-cron: "0 30 4 * * *"                  # 每日 re-plan（默认 04:30）
   multi-agent:

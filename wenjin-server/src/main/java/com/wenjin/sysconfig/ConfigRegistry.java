@@ -100,6 +100,8 @@ public class ConfigRegistry {
                 FeatureFlagsProperties::isPlanEnabled, FeatureFlagsProperties::setPlanEnabled);
         feature(list, "multi-agent-enabled", "多智能体周报 / 抽查", "关闭则零调度、报告接口 404",
                 FeatureFlagsProperties::isMultiAgentEnabled, FeatureFlagsProperties::setMultiAgentEnabled);
+        feature(list, "proactive-enabled", "主动陪伴", "关闭时伴侣 opener / 提示条 / 小红点接口返回 404，前端回退固定话术",
+                FeatureFlagsProperties::isProactiveEnabled, FeatureFlagsProperties::setProactiveEnabled);
 
         // ── 限额（wenjin.limits.companion.*）──
         list.add(ConfigKeyDef.integer("wenjin.limits.companion.max-input-chars", GROUP_LIMITS, "单条输入上限（字）",

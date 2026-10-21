@@ -13,6 +13,7 @@ wenjin:
     rag-enabled: true
     plan-enabled: true
     multi-agent-enabled: false
+    proactive-enabled: true
     companion-llm-enabled: true
     reflection-enabled: true
   companion:

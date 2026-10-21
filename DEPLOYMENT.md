@@ -421,6 +421,7 @@ npm run build        # 产出 dist/
 | 已配置 | `wenjin.features.companion-llm-enabled` | M9 伴侣 LLM 紧急 kill switch | 小 |
 | 已配置 | `wenjin.features.plan-enabled` | M10 学习计划 / daily-brief / re-plan | 小 |
 | 已配置 | `wenjin.features.multi-agent-enabled` | M11 多智能体周报 / Supervisor 抽查（默认关） | 小 |
+| 已配置 | `wenjin.features.proactive-enabled` / `wenjin.limits.proactive` | 方向 4 主动陪伴（opener / 提示条 / 小红点）开关与限额 | 小 |
 | 已配置 | `wenjin.eval.judge-model` | M6 LLM-as-judge 模型名（可选） | 极小 |
 | 已配置 | `wenjin.limits.trace` / `wenjin.limits.tools` | step I/O 与工具结果截断 | 小 |
 | 已配置 | `wenjin.limits.prompt` / `wenjin.limits.memory` | M7 分槽预算与记忆强度/注入 | 小 |
@@ -434,6 +435,7 @@ npm run build        # 产出 dist/
 | 已迁移 | Flyway `V14__agent_plan.sql` | `agent_plan` / `agent_plan_task` / `tool_effect_key`（M10） | 中 |
 | 已迁移 | Flyway `V15__agent_report.sql` | `agent_report`（M11 多智能体产出，可选） | 中 |
 | 已迁移 | Flyway `V21__answer_record_time_index.sql` | `answer_record.idx_student_course_time`（错因辅导按时间取最近错题；仅加索引，大表建议低峰执行） | 小 |
+| 已迁移 | Flyway `V22__companion_hint_log.sql` | `companion_hint_log`（主动陪伴提示条展示/关闭日志） | 小 |
 
 ### 4.1 配置清单（调度与基线）
 
@@ -465,6 +467,12 @@ spring:
 | `wenjin.features.companion-llm-enabled` | `true` | `${WENJIN_FEATURE_COMPANION_LLM:true}` | M9 紧急关 LLM；关则零 LLM 模板 + 练习卡，run=`DEGRADED` |
 | `wenjin.features.plan-enabled` | `true` | `${WENJIN_FEATURE_PLAN:false}` | M10 学习计划；关则工具下架、scheduler 不跑、ACTIVE 冻结不删、brief 隐藏计划段 |
 | `wenjin.features.multi-agent-enabled` | `false` | `${WENJIN_FEATURE_MULTI_AGENT:false}` | M11 多智能体；**默认关**；关则零 cron、报告 API 404、相关 AiJob 拒跑 |
+| `wenjin.features.proactive-enabled` | `true` | `${WENJIN_FEATURE_PROACTIVE:false}` | 方向 4 主动陪伴；关则 `/api/companion/opener`、`hints/count`、`hints/dismiss` 返回 404（前端回退固定话术）；开启前须 **V22 migrate** |
+| `wenjin.limits.proactive.max-opener-actions` | `2` | 继承基线 | opener 动作卡上限 |
+| `wenjin.limits.proactive.max-hints-per-day` | `3` | 继承基线 | 每日（自然日）新展示提示条上限 |
+| `wenjin.limits.proactive.hint-cooldown-hours` | `20` | 继承基线 | 同类型提示冷却小时数 |
+| `wenjin.limits.proactive.error-burst-threshold` | `2` | 继承基线 | 单次练习错题数 >= 此值触发复盘动作 / ERROR_BURST 提示 |
+| `wenjin.limits.proactive.error-burst-window-hours` | `24` | 继承基线 | 错题爆发回看窗口（小时） |
 | `wenjin.limits.supervisor.sample-size` | `5` | 继承基线 | Supervisor 每课程每周抽样 COMPANION_CHAT 数 |
 | `wenjin.multi-agent.report-cron` | `0 15 3 * * MON` | 继承基线 | 周一凌晨入队 TEACHER_WEEKLY_REPORT / SUPERVISOR_SAMPLE |
 | `wenjin.limits.plan.daily-task-cap` | `3` | 继承基线 | 每日任务上限 |
@@ -558,6 +566,7 @@ wenjin:
 - **M8 RAG**：生产默认 `rag-enabled=false`；开启前须完成 **V13 migrate** 与 **`ops/sql/preflight-ngram.sql`**（`ngram_token_size=2`）。关闭时回到 M7 基线（空 RETRIEVAL、`search_materials` 不可用）。**版权**：整本出版教材勿部署到公网 `fordo.thingxue.com`；校内演示环境不受限。NODE_REF 参考文档可入库。
 - **M9 竞赛交付 / 紧急 kill switch**：见下表；**无新 Flyway**（探针会话为进程内 `ProbeSessionStore`，避免占用 M10 的 V14）。
 - **M10 计划**：生产默认 `plan-enabled=false`；开启前须完成 **V14 migrate**。关闭时：计划工具下架、re-plan 不跑、daily-brief 隐藏计划段、已有 ACTIVE 冻结不删。DRAFT 永不进 brief / re-plan。
+- **主动陪伴**：生产默认 `proactive-enabled=false`（`WENJIN_FEATURE_PROACTIVE`）；开启前须 **V22 migrate**（`companion_hint_log`）。零 LLM、读时聚合，关闭时三个接口 404、前端回退固定话术；管理后台「系统配置」可热改开关。
 - **M11 多智能体（可选）**：默认 `multi-agent-enabled=false`（开发/生产一致）；开启前须 **V15 migrate** 且建议 `ai-job-dispatch-enabled=true`。关闭时：无周报 cron、报告 API 404、相关 job kind 拒跑；与 M10 基线一致。Teacher 周报只读证据流/掌握度/练习，**不读 student_memory**。
 
 ### 4.2.1 M9 紧急 kill switch 矩阵
