@@ -471,6 +471,7 @@ spring:
 | `wenjin.limits.plan.backlog-threshold` | `5` | 继承基线 | daily-brief 复习积压置顶 |
 | `wenjin.plan.replan-cron` | `0 30 4 * * *` | 继承基线 | 每日 re-plan（仅 ACTIVE） |
 | `wenjin.eval.judge-model` | `${WENJIN_EVAL_JUDGE_MODEL:}`（空则回落文本模型） | 同左 | LLM-as-judge 模型；未配置时沿用 `wenjin.ai.model` |
+| `wenjin.eval.price.input-per-mtok` / `output-per-mtok` | `${WENJIN_EVAL_PRICE_IN:0}` / `${WENJIN_EVAL_PRICE_OUT:0}` | 同左 | 评测报告成本估算单价（美元/百万 token）；0 = 不计成本 |
 | `wenjin.limits.trace.max-io-chars` | `8000` | 继承基线 | `agent_step.input_json` / `output_json` 超长截断并追加 `[truncated]` |
 | `wenjin.limits.tools.max-result-chars` | `4000` | 继承基线 | 通用工具结果字符上限（与伴侣侧 `wenjin.companion.tools.max-result-chars` 并存；后者偏对话上下文） |
 | `wenjin.companion.tools.max-result-chars` | `2000` | 继承基线 | 伴侣 ToolGovernor 结果截断（M4） |
@@ -534,7 +535,24 @@ wenjin:
 - **学生端不开放 trace API**：仅教师/管理员经 `TeacherAgentRunController` 读本课 run；学生令牌应 401/403。
 - **Schema**：空库走 Flyway V1…**V15**；既有库 migrate **V10**（`agent_run` / `agent_step`），**V11**（eval），**V12**（`student_memory`），**V13**（RAG 三表 + FULLTEXT ngram），**V14**（计划三表），**V15**（`agent_report`）。`schema.sql` 仅本地空库快照，生产禁用。
 - **发布顺序**：migrate V10 → 滚动应用（可先 flag off）→ 冒烟教师页 `/teacher/agent-runs` → 再开 `WENJIN_FEATURE_AGENT_TRACE`。回滚优先关 flag，不必立刻 drop 表。
-- **M6 评测**：生产默认 `eval-enabled=false`；CI 用 REPLAY 硬断言（`eval-replay` job，不调用外网模型）。LIVE 录 golden / judge 校准仅在有 Key 的受控环境执行。
+- **M6 评测**：生产默认 `eval-enabled=false`，评测装配（`EvalRuntimeConfiguration`）只在 `eval` profile 下生效，生产永不激活。CI `eval-replay` 用 Testcontainers 把每个 ENABLED 场景的 golden 回放进真实编排并做硬断言（不调用外网模型）；CI `eval-live` 为 `workflow_dispatch` 手动任务，读仓库 secret `WENJIN_AI_API_KEY`，产物 `target/eval-live/**`。
+  - **评测库必须独立**：本地用 `wenjin_eval`（`CREATE DATABASE wenjin_eval DEFAULT CHARACTER SET utf8mb4`，表由 Flyway 建，**不要**灌 `schema.sql`）；JDBC 库名为 `wenjin` 时拒跑。
+  - 评测运行参数（系统属性 / 环境变量，仅测试进程使用）：
+
+    | 参数 | 默认 | 说明 |
+    | --- | --- | --- |
+    | `WENJIN_EVAL_IT=true` | 未设 = 跳过 | 启用 `ReplayScenarioIT` / `LiveEvalPipelineIT` / `EvalFixtureIT` |
+    | `WENJIN_EVAL_LIVE=true` + `WENJIN_AI_API_KEY` | 未设 = 跳过 | 启用 `LiveEvalSuiteIT`（真实模型，按 `wenjin.ai.base-url/model`） |
+    | `-Dwenjin.eval.jdbc-url` / `WENJIN_EVAL_JDBC_URL` | Testcontainers `mysql:8.4` | 指向本机评测库，如 `jdbc:mysql://127.0.0.1:3306/wenjin_eval`；账号 `-Dwenjin.eval.jdbc-user` / `-password`（默认 root/root） |
+    | `-Dwenjin.eval.repeat` | `3` | LIVE 每场景重复次数 |
+    | `-Dwenjin.eval.scenarios` | 全部 ENABLED | 逗号分隔；显式列出时可跑 PENDING |
+    | `-Dwenjin.eval.judge` | `false` | 跑 LLM judge（模型 `wenjin.eval.judge-model`），并导出 `calibration.csv` |
+    | `-Dwenjin.eval.record` / `-Dwenjin.eval.record-dir` | `false` / `src/test/resources/eval/golden` | RECORD：把真实 `streamTurn` 输出写成 golden v2 |
+    | `-Dwenjin.eval.out-dir` | `target/eval-live` | LIVE 报告根目录（子目录按时间戳） |
+    | `-Dwenjin.eval.compare=A/report.json,B/report.json` | — | `EvalToolsTest`：两份报告对比 → `target/eval-compare.md` |
+    | `-Dwenjin.eval.calibration-csv=...` | — | `EvalToolsTest`：读回填好 `human_score` 的 CSV，算人机一致率与维度偏差 |
+
+  - 本地 LIVE 一条命令（PowerShell，`wenjin-server` 目录）：`$env:WENJIN_AUTH_SECRET="ci-test-secret-not-for-prod-at-least-32-bytes"; $env:WENJIN_EVAL_LIVE="true"; $env:WENJIN_AI_API_KEY="<key>"; .\mvnw.cmd test "-Dtest=LiveEvalSuiteIT" "-Dwenjin.eval.jdbc-url=jdbc:mysql://127.0.0.1:3306/wenjin_eval" "-Dwenjin.eval.judge=true"`。完整说明见 README「M6 伴侣评测」。
 - **M7 记忆**：生产默认 `memory-enabled=false`；开启前须完成 V12 migrate。关闭时行为回到 M6 基线（空 MEMORY 槽、无 distill 入队、记忆工具不可用）。`record_observation` 超 `write-per-run` 返回 `TOOL_BUDGET_EXCEEDED` + GUARD，且不占用总工具次数。
 - **M8 RAG**：生产默认 `rag-enabled=false`；开启前须完成 **V13 migrate** 与 **`ops/sql/preflight-ngram.sql`**（`ngram_token_size=2`）。关闭时回到 M7 基线（空 RETRIEVAL、`search_materials` 不可用）。**版权**：整本出版教材勿部署到公网 `fordo.thingxue.com`；校内演示环境不受限。NODE_REF 参考文档可入库。
 - **M9 竞赛交付 / 紧急 kill switch**：见下表；**无新 Flyway**（探针会话为进程内 `ProbeSessionStore`，避免占用 M10 的 V14）。

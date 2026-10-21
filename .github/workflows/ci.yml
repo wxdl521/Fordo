@@ -4,6 +4,20 @@ on:
   push:
     branches: [main, master, 'codex/**', 'feat/**']
   pull_request:
+  workflow_dispatch:
+    inputs:
+      scenarios:
+        description: 'LIVE eval scenario codes, comma-separated (empty = all ENABLED)'
+        required: false
+        default: ''
+      repeat:
+        description: 'LIVE eval runs per scenario'
+        required: false
+        default: '3'
+      judge:
+        description: 'Run the LLM judge (true/false)'
+        required: false
+        default: 'true'
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -69,17 +83,64 @@ jobs:
     name: eval-replay
     needs: backend
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: '21', cache: maven, cache-dependency-path: wenjin-server/pom.xml}
-      - run: ./mvnw -q -Dtest=com.wenjin.eval.** test -Deval.mode=replay
+      # Unit tests of com.wenjin.eval.** plus the Docker-backed eval ITs (WENJIN_EVAL_IT=true):
+      # ReplayScenarioIT replays every ENABLED scenario golden through the real companion
+      # orchestrator + tools on a Testcontainers MySQL; LiveEvalPipelineIT runs the LIVE
+      # pipeline with a scripted stub model; EvalFixtureIT covers the DB fixture.
+      - run: ./mvnw -B -Dtest='com.wenjin.eval.**' test
         working-directory: wenjin-server
         env:
           WENJIN_AUTH_SECRET: ci-test-secret-not-for-prod-at-least-32-bytes
+          WENJIN_AI_API_KEY: ''
+          WENJIN_EVAL_IT: 'true'
+      - name: Verify replay IT ran
+        working-directory: wenjin-server
+        shell: bash
+        run: grep -q 'tests="[1-9]' target/surefire-reports/TEST-com.wenjin.eval.integration.ReplayScenarioIT.xml
       - uses: actions/upload-artifact@v4
         if: always()
-        with: {name: eval-report, path: wenjin-server/target/eval-report.md, if-no-files-found: ignore}
+        with:
+          name: eval-report
+          path: |
+            wenjin-server/target/eval-report.md
+            wenjin-server/target/surefire-reports/*eval*
+          if-no-files-found: ignore
+
+  eval-live:
+    name: eval-live
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '21', cache: maven, cache-dependency-path: wenjin-server/pom.xml}
+      - name: LIVE eval against the configured model
+        working-directory: wenjin-server
+        env:
+          WENJIN_AUTH_SECRET: ci-test-secret-not-for-prod-at-least-32-bytes
+          WENJIN_AI_API_KEY: ${{ secrets.WENJIN_AI_API_KEY }}
+          WENJIN_EVAL_LIVE: 'true'
+          EVAL_SCENARIOS: ${{ github.event.inputs.scenarios }}
+          EVAL_REPEAT: ${{ github.event.inputs.repeat }}
+          EVAL_JUDGE: ${{ github.event.inputs.judge }}
+        shell: bash
+        run: |
+          if [[ -z "$WENJIN_AI_API_KEY" ]]; then
+            echo "::error::secret WENJIN_AI_API_KEY is not set"; exit 1
+          fi
+          ./mvnw -B -Dtest=LiveEvalSuiteIT test "-Dwenjin.eval.scenarios=${EVAL_SCENARIOS}" "-Dwenjin.eval.repeat=${EVAL_REPEAT:-3}" "-Dwenjin.eval.judge=${EVAL_JUDGE:-true}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-live
+          path: wenjin-server/target/eval-live/**
+          if-no-files-found: warn
 
   frontend:
     name: frontend-check
