@@ -71,6 +71,7 @@ class ControllerValidationWiringTest {
                 QuestionAdminController.class,
                 ReviewController.class,
                 SystemAdminUserController.class,
+                SystemAdminUserManageController.class,
                 TeacherAgentRunController.class,
                 TeacherCourseController.class,
                 TeacherDashboardController.class,
