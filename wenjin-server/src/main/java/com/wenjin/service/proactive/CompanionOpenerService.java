@@ -1,8 +1,6 @@
 package com.wenjin.service.proactive;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.FeatureFlagsProperties;
@@ -23,10 +21,9 @@ import com.wenjin.mapper.CompanionHintLogMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.PracticeSessionMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.service.LearningFrontierService;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.ReviewService;
-import com.wenjin.service.companion.GetLearningFrontierTool;
-import com.wenjin.service.companion.ToolContext;
 import com.wenjin.support.plan.PlanStatus;
 import com.wenjin.support.plan.PlanTaskKind;
 import com.wenjin.support.plan.PlanTaskStatus;
@@ -60,7 +57,6 @@ import java.util.function.Supplier;
 public class CompanionOpenerService {
 
     private static final Logger log = LoggerFactory.getLogger(CompanionOpenerService.class);
-    private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_HINT_KEY = 96;
     private static final int MAX_HINT_TYPE = 32;
 
@@ -76,7 +72,7 @@ public class CompanionOpenerService {
     private final KgNodeMapper nodeMapper;
     private final StudentMasteryMapper masteryMapper;
     private final MasteryDecayCalculator decay;
-    private final GetLearningFrontierTool frontierTool;
+    private final LearningFrontierService frontierService;
     private final CompanionHintLogMapper hintMapper;
     private final Clock clock;
 
@@ -90,7 +86,7 @@ public class CompanionOpenerService {
                                   KgNodeMapper nodeMapper,
                                   StudentMasteryMapper masteryMapper,
                                   MasteryDecayCalculator decay,
-                                  GetLearningFrontierTool frontierTool,
+                                  LearningFrontierService frontierService,
                                   CompanionHintLogMapper hintMapper,
                                   Clock clock) {
         this.flags = Objects.requireNonNull(flags, "flags");
@@ -103,7 +99,7 @@ public class CompanionOpenerService {
         this.nodeMapper = nodeMapper;
         this.masteryMapper = masteryMapper;
         this.decay = decay;
-        this.frontierTool = frontierTool;
+        this.frontierService = frontierService;
         this.hintMapper = hintMapper;
         this.clock = clock == null ? Clock.systemDefaultZone() : clock;
     }
@@ -437,14 +433,13 @@ public class CompanionOpenerService {
 
     private CompanionOpenerVO.Action frontierAction(Signals sig) {
         try {
-            String json = frontierTool.execute(new ToolContext(sig.studentId, sig.courseId), JSON.createObjectNode());
-            JsonNode items = JSON.readTree(json).path("items");
-            if (!items.isArray() || items.isEmpty()) {
+            List<LearningFrontierService.FrontierNode> frontier =
+                    frontierService.frontier(sig.studentId, sig.courseId, 1);
+            if (frontier.isEmpty()) {
                 return null;
             }
-            JsonNode first = items.get(0);
-            String code = first.path("code").asText(null);
-            String name = displayName(first.path("name").asText(null), code);
+            String code = frontier.get(0).code();
+            String name = displayName(frontier.get(0).name(), code);
             if (!StringUtils.hasText(code)) {
                 return null;
             }

@@ -21,8 +21,7 @@ import com.wenjin.mapper.PracticeSessionMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.ReviewService;
-import com.wenjin.service.companion.GetLearningFrontierTool;
-import com.wenjin.service.companion.ToolContext;
+import com.wenjin.service.LearningFrontierService;
 import com.wenjin.support.plan.PlanStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -72,7 +71,7 @@ class CompanionOpenerServiceTest {
     @Mock KgNodeMapper nodeMapper;
     @Mock StudentMasteryMapper masteryMapper;
     @Mock MasteryDecayCalculator decay;
-    @Mock GetLearningFrontierTool frontierTool;
+    @Mock LearningFrontierService frontierService;
     @Mock CompanionHintLogMapper hintMapper;
 
     FeatureFlagsProperties flags;
@@ -87,7 +86,7 @@ class CompanionOpenerServiceTest {
         limits = new LimitsProperties();
         Clock clock = Clock.fixed(NOW.atZone(ZONE).toInstant(), ZONE);
         service = new CompanionOpenerService(flags, limits, reviewService, planMapper, taskMapper,
-                sessionMapper, answerMapper, nodeMapper, masteryMapper, decay, frontierTool, hintMapper, clock);
+                sessionMapper, answerMapper, nodeMapper, masteryMapper, decay, frontierService, hintMapper, clock);
 
         when(nodeMapper.selectList(any())).thenReturn(List.of(
                 node(1L, "N1", "变量"), node(2L, "N2", "循环"), node(3L, "N3", "数组"), node(4L, "N4", "继承")));
@@ -101,7 +100,7 @@ class CompanionOpenerServiceTest {
         when(sessionMapper.selectList(any())).thenReturn(List.of());
         when(answerMapper.selectList(any())).thenReturn(List.of());
         when(hintMapper.selectList(any())).thenReturn(List.of());
-        when(frontierTool.execute(any(ToolContext.class), any())).thenReturn("{\"items\":[]}");
+        when(frontierService.frontier(SID, CID, 1)).thenReturn(List.of());
     }
 
     // ───────── helpers ─────────
@@ -201,7 +200,7 @@ class CompanionOpenerServiceTest {
         assertThatThrownBy(() -> service.dismiss(SID, CID, "DECAY:x")).isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode()).isEqualTo(404);
         verifyNoInteractions(reviewService, planMapper, taskMapper, sessionMapper, answerMapper, nodeMapper,
-                masteryMapper, hintMapper, frontierTool);
+                masteryMapper, hintMapper, frontierService);
     }
 
     @Test
@@ -334,8 +333,8 @@ class CompanionOpenerServiceTest {
     @Test
     @DisplayName("FRONTIER：新学生无掌握数据 → 取前沿第一个节点")
     void frontier_forNewStudent() throws Exception {
-        when(frontierTool.execute(any(ToolContext.class), any()))
-                .thenReturn("{\"items\":[{\"code\":\"N1\",\"name\":\"变量\",\"effective\":0.0}]}");
+        when(frontierService.frontier(SID, CID, 1))
+                .thenReturn(List.of(new LearningFrontierService.FrontierNode("N1", "变量", 0.0)));
         CompanionOpenerVO vo = service.build(SID, CID);
         assertThat(vo.getActions()).hasSize(1);
         assertThat(vo.getActions().get(0).getKind()).isEqualTo("FRONTIER");
@@ -362,7 +361,7 @@ class CompanionOpenerServiceTest {
 
         Clock evening = Clock.fixed(NOW.withHour(20).atZone(ZONE).toInstant(), ZONE);
         CompanionOpenerService s2 = new CompanionOpenerService(flags, limits, reviewService, planMapper, taskMapper,
-                sessionMapper, answerMapper, nodeMapper, masteryMapper, decay, frontierTool, hintMapper, evening);
+                sessionMapper, answerMapper, nodeMapper, masteryMapper, decay, frontierService, hintMapper, evening);
         assertThat(s2.build(SID, CID).getGreeting()).startsWith("晚上好");
     }
 
