@@ -442,7 +442,8 @@ public class CompanionServiceImpl implements CompanionService {
                 messages,
                 tools,
                 toolContext,
-                forcedPracticeCall(conversation, latestUser, tools),
+                // 复盘本轮（点击「复盘错题」）由 get_recent_mistakes 驱动，不得被练习意图劫持
+                reviewPracticeSessionId != null ? null : forcedPracticeCall(conversation, latestUser, tools),
                 maxRounds(),
                 maxToolCalls(),
                 limits.getCompanion().getMaxAiOutputChars(),

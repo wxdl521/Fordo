@@ -1181,6 +1181,47 @@ class CompanionServiceImplTest {
     }
 
     @Test
+    void reviewSession_withStartPracticeAndFocus_doesNotForcePractice() {
+        configureTools(true, 2, 3, List.of(
+                fakeTool("start_practice", "正在生成节点练习…", Map.of("type", "object", "properties", Map.of())),
+                fakeTool("get_recent_mistakes", "正在翻看你的错题…", Map.of("type", "object", "properties", Map.of()))));
+        // 带焦点节点 KT12；用户原话含「练习」
+        stubConversationAndPrompt(613L, List.of(userMessage("帮我复盘一下刚才那次练习的错题")));
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
+                new ToolExecutionResult("c1", "get_recent_mistakes", true, "{\"mistakes\":[]}"));
+        scriptTurns(tools(new CompanionAiClient.ToolCall("c1", "get_recent_mistakes", "{}")), text("没有错题"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(613L, 78L, new RecordingSink());
+
+        ArgumentCaptor<CompanionAiClient.ToolCall> callCaptor =
+                ArgumentCaptor.forClass(CompanionAiClient.ToolCall.class);
+        verify(toolGovernor).execute(any(), callCaptor.capture(), any(), any());
+        assertThat(callCaptor.getAllValues()).extracting(CompanionAiClient.ToolCall::name)
+                .containsExactly("get_recent_mistakes");
+    }
+
+    @Test
+    void typedReviewRequest_withoutReviewSession_doesNotForcePractice() {
+        configureTools(true, 2, 3, List.of(
+                fakeTool("start_practice", "正在生成节点练习…", Map.of("type", "object", "properties", Map.of())),
+                fakeTool("get_recent_mistakes", "正在翻看你的错题…", Map.of("type", "object", "properties", Map.of()))));
+        stubConversationAndPrompt(614L, List.of(userMessage("帮我复盘一下刚才那次练习的错题")));
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
+                new ToolExecutionResult("c1", "get_recent_mistakes", true, "{\"mistakes\":[]}"));
+        scriptTurns(tools(new CompanionAiClient.ToolCall("c1", "get_recent_mistakes", "{}")), text("没有错题"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(614L, new RecordingSink());
+
+        ArgumentCaptor<CompanionAiClient.ToolCall> callCaptor =
+                ArgumentCaptor.forClass(CompanionAiClient.ToolCall.class);
+        verify(toolGovernor).execute(any(), callCaptor.capture(), any(), any());
+        assertThat(callCaptor.getAllValues()).extracting(CompanionAiClient.ToolCall::name)
+                .containsExactly("get_recent_mistakes");
+    }
+
+    @Test
     void withoutReviewSession_promptHasNoReviewSection() {
         configureTools(true, 2, 3, List.of(fakeTool(
                 "get_recent_mistakes", "正在翻看你的错题…", Map.of("type", "object", "properties", Map.of()))));
