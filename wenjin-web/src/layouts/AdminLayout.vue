@@ -73,7 +73,9 @@ const navItems = [
   { to: '/admin/courses', label: '课程管理', testid: 'admin-nav-courses' },
   { to: '/admin/clazzes', label: '班级管理', testid: 'admin-nav-clazzes' },
   { to: '/admin/audit-logs', label: '操作日志', testid: 'admin-nav-audit-logs' },
-  { to: '/admin/login-logs', label: '登录日志', testid: 'admin-nav-login-logs' }
+  { to: '/admin/login-logs', label: '登录日志', testid: 'admin-nav-login-logs' },
+  { to: '/admin/settings', label: '系统配置', testid: 'admin-nav-settings' },
+  { to: '/admin/maintenance', label: '数据维护', testid: 'admin-nav-maintenance' }
 ]
 
 const adminName = computed(() => {

@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════
 --  问津 · 知识图谱驱动的个性化学习导航系统
---  本地空库重建快照（当前最终 DDL，含 V3–V17；共 40 张业务表）
+--  本地空库重建快照（当前最终 DDL，含 V3–V18；共 41 张业务表）
 --
 --  ⚠ 仅本地空库 / 会删数据 / 生产禁用
 --    · 本脚本含 DROP TABLE IF EXISTS，会清空目标库业务表数据。
---    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V17）。
+--    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V18）。
 --    · 新增版本化迁移（Vn）后，必须把最终 DDL 同步回本文件，保持本地快照一致。
 --    · 应用启动默认 spring.flyway.enabled=false（WENJIN_FLYWAY_ENABLED），
 --      普通应用账号只有 DML；发布流水线用 migrator 凭据单独跑迁移作业。
@@ -22,7 +22,8 @@
 --   10. V15 增 agent_report（M11 多智能体周报 / 抽查，可选）。
 --   11. V16 增 audit_log / login_log（管理后台审计与监控，无物理 FK）；sys_user 增 token_valid_after。
 --   12. V17 增 clazz / clazz_student / clazz_course（管理后台班级；含物理 FK，删班级级联删成员与课程关联行）。
---   13. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--   13. V18 增 sys_config（管理后台系统配置覆盖层；secret 存 AES-GCM 密文，无物理 FK）。
+--   14. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -731,5 +732,18 @@ CREATE TABLE `clazz_course` (
     CONSTRAINT `fk_cc_clazz` FOREIGN KEY (`clazz_id`) REFERENCES `clazz` (`id`) ON DELETE CASCADE,
     CONSTRAINT `fk_cc_course` FOREIGN KEY (`course_id`) REFERENCES `course` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='班级关联课程【V17】';
+
+-- ───────────────────────────── 组：系统配置【V18】─────────────────────────────
+--  yml / 环境变量为默认值，本表覆盖白名单 key；启动与保存后写回 properties bean（热生效）。
+
+DROP TABLE IF EXISTS `sys_config`;
+CREATE TABLE `sys_config` (
+    `config_key`   VARCHAR(128) NOT NULL                COMMENT '配置项 key，如 wenjin.ai.model（白名单登记）',
+    `config_value` TEXT         NOT NULL                COMMENT '覆盖值；secret 类型为 AES-GCM 密文(base64)',
+    `encrypted`    TINYINT      NOT NULL DEFAULT 0      COMMENT '1=config_value 为密文, 0=明文',
+    `updated_by`   BIGINT       NULL                    COMMENT '最后修改人 sys_user.id（仅留痕，无物理外键）',
+    `updated_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最后修改时间',
+    PRIMARY KEY (`config_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统配置覆盖层（白名单 key）【V18】';
 
 SET FOREIGN_KEY_CHECKS = 1;

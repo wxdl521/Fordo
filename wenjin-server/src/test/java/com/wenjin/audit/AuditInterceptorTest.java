@@ -152,6 +152,39 @@ class AuditInterceptorTest {
     }
 
     @Test
+    @DisplayName("target_id：系统配置项路径变量 key（排在 id/courseId/draftId 之后）")
+    void targetId_configKey() throws Exception {
+        when(userMapper.selectById(1L)).thenReturn(user(1L, "root"));
+
+        request.setAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE, Map.of("key", "wenjin.ai.model"));
+        interceptor.afterCompletion(request, response, handler("audited"), null);
+        request.setAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE, Map.of("key", "k", "id", "9"));
+        interceptor.afterCompletion(request, response, handler("audited"), null);
+
+        ArgumentCaptor<AuditLog> captor = ArgumentCaptor.forClass(AuditLog.class);
+        verify(auditLogMapper, times(2)).insert(captor.capture());
+        assertThat(captor.getAllValues()).extracting(AuditLog::getTargetId).containsExactly("wenjin.ai.model", "9");
+    }
+
+    @Test
+    @DisplayName("target_id：没有路径变量时取控制器放的请求属性（目标在请求体里）；路径变量优先；空白视为无")
+    void targetId_explicitAttributeFallback() throws Exception {
+        when(userMapper.selectById(1L)).thenReturn(user(1L, "root"));
+
+        request.setAttribute(AuditInterceptor.TARGET_ID_ATTRIBUTE, "5");
+        interceptor.afterCompletion(request, response, handler("audited"), null);
+        request.setAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE, Map.of("id", "9"));
+        interceptor.afterCompletion(request, response, handler("audited"), null);
+        request.removeAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE);
+        request.setAttribute(AuditInterceptor.TARGET_ID_ATTRIBUTE, "  ");
+        interceptor.afterCompletion(request, response, handler("audited"), null);
+
+        ArgumentCaptor<AuditLog> captor = ArgumentCaptor.forClass(AuditLog.class);
+        verify(auditLogMapper, times(3)).insert(captor.capture());
+        assertThat(captor.getAllValues()).extracting(AuditLog::getTargetId).containsExactly("5", "9", null);
+    }
+
+    @Test
     @DisplayName("匿名请求不落审计（防止未登录刷接口把审计表刷爆），也不查用户表")
     void anonymous_notRecorded() throws Exception {
         CurrentUser.clear();

@@ -29,6 +29,8 @@ const AdminClazzes = () => import('../views/AdminClazzes.vue')
 const AdminClazzDetail = () => import('../views/AdminClazzDetail.vue')
 const AdminAuditLogs = () => import('../views/AdminAuditLogs.vue')
 const AdminLoginLogs = () => import('../views/AdminLoginLogs.vue')
+const AdminSettings = () => import('../views/AdminSettings.vue')
+const AdminMaintenance = () => import('../views/AdminMaintenance.vue')
 
 const routes = [
   { path: '/', name: 'login', component: Login, meta: { title: '登录 / 课程选择', public: true } },
@@ -62,7 +64,9 @@ const routes = [
       { path: 'clazzes', name: 'admin-clazzes', component: AdminClazzes, meta: { title: '班级管理' } },
       { path: 'clazzes/:id', name: 'admin-clazz-detail', component: AdminClazzDetail, meta: { title: '班级详情' } },
       { path: 'audit-logs', name: 'admin-audit-logs', component: AdminAuditLogs, meta: { title: '操作日志' } },
-      { path: 'login-logs', name: 'admin-login-logs', component: AdminLoginLogs, meta: { title: '登录日志' } }
+      { path: 'login-logs', name: 'admin-login-logs', component: AdminLoginLogs, meta: { title: '登录日志' } },
+      { path: 'settings', name: 'admin-settings', component: AdminSettings, meta: { title: '系统配置' } },
+      { path: 'maintenance', name: 'admin-maintenance', component: AdminMaintenance, meta: { title: '数据维护' } }
     ]
   },
 ]

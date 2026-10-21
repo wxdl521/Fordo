@@ -50,6 +50,11 @@ class AuditedInventoryTest {
             "SystemAdminClazzController#removeStudent=CLAZZ_STUDENT_REMOVE:CLAZZ",
             "SystemAdminClazzController#addCourse=CLAZZ_COURSE_ADD:CLAZZ",
             "SystemAdminClazzController#removeCourse=CLAZZ_COURSE_REMOVE:CLAZZ",
+            // 管理后台系统配置 / 数据维护（审计不记配置值）
+            "SystemAdminConfigController#update=CONFIG_UPDATE:CONFIG",
+            "SystemAdminConfigController#reset=CONFIG_RESET:CONFIG",
+            "SystemAdminConfigController#aiTest=AI_TEST:CONFIG",
+            "SystemAdminConfigController#dataReset=DATA_RESET:COURSE",
             // 图谱
             "GraphAdminController#importGraph=GRAPH_IMPORT:GRAPH",
             "GraphAdminController#importGraphFromExcel=GRAPH_IMPORT:GRAPH",

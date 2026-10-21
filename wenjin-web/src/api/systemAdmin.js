@@ -290,3 +290,53 @@ export function addClazzCourse(id, courseId) {
 export function removeClazzCourse(id, courseId) {
   return http.delete(`/system-admin/clazzes/${id}/courses/${courseId}`)
 }
+
+// ───────── 系统配置 / 数据维护（A4） ─────────
+
+/**
+ * 系统配置分组列表（白名单 key，按分组排列）。
+ * secret 项的 value / defaultValue 恒为 null，只返回 configured 与 masked。
+ * @returns {Promise<{ group: string, items: object[] }[]>}
+ */
+export function listConfigs() {
+  return http.get('/system-admin/configs')
+}
+
+/**
+ * 覆盖某个配置项（立即生效，并记入审计）。secret 传明文，服务端加密存库。
+ * @param {string} key 白名单内的配置 key，如 wenjin.ai.model
+ * @param {string|number|boolean} value
+ * @returns {Promise<object>} 更新后的单个配置项
+ */
+export function updateConfig(key, value) {
+  return http.put(`/system-admin/configs/${encodeURIComponent(key)}`, { value })
+}
+
+/**
+ * 恢复默认（删除覆盖，回到启动时的 yml / 环境变量取值）。
+ * @param {string} key
+ * @returns {Promise<object>} 恢复后的单个配置项
+ */
+export function resetConfig(key) {
+  return http.delete(`/system-admin/configs/${encodeURIComponent(key)}`)
+}
+
+/**
+ * 用当前生效配置发一个极小请求，检测 AI 连通性（不回显 key）。
+ * @param {'text'|'vision'} target
+ * @returns {Promise<{ ok: boolean, latencyMs: number, model: string, error?: string }>}
+ */
+export function testAiConnection(target) {
+  return http.post('/system-admin/configs/ai-test', { target })
+}
+
+/**
+ * 清空某门课程的学生学习数据（不删选课、图谱、题库、账号）。
+ * confirmText 必须与课程名完全一致；生产环境默认 403。
+ * @param {number} courseId
+ * @param {string} confirmText
+ * @returns {Promise<{ deleted: Record<string, number> }>} 每张表删除的行数
+ */
+export function resetLearningData(courseId, confirmText) {
+  return http.post('/system-admin/data-reset', { courseId, confirmText })
+}

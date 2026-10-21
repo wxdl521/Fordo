@@ -22,16 +22,20 @@ public class LimitsProperties {
     private final Plan plan = new Plan();
     private final Supervisor supervisor = new Supervisor();
 
+    /**
+     * 伴侣会话预算（wenjin.limits.companion.*）。前四项每次请求现读，可由管理后台「系统配置」运行时改写，
+     * 故标 {@code volatile}。
+     */
     @Data
     public static class Companion {
-        /** 单条用户输入最大字符数 */
-        private int maxInputChars = 4000;
+        /** 单条用户输入最大字符数（接口 DTO 另有 @Size(max=4000) 硬上限，调大超过 4000 无效） */
+        private volatile int maxInputChars = 4000;
         /** 单轮 AI 累计输出最大字符数（超出截断并附原因） */
-        private int maxAiOutputChars = 16_000;
+        private volatile int maxAiOutputChars = 16_000;
         /** 送入模型的上下文总字符上限（摘要 + 近窗） */
-        private int maxContextChars = 32_000;
+        private volatile int maxContextChars = 32_000;
         /** 近窗消息条数（摘要之外保留的最新消息） */
-        private int maxRecentMessages = 20;
+        private volatile int maxRecentMessages = 20;
         /** 会话/消息列表默认 limit */
         private int listDefaultLimit = 30;
         /** 会话/消息列表 limit 上限 */

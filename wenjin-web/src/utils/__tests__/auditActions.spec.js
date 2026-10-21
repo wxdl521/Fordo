@@ -17,7 +17,8 @@ const PLANNED_ACTIONS = [
   'GRAPH_NODE_CREATE', 'GRAPH_NODE_UPDATE', 'GRAPH_NODE_DELETE',
   'GRAPH_EDGE_CREATE', 'GRAPH_EDGE_ACCEPT', 'GRAPH_EDGE_REJECT',
   'QUESTION_REVIEW', 'QUESTION_REVIEW_ALL', 'QUESTION_IMPORT', 'QUESTION_GENERATE',
-  'RAG_MAPPING_APPROVE', 'RAG_MAPPING_REJECT', 'RAG_MAPPING_BATCH_APPROVE'
+  'RAG_MAPPING_APPROVE', 'RAG_MAPPING_REJECT', 'RAG_MAPPING_BATCH_APPROVE',
+  'CONFIG_UPDATE', 'CONFIG_RESET', 'AI_TEST', 'DATA_RESET'
 ]
 
 describe('auditActions', () => {
@@ -37,6 +38,14 @@ describe('auditActions', () => {
     expect(auditActionLabel('COURSE_TRANSFER')).toBe('转让课程教师')
     expect(auditActionLabel('CLAZZ_STUDENT_ADD')).toBe('添加班级学生')
     expect(auditActionLabel('CLAZZ_COURSE_REMOVE')).toBe('班级解除课程')
+  })
+
+  it('translates the A4 config / maintenance actions and the CONFIG target type', () => {
+    expect(auditActionLabel('CONFIG_UPDATE')).toBe('修改配置')
+    expect(auditActionLabel('CONFIG_RESET')).toBe('恢复默认配置')
+    expect(auditActionLabel('AI_TEST')).toBe('测试 AI 连接')
+    expect(auditActionLabel('DATA_RESET')).toBe('清空学习数据')
+    expect(auditTargetLabel('CONFIG')).toBe('配置')
   })
 
   it('keeps the A3 actions in a stable order right after the course actions', () => {

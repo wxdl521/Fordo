@@ -96,6 +96,32 @@ class AuthSecretGuardTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
+    /** 复用规则：非 dev/test 下不合规即抛，报错提示调用方指定的环境变量名；dev/test 不检查。 */
+    @Test
+    void requireStrongOutsideDevTest_reusesRulesWithEnvName() {
+        assertThatThrownBy(() -> AuthSecretGuard.requireStrongOutsideDevTest(
+                TokenService.DEFAULT_DEV_SECRET, new String[]{"prod"}, "WENJIN_CONFIG_SECRET"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("WENJIN_CONFIG_SECRET");
+        assertThatThrownBy(() -> AuthSecretGuard.requireStrongOutsideDevTest(
+                SECRET_31, new String[]{"prod"}, "WENJIN_CONFIG_SECRET"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("32");
+        assertThatThrownBy(() -> AuthSecretGuard.requireStrongOutsideDevTest(null, null, "X"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatCode(() -> AuthSecretGuard.requireStrongOutsideDevTest(
+                SECRET_32, new String[]{"prod"}, "WENJIN_CONFIG_SECRET")).doesNotThrowAnyException();
+        assertThatCode(() -> AuthSecretGuard.requireStrongOutsideDevTest(
+                "", new String[]{"dev"}, "WENJIN_CONFIG_SECRET")).doesNotThrowAnyException();
+    }
+
+    /** 原签名密钥检查的提示仍指向 WENJIN_AUTH_SECRET。 */
+    @Test
+    void enforce_messageStillNamesAuthSecret() {
+        assertThatThrownBy(() -> AuthSecretGuard.enforce(TokenService.DEFAULT_DEV_SECRET, new String[]{"prod"}))
+                .hasMessageContaining("WENJIN_AUTH_SECRET");
+    }
+
     /** test profile 允许短密钥。 */
     @Test
     void testProfile_shortSecret_doesNotThrow() {

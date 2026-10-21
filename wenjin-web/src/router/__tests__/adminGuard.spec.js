@@ -33,7 +33,7 @@ describe('admin route guard', () => {
     session._refreshPromise = null
   })
 
-  it('registers /admin with nested overview / users / courses / classes / audit / login-log pages and a default redirect', () => {
+  it('registers /admin with nested overview / users / courses / classes / audit / login-log / settings / maintenance pages and a default redirect', () => {
     const routes = router.getRoutes()
     expect(routes.find((r) => r.path === '/admin')).toBeTruthy()
     const expected = [
@@ -43,7 +43,9 @@ describe('admin route guard', () => {
       ['admin-clazzes', '/admin/clazzes', '班级管理'],
       ['admin-clazz-detail', '/admin/clazzes/:id', '班级详情'],
       ['admin-audit-logs', '/admin/audit-logs', '操作日志'],
-      ['admin-login-logs', '/admin/login-logs', '登录日志']
+      ['admin-login-logs', '/admin/login-logs', '登录日志'],
+      ['admin-settings', '/admin/settings', '系统配置'],
+      ['admin-maintenance', '/admin/maintenance', '数据维护']
     ]
     for (const [name, path, title] of expected) {
       const route = routes.find((r) => r.name === name)
@@ -72,7 +74,9 @@ describe('admin route guard', () => {
       '/admin/clazzes',
       '/admin/clazzes/3',
       '/admin/audit-logs',
-      '/admin/login-logs'
+      '/admin/login-logs',
+      '/admin/settings',
+      '/admin/maintenance'
     ]) {
       expect(await visit(path), path).toBe('/')
     }
@@ -90,6 +94,14 @@ describe('admin route guard', () => {
     expect(router.currentRoute.value.name).toBe('admin-audit-logs')
     expect(await visit('/admin/login-logs')).toBe('/admin/login-logs')
     expect(router.currentRoute.value.name).toBe('admin-login-logs')
+  })
+
+  it('lets an administrator open the system settings and data maintenance pages', async () => {
+    signIn({ id: 1, role: 3, username: 'root', realName: '管理员' })
+    expect(await visit('/admin/settings')).toBe('/admin/settings')
+    expect(router.currentRoute.value.name).toBe('admin-settings')
+    expect(await visit('/admin/maintenance')).toBe('/admin/maintenance')
+    expect(router.currentRoute.value.name).toBe('admin-maintenance')
   })
 
   it('lets an administrator open the course and class pages (incl. the class detail route)', async () => {

@@ -25,7 +25,9 @@ async function mountLayout(startPath = '/admin/users') {
       { path: '/admin/clazzes', component: { template: '<div data-testid="child-page">班级页</div>' } },
       { path: '/admin/clazzes/:id', component: { template: '<div data-testid="child-page">班级详情页</div>' } },
       { path: '/admin/audit-logs', component: { template: '<div data-testid="child-page">操作日志页</div>' } },
-      { path: '/admin/login-logs', component: { template: '<div data-testid="child-page">登录日志页</div>' } }
+      { path: '/admin/login-logs', component: { template: '<div data-testid="child-page">登录日志页</div>' } },
+      { path: '/admin/settings', component: { template: '<div data-testid="child-page">系统配置页</div>' } },
+      { path: '/admin/maintenance', component: { template: '<div data-testid="child-page">数据维护页</div>' } }
     ]
   })
   await router.push(startPath)
@@ -53,18 +55,22 @@ describe('AdminLayout', () => {
     wrapper.unmount()
   })
 
-  it('lists the sidebar in order: overview, users, courses, classes, audit logs, login logs', async () => {
+  it('lists the sidebar in order: overview, users, courses, classes, audit logs, login logs, settings, maintenance', async () => {
     const { wrapper } = await mountLayout('/admin/audit-logs')
 
     const links = wrapper.findAll('nav a')
-    expect(links.map((a) => a.text())).toEqual(['平台总览', '用户管理', '课程管理', '班级管理', '操作日志', '登录日志'])
+    expect(links.map((a) => a.text())).toEqual([
+      '平台总览', '用户管理', '课程管理', '班级管理', '操作日志', '登录日志', '系统配置', '数据维护'
+    ])
     expect(links.map((a) => a.attributes('href'))).toEqual([
       '/admin/overview',
       '/admin/users',
       '/admin/courses',
       '/admin/clazzes',
       '/admin/audit-logs',
-      '/admin/login-logs'
+      '/admin/login-logs',
+      '/admin/settings',
+      '/admin/maintenance'
     ])
     expect(links.map((a) => a.attributes('data-testid'))).toEqual([
       'admin-nav-overview',
@@ -72,11 +78,27 @@ describe('AdminLayout', () => {
       'admin-nav-courses',
       'admin-nav-clazzes',
       'admin-nav-audit-logs',
-      'admin-nav-login-logs'
+      'admin-nav-login-logs',
+      'admin-nav-settings',
+      'admin-nav-maintenance'
     ])
     // 只有当前页高亮
-    expect(links.map((a) => a.attributes('aria-current'))).toEqual([undefined, undefined, undefined, undefined, 'page', undefined])
+    expect(links.map((a) => a.attributes('aria-current'))).toEqual([
+      undefined, undefined, undefined, undefined, 'page', undefined, undefined, undefined
+    ])
     wrapper.unmount()
+  })
+
+  it('highlights the settings and maintenance entries on their own pages', async () => {
+    const settings = await mountLayout('/admin/settings')
+    expect(settings.wrapper.get('[data-testid="admin-nav-settings"]').attributes('aria-current')).toBe('page')
+    expect(settings.wrapper.get('[data-testid="admin-nav-maintenance"]').attributes('aria-current')).toBeUndefined()
+    settings.wrapper.unmount()
+
+    const maintenance = await mountLayout('/admin/maintenance')
+    expect(maintenance.wrapper.get('[data-testid="admin-nav-maintenance"]').attributes('aria-current')).toBe('page')
+    expect(maintenance.wrapper.get('[data-testid="child-page"]').text()).toBe('数据维护页')
+    maintenance.wrapper.unmount()
   })
 
   it('keeps the class nav item highlighted on a class detail page', async () => {

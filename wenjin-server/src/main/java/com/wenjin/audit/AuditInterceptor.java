@@ -38,8 +38,14 @@ public class AuditInterceptor implements HandlerInterceptor {
 
     private static final Logger log = LoggerFactory.getLogger(AuditInterceptor.class);
 
-    /** target_id 候选路径变量，按优先级取第一个存在的。 */
-    private static final String[] TARGET_ID_KEYS = {"id", "courseId", "draftId"};
+    /** target_id 候选路径变量，按优先级取第一个存在的（{@code key}：系统配置项 key）。 */
+    private static final String[] TARGET_ID_KEYS = {"id", "courseId", "draftId", "key"};
+
+    /**
+     * 目标在请求体里（没有路径变量）时，控制器可把 target_id 放进这个请求属性；路径变量优先。
+     * 只放对象标识，绝不放业务值。
+     */
+    public static final String TARGET_ID_ATTRIBUTE = AuditInterceptor.class.getName() + ".TARGET_ID";
 
     private static final int MAX_PATH = 255;
     private static final int MAX_TARGET_ID = 64;
@@ -120,14 +126,17 @@ public class AuditInterceptor implements HandlerInterceptor {
 
     private static String resolveTargetId(HttpServletRequest request) {
         Object attr = request.getAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE);
-        if (!(attr instanceof Map<?, ?> vars)) {
-            return null;
-        }
-        for (String key : TARGET_ID_KEYS) {
-            Object value = vars.get(key);
-            if (value != null && !value.toString().isBlank()) {
-                return value.toString();
+        if (attr instanceof Map<?, ?> vars) {
+            for (String key : TARGET_ID_KEYS) {
+                Object value = vars.get(key);
+                if (value != null && !value.toString().isBlank()) {
+                    return value.toString();
+                }
             }
+        }
+        Object explicit = request.getAttribute(TARGET_ID_ATTRIBUTE);
+        if (explicit != null && !explicit.toString().isBlank()) {
+            return explicit.toString();
         }
         return null;
     }

@@ -19,7 +19,7 @@ describe('systemAdmin API contracts', () => {
     vi.clearAllMocks()
   })
 
-  it('exports exactly the user / audit / course / class operations', () => {
+  it('exports exactly the user / audit / course / class / config operations', () => {
     expect(Object.keys(systemAdmin).sort()).toEqual([
       'addClazzCourse',
       'addClazzStudents',
@@ -37,19 +37,64 @@ describe('systemAdmin API contracts', () => {
       'listAuditActions',
       'listAuditLogs',
       'listClazzes',
+      'listConfigs',
       'listLoginLogs',
       'listTeachers',
       'listUsers',
       'removeClazzCourse',
       'removeClazzStudent',
+      'resetConfig',
+      'resetLearningData',
       'resetUserPassword',
       'restoreAdminCourse',
       'setAdminCoursePublished',
       'setUserStatus',
+      'testAiConnection',
       'transferCourseOwner',
       'updateClazz',
+      'updateConfig',
       'updateUser'
     ])
+  })
+
+  describe('system config and data maintenance (A4)', () => {
+    it('listConfigs GETs the config groups without params', () => {
+      systemAdmin.listConfigs()
+
+      expect(http.get.mock.calls).toEqual([['/system-admin/configs']])
+    })
+
+    it('updateConfig PUTs {value} to the key path (dots kept) and passes secret plaintext only in the body', () => {
+      systemAdmin.updateConfig('wenjin.ai.model', 'deepseek-v4-pro')
+      systemAdmin.updateConfig('wenjin.features.companion-llm-enabled', false)
+      systemAdmin.updateConfig('wenjin.ai.api-key', 'sk-test-plain')
+
+      expect(http.put.mock.calls).toEqual([
+        ['/system-admin/configs/wenjin.ai.model', { value: 'deepseek-v4-pro' }],
+        ['/system-admin/configs/wenjin.features.companion-llm-enabled', { value: false }],
+        ['/system-admin/configs/wenjin.ai.api-key', { value: 'sk-test-plain' }]
+      ])
+    })
+
+    it('resetConfig DELETEs the same key path', () => {
+      systemAdmin.resetConfig('wenjin.ai.vision.base-url')
+
+      expect(http.delete.mock.calls).toEqual([['/system-admin/configs/wenjin.ai.vision.base-url']])
+    })
+
+    it('testAiConnection POSTs the target to ai-test', () => {
+      systemAdmin.testAiConnection('vision')
+
+      expect(http.post.mock.calls).toEqual([['/system-admin/configs/ai-test', { target: 'vision' }]])
+    })
+
+    it('resetLearningData POSTs courseId and confirmText and drops anything else', () => {
+      systemAdmin.resetLearningData(5, '软件工程')
+
+      expect(http.post.mock.calls).toEqual([
+        ['/system-admin/data-reset', { courseId: 5, confirmText: '软件工程' }]
+      ])
+    })
   })
 
   it('listUsers sends only non-empty filters and forwards axios config', () => {

@@ -38,7 +38,11 @@ export const AUDIT_ACTION_LABELS = {
   QUESTION_GENERATE: 'AI 生成题目',
   RAG_MAPPING_APPROVE: '通过语料映射',
   RAG_MAPPING_REJECT: '驳回语料映射',
-  RAG_MAPPING_BATCH_APPROVE: '批量通过语料映射'
+  RAG_MAPPING_BATCH_APPROVE: '批量通过语料映射',
+  CONFIG_UPDATE: '修改配置',
+  CONFIG_RESET: '恢复默认配置',
+  AI_TEST: '测试 AI 连接',
+  DATA_RESET: '清空学习数据'
 }
 
 /** 审计对象类型 → 中文名。 */
@@ -48,7 +52,8 @@ export const AUDIT_TARGET_LABELS = {
   CLAZZ: '班级',
   GRAPH: '图谱',
   QUESTION: '题目',
-  RAG: '语料'
+  RAG: '语料',
+  CONFIG: '配置'
 }
 
 /** 登录失败原因 → 中文名。 */
