@@ -150,6 +150,9 @@ wenjin:
     report-cron: "0 15 3 * * MON"                # 周一凌晨入队周报/抽查（仅 multi-agent-enabled）
   eval:                                          # 伴侣评测（M6）
     judge-model: ${WENJIN_EVAL_JUDGE_MODEL:}     # LLM-as-judge 模型；空则回落 wenjin.ai.model
+    price:                                       # 评测成本估算单价（美元/百万 token）；0 表示不计成本
+      input-per-mtok: ${WENJIN_EVAL_PRICE_IN:0}   # 输入 token 单价
+      output-per-mtok: ${WENJIN_EVAL_PRICE_OUT:0} # 输出 token 单价
   jobs:                                          # AI 异步作业 worker
     poll-interval-ms: 2000                       # 领取轮询间隔
     heartbeat-interval-ms: 30000
