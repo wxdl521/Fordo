@@ -8,6 +8,7 @@ import com.wenjin.eval.collect.AgentTraceReader;
 import com.wenjin.eval.fixture.DbEvalMasteryPort;
 import com.wenjin.eval.fixture.EvalFixture;
 import com.wenjin.eval.fixture.EvalWorldBuilder;
+import com.wenjin.eval.fixture.JdbcEvalMistakePort;
 import com.wenjin.eval.fixture.JdbcEvalSessionPort;
 import com.wenjin.eval.fixture.MapperEvalNodeLookup;
 import com.wenjin.eval.fixture.StoreEvalReviewQueuePort;
@@ -67,7 +68,8 @@ public class EvalRuntimeConfiguration {
                 new DbEvalMasteryPort(masteryMapper, snapshotMapper, masteryService, decayCalculator, jdbc),
                 new StoreEvalReviewQueuePort(scheduleStore),
                 new JdbcEvalSessionPort(jdbc),
-                new MapperEvalNodeLookup(nodeMapper));
+                new MapperEvalNodeLookup(nodeMapper),
+                new JdbcEvalMistakePort(jdbc));
     }
 
     @Bean

@@ -9,6 +9,7 @@ import com.wenjin.eval.runner.ScenarioRun;
 import com.wenjin.eval.scenario.EvalScenarioDocument;
 import com.wenjin.eval.scenario.EvalScenarioStatus;
 import com.wenjin.eval.scenario.ScenarioLoader;
+import com.wenjin.service.companion.ProbeSessionStore;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -42,6 +43,9 @@ class ReplayScenarioIT extends EvalDbSupport {
 
     @Autowired
     private JdbcTemplate jdbc;
+
+    @Autowired
+    private ProbeSessionStore probeSessionStore;
 
     static Stream<String> enabledScenarioCodes() {
         return new ScenarioLoader().loadAll().stream()
@@ -92,6 +96,26 @@ class ReplayScenarioIT extends EvalDbSupport {
                 "SELECT COUNT(*) FROM practice_session WHERE student_id = ?", Integer.class,
                 harness.fixture().world().studentId());
         assertThat(practiceSessions).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("S22 mistake review: real tool reads seeded mistakes, auto probe targets the misconception node")
+    void s22_probesMisconceptionNode() {
+        EvalScenarioDocument s22 = harness.scenarioLoader().loadByCode("S22").orElseThrow();
+        long studentId = harness.fixture().world().studentId();
+        long courseId = harness.fixture().world().courseId();
+        probeSessionStore.clear();
+
+        ScenarioRun run = harness.replayExecutor().runDetailed(s22);
+
+        assertThat(run.outcome().hardPass()).as("%s", run.outcome().hardResult().failures()).isTrue();
+        String toolOutput = jdbc.queryForObject(
+                "SELECT output_json FROM agent_step WHERE run_id = ? AND name = 'get_recent_mistakes'",
+                String.class, run.outcome().runId());
+        assertThat(toolOutput).contains("\"topMisconceptions\"").contains("SE-2.1").contains("SE-2.2");
+        assertThat(probeSessionStore.usedBankQuestionIds(studentId, courseId, "SE-2.1"))
+                .as("auto probe issued on the first misconception node").isNotEmpty();
+        assertThat(probeSessionStore.usedBankQuestionIds(studentId, courseId, "SE-3.2")).isEmpty();
     }
 
     @Test

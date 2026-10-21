@@ -1,0 +1,28 @@
+{
+  "scenario": "S22",
+  "format": 2,
+  "recordedAt": "2026-10-21T00:00:00Z",
+  "model": "synthetic",
+  "synthetic": true,
+  "turns": [
+    {
+      "rounds": [
+        {
+          "content": "",
+          "toolCalls": [
+            {
+              "name": "get_recent_mistakes",
+              "arguments": {}
+            }
+          ],
+          "finishReason": "tool_calls"
+        },
+        {
+          "content": "我翻了你最近的错题：用例图（SE-3.2）那道题你选了和需求获取（SE-2.1）相关的说法——访谈、问卷是「怎么收集需求」，而用例图描述的是「参与者要系统完成什么」，两者容易混在一起。另一道数据流图（SE-3.1）的错选则指向需求规格说明（SE-2.2）。先想一想：如果一个说法讲的是「如何问用户」，它更像需求获取还是用例？",
+          "toolCalls": [],
+          "finishReason": "stop"
+        }
+      ]
+    }
+  ]
+}

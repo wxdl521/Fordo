@@ -139,6 +139,32 @@ class ScenarioSchemaValidatorTest {
         assertThat(loader.loadByCode("S01").orElseThrow().liveFaults()).isNull();
     }
 
+    @Test
+    @DisplayName("persona.mistakes: valid seeds pass; blank nodeCode / misconception or too many fail; S22 carries them")
+    void personaMistakes_validation() {
+        ScenarioSchemaValidator.validate(withMistakes(List.of(
+                new EvalScenarioDocument.MistakeSeed("SE-3.2", "SE-2.1"))));
+        assertThatThrownBy(() -> ScenarioSchemaValidator.validate(withMistakes(List.of(
+                new EvalScenarioDocument.MistakeSeed(" ", "SE-2.1")))))
+                .isInstanceOf(ScenarioSchemaException.class).hasMessageContaining("mistakes[0].nodeCode");
+        assertThatThrownBy(() -> ScenarioSchemaValidator.validate(withMistakes(List.of(
+                new EvalScenarioDocument.MistakeSeed("SE-3.2", null)))))
+                .isInstanceOf(ScenarioSchemaException.class).hasMessageContaining("misconceptionNodeCode");
+        List<EvalScenarioDocument.MistakeSeed> tooMany = java.util.Collections.nCopies(
+                ScenarioSchemaValidator.MAX_MISTAKES + 1, new EvalScenarioDocument.MistakeSeed("SE-3.2", "SE-2.1"));
+        assertThatThrownBy(() -> ScenarioSchemaValidator.validate(withMistakes(tooMany)))
+                .isInstanceOf(ScenarioSchemaException.class).hasMessageContaining("at most");
+
+        EvalScenarioDocument s22 = new ScenarioLoader().loadByCode("S22").orElseThrow();
+        assertThat(s22.persona().mistakes()).isNotEmpty();
+        assertThat(s22.hard().mustCallTools()).contains("get_recent_mistakes");
+    }
+
+    private static EvalScenarioDocument withMistakes(List<EvalScenarioDocument.MistakeSeed> mistakes) {
+        return new EvalScenarioDocument("S01", "t", new Persona(List.of(), List.of(), "n", mistakes),
+                List.of(new ScriptTurn("hi")), emptyHard(), oneDimJudge(), "ENABLED", null);
+    }
+
     private static EvalScenarioDocument withFaults(EvalScenarioDocument.LiveFaults faults) {
         return new EvalScenarioDocument("S01", "t", emptyPersona(), List.of(new ScriptTurn("hi")),
                 emptyHard(), oneDimJudge(), "ENABLED", null, faults);

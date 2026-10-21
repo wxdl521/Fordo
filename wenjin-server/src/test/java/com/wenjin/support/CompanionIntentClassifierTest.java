@@ -52,6 +52,7 @@ class CompanionIntentClassifierTest {
         SCENARIO_EXPECTED.put("S19", EXPLAIN); // mustCall search_materials
         SCENARIO_EXPECTED.put("S20", QUERY);   // mustCall draft_study_plan
         SCENARIO_EXPECTED.put("S21", QUERY);   // mustCall get_plan_progress
+        SCENARIO_EXPECTED.put("S22", EXPLAIN); // mustCall get_recent_mistakes (explain tool)
     }
 
     static Stream<Arguments> scenarioFirstMessages() throws IOException {
@@ -68,7 +69,7 @@ class CompanionIntentClassifierTest {
                 rows.add(Arguments.of(entry.getKey(), firstMessage, mustCall, entry.getValue()));
             }
         }
-        assertThat(rows).as("all 21 scenarios covered").hasSize(21);
+        assertThat(rows).as("all 22 scenarios covered").hasSize(22);
         return rows.stream();
     }
 
@@ -105,7 +106,7 @@ class CompanionIntentClassifierTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"get_node_detail", "search_materials", "trace_prerequisites"})
+    @ValueSource(strings = {"get_node_detail", "search_materials", "trace_prerequisites", "get_recent_mistakes"})
     void explainToolsGiveExplain(String tool) {
         assertThat(CompanionIntentClassifier.classify("这个怎么样", List.of(tool))).isEqualTo(EXPLAIN);
     }

@@ -30,4 +30,11 @@ public class CompanionChatRequest {
     @NotBlank(message = "消息不能为空")
     @Size(min = 1, max = 4000, message = "消息长度须在 1-4000 之间")
     private String message;
+
+    /**
+     * 可选：本轮要复盘的练习会话（学生点击「复盘错题」时携带）。控制器校验其属于当前学生与课程，
+     * 否则 404；只对本轮有效，作为 {@code get_recent_mistakes} 的默认会话。
+     */
+    @Positive(message = "reviewPracticeSessionId 必须为正数")
+    private Long reviewPracticeSessionId;
 }

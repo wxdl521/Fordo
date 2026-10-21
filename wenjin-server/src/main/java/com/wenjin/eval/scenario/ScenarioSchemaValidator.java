@@ -20,6 +20,7 @@ public final class ScenarioSchemaValidator {
 
     private static final Pattern CODE_PATTERN = Pattern.compile("^S\\d{2,3}$");
     private static final Set<String> ALLOWED_STATUS = Set.of("ENABLED", "DISABLED", "PENDING");
+    static final int MAX_MISTAKES = 10;
 
     private ScenarioSchemaValidator() {}
 
@@ -108,6 +109,24 @@ public final class ScenarioSchemaValidator {
                 if (o.effective() != null && (o.effective() < 0.0 || o.effective() > 1.0)) {
                     throw new ScenarioSchemaException(
                             "persona.masteryOverrides[" + i + "].effective must be in [0,1]");
+                }
+            }
+        }
+        if (persona.mistakes() != null) {
+            if (persona.mistakes().size() > MAX_MISTAKES) {
+                throw new ScenarioSchemaException("persona.mistakes must have at most " + MAX_MISTAKES + " entries");
+            }
+            for (int i = 0; i < persona.mistakes().size(); i++) {
+                EvalScenarioDocument.MistakeSeed m = persona.mistakes().get(i);
+                if (m == null) {
+                    throw new ScenarioSchemaException("persona.mistakes[" + i + "] is null");
+                }
+                if (m.nodeCode() == null || m.nodeCode().isBlank()) {
+                    throw new ScenarioSchemaException("persona.mistakes[" + i + "].nodeCode is required");
+                }
+                if (m.misconceptionNodeCode() == null || m.misconceptionNodeCode().isBlank()) {
+                    throw new ScenarioSchemaException(
+                            "persona.mistakes[" + i + "].misconceptionNodeCode is required");
                 }
             }
         }

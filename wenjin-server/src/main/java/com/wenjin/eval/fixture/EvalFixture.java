@@ -2,6 +2,7 @@ package com.wenjin.eval.fixture;
 
 import com.wenjin.eval.scenario.EvalScenarioDocument;
 import com.wenjin.eval.scenario.EvalScenarioDocument.MasteryOverride;
+import com.wenjin.eval.scenario.EvalScenarioDocument.MistakeSeed;
 import com.wenjin.eval.scenario.EvalScenarioDocument.Persona;
 
 import java.util.ArrayList;
@@ -23,12 +24,23 @@ public final class EvalFixture {
     private final EvalReviewQueuePort reviewQueuePort;
     private final EvalSessionPort sessionPort;
     private final EvalNodeLookup nodeLookup;
+    private final EvalMistakePort mistakePort;
 
     public EvalFixture(EvalWorld world,
                        EvalMasteryPort masteryPort,
                        EvalReviewQueuePort reviewQueuePort,
                        EvalSessionPort sessionPort,
                        EvalNodeLookup nodeLookup) {
+        this(world, masteryPort, reviewQueuePort, sessionPort, nodeLookup, EvalMistakePort.NONE);
+    }
+
+    public EvalFixture(EvalWorld world,
+                       EvalMasteryPort masteryPort,
+                       EvalReviewQueuePort reviewQueuePort,
+                       EvalSessionPort sessionPort,
+                       EvalNodeLookup nodeLookup,
+                       EvalMistakePort mistakePort) {
+        this.mistakePort = Objects.requireNonNull(mistakePort, "mistakePort");
         this.world = Objects.requireNonNull(world, "world");
         this.masteryPort = Objects.requireNonNull(masteryPort, "masteryPort");
         this.reviewQueuePort = Objects.requireNonNull(reviewQueuePort, "reviewQueuePort");
@@ -117,13 +129,39 @@ public final class EvalFixture {
             appliedReview.addAll(toPin);
         }
 
+        // 错题种子：列表靠前者更近（minutesAgo 递增），与「最近错题优先」一致
+        List<String> appliedMistakes = new ArrayList<>();
+        List<MistakeSeed> mistakes = persona.mistakes() == null ? List.of() : persona.mistakes();
+        for (int i = 0; i < mistakes.size(); i++) {
+            MistakeSeed seed = mistakes.get(i);
+            if (seed == null || seed.nodeCode() == null || seed.nodeCode().isBlank()
+                    || seed.misconceptionNodeCode() == null || seed.misconceptionNodeCode().isBlank()) {
+                continue;
+            }
+            String code = seed.nodeCode().trim();
+            String misconception = seed.misconceptionNodeCode().trim();
+            Optional<Long> nodeId = nodeLookup.nodeIdByCode(world.courseId(), code);
+            boolean misconceptionKnown = nodeLookup.nodeIdByCode(world.courseId(), misconception).isPresent();
+            if (nodeId.isEmpty() || !misconceptionKnown) {
+                String missing = nodeId.isEmpty() ? code : misconception;
+                if (!missingNodes.contains(missing)) {
+                    missingNodes.add(missing);
+                }
+                continue;
+            }
+            if (mistakePort.recordMistake(world.studentId(), world.courseId(), nodeId.get(), misconception, i + 1)) {
+                appliedMistakes.add(code);
+            }
+        }
+
         return new PersonaInjectionResult(
                 List.copyOf(appliedMastery),
                 List.copyOf(appliedReview),
                 List.copyOf(missingNodes),
                 Map.copyOf(rawByCode),
                 Map.copyOf(effectiveByCode),
-                Map.copyOf(reviewQueuePort.forcedToday(world.studentId(), world.courseId())));
+                Map.copyOf(reviewQueuePort.forcedToday(world.studentId(), world.courseId())),
+                List.copyOf(appliedMistakes));
     }
 
     /**
@@ -144,7 +182,8 @@ public final class EvalFixture {
             List<String> missingNodeCodes,
             Map<String, Double> rawByCode,
             Map<String, Double> effectiveByCode,
-            Map<String, String> reviewPins
+            Map<String, String> reviewPins,
+            List<String> appliedMistakeCodes
     ) {
         public boolean hasMissingNodes() {
             return missingNodeCodes != null && !missingNodeCodes.isEmpty();

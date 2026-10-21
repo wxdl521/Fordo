@@ -433,6 +433,7 @@ npm run build        # 产出 dist/
 | 已迁移 | Flyway `V13__rag.sql` | `doc_source` / `doc_chunk` / `chunk_node_map`（M8） | 中 |
 | 已迁移 | Flyway `V14__agent_plan.sql` | `agent_plan` / `agent_plan_task` / `tool_effect_key`（M10） | 中 |
 | 已迁移 | Flyway `V15__agent_report.sql` | `agent_report`（M11 多智能体产出，可选） | 中 |
+| 已迁移 | Flyway `V21__answer_record_time_index.sql` | `answer_record.idx_student_course_time`（错因辅导按时间取最近错题；仅加索引，大表建议低峰执行） | 小 |
 
 ### 4.1 配置清单（调度与基线）
 

@@ -1,5 +1,7 @@
 package com.wenjin.service.companion;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.ai.CompanionAiClient;
 import com.wenjin.ai.SinkFailureException;
 import com.wenjin.service.CompanionService.CompanionStreamSink;
@@ -47,6 +49,11 @@ public final class CompanionOrchestrator {
     public static final String ERROR_LLM_INTERRUPTED = "LLM_INTERRUPTED";
     public static final String ERROR_LLM = "LLM_ERROR";
 
+    /** turnSignals 键：本 turn {@code get_recent_mistakes} 结果中的第一误区节点码（误区定向探针用）。 */
+    public static final String SIGNAL_MISCONCEPTION_NODE = "misconceptionNodeCode";
+
+    private static final ObjectMapper SIGNAL_MAPPER = new ObjectMapper();
+
     static final String FALLBACK_AFTER_PRACTICE =
             "练习已生成，可以直接在上方卡片里作答。有问题随时问我。";
     static final String FALLBACK_AFTER_TOOLS =
@@ -85,8 +92,19 @@ public final class CompanionOrchestrator {
                           TraceContext traceCtx) {
     }
 
-    /** @param toolsCalled 本 turn 实际执行（含被拦截）的工具名，按执行顺序 */
-    public record Outcome(int runStatus, String errorCode, List<String> toolsCalled) {
+    /**
+     * @param toolsCalled 本 turn 实际执行（含被拦截）的工具名，按执行顺序
+     * @param turnSignals 工具结构化结果中提取、供外壳后处理用的少量信号（如 {@link #SIGNAL_MISCONCEPTION_NODE}）
+     */
+    public record Outcome(int runStatus, String errorCode, List<String> toolsCalled, Map<String, String> turnSignals) {
+        public Outcome {
+            toolsCalled = toolsCalled == null ? List.of() : List.copyOf(toolsCalled);
+            turnSignals = turnSignals == null ? Map.of() : Map.copyOf(turnSignals);
+        }
+
+        public Outcome(int runStatus, String errorCode, List<String> toolsCalled) {
+            this(runStatus, errorCode, toolsCalled, Map.of());
+        }
     }
 
     /** 降级原因（与 CompanionDegradeService 常量一致，避免本类依赖其 Spring 装配）。 */
@@ -127,6 +145,7 @@ public final class CompanionOrchestrator {
         private final List<Map<String, Object>> schemas;
         private final Map<String, String> labels;
         private final List<String> toolsCalled = new ArrayList<>();
+        private final Map<String, String> signals = new LinkedHashMap<>();
         private List<Map<String, Object>> messages;
         private boolean practiceStarted;
 
@@ -223,18 +242,18 @@ public final class CompanionOrchestrator {
                 }
             }
             shell.persist(persisted);
-            return new Outcome(AgentRunStatus.SUCCEEDED, null, List.copyOf(toolsCalled));
+            return new Outcome(AgentRunStatus.SUCCEEDED, null, toolsCalled, signals);
         }
 
         private Outcome cancelled() {
             persistIfAny(text.persistable());
-            return new Outcome(AgentRunStatus.CANCELLED, null, List.copyOf(toolsCalled));
+            return new Outcome(AgentRunStatus.CANCELLED, null, toolsCalled, signals);
         }
 
         Outcome disconnected(RuntimeException cause) {
             log.info("Companion client disconnected; stopping turn: {}", cause.toString());
             persistIfAny(text.persistable());
-            return new Outcome(AgentRunStatus.CANCELLED, ERROR_CLIENT_DISCONNECTED, List.copyOf(toolsCalled));
+            return new Outcome(AgentRunStatus.CANCELLED, ERROR_CLIENT_DISCONNECTED, toolsCalled, signals);
         }
 
         private Outcome interrupted() {
@@ -245,18 +264,18 @@ public final class CompanionOrchestrator {
             }
             String generated = text.persistable();
             shell.persist(generated + INTERRUPTED_NOTICE);
-            return new Outcome(AgentRunStatus.FAILED, ERROR_LLM_INTERRUPTED, List.copyOf(toolsCalled));
+            return new Outcome(AgentRunStatus.FAILED, ERROR_LLM_INTERRUPTED, toolsCalled, signals);
         }
 
         private Outcome degraded(Throwable ex) {
             int status = shell.degrade(out, isTimeout(ex) ? REASON_LLM_TIMEOUT : REASON_LLM_FAILURES);
-            return new Outcome(status, null, List.copyOf(toolsCalled));
+            return new Outcome(status, null, toolsCalled, signals);
         }
 
         private Outcome legacyFallback() {
             try {
                 shell.streamLegacy(out);
-                return new Outcome(AgentRunStatus.SUCCEEDED, null, List.copyOf(toolsCalled));
+                return new Outcome(AgentRunStatus.SUCCEEDED, null, toolsCalled, signals);
             } catch (RuntimeException legacyEx) {
                 if (legacyEx instanceof SinkFailureException || out.disconnected()) {
                     throw legacyEx;
@@ -335,6 +354,12 @@ public final class CompanionOrchestrator {
             recordToolStep(call, result, elapsedMs);
             messages.add(toolMessage(call, result));
             boolean ok = result != null && result.ok();
+            if (ok && GetRecentMistakesTool.NAME.equals(name)) {
+                String code = topMisconceptionNode(result.content());
+                if (code != null) {
+                    signals.putIfAbsent(SIGNAL_MISCONCEPTION_NODE, code);
+                }
+            }
             out.toolResult(name, ok);
             if (result != null && result.practiceCard() != null) {
                 out.practiceCard(result.practiceCard());
@@ -402,6 +427,19 @@ public final class CompanionOrchestrator {
     }
 
     private record TimedResult(ToolExecutionResult result, int elapsedMs) {
+    }
+
+    /** {@code get_recent_mistakes} 结果 → {@code topMisconceptions[0].nodeCode}；无 / 解析失败 → null。 */
+    static String topMisconceptionNode(String toolContent) {
+        if (toolContent == null || toolContent.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode code = SIGNAL_MAPPER.readTree(toolContent).path("topMisconceptions").path(0).path("nodeCode");
+            return code.isTextual() && !code.asText().isBlank() ? code.asText().trim() : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static TimedResult await(Future<TimedResult> future) {

@@ -31,6 +31,7 @@ import com.wenjin.service.companion.CompanionDegradeService;
 import com.wenjin.service.companion.CompanionOrchestrator;
 import com.wenjin.service.companion.CompanionTool;
 import com.wenjin.service.companion.ReflectionCoordinator;
+import com.wenjin.service.companion.StrategySwitcher;
 import com.wenjin.service.companion.ToolContext;
 import com.wenjin.service.companion.ToolGovernor;
 import com.wenjin.service.plan.PlanCancelGuard;
@@ -196,6 +197,11 @@ public class CompanionServiceImpl implements CompanionService {
 
     @Override
     public void streamReply(Long conversationId, CompanionStreamSink sink) {
+        streamReply(conversationId, null, sink);
+    }
+
+    @Override
+    public void streamReply(Long conversationId, Long reviewPracticeSessionId, CompanionStreamSink sink) {
         CompanionConversation conversation = conversationMapper.selectById(conversationId);
         if (conversation == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "会话不存在: " + conversationId);
@@ -270,19 +276,29 @@ public class CompanionServiceImpl implements CompanionService {
                         CompanionDegradeService.REASON_LLM_DISABLED);
                 return;
             }
+            // 换策略（探针未通过后）与复盘会话：本 turn 的动态提示段，追加在学生动态段之后
+            ReflectionCoordinator.StrategyDirective strategyDirective = resolveStrategyDirective(conversation);
+            String strategySection = strategyPromptSection(conversation.getCourseId(), strategyDirective);
             if (!toolOrchestrationAvailable) {
-                streamWithLegacyPath(conversationId, systemPrompt, ctx, memoryLines,
+                streamWithLegacyPath(conversationId, systemPrompt + strategySection, ctx, memoryLines,
                         retrievalBlocks, sink, traceCtx);
                 return;
             }
-            CompanionOrchestrator.Outcome outcome = streamWithTools(conversationId, conversation, systemPrompt,
+            CompanionOrchestrator.Outcome outcome = streamWithTools(conversationId, conversation,
+                    systemPrompt + strategySection + reviewPromptSection(reviewPracticeSessionId),
+                    strategySection, reviewPracticeSessionId,
                     latestUser, ctx, memoryLines, retrievalBlocks, usableTools, sink, traceCtx);
             runStatus = outcome.runStatus();
             errorCode = outcome.errorCode();
             if (runStatus == AgentRunStatus.SUCCEEDED) {
                 // M9：本 turn 结束后确定性判定意图，EXPLAIN 时按需追发理解探针
-                maybeAutoProbeAfterExplain(conversation,
-                        CompanionIntentClassifier.classify(latestUser, outcome.toolsCalled()), sink);
+                CompanionIntent intent = CompanionIntentClassifier.classify(latestUser, outcome.toolsCalled());
+                if (strategyDirective != null && intent == CompanionIntent.CHAT) {
+                    // 本 turn 按新策略重讲 = 讲解；需再探一次以检验新讲法
+                    intent = CompanionIntent.EXPLAIN;
+                }
+                maybeAutoProbeAfterExplain(conversation, intent,
+                        probeTarget(conversation, outcome, strategyDirective), sink);
             }
         } catch (RuntimeException ex) {
             runStatus = AgentRunStatus.FAILED;
@@ -403,6 +419,8 @@ public class CompanionServiceImpl implements CompanionService {
     private CompanionOrchestrator.Outcome streamWithTools(Long conversationId,
                                                           CompanionConversation conversation,
                                                           String systemPrompt,
+                                                          String fallbackPromptSuffix,
+                                                          Long reviewPracticeSessionId,
                                                           String latestUser,
                                                           ConversationContextBuilder.BuiltContext ctx,
                                                           List<String> memoryLines,
@@ -418,7 +436,8 @@ public class CompanionServiceImpl implements CompanionService {
         ToolContext toolContext = new ToolContext(
                 conversation.getStudentId(),
                 conversation.getCourseId(),
-                conversation.getNodeCode());
+                conversation.getNodeCode(),
+                reviewPracticeSessionId);
         CompanionOrchestrator.Request request = new CompanionOrchestrator.Request(
                 messages,
                 tools,
@@ -451,7 +470,7 @@ public class CompanionServiceImpl implements CompanionService {
                             conversation.getStudentId(),
                             conversation.getCourseId(),
                             conversation.getNodeCode(),
-                            false);
+                            false) + (fallbackPromptSuffix == null ? "" : fallbackPromptSuffix);
                 }
                 return fallbackPrompt;
             }
@@ -476,6 +495,7 @@ public class CompanionServiceImpl implements CompanionService {
 
     private void maybeAutoProbeAfterExplain(CompanionConversation conversation,
                                             CompanionIntent intent,
+                                            String nodeCode,
                                             CompanionStreamSink sink) {
         if (reflectionCoordinator == null || conversation == null) {
             return;
@@ -483,7 +503,6 @@ public class CompanionServiceImpl implements CompanionService {
         if (!reflectionCoordinator.shouldAutoProbe(intent)) {
             return;
         }
-        String nodeCode = conversation.getNodeCode();
         if (!StringUtils.hasText(nodeCode)) {
             return;
         }
@@ -498,6 +517,66 @@ public class CompanionServiceImpl implements CompanionService {
         } catch (Exception e) {
             log.warn("auto probe after EXPLAIN failed: {}", e.getMessage());
         }
+    }
+
+    /**
+     * 自动探针目标：本 turn 错题工具给出的第一误区节点 &gt; 本 turn 按新策略重讲的节点 &gt; 会话焦点节点。
+     */
+    static String probeTarget(CompanionConversation conversation,
+                              CompanionOrchestrator.Outcome outcome,
+                              ReflectionCoordinator.StrategyDirective strategyDirective) {
+        String misconception = outcome == null ? null
+                : outcome.turnSignals().get(CompanionOrchestrator.SIGNAL_MISCONCEPTION_NODE);
+        if (StringUtils.hasText(misconception)) {
+            return misconception;
+        }
+        if (strategyDirective != null && StringUtils.hasText(strategyDirective.nodeCode())) {
+            return strategyDirective.nodeCode();
+        }
+        return conversation == null ? null : conversation.getNodeCode();
+    }
+
+    /** 失败不阻断对话；reflection 关闭 / 未装配时为 null。 */
+    private ReflectionCoordinator.StrategyDirective resolveStrategyDirective(CompanionConversation conversation) {
+        if (reflectionCoordinator == null || conversation == null) {
+            return null;
+        }
+        try {
+            return reflectionCoordinator.resolveStrategyDirective(
+                    conversation.getStudentId(), conversation.getCourseId(), conversation.getNodeCode()).orElse(null);
+        } catch (Exception e) {
+            log.warn("strategy directive failed: conversationId={}: {}", conversation.getId(), e.getMessage());
+            return null;
+        }
+    }
+
+    private String strategyPromptSection(Long courseId, ReflectionCoordinator.StrategyDirective directive) {
+        if (directive == null) {
+            return "";
+        }
+        String label = directive.nodeCode();
+        try {
+            KgNode node = nodeMapper.selectOne(new LambdaQueryWrapper<KgNode>()
+                    .eq(KgNode::getCourseId, courseId)
+                    .eq(KgNode::getNodeCode, directive.nodeCode())
+                    .isNull(KgNode::getArchivedAt));
+            if (node != null) {
+                label = nodePromptLabel(node);
+            }
+        } catch (Exception e) {
+            log.debug("strategy node label lookup failed: {}", e.getMessage());
+        }
+        return StrategySwitcher.reexplainDirective(directive.strategy(), label);
+    }
+
+    /** 复盘会话（已由控制器校验归属）：提示先读错题；仅工具路径注入。 */
+    static String reviewPromptSection(Long reviewPracticeSessionId) {
+        if (reviewPracticeSessionId == null) {
+            return "";
+        }
+        return "## 本轮复盘\n"
+                + "学生点击了「复盘错题」，要复盘刚完成的那次练习（会话 #" + reviewPracticeSessionId + "）："
+                + "请先调用 get_recent_mistakes（无需传 practiceSessionId，默认即该会话），再按「错因辅导」规则逐题讲清误区。\n\n";
     }
 
     private int streamDegraded(Long conversationId,
@@ -1038,11 +1117,18 @@ public class CompanionServiceImpl implements CompanionService {
         sb.append("- recall_student_context：按关键词检索学生长期记忆；record_observation：记录 SEMANTIC/PROCEDURAL 观察（每轮有限）。\n");
         sb.append("- search_materials：按关键词检索课程资料片段（附出处）；probe_understanding：讲解后发 1 道理解探针题（不改掌握度）。\n");
         sb.append("- draft_study_plan：起草备考学习计划（仅草稿，需学生确认）；get_plan_progress：查看当前学习计划进度与今日剩余任务。\n");
+        sb.append("- get_recent_mistakes：读取学生近期错题（所选 vs 正确选项）及错误选项指向的误区节点。\n");
         sb.append("- 只能调用本轮接口实际提供的工具；未提供的工具视为当前不可用。\n");
         sb.append("- 用户只说节点名称时，先从课程知识点范围匹配名称；能确定 nodeCode 就用 nodeCode，否则传精确 nodeName 让服务端解析。\n");
         sb.append("- 禁止编造掌握度；没有工具证据时，要明确说明暂未查询到。\n");
         sb.append("- 工具只能通过接口提供的 function/tool_calls 通道调用；禁止在回复正文中输出 DSML、XML、tool_calls、invoke、伪标签或任何工具协议原文。\n");
         sb.append("- 工具执行完成后，只用自然语言总结结果，不要重复工具参数或协议。\n\n");
+
+        sb.append("## 错因辅导\n");
+        sb.append("- 学生要求复盘错题、说自己做错了或不懂为什么错时，先调用 get_recent_mistakes，再回答。\n");
+        sb.append("- 针对误区节点（misconceptionNodes / topMisconceptions）讲清「为什么会选错」：对比所选选项与正确选项背后的概念差别，指出混淆点。\n");
+        sb.append("- 不要直接念答案或照搬解析；先让学生说出当时的想法，再引导其自己发现错误。\n");
+        sb.append("- 讲完后系统会自动就误区节点出一道理解探针题，无需你另行出题。\n\n");
 
         sb.append("## 课程知识点范围\n");
         if (whitelist != null) {
