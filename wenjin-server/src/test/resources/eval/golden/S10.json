@@ -1,14 +1,18 @@
 {
-  "scenario" : "S10",
-  "recordedAt" : "2026-07-20T12:00:00Z",
-  "model" : "deepseek-chat",
-  "llmCalls" : [ {
-    "idx" : 0,
-    "name" : "phase1",
-    "output" : "{\"type\":\"final_text\",\"text\":\"\"}"
-  }, {
-    "idx" : 1,
-    "name" : "phase2",
-    "output" : "你的输入较长，我已按系统上限截断后阅读。入门建议：先扫 SE-1.1 建立术语，再按学习路径推进建模相关节点；你可以回复一个具体章节，我帮你拆成三天小计划。"
-  } ]
+  "scenario": "S10",
+  "format": 2,
+  "recordedAt": "2026-10-21T00:00:00Z",
+  "model": "synthetic",
+  "synthetic": true,
+  "turns": [
+    {
+      "rounds": [
+        {
+          "content": "好的，我们系统地学。第一步是软件工程概述（SE-1.1），弄清软件工程要解决什么问题；第二步学需求获取（SE-2.1）；第三步进入需求建模。你想先从哪一步开始？",
+          "toolCalls": [],
+          "finishReason": "stop"
+        }
+      ]
+    }
+  ]
 }

@@ -1,14 +1,18 @@
 {
-  "scenario" : "S17",
-  "recordedAt" : "2026-07-20T12:00:00Z",
-  "model" : "deepseek-chat",
-  "llmCalls" : [ {
-    "idx" : 0,
-    "name" : "phase1",
-    "output" : "{\"type\":\"final_text\",\"text\":\"\",\"intent\":\"CHAT\"}"
-  }, {
-    "idx" : 1,
-    "name" : "phase2",
-    "output" : "你好！可以按「诊断定位 → 路径学习 → 节点练习 → 复习巩固」安排节奏。今天想先摸清薄弱点，还是直接挑 SE-1.1 开一小段练习？"
-  } ]
+  "scenario": "S17",
+  "format": 2,
+  "recordedAt": "2026-10-21T00:00:00Z",
+  "model": "synthetic",
+  "synthetic": true,
+  "turns": [
+    {
+      "rounds": [
+        {
+          "content": "当然可以聊聊学习节奏！一般建议每天固定一小段时间，学新内容和复习交替进行，比一次学很久效果更好。你现在每天大概能安排多少时间学习？",
+          "toolCalls": [],
+          "finishReason": "stop"
+        }
+      ]
+    }
+  ]
 }

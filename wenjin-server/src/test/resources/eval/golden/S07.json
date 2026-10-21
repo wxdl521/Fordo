@@ -1,14 +1,12 @@
 {
-  "scenario" : "S07",
-  "recordedAt" : "2026-07-20T12:00:00Z",
-  "model" : "deepseek-chat",
-  "llmCalls" : [ {
-    "idx" : 0,
-    "name" : "phase1",
-    "output" : "{\"type\":\"final_text\",\"text\":\"\"}"
-  }, {
-    "idx" : 1,
-    "name" : "phase2",
-    "output" : "我这边暂时无法调用大模型，先给你一条不依赖 AI 的学习建议：优先完成今日复习，再针对薄弱点做短练习。可以先巩固 SE-2.1 或 SE-3.2。"
-  } ]
+  "scenario": "S07",
+  "format": 2,
+  "recordedAt": "2026-10-21T00:00:00Z",
+  "model": "synthetic",
+  "synthetic": true,
+  "turns": [
+    {
+      "rounds": []
+    }
+  ]
 }

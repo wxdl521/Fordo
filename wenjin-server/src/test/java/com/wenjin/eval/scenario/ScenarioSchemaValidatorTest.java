@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ScenarioSchemaValidatorTest {
@@ -111,6 +112,36 @@ class ScenarioSchemaValidatorTest {
         assertThatThrownBy(() -> ScenarioSchemaValidator.validate(doc))
                 .isInstanceOf(ScenarioSchemaException.class)
                 .hasMessageContaining("duplicated");
+    }
+
+    @Test
+    @DisplayName("liveFaults: valid spec passes; empty / out-of-range fails")
+    void liveFaults_validation() {
+        ScenarioSchemaValidator.validate(withFaults(new EvalScenarioDocument.LiveFaults(2, null)));
+        ScenarioSchemaValidator.validate(withFaults(new EvalScenarioDocument.LiveFaults(null, 1)));
+        assertThatThrownBy(() -> ScenarioSchemaValidator.validate(
+                withFaults(new EvalScenarioDocument.LiveFaults(null, null))))
+                .isInstanceOf(ScenarioSchemaException.class).hasMessageContaining("liveFaults");
+        assertThatThrownBy(() -> ScenarioSchemaValidator.validate(
+                withFaults(new EvalScenarioDocument.LiveFaults(0, null))))
+                .isInstanceOf(ScenarioSchemaException.class).hasMessageContaining("llmFailures");
+        assertThatThrownBy(() -> ScenarioSchemaValidator.validate(
+                withFaults(new EvalScenarioDocument.LiveFaults(null, -1))))
+                .isInstanceOf(ScenarioSchemaException.class).hasMessageContaining("maxToolCalls");
+    }
+
+    @Test
+    @DisplayName("S06/S07 scenario files carry liveFaults (budget exhaustion / degrade)")
+    void scenarioFiles_carryLiveFaults() {
+        ScenarioLoader loader = new ScenarioLoader();
+        assertThat(loader.loadByCode("S06").orElseThrow().liveFaults().maxToolCalls()).isEqualTo(1);
+        assertThat(loader.loadByCode("S07").orElseThrow().liveFaults().llmFailures()).isEqualTo(2);
+        assertThat(loader.loadByCode("S01").orElseThrow().liveFaults()).isNull();
+    }
+
+    private static EvalScenarioDocument withFaults(EvalScenarioDocument.LiveFaults faults) {
+        return new EvalScenarioDocument("S01", "t", emptyPersona(), List.of(new ScriptTurn("hi")),
+                emptyHard(), oneDimJudge(), "ENABLED", null, faults);
     }
 
     private static EvalScenarioDocument validBase(String code, String title) {

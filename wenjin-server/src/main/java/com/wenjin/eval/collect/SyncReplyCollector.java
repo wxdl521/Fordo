@@ -6,10 +6,11 @@ import com.wenjin.service.CompanionService;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.LongSupplier;
 
 /**
  * Collects {@link CompanionService.CompanionStreamSink} tokens/events into a final synchronous result.
- * <p>No Spring dependency — unit-testable pure component.
+ * <p>Also measures time-to-first-token for eval metrics. No Spring dependency — unit-testable pure component.
  */
 public final class SyncReplyCollector extends CompanionService.CompanionStreamSink {
 
@@ -17,12 +18,39 @@ public final class SyncReplyCollector extends CompanionService.CompanionStreamSi
     private final List<PracticeStartVO> practiceCards = new ArrayList<>();
     private final List<ToolCallEvent> toolEvents = new ArrayList<>();
     private final List<String> pendingToolLabels = new ArrayList<>();
+    private final LongSupplier nanoClock;
+    private final long startedNanos;
+    private volatile long firstTokenNanos = -1;
+
+    public SyncReplyCollector() {
+        this(System::nanoTime);
+    }
+
+    /** @param nanoClock monotonic clock (injectable for tests); the collector starts timing on construction */
+    public SyncReplyCollector(LongSupplier nanoClock) {
+        this.nanoClock = nanoClock == null ? System::nanoTime : nanoClock;
+        this.startedNanos = this.nanoClock.getAsLong();
+    }
 
     @Override
     public void token(String token) {
         if (token != null) {
+            if (firstTokenNanos < 0 && !token.isEmpty()) {
+                firstTokenNanos = nanoClock.getAsLong();
+            }
             text.append(token);
         }
+    }
+
+    /** Time from construction to the first non-empty token (ms); null when no token arrived. */
+    public Long ttftMs() {
+        long first = firstTokenNanos;
+        return first < 0 ? null : Math.max(0L, (first - startedNanos) / 1_000_000L);
+    }
+
+    /** Time from construction until now (ms). */
+    public long elapsedMs() {
+        return Math.max(0L, (nanoClock.getAsLong() - startedNanos) / 1_000_000L);
     }
 
     @Override

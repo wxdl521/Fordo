@@ -2,17 +2,22 @@ package com.wenjin.eval.golden;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.wenjin.eval.hard.EvalStepView;
+import com.wenjin.ai.CompanionAiClient;
+import com.wenjin.ai.CompanionAiClient.StreamTurnResult;
+import com.wenjin.ai.CompanionAiClient.ToolCall;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Files;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class GoldenRecorderTest {
 
@@ -22,68 +27,122 @@ class GoldenRecorderTest {
     @TempDir
     Path tempDir;
 
-    @Test
-    @DisplayName("steps → golden JSON structure (LLM_CALL only, idx order)")
-    void build_filtersLlmCallsAndStructure() throws Exception {
-        Instant at = Instant.parse("2026-07-20T10:00:00Z");
-        List<EvalStepView> steps = List.of(
-                new EvalStepView("LLM_CALL", "phase1", 0, "{}",
-                        "{\"type\":\"tool_calls\",\"calls\":[{\"id\":\"c1\",\"name\":\"query_mastery\",\"arguments\":\"{}\"}]}"),
-                new EvalStepView("TOOL_CALL", "query_mastery", 0, "{}", "{\"ok\":true}"),
-                new EvalStepView("LLM_CALL", "phase2", 0, null, "你好，先看薄弱点。"),
-                new EvalStepView("GUARD", "budget", 1, null, null));
-
-        GoldenFile golden = recorder.build("S09", "deepseek-chat", at, steps);
-
-        assertThat(golden.scenario()).isEqualTo("S09");
-        assertThat(golden.model()).isEqualTo("deepseek-chat");
-        assertThat(golden.recordedAt()).isEqualTo("2026-07-20T10:00:00Z");
-        assertThat(golden.llmCalls()).hasSize(2);
-        assertThat(golden.llmCalls().get(0).idx()).isEqualTo(0);
-        assertThat(golden.llmCalls().get(0).name()).isEqualTo("phase1");
-        assertThat(golden.llmCalls().get(0).output()).contains("query_mastery");
-        assertThat(golden.llmCalls().get(1).idx()).isEqualTo(1);
-        assertThat(golden.llmCalls().get(1).name()).isEqualTo("phase2");
-        assertThat(golden.llmCalls().get(1).output()).isEqualTo("你好，先看薄弱点。");
-
-        String json = recorder.toJson(golden);
-        JsonNode root = mapper.readTree(json);
-        assertThat(root.path("scenario").asText()).isEqualTo("S09");
-        assertThat(root.path("recordedAt").asText()).isEqualTo("2026-07-20T10:00:00Z");
-        assertThat(root.path("model").asText()).isEqualTo("deepseek-chat");
-        assertThat(root.path("llmCalls").isArray()).isTrue();
-        assertThat(root.path("llmCalls")).hasSize(2);
-        assertThat(root.path("llmCalls").get(0).path("idx").asInt()).isEqualTo(0);
-        assertThat(root.path("llmCalls").get(0).path("name").asText()).isEqualTo("phase1");
-        assertThat(root.path("llmCalls").get(1).path("name").asText()).isEqualTo("phase2");
+    private static List<List<StreamTurnResult>> sampleTurns() {
+        return List.of(
+                List.of(
+                        new StreamTurnResult("", List.of(new ToolCall("c1", "query_mastery", "{\"nodeCode\":\"SE-3.2\"}")),
+                                new CompanionAiClient.Usage(100, 5, null), "tool_calls"),
+                        new StreamTurnResult("先看薄弱点。", List.of(), null, "stop")),
+                List.of(new StreamTurnResult("第二轮", List.of(), null, "stop")));
     }
 
     @Test
-    @DisplayName("export writes file under temp dir; loader round-trips")
-    void export_writeAndLoad() {
-        Instant at = Instant.parse("2026-07-20T12:00:00Z");
-        List<EvalStepView> steps = List.of(
-                new EvalStepView("LLM_CALL", "phase1", 0, null, "{\"type\":\"final_text\",\"text\":\"ok\"}"),
-                new EvalStepView("LLM_CALL", "phase2", 0, null, "ok reply"));
+    @DisplayName("recorded turns → v2 JSON: format 2, turns/rounds, arguments written as a JSON object")
+    void build_v2Structure() throws Exception {
+        GoldenFile golden = recorder.build("S01", "deepseek-chat",
+                Instant.parse("2026-10-21T10:00:00Z"), false, sampleTurns());
 
-        Path out = GoldenRecorder.defaultGoldenPath(tempDir, "S01");
-        recorder.export("S01", "deepseek-chat", at, steps, out);
+        JsonNode root = mapper.readTree(recorder.toJson(golden));
+        assertThat(root.path("format").asInt()).isEqualTo(2);
+        assertThat(root.path("synthetic").asBoolean()).isFalse();
+        assertThat(root.path("model").asText()).isEqualTo("deepseek-chat");
+        assertThat(root.path("recordedAt").asText()).isEqualTo("2026-10-21T10:00:00Z");
+        JsonNode r0 = root.path("turns").get(0).path("rounds").get(0);
+        assertThat(r0.path("toolCalls").get(0).path("name").asText()).isEqualTo("query_mastery");
+        assertThat(r0.path("toolCalls").get(0).path("arguments").isObject()).isTrue();
+        assertThat(r0.path("toolCalls").get(0).path("arguments").path("nodeCode").asText()).isEqualTo("SE-3.2");
+        assertThat(r0.path("finishReason").asText()).isEqualTo("tool_calls");
+        assertThat(root.path("turns").get(1).path("rounds").get(0).path("content").asText()).isEqualTo("第二轮");
+    }
 
-        assertThat(Files.exists(out)).isTrue();
+    @Test
+    @DisplayName("write → load round-trips")
+    void writeAndLoad_roundTrip() {
+        GoldenFile golden = recorder.build("S01", "m", Instant.parse("2026-10-21T10:00:00Z"), true, sampleTurns());
+        Path out = recorder.write(golden, GoldenRecorder.defaultGoldenPath(tempDir, "S01"));
 
         GoldenFile loaded = new GoldenLoader().load(out);
-        assertThat(loaded.scenario()).isEqualTo("S01");
-        assertThat(loaded.model()).isEqualTo("deepseek-chat");
-        assertThat(loaded.llmCalls()).hasSize(2);
-        assertThat(loaded.llmCalls().get(0).name()).isEqualTo("phase1");
-        assertThat(loaded.llmCalls().get(1).output()).isEqualTo("ok reply");
+        assertThat(loaded).isEqualTo(golden);
+        assertThat(loaded.isSynthetic()).isTrue();
+        assertThat(loaded.roundCount()).isEqualTo(3);
+        assertThat(loaded.turns().get(0).rounds().get(0).toolCalls().get(0).arguments())
+                .isEqualTo("{\"nodeCode\":\"SE-3.2\"}");
     }
 
     @Test
-    @DisplayName("empty steps → llmCalls empty array")
-    void build_emptySteps() {
-        GoldenFile golden = recorder.build("S02", "m", Instant.parse("2026-01-01T00:00:00Z"), List.of());
-        assertThat(golden.llmCalls()).isEmpty();
-        assertThat(recorder.toJson(golden)).contains("\"llmCalls\"");
+    @DisplayName("loader accepts string-encoded arguments; rejects v1 llmCalls goldens with need re-record")
+    void loader_stringArgs_andV1Rejected() {
+        String v2 = """
+                {"scenario":"S09","format":2,"turns":[{"rounds":[
+                  {"content":"","toolCalls":[{"name":"get_learning_frontier","arguments":"{\\"limit\\":3}"}]},
+                  {"content":"hi"}]}]}
+                """;
+        GoldenFile parsed = new GoldenLoader().parse(
+                new ByteArrayInputStream(v2.getBytes(StandardCharsets.UTF_8)), "inline");
+        assertThat(parsed.turns().get(0).rounds().get(0).toolCalls().get(0).arguments()).isEqualTo("{\"limit\":3}");
+        assertThat(parsed.turns().get(0).rounds().get(1).finishReason()).isEqualTo("stop");
+
+        String v1 = """
+                {"scenario":"S09","llmCalls":[{"idx":0,"name":"phase1","output":"x"}]}
+                """;
+        assertThatThrownBy(() -> new GoldenLoader().parse(
+                new ByteArrayInputStream(v1.getBytes(StandardCharsets.UTF_8)), "v1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("need re-record");
+    }
+
+    @Test
+    @DisplayName("RecordingCompanionAiClient captures streamTurn results per turn and passes deltas through")
+    void recordingClient_capturesPerTurn() {
+        List<StreamTurnResult> script = new ArrayList<>(List.of(
+                new StreamTurnResult("ab", List.of(), null, "stop"),
+                new StreamTurnResult("", List.of(new ToolCall("x", "get_review_queue", "{}")), null, "tool_calls")));
+        CompanionAiClient stub = new StubClient(script);
+        RecordingCompanionAiClient rec = new RecordingCompanionAiClient(stub);
+
+        rec.beginTurn();
+        StringBuilder seen = new StringBuilder();
+        rec.streamTurn(List.of(), List.of(), CompanionAiClient.ToolChoice.AUTO, seen::append);
+        rec.beginTurn();
+        rec.streamTurn(List.of(), List.of(), CompanionAiClient.ToolChoice.AUTO, seen::append);
+
+        assertThat(seen.toString()).isEqualTo("ab");
+        assertThat(rec.recordedTurns()).hasSize(2);
+        assertThat(rec.recordedTurns().get(1).get(0).toolCalls().get(0).name()).isEqualTo("get_review_queue");
+    }
+
+    /** Pops scripted results; streams content as one delta. */
+    static final class StubClient implements CompanionAiClient {
+        private final List<StreamTurnResult> script;
+
+        StubClient(List<StreamTurnResult> script) {
+            this.script = script;
+        }
+
+        @Override
+        public StreamTurnResult streamTurn(List<java.util.Map<String, Object>> messages,
+                                           List<java.util.Map<String, Object>> toolSchemas,
+                                           ToolChoice toolChoice, java.util.function.Consumer<String> onContentDelta) {
+            StreamTurnResult r = script.remove(0);
+            if (!r.content().isEmpty()) {
+                onContentDelta.accept(r.content());
+            }
+            return r;
+        }
+
+        @Override
+        public void stream(String s, List<ChatMsg> h, String u, java.util.function.Consumer<String> t) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public TurnOutcome completeWithTools(List<java.util.Map<String, Object>> m, List<java.util.Map<String, Object>> s) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void streamMessages(List<java.util.Map<String, Object>> m, java.util.function.Consumer<String> t) {
+            throw new UnsupportedOperationException();
+        }
     }
 }

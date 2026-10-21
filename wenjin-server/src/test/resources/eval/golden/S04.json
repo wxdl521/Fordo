@@ -1,14 +1,28 @@
 {
-  "scenario" : "S04",
-  "recordedAt" : "2026-07-20T12:00:00Z",
-  "model" : "deepseek-chat",
-  "llmCalls" : [ {
-    "idx" : 0,
-    "name" : "phase1",
-    "output" : "{\"type\":\"tool_calls\",\"calls\":[{\"id\":\"c1\",\"name\":\"query_mastery\",\"arguments\":\"{}\"}]}"
-  }, {
-    "idx" : 1,
-    "name" : "phase2",
-    "output" : "根据掌握度查询：SE-1.1 相对较好（effective≈0.75），SE-3.2 仍偏弱（≈0.35）。可以优先保持 SE-1.1 的练习节奏，并把精力放到 SE-3.2 的用例边界练习上。"
-  } ]
+  "scenario": "S04",
+  "format": 2,
+  "recordedAt": "2026-10-21T00:00:00Z",
+  "model": "synthetic",
+  "synthetic": true,
+  "turns": [
+    {
+      "rounds": [
+        {
+          "content": "",
+          "toolCalls": [
+            {
+              "name": "query_mastery",
+              "arguments": {}
+            }
+          ],
+          "finishReason": "tool_calls"
+        },
+        {
+          "content": "我查了你的掌握情况：软件工程概述（SE-1.1）掌握得比较好；用例图（SE-3.2）还偏弱。建议保持 SE-1.1 的复习节奏，把精力多放在用例图上。你想先从用例图的哪个部分开始？",
+          "toolCalls": [],
+          "finishReason": "stop"
+        }
+      ]
+    }
+  ]
 }

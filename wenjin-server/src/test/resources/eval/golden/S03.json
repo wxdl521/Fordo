@@ -1,14 +1,18 @@
 {
-  "scenario" : "S03",
-  "recordedAt" : "2026-07-20T12:00:00Z",
-  "model" : "deepseek-chat",
-  "llmCalls" : [ {
-    "idx" : 0,
-    "name" : "phase1",
-    "output" : "{\"type\":\"final_text\",\"text\":\"\"}"
-  }, {
-    "idx" : 1,
-    "name" : "phase2",
-    "output" : "「量子纠缠」不属于本课软件工程图谱中的知识点，我不会为它编造节点编号。若你想在本课推进，可以从 SE-1.1 需求基础或 SE-3.1/SE-3.2 建模相关节点开始。你更想先补哪一块？"
-  } ]
+  "scenario": "S03",
+  "format": 2,
+  "recordedAt": "2026-10-21T00:00:00Z",
+  "model": "synthetic",
+  "synthetic": true,
+  "turns": [
+    {
+      "rounds": [
+        {
+          "content": "量子纠缠不属于本课的知识图谱，我不能编造它和软件工程的关系。如果你想系统入门，建议从软件工程概述（SE-1.1）开始，再到需求获取（SE-2.1）。要不要先聊聊软件危机是怎么回事？",
+          "toolCalls": [],
+          "finishReason": "stop"
+        }
+      ]
+    }
+  ]
 }

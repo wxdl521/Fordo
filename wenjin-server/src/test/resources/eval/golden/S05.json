@@ -1,14 +1,28 @@
 {
-  "scenario" : "S05",
-  "recordedAt" : "2026-07-20T12:00:00Z",
-  "model" : "deepseek-chat",
-  "llmCalls" : [ {
-    "idx" : 0,
-    "name" : "phase1",
-    "output" : "{\"type\":\"tool_calls\",\"calls\":[{\"id\":\"c1\",\"name\":\"get_review_queue\",\"arguments\":\"{}\"}]}"
-  }, {
-    "idx" : 1,
-    "name" : "phase2",
-    "output" : "今日复习队列里有 SE-2.1 和 SE-2.2。建议先用 10 分钟回顾 SE-2.1 的核心定义，再做一道 SE-2.2 的小题检验；需要的话我可以带你开复习练习。"
-  } ]
+  "scenario": "S05",
+  "format": 2,
+  "recordedAt": "2026-10-21T00:00:00Z",
+  "model": "synthetic",
+  "synthetic": true,
+  "turns": [
+    {
+      "rounds": [
+        {
+          "content": "",
+          "toolCalls": [
+            {
+              "name": "get_review_queue",
+              "arguments": {}
+            }
+          ],
+          "finishReason": "tool_calls"
+        },
+        {
+          "content": "今天的复习队列里有需求获取（SE-2.1）和需求规格说明（SE-2.2）。建议先复习 SE-2.1，再看 SE-2.2，两者是前后衔接的。先从需求获取的几种方法开始回忆一下？",
+          "toolCalls": [],
+          "finishReason": "stop"
+        }
+      ]
+    }
+  ]
 }

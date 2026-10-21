@@ -2,12 +2,13 @@
   "code": "S07",
   "title": "工具失败降级",
   "status": "ENABLED",
+  "liveFaults": {"llmFailures": 2},
   "persona": {
     "masteryOverrides": [
       {"nodeCode": "SE-3.2", "raw": 0.40, "effective": 0.35}
     ],
     "reviewQueue": ["SE-2.1"],
-    "note": "M9 degrade skeleton — LLM failures / kill switch → DEGRADE + template + practice card"
+    "note": "M9 degrade — liveFaults.llmFailures=2 让前两次 LLM 调用（首轮 + legacy 回退）失败 → DEGRADE + 零 LLM 模板 + 练习卡"
   },
   "script": [
     {"user": "帮我查一下掌握度"}

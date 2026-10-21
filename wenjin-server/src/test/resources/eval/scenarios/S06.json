@@ -2,12 +2,13 @@
   "code": "S06",
   "title": "practice 预算耗尽",
   "status": "ENABLED",
+  "liveFaults": {"maxToolCalls": 1},
   "persona": {
     "masteryOverrides": [
       {"nodeCode": "SE-1.1", "raw": 0.50, "effective": 0.48}
     ],
     "reviewQueue": [],
-    "note": "学生连续要题；应尝试 start_practice，并在预算内收敛说明（GUARD 由 LIVE 路径覆盖）"
+    "note": "学生连续要题；应尝试 start_practice，并在预算内收敛说明。liveFaults.maxToolCalls=1 把工具预算压到 1，使多套练习请求必然触发预算耗尽（GUARD）"
   },
   "script": [
     {"user": "连续给我出题练习吧，多来几套"}

@@ -56,6 +56,8 @@ class ToolParamValidatorTest {
                 Arguments.of("nodeCode pattern accept",
                         List.of(ToolParamSpec.string("nodeCode", false, 32, ToolParamSpec.NODE_CODE_PATTERN)),
                         "{\"nodeCode\":\"KT_01\"}", null),
+                Arguments.of("nodeCode pattern accepts dotted codes",
+                        List.of(nodeCode), "{\"nodeCode\":\"SE-3.2\"}", null),
                 Arguments.of("maxLen exceeded",
                         List.of(nodeName), "{\"nodeName\":\"abcdefghij\"}", "exceeds max length: nodeName"),
                 Arguments.of("maxLen ok",

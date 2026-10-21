@@ -25,6 +25,22 @@ class SyncReplyCollectorTest {
     }
 
     @Test
+    @DisplayName("TTFT: 首个非空 token 时刻相对构造时刻；无 token 为 null")
+    void measuresTimeToFirstToken() {
+        long[] now = {1_000_000_000L};
+        SyncReplyCollector collector = new SyncReplyCollector(() -> now[0]);
+        assertThat(collector.ttftMs()).isNull();
+        now[0] += 5_000_000L;
+        collector.token("");
+        now[0] += 120_000_000L;
+        collector.token("首");
+        now[0] += 300_000_000L;
+        collector.token("字");
+        assertThat(collector.ttftMs()).isEqualTo(125L);
+        assertThat(collector.elapsedMs()).isEqualTo(425L);
+    }
+
+    @Test
     @DisplayName("toolStart/toolResult 事件可查询工具名")
     void collectsToolEvents() {
         SyncReplyCollector collector = new SyncReplyCollector();

@@ -9,7 +9,6 @@ import com.wenjin.eval.fixture.InMemoryEvalReviewQueuePort;
 import com.wenjin.eval.fixture.InMemoryEvalSessionPort;
 import com.wenjin.eval.fixture.MapEvalNodeLookup;
 import com.wenjin.eval.golden.GoldenFile;
-import com.wenjin.eval.golden.GoldenLlmCall;
 import com.wenjin.eval.golden.GoldenRecorder;
 import com.wenjin.eval.hard.EvalStepView;
 import com.wenjin.eval.hard.HardAssertChecker;
@@ -90,13 +89,9 @@ class ReplayEvalExecutorTest {
     @Test
     @DisplayName("loadReplayClient from written golden file")
     void loadReplayClient_fromPath() {
-        GoldenFile golden = new GoldenFile(
-                "S09",
-                Instant.parse("2026-07-20T00:00:00Z").toString(),
-                "deepseek-chat",
-                List.of(
-                        new GoldenLlmCall(0, "phase1", "{\"type\":\"final_text\",\"text\":\"\"}"),
-                        new GoldenLlmCall(1, "phase2", "welcome")));
+        GoldenFile golden = new GoldenFile("S09", 2, Instant.parse("2026-07-20T00:00:00Z").toString(),
+                "deepseek-chat", true, List.of(new GoldenFile.GoldenTurn(List.of(
+                        new GoldenFile.GoldenRound("welcome", List.of(), null)))));
         Path path = GoldenRecorder.defaultGoldenPath(tempDir, "S09");
         new GoldenRecorder().write(golden, path);
 
@@ -107,11 +102,50 @@ class ReplayEvalExecutorTest {
                 enabledFlags());
 
         ReplayCompanionAiClient client = executor.loadReplayClient(path);
-        assertThat(client.completeWithTools(List.of(), List.of()))
-                .isInstanceOf(com.wenjin.ai.CompanionAiClient.FinalText.class);
         StringBuilder sb = new StringBuilder();
-        client.streamMessages(List.of(), sb::append);
+        client.streamTurn(List.of(), List.of(), com.wenjin.ai.CompanionAiClient.ToolChoice.AUTO, sb::append);
         assertThat(sb.toString()).isEqualTo("welcome");
+        assertThat(client.verifyFullyConsumed()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("turn exception → execution hard failure; lifecycle before/after always run; metrics summed")
+    void turnException_reportedAndLifecycleRuns() {
+        java.util.List<String> events = new java.util.ArrayList<>();
+        ScenarioLifecycle lifecycle = new ScenarioLifecycle() {
+            @Override
+            public void beforeScenario(com.wenjin.eval.scenario.EvalScenarioDocument s) {
+                events.add("before:" + s.code());
+            }
+
+            @Override
+            public EvalCaseOutcome afterScenario(com.wenjin.eval.scenario.EvalScenarioDocument s, EvalCaseOutcome o) {
+                events.add("after:" + s.code());
+                return o;
+            }
+        };
+        AtomicInteger turns = new AtomicInteger();
+        CompanionTurnRunner runner = req -> {
+            if (turns.incrementAndGet() == 2) {
+                throw new IllegalStateException("Golden rounds exhausted — need re-record");
+            }
+            return new CompanionTurnRunner.TurnResult(5L, 6L, new CollectedReply("ok", List.of(), List.of()),
+                    List.of(new EvalStepView("LLM_CALL", "llm_round", 0, "d", "{}", 1, 10, 2, 5L, null)), 40L, 100L);
+        };
+        ReplayEvalExecutor executor = new ReplayEvalExecutor(new ScenarioLoader(), runner, new HardAssertChecker(),
+                enabledFlags(), null, null, lifecycle);
+
+        ScenarioRun run = executor.runDetailed(new ScenarioLoader().loadByCode("S01").orElseThrow());
+
+        assertThat(events).containsExactly("before:S01", "after:S01");
+        assertThat(run.outcome().hardPass()).isFalse();
+        assertThat(run.outcome().hardResult().failures()).first()
+                .satisfies(f -> assertThat(f.check()).isEqualTo("execution"))
+                .satisfies(f -> assertThat(f.message()).contains("need re-record"));
+        assertThat(run.outcome().metrics().ttftMs()).isEqualTo(40L);
+        assertThat(run.outcome().metrics().tokensIn()).isEqualTo(10);
+        assertThat(run.exchanges()).hasSize(2);
+        assertThat(run.transcript()).contains("ok");
     }
 
     private static FeatureFlagsProperties enabledFlags() {

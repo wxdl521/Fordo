@@ -48,6 +48,22 @@ public final class ScenarioSchemaValidator {
         validateScript(doc.script());
         validateHard(doc.hard());
         validateJudge(doc.judge());
+        validateLiveFaults(doc.liveFaults());
+    }
+
+    private static void validateLiveFaults(EvalScenarioDocument.LiveFaults faults) {
+        if (faults == null) {
+            return;
+        }
+        if (faults.llmFailures() == null && faults.maxToolCalls() == null) {
+            throw new ScenarioSchemaException("liveFaults must set llmFailures and/or maxToolCalls");
+        }
+        if (faults.llmFailures() != null && (faults.llmFailures() < 1 || faults.llmFailures() > 10)) {
+            throw new ScenarioSchemaException("liveFaults.llmFailures must be in [1,10]");
+        }
+        if (faults.maxToolCalls() != null && (faults.maxToolCalls() < 0 || faults.maxToolCalls() > 20)) {
+            throw new ScenarioSchemaException("liveFaults.maxToolCalls must be in [0,20]");
+        }
     }
 
     private static void validateStatus(EvalScenarioDocument doc) {
