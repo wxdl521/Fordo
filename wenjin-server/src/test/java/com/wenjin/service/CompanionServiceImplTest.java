@@ -1095,6 +1095,81 @@ class CompanionServiceImplTest {
         assertThat(persistedReply()).startsWith("二次函数的图像是抛物线").contains("回答中断");
     }
 
+    // ── I3 先落库再推送：客户端已断开时回复不丢 ───────────────────────────────
+
+    private static CompanionService.CompanionStreamSink brokenSink() {
+        return new CompanionService.CompanionStreamSink() {
+            @Override
+            public void token(String token) {
+                throw new IllegalStateException("broken pipe");
+            }
+        };
+    }
+
+    @Test
+    void killSwitchDegrade_persistsBeforeEmit_whenClientDisconnected() {
+        FeatureFlagsProperties flags = new FeatureFlagsProperties();
+        flags.setCompanionLlmEnabled(false);
+        ReflectionTestUtils.setField(service, "featureFlags", flags);
+        com.wenjin.service.companion.CompanionDegradeService degradeService =
+                org.mockito.Mockito.mock(com.wenjin.service.companion.CompanionDegradeService.class);
+        ReflectionTestUtils.setField(service, "degradeService", degradeService);
+        when(degradeService.degrade(any(), any(), any(), any(), any())).thenReturn(
+                new com.wenjin.service.companion.CompanionDegradeService.DegradeResult("先复习一下吧", null, "x"));
+        stubConversationAndPrompt(330L, List.of(userMessage("你好")));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(330L, brokenSink());
+
+        assertThat(persistedReply()).isEqualTo("先复习一下吧");
+    }
+
+    @Test
+    void killSwitchWithoutDegradeService_persistsFallbackBeforeEmit() {
+        FeatureFlagsProperties flags = new FeatureFlagsProperties();
+        flags.setCompanionLlmEnabled(false);
+        ReflectionTestUtils.setField(service, "featureFlags", flags);
+        stubConversationAndPrompt(331L, List.of(userMessage("你好")));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(331L, brokenSink());
+
+        assertThat(persistedReply()).contains("学习伴侣暂时不可用");
+    }
+
+    @Test
+    void orchestratorDegrade_persistsBeforeEmit_whenClientDisconnected() {
+        stubConversationAndPrompt(332L, List.of(userMessage("讲讲二次函数")));
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "query_mastery", "查询掌握度", Map.of("type", "object", "properties", Map.of()))));
+        com.wenjin.service.companion.CompanionDegradeService degradeService =
+                org.mockito.Mockito.mock(com.wenjin.service.companion.CompanionDegradeService.class);
+        ReflectionTestUtils.setField(service, "degradeService", degradeService);
+        when(degradeService.degrade(any(), any(), any(), any(), any())).thenReturn(
+                new com.wenjin.service.companion.CompanionDegradeService.DegradeResult("降级回复", null, "x"));
+        scriptTurns(fail(new IllegalStateException("read timed out")));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(332L, brokenSink());
+
+        assertThat(persistedReply()).isEqualTo("降级回复");
+    }
+
+    @Test
+    void orchestratorFinishFallback_persistsBeforeEmit_whenClientDisconnected() {
+        stubConversationAndPrompt(333L, List.of(userMessage("我掌握得怎么样")));
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "query_mastery", "查询掌握度", Map.of("type", "object", "properties", Map.of()))));
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
+                new ToolExecutionResult("c1", "query_mastery", true, "{}"));
+        scriptTurns(tools(new CompanionAiClient.ToolCall("c1", "query_mastery", "{}")), text());
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+        // toolStart/toolResult 正常，只有 token 断开
+        service.streamReply(333L, brokenSink());
+
+        assertThat(persistedReply()).isNotBlank();
+    }
+
     @Test
     void sinkDisconnectStopsWithoutDegradeAndNeverTouchesSinkAgain() {
         Long conversationId = 323L;

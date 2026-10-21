@@ -235,13 +235,16 @@ public final class CompanionOrchestrator {
 
         private Outcome finish() {
             String persisted = text.persistable();
+            boolean emitFallback = false;
             if (persisted.isEmpty()) {
                 persisted = practiceStarted ? FALLBACK_AFTER_PRACTICE : FALLBACK_AFTER_TOOLS;
-                if (!text.emittedVisible()) {
-                    out.token(persisted);
-                }
+                emitFallback = !text.emittedVisible();
             }
+            // 先落库再推送：推送失败（断开）走 run() 的 disconnected，其 persistable() 为空不会重复落库
             shell.persist(persisted);
+            if (emitFallback) {
+                out.token(persisted);
+            }
             return new Outcome(AgentRunStatus.SUCCEEDED, null, toolsCalled, signals);
         }
 

@@ -2,6 +2,7 @@ package com.wenjin.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenjin.ai.CompanionAiClient;
+import com.wenjin.ai.SinkFailureException;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.AiProperties;
@@ -272,8 +273,15 @@ public class CompanionServiceImpl implements CompanionService {
         try {
             // M9 kill switch: companion-llm-enabled=false → zero-LLM template path
             if (!isCompanionLlmEnabled()) {
-                runStatus = streamDegraded(conversationId, conversation, sink, traceCtx,
-                        CompanionDegradeService.REASON_LLM_DISABLED);
+                try {
+                    runStatus = streamDegraded(conversationId, conversation, sink, traceCtx,
+                            CompanionDegradeService.REASON_LLM_DISABLED);
+                } catch (SinkFailureException disconnected) {
+                    // 回复已落库；客户端断开按编排器同一语义记 CANCELLED
+                    log.info("Companion client disconnected during degraded reply: {}", disconnected.toString());
+                    runStatus = AgentRunStatus.CANCELLED;
+                    errorCode = CompanionOrchestrator.ERROR_CLIENT_DISCONNECTED;
+                }
                 return;
             }
             // 换策略（探针未通过后）与复盘会话：本 turn 的动态提示段，追加在学生动态段之后
@@ -587,8 +595,9 @@ public class CompanionServiceImpl implements CompanionService {
                                String reason) {
         if (degradeService == null || conversation == null) {
             String fallback = "学习伴侣暂时不可用，请稍后再试。优先完成今日复习与薄弱点练习。";
-            sink.token(fallback);
+            // 先落库再推送：客户端已断开时回复仍可在历史中看到
             saveAiMessage(conversationId, fallback);
+            emitToSink(() -> sink.token(fallback));
             return AgentRunStatus.DEGRADED;
         }
         CompanionDegradeService.DegradeResult result = degradeService.degrade(
@@ -598,13 +607,28 @@ public class CompanionServiceImpl implements CompanionService {
                 reason,
                 traceCtx);
         if (result.text() != null) {
-            sink.token(result.text());
             saveAiMessage(conversationId, result.text());
         }
-        if (result.practiceCard() != null) {
-            sink.practiceCard(result.practiceCard());
-        }
+        emitToSink(() -> {
+            if (result.text() != null) {
+                sink.token(result.text());
+            }
+            if (result.practiceCard() != null) {
+                sink.practiceCard(result.practiceCard());
+            }
+        });
         return AgentRunStatus.DEGRADED;
+    }
+
+    /** 下游推送失败统一视为客户端断开（{@link SinkFailureException}），与编排器语义一致。 */
+    private static void emitToSink(Runnable emit) {
+        try {
+            emit.run();
+        } catch (SinkFailureException sfe) {
+            throw sfe;
+        } catch (RuntimeException e) {
+            throw new SinkFailureException(e);
+        }
     }
 
     private boolean isCompanionLlmEnabled() {
