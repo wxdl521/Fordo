@@ -1353,6 +1353,55 @@ class CompanionServiceImplTest {
         assertThat(promptBlank).doesNotContain("软件工程");
     }
 
+    @Test
+    void buildPromptPutsStaticSectionsFirstAndStudentSectionsLast() {
+        DiagnosticResultVO diagnostic = new DiagnosticResultVO();
+        diagnostic.setHasWeakness(true);
+        DiagnosticResultVO.NodeRef stuckNode = new DiagnosticResultVO.NodeRef();
+        stuckNode.setName("软件测试");
+        diagnostic.setStuckNode(stuckNode);
+        DiagnosticResultVO.RootCause rootCause = new DiagnosticResultVO.RootCause();
+        rootCause.setName("需求分析");
+        rootCause.setMasteryScore(42.0);
+        rootCause.setSelf(false);
+        diagnostic.setRootCause(rootCause);
+
+        LearningPathVO.NodeRef targetNode = new LearningPathVO.NodeRef();
+        targetNode.setNodeCode("KT20");
+        targetNode.setName("一元二次方程");
+
+        String prompt = CompanionServiceImpl.buildSystemPrompt(
+                "数据结构", List.of("链表（nodeCode: KT01）"), List.of(), targetNode, null,
+                "KT12", "二次函数基础", diagnostic);
+
+        int persona = prompt.indexOf("你是「问津」");
+        int rules = prompt.indexOf("## 对话规则");
+        int tools = prompt.indexOf("## 工具使用");
+        int whitelist = prompt.indexOf("## 课程知识点范围");
+        int root = prompt.indexOf("## 诊断根因");
+        int path = prompt.indexOf("## 当前学习路径");
+        int focus = prompt.indexOf("## 当前焦点节点");
+        assertThat(persona).isZero();
+        assertThat(rules).isGreaterThan(persona);
+        assertThat(tools).isGreaterThan(rules);
+        assertThat(whitelist).isGreaterThan(tools);
+        assertThat(root).isGreaterThan(whitelist);
+        assertThat(path).isGreaterThan(root);
+        assertThat(focus).isGreaterThan(path);
+
+        // Static prefix is identical across students (prompt-cache friendly).
+        String other = CompanionServiceImpl.buildSystemPrompt(
+                "数据结构", List.of("链表（nodeCode: KT01）"), List.of(), null, null, null, null, null);
+        assertThat(other).isEqualTo(prompt.substring(0, root));
+
+        for (String tool : List.of("query_mastery", "get_node_detail", "start_practice", "trace_prerequisites",
+                "get_learning_frontier", "get_review_queue", "schedule_review", "recall_student_context",
+                "record_observation", "search_materials", "probe_understanding", "draft_study_plan",
+                "get_plan_progress")) {
+            assertThat(prompt.substring(tools, whitelist)).contains(tool);
+        }
+    }
+
     private MasteryDecayCalculator makeCalculator() {
         MasteryDecayCalculator calculator = new MasteryDecayCalculator();
         ReflectionTestUtils.setField(calculator, "enabled", true);
