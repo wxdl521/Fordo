@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════
 --  问津 · 知识图谱驱动的个性化学习导航系统
---  本地空库重建快照（当前最终 DDL，含 V3–V20；共 42 张业务表）
+--  本地空库重建快照（当前最终 DDL，含 V3–V21；共 42 张业务表）
 --
 --  ⚠ 仅本地空库 / 会删数据 / 生产禁用
 --    · 本脚本含 DROP TABLE IF EXISTS，会清空目标库业务表数据。
---    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V20）。
+--    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V21）。
 --    · 新增版本化迁移（Vn）后，必须把最终 DDL 同步回本文件，保持本地快照一致。
 --    · 应用启动默认 spring.flyway.enabled=false（WENJIN_FLYWAY_ENABLED），
 --      普通应用账号只有 DML；发布流水线用 migrator 凭据单独跑迁移作业。
@@ -24,7 +24,8 @@
 --   12. V17 增 clazz / clazz_student / clazz_course（管理后台班级；含物理 FK，删班级级联删成员与课程关联行）。
 --   13. V18 增 sys_config（管理后台系统配置覆盖层；secret 存 AES-GCM 密文，无物理 FK）。
 --   14. V19 增 review_pin（今日复习置顶）；V20 增 sys_user.email（注册邮箱，可空唯一）。
---   15. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--   15. V21 增 answer_record.idx_student_course_time（错因辅导按时间取最近错题）。
+--   16. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -322,6 +323,7 @@ CREATE TABLE `answer_record` (
     `fixed_diagnostic_session_id` BIGINT DEFAULT NULL COMMENT '固定诊断会话ID（scene=1 固定卷时非空，物理外键→diagnostic_session.id）【V3】',
     PRIMARY KEY (`id`),
     KEY `idx_student_course` (`student_id`, `course_id`),
+    KEY `idx_student_course_time` (`student_id`, `course_id`, `answered_at`) COMMENT '【V21】错因辅导按时间取最近错题',
     KEY `idx_question` (`question_id`),
     UNIQUE KEY `uk_fixed_diag_session_question` (`fixed_diagnostic_session_id`, `question_id`),
     CONSTRAINT `fk_answer_student` FOREIGN KEY (`student_id`) REFERENCES `sys_user` (`id`),
