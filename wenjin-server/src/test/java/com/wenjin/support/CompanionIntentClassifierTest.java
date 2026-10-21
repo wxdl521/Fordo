@@ -105,7 +105,7 @@ class CompanionIntentClassifierTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"get_node_detail", "search_materials", "trace_prerequisites"})
+    @ValueSource(strings = {"get_node_detail", "search_materials", "trace_prerequisites", "get_recent_mistakes"})
     void explainToolsGiveExplain(String tool) {
         assertThat(CompanionIntentClassifier.classify("这个怎么样", List.of(tool))).isEqualTo(EXPLAIN);
     }

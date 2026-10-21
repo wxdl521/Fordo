@@ -1038,11 +1038,18 @@ public class CompanionServiceImpl implements CompanionService {
         sb.append("- recall_student_context：按关键词检索学生长期记忆；record_observation：记录 SEMANTIC/PROCEDURAL 观察（每轮有限）。\n");
         sb.append("- search_materials：按关键词检索课程资料片段（附出处）；probe_understanding：讲解后发 1 道理解探针题（不改掌握度）。\n");
         sb.append("- draft_study_plan：起草备考学习计划（仅草稿，需学生确认）；get_plan_progress：查看当前学习计划进度与今日剩余任务。\n");
+        sb.append("- get_recent_mistakes：读取学生近期错题（所选 vs 正确选项）及错误选项指向的误区节点。\n");
         sb.append("- 只能调用本轮接口实际提供的工具；未提供的工具视为当前不可用。\n");
         sb.append("- 用户只说节点名称时，先从课程知识点范围匹配名称；能确定 nodeCode 就用 nodeCode，否则传精确 nodeName 让服务端解析。\n");
         sb.append("- 禁止编造掌握度；没有工具证据时，要明确说明暂未查询到。\n");
         sb.append("- 工具只能通过接口提供的 function/tool_calls 通道调用；禁止在回复正文中输出 DSML、XML、tool_calls、invoke、伪标签或任何工具协议原文。\n");
         sb.append("- 工具执行完成后，只用自然语言总结结果，不要重复工具参数或协议。\n\n");
+
+        sb.append("## 错因辅导\n");
+        sb.append("- 学生要求复盘错题、说自己做错了或不懂为什么错时，先调用 get_recent_mistakes，再回答。\n");
+        sb.append("- 针对误区节点（misconceptionNodes / topMisconceptions）讲清「为什么会选错」：对比所选选项与正确选项背后的概念差别，指出混淆点。\n");
+        sb.append("- 不要直接念答案或照搬解析；先让学生说出当时的想法，再引导其自己发现错误。\n");
+        sb.append("- 讲完后系统会自动就误区节点出一道理解探针题，无需你另行出题。\n\n");
 
         sb.append("## 课程知识点范围\n");
         if (whitelist != null) {
