@@ -8,7 +8,7 @@ import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.AdminCreateUserRequest;
 import com.wenjin.dto.AdminResetPasswordVO;
 import com.wenjin.dto.AdminUpdateUserRequest;
-import com.wenjin.dto.AdminUserPageVO;
+import com.wenjin.dto.AdminPageVO;
 import com.wenjin.dto.AdminUserVO;
 import com.wenjin.entity.SysUser;
 import com.wenjin.mapper.SysUserMapper;
@@ -82,7 +82,7 @@ class AdminUserServiceImplTest {
         when(userMapper.selectCount(any(QueryWrapper.class))).thenReturn(1L);
         when(userMapper.selectList(any(QueryWrapper.class))).thenReturn(List.of(u));
 
-        AdminUserPageVO page = service.list(null, null, null, 0, 500);
+        AdminPageVO<AdminUserVO> page = service.list(null, null, null, 0, 500);
 
         assertThat(page.getTotal()).isEqualTo(1L);
         assertThat(page.getPage()).isEqualTo(1);
@@ -107,11 +107,11 @@ class AdminUserServiceImplTest {
         when(userMapper.selectCount(any(QueryWrapper.class))).thenReturn(100L);
         when(userMapper.selectList(any(QueryWrapper.class))).thenReturn(List.of());
 
-        AdminUserPageVO defaults = service.list(null, null, null, null, null);
+        AdminPageVO<AdminUserVO> defaults = service.list(null, null, null, null, null);
         assertThat(defaults.getPage()).isEqualTo(1);
         assertThat(defaults.getSize()).isEqualTo(20);
 
-        AdminUserPageVO third = service.list(null, null, null, 3, 20);
+        AdminPageVO<AdminUserVO> third = service.list(null, null, null, 3, 20);
         assertThat(third.getPage()).isEqualTo(3);
 
         ArgumentCaptor<QueryWrapper<SysUser>> captor = ArgumentCaptor.forClass(QueryWrapper.class);
@@ -143,7 +143,7 @@ class AdminUserServiceImplTest {
     void list_zeroTotal_skipsRecordQuery() {
         when(userMapper.selectCount(any(QueryWrapper.class))).thenReturn(0L);
 
-        AdminUserPageVO page = service.list("nobody", null, null, 1, 20);
+        AdminPageVO<AdminUserVO> page = service.list("nobody", null, null, 1, 20);
 
         assertThat(page.getTotal()).isZero();
         assertThat(page.getRecords()).isEmpty();

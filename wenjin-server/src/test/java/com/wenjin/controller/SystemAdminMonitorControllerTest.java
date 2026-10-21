@@ -6,7 +6,7 @@ import com.wenjin.common.ResultCode;
 import com.wenjin.config.AdminAuthInterceptor;
 import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.AuditLogVO;
-import com.wenjin.dto.LogPageVO;
+import com.wenjin.dto.AdminPageVO;
 import com.wenjin.dto.LoginLogVO;
 import com.wenjin.dto.OverviewVO;
 import com.wenjin.security.CurrentPrincipal;
@@ -81,7 +81,7 @@ class SystemAdminMonitorControllerTest {
         row.setIp("10.0.0.7");
         row.setRequestId("req-1");
         row.setCreatedAt("2026-10-21T10:15:30");
-        LogPageVO<AuditLogVO> page = new LogPageVO<>();
+        AdminPageVO<AuditLogVO> page = new AdminPageVO<>();
         page.setRecords(List.of(row));
         page.setTotal(41L);
         page.setPage(2);
@@ -116,7 +116,7 @@ class SystemAdminMonitorControllerTest {
     @Test
     @DisplayName("GET /audit-logs：全部参数可省略（都以 null 透传，由 service 套默认值）")
     void auditLogs_allParamsOptional() throws Exception {
-        LogPageVO<AuditLogVO> page = new LogPageVO<>();
+        AdminPageVO<AuditLogVO> page = new AdminPageVO<>();
         page.setRecords(List.of());
         page.setPage(1);
         page.setSize(20);
@@ -176,7 +176,7 @@ class SystemAdminMonitorControllerTest {
         row.setIp("10.0.0.9");
         row.setUserAgent("Mozilla/5.0");
         row.setCreatedAt("2026-10-21T09:00:01");
-        LogPageVO<LoginLogVO> page = new LogPageVO<>();
+        AdminPageVO<LoginLogVO> page = new AdminPageVO<>();
         page.setRecords(List.of(row));
         page.setTotal(1L);
         page.setPage(1);

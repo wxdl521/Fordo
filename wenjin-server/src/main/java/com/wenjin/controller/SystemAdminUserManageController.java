@@ -8,7 +8,7 @@ import com.wenjin.dto.AdminResetPasswordRequest;
 import com.wenjin.dto.AdminResetPasswordVO;
 import com.wenjin.dto.AdminUpdateUserRequest;
 import com.wenjin.dto.AdminUserImportResultVO;
-import com.wenjin.dto.AdminUserPageVO;
+import com.wenjin.dto.AdminPageVO;
 import com.wenjin.dto.AdminUserVO;
 import com.wenjin.service.AdminUserImportService;
 import com.wenjin.service.AdminUserService;
@@ -55,7 +55,7 @@ public class SystemAdminUserManageController {
 
     /** GET /api/system-admin/users */
     @GetMapping("/users")
-    public Result<AdminUserPageVO> list(@RequestParam(value = "keyword", required = false) String keyword,
+    public Result<AdminPageVO<AdminUserVO>> list(@RequestParam(value = "keyword", required = false) String keyword,
                                         @RequestParam(value = "role", required = false) Integer role,
                                         @RequestParam(value = "status", required = false) Integer status,
                                         @RequestParam(value = "page", required = false) Integer page,

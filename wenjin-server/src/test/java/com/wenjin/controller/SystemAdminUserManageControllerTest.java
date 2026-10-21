@@ -9,7 +9,7 @@ import com.wenjin.dto.AdminCreateUserRequest;
 import com.wenjin.dto.AdminResetPasswordVO;
 import com.wenjin.dto.AdminUpdateUserRequest;
 import com.wenjin.dto.AdminUserImportResultVO;
-import com.wenjin.dto.AdminUserPageVO;
+import com.wenjin.dto.AdminPageVO;
 import com.wenjin.dto.AdminUserVO;
 import com.wenjin.security.CurrentPrincipal;
 import com.wenjin.security.UserRole;
@@ -83,7 +83,7 @@ class SystemAdminUserManageControllerTest {
     @Test
     @DisplayName("GET /users：参数透传，返回 {records,total,page,size}")
     void list_passesParamsAndReturnsPage() throws Exception {
-        AdminUserPageVO page = new AdminUserPageVO();
+        AdminPageVO<AdminUserVO> page = new AdminPageVO<>();
         page.setRecords(List.of(vo(5L, "alice", 2, 1)));
         page.setTotal(41L);
         page.setPage(2);
@@ -109,7 +109,7 @@ class SystemAdminUserManageControllerTest {
     @Test
     @DisplayName("GET /users：全部参数可省略")
     void list_allParamsOptional() throws Exception {
-        AdminUserPageVO page = new AdminUserPageVO();
+        AdminPageVO<AdminUserVO> page = new AdminPageVO<>();
         page.setRecords(List.of());
         page.setPage(1);
         page.setSize(20);

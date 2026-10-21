@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.dto.AuditLogVO;
-import com.wenjin.dto.LogPageVO;
+import com.wenjin.dto.AdminPageVO;
 import com.wenjin.dto.LoginLogVO;
 import com.wenjin.dto.MonitorRows;
 import com.wenjin.dto.OverviewVO;
@@ -62,7 +62,7 @@ public class MonitorServiceImpl implements MonitorService {
     // ───────────────────────── 操作日志 ─────────────────────────
 
     @Override
-    public LogPageVO<AuditLogVO> listAuditLogs(String operator, String action, Integer success,
+    public AdminPageVO<AuditLogVO> listAuditLogs(String operator, String action, Integer success,
                                                LocalDate from, LocalDate to, Integer page, Integer size) {
         validateSuccess(success);
         validateRange(from, to);
@@ -107,7 +107,7 @@ public class MonitorServiceImpl implements MonitorService {
     // ───────────────────────── 登录日志 ─────────────────────────
 
     @Override
-    public LogPageVO<LoginLogVO> listLoginLogs(String username, Integer success,
+    public AdminPageVO<LoginLogVO> listLoginLogs(String username, Integer success,
                                                LocalDate from, LocalDate to, Integer page, Integer size) {
         validateSuccess(success);
         validateRange(from, to);
@@ -312,8 +312,8 @@ public class MonitorServiceImpl implements MonitorService {
         return "LIMIT " + offset + "," + size;
     }
 
-    private static <T> LogPageVO<T> page(List<T> records, long total, int page, int size) {
-        LogPageVO<T> vo = new LogPageVO<>();
+    private static <T> AdminPageVO<T> page(List<T> records, long total, int page, int size) {
+        AdminPageVO<T> vo = new AdminPageVO<>();
         vo.setRecords(records);
         vo.setTotal(total);
         vo.setPage(page);

@@ -5,7 +5,7 @@ import lombok.Data;
 import java.util.List;
 
 /**
- * 管理后台通用分页结果：{@code { records, total, page, size }}（与 {@link AdminUserPageVO} 同形）。
+ * 管理后台通用分页结果：{@code { records, total, page, size }}（与 {@link AdminPageVO<AdminUserVO>} 同形）。
  */
 @Data
 public class AdminPageVO<T> {

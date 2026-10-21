@@ -114,6 +114,3 @@ export function fetchTeacherReports(courseId, kind, config = {}) {
     params: { ...config.params, courseId, kind }
   })
 }
-export function fetchTeacherReport(id, config = {}) {
-  return http.get(`/teacher/reports/${id}`, config)
-}

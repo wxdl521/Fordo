@@ -1,7 +1,7 @@
 package com.wenjin.service;
 
 import com.wenjin.dto.AuditLogVO;
-import com.wenjin.dto.LogPageVO;
+import com.wenjin.dto.AdminPageVO;
 import com.wenjin.dto.LoginLogVO;
 import com.wenjin.dto.OverviewVO;
 
@@ -24,14 +24,14 @@ public interface MonitorService {
      * @param page     页码，缺省/小于 1 取 1
      * @param size     每页条数，缺省 20，上限 100
      */
-    LogPageVO<AuditLogVO> listAuditLogs(String operator, String action, Integer success,
+    AdminPageVO<AuditLogVO> listAuditLogs(String operator, String action, Integer success,
                                         LocalDate from, LocalDate to, Integer page, Integer size);
 
     /** 库里出现过的 action 去重（供筛选下拉）。 */
     List<String> listAuditActions();
 
     /** 登录日志分页，按时间倒序；参数语义同 {@link #listAuditLogs}，{@code username} 为模糊匹配。 */
-    LogPageVO<LoginLogVO> listLoginLogs(String username, Integer success,
+    AdminPageVO<LoginLogVO> listLoginLogs(String username, Integer success,
                                         LocalDate from, LocalDate to, Integer page, Integer size);
 
     /**

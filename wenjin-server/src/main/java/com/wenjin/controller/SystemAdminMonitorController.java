@@ -2,7 +2,7 @@ package com.wenjin.controller;
 
 import com.wenjin.common.Result;
 import com.wenjin.dto.AuditLogVO;
-import com.wenjin.dto.LogPageVO;
+import com.wenjin.dto.AdminPageVO;
 import com.wenjin.dto.LoginLogVO;
 import com.wenjin.dto.OverviewVO;
 import com.wenjin.service.MonitorService;
@@ -34,7 +34,7 @@ public class SystemAdminMonitorController {
      * <p>{@code from}/{@code to} 为 yyyy-MM-dd，均含当日；{@code size} 上限 100。
      */
     @GetMapping("/audit-logs")
-    public Result<LogPageVO<AuditLogVO>> auditLogs(
+    public Result<AdminPageVO<AuditLogVO>> auditLogs(
             @RequestParam(value = "operator", required = false) String operator,
             @RequestParam(value = "action", required = false) String action,
             @RequestParam(value = "success", required = false) Integer success,
@@ -53,7 +53,7 @@ public class SystemAdminMonitorController {
 
     /** GET /api/system-admin/login-logs */
     @GetMapping("/login-logs")
-    public Result<LogPageVO<LoginLogVO>> loginLogs(
+    public Result<AdminPageVO<LoginLogVO>> loginLogs(
             @RequestParam(value = "username", required = false) String username,
             @RequestParam(value = "success", required = false) Integer success,
             @RequestParam(value = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,

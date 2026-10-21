@@ -3,7 +3,7 @@ package com.wenjin.service;
 import com.wenjin.dto.AdminCreateUserRequest;
 import com.wenjin.dto.AdminResetPasswordVO;
 import com.wenjin.dto.AdminUpdateUserRequest;
-import com.wenjin.dto.AdminUserPageVO;
+import com.wenjin.dto.AdminPageVO;
 import com.wenjin.dto.AdminUserVO;
 import com.wenjin.entity.SysUser;
 
@@ -15,7 +15,7 @@ import java.util.List;
 public interface AdminUserService {
 
     /** 分页查询，按 id 倒序；keyword 对用户名/姓名模糊匹配。page/size 越界时被钳制（size 上限 100）。 */
-    AdminUserPageVO list(String keyword, Integer role, Integer status, Integer page, Integer size);
+    AdminPageVO<AdminUserVO> list(String keyword, Integer role, Integer status, Integer page, Integer size);
 
     /** 创建教师或学生账号（BCrypt 存储）。 */
     AdminUserVO create(AdminCreateUserRequest request);

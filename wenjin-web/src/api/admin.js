@@ -141,8 +141,3 @@ export function fetchExtractionReviews(courseCode, config = {}) {
     params: { ...config.params, courseCode }
   })
 }
-
-/** @deprecated 兼容旧签名：第三参为 onUploadProgress 函数 */
-export function importQuestionExcelLegacy(courseId, file, onUploadProgress) {
-  return importQuestionExcel(courseId, file, { onUploadProgress })
-}

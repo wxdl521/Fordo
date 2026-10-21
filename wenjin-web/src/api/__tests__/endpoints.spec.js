@@ -64,12 +64,11 @@ describe('API endpoint contracts', () => {
         'extractGraphFromFile',
         'fetchExtractDraft',
         'commitExtractDraft',
-        'fetchExtractionReviews',
-        'importQuestionExcelLegacy'
+        'fetchExtractionReviews'
       ]],
       [growth, ['fetchGrowth']],
       [path, ['generatePath', 'fetchCurrentPath', 'completeItem']],
-      [practice, ['startPractice', 'submitPractice', 'fetchPracticeHistory']],
+      [practice, ['startPractice', 'submitPractice']],
       [review, ['fetchTodayReview']],
       [jobs, ['getJob', 'cancelJob', 'isJobTerminal', 'isJobSucceeded']],
       [teacher, [
@@ -97,8 +96,7 @@ describe('API endpoint contracts', () => {
         'rejectRagMapping',
         'batchApproveRagMappings',
         'createNodeRefSource',
-        'fetchTeacherReports',
-        'fetchTeacherReport'
+        'fetchTeacherReports'
       ]],
       [companion, [
         'isAbortError',
@@ -120,8 +118,9 @@ describe('API endpoint contracts', () => {
       expect(Object.keys(module).sort()).toEqual([...names].sort())
       exportCount += names.length
     }
-    // 61 baseline + 8 teacher RAG/reports + 1 companion submitProbe + 2 student + 1 sendEmailCode = 73
-    expect(exportCount).toBe(73)
+    // 61 baseline + 8 teacher RAG/reports + 1 companion submitProbe + 2 student + 1 sendEmailCode
+    // - 3 removed unused (importQuestionExcelLegacy / fetchPracticeHistory / fetchTeacherReport) = 70
+    expect(exportCount).toBe(70)
   })
 
   it('maps user and course operations without forwarding privilege fields', () => {
@@ -299,21 +298,18 @@ describe('API endpoint contracts', () => {
     ])
   })
 
-  it('maps all question imports including the legacy upload alias', () => {
+  it('maps all question imports', () => {
     const jsonFile = new File(['{}'], 'questions.json', { type: 'application/json' })
     const excelFile = new File(['excel'], 'questions.xlsx')
-    const legacyFile = new File(['legacy'], 'legacy.xlsx')
     const onProgress = vi.fn()
-    const onLegacyProgress = vi.fn()
 
     admin.importQuestionJson(4, jsonFile)
     admin.importQuestionExcel(4, excelFile, {
       headers: { 'Idempotency-Key': 'excel-key' },
       onUploadProgress: onProgress
     })
-    admin.importQuestionExcelLegacy(4, legacyFile, onLegacyProgress)
 
-    expect(http.post).toHaveBeenCalledTimes(3)
+    expect(http.post).toHaveBeenCalledTimes(2)
     expectMultipartCall(
       http.post.mock.calls[0],
       '/admin/question/import/json',
@@ -334,16 +330,6 @@ describe('API endpoint contracts', () => {
           'Idempotency-Key': 'excel-key'
         },
         onUploadProgress: onProgress
-      }
-    )
-    expectMultipartCall(
-      http.post.mock.calls[2],
-      '/admin/question/import/excel',
-      legacyFile,
-      {
-        params: { courseId: 4 },
-        headers: { 'Content-Type': 'multipart/form-data' },
-        onUploadProgress: onLegacyProgress
       }
     )
   })
@@ -430,11 +416,9 @@ describe('API endpoint contracts', () => {
     path.completeItem(18)
     practice.startPractice(startPayload)
     practice.submitPractice(23, submitPayload)
-    practice.fetchPracticeHistory(5, 9)
 
     expect(http.get.mock.calls).toEqual([
-      ['/path/current', { params: { courseId: 5 } }],
-      ['/practice/history', { params: { courseId: 5, nodeId: 9 } }]
+      ['/path/current', { params: { courseId: 5 } }]
     ])
     expect(http.post.mock.calls).toEqual([
       ['/path/generate', { courseId: 5, targetNodeId: 9 }],

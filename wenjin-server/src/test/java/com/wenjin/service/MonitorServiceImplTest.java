@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.dto.AuditLogVO;
-import com.wenjin.dto.LogPageVO;
+import com.wenjin.dto.AdminPageVO;
 import com.wenjin.dto.LoginLogVO;
 import com.wenjin.dto.MonitorRows;
 import com.wenjin.dto.OverviewVO;
@@ -91,7 +91,7 @@ class MonitorServiceImplTest {
         when(auditLogMapper.selectCount(any(QueryWrapper.class))).thenReturn(1L);
         when(auditLogMapper.selectList(any(QueryWrapper.class))).thenReturn(List.of(auditRow(5L)));
 
-        LogPageVO<AuditLogVO> page = service.listAuditLogs(null, null, null, null, null, 0, 500);
+        AdminPageVO<AuditLogVO> page = service.listAuditLogs(null, null, null, null, null, 0, 500);
 
         assertThat(page.getTotal()).isEqualTo(1L);
         assertThat(page.getPage()).isEqualTo(1);
@@ -128,8 +128,8 @@ class MonitorServiceImplTest {
         when(auditLogMapper.selectCount(any(QueryWrapper.class))).thenReturn(100L);
         when(auditLogMapper.selectList(any(QueryWrapper.class))).thenReturn(List.of(failed));
 
-        LogPageVO<AuditLogVO> defaults = service.listAuditLogs(null, null, null, null, null, null, null);
-        LogPageVO<AuditLogVO> third = service.listAuditLogs(null, null, null, null, null, 3, 20);
+        AdminPageVO<AuditLogVO> defaults = service.listAuditLogs(null, null, null, null, null, null, null);
+        AdminPageVO<AuditLogVO> third = service.listAuditLogs(null, null, null, null, null, 3, 20);
 
         assertThat(defaults.getPage()).isEqualTo(1);
         assertThat(defaults.getSize()).isEqualTo(20);
@@ -168,7 +168,7 @@ class MonitorServiceImplTest {
     void auditLogs_zeroTotal_skipsRecordQuery() {
         when(auditLogMapper.selectCount(any(QueryWrapper.class))).thenReturn(0L);
 
-        LogPageVO<AuditLogVO> page = service.listAuditLogs("nobody", null, null, null, null, 1, 20);
+        AdminPageVO<AuditLogVO> page = service.listAuditLogs("nobody", null, null, null, null, 1, 20);
 
         assertThat(page.getTotal()).isZero();
         assertThat(page.getRecords()).isEmpty();
@@ -209,7 +209,7 @@ class MonitorServiceImplTest {
         when(loginLogMapper.selectCount(any(QueryWrapper.class))).thenReturn(1L);
         when(loginLogMapper.selectList(any(QueryWrapper.class))).thenReturn(List.of(row));
 
-        LogPageVO<LoginLogVO> page = service.listLoginLogs(null, null, null, null, 1, 999);
+        AdminPageVO<LoginLogVO> page = service.listLoginLogs(null, null, null, null, 1, 999);
 
         assertThat(page.getSize()).isEqualTo(100);
         LoginLogVO vo = page.getRecords().get(0);

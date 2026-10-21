@@ -8,7 +8,7 @@ import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.AdminCreateUserRequest;
 import com.wenjin.dto.AdminResetPasswordVO;
 import com.wenjin.dto.AdminUpdateUserRequest;
-import com.wenjin.dto.AdminUserPageVO;
+import com.wenjin.dto.AdminPageVO;
 import com.wenjin.dto.AdminUserVO;
 import com.wenjin.entity.SysUser;
 import com.wenjin.mapper.SysUserMapper;
@@ -67,7 +67,7 @@ public class AdminUserServiceImpl implements AdminUserService {
     // ───────────────────────── 查询 ─────────────────────────
 
     @Override
-    public AdminUserPageVO list(String keyword, Integer role, Integer status, Integer page, Integer size) {
+    public AdminPageVO<AdminUserVO> list(String keyword, Integer role, Integer status, Integer page, Integer size) {
         if (role != null && (role < UserRole.TEACHER.code() || role > UserRole.ADMIN.code())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "角色筛选值无效");
         }
@@ -91,7 +91,7 @@ public class AdminUserServiceImpl implements AdminUserService {
             }
         }
 
-        AdminUserPageVO vo = new AdminUserPageVO();
+        AdminPageVO<AdminUserVO> vo = new AdminPageVO<>();
         vo.setRecords(records);
         vo.setTotal(total);
         vo.setPage(effectivePage);

@@ -31,13 +31,3 @@ export function submitPractice(sessionId, payload, config) {
     : http.post(`/practice/${sessionId}/submit`, body)
 }
 
-/**
- * 查询节点练习历史（供显示"上次练习 x/y"）。
- * GET /api/practice/history
- * @param {number} courseId
- * @param {number} nodeId
- * @returns {Promise<PracticeHistoryVO[]>}
- */
-export function fetchPracticeHistory(courseId, nodeId) {
-  return http.get('/practice/history', { params: { courseId, nodeId } })
-}
