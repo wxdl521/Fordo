@@ -46,6 +46,13 @@ public class ConfigRegistry {
     private static final int MODEL_MAX = 64;
     private static final int SECRET_MAX = 512;
 
+    /**
+     * 「地址 → 与之成对的令牌」：地址一变，旧令牌即作废（{@link SysConfigService} 负责清空），防止管理员（或拿到管理员
+     * 会话的人）把基址改到自己的主机上、让服务端把原令牌发过去。目前只登记 Judge0；AI 各组沿用原行为。
+     */
+    private static final Map<String, String> URL_BOUND_SECRETS = Map.of(
+            "wenjin.code-check.judge0.base-url", "wenjin.code-check.judge0.api-key");
+
     private final Map<String, ConfigKeyDef> defs;
 
     public ConfigRegistry() {
@@ -148,7 +155,8 @@ public class ConfigRegistry {
 
         // ── 代码沙箱（wenjin.code-check.judge0.*；Judge0CodeSandbox 每次调用现读；仅 backend=judge0 时生效）──
         list.add(ConfigKeyDef.text("wenjin.code-check.judge0.base-url", GROUP_CODE_CHECK, "Judge0 基址",
-                "仅 wenjin.code-check.backend=judge0 时使用，如 http://judge0.internal:2358", URL_MAX, true,
+                "仅 wenjin.code-check.backend=judge0 时使用，如 http://judge0.internal:2358；修改后 Auth Token 立即作废，需重新填写",
+                URL_MAX, true,
                 b -> judge0(b).getBaseUrl(), (b, v) -> judge0(b).setBaseUrl(v)));
         list.add(ConfigKeyDef.secret("wenjin.code-check.judge0.api-key", GROUP_CODE_CHECK, "Judge0 Auth Token",
                 "Judge0 的 AUTHN_TOKEN（请求头 X-Auth-Token）；加密存储，界面只显示末 4 位", SECRET_MAX,
@@ -166,6 +174,12 @@ public class ConfigRegistry {
     /** 全部登记项（登记顺序 = 页面展示顺序）。 */
     public List<ConfigKeyDef> all() {
         return List.copyOf(defs.values());
+    }
+
+    /** 与该地址项成对、地址变更时须作废的 secret 项（没有则 empty）。 */
+    public Optional<ConfigKeyDef> boundSecretOf(String urlKey) {
+        String secretKey = urlKey == null ? null : URL_BOUND_SECRETS.get(urlKey);
+        return secretKey == null ? Optional.empty() : find(secretKey);
     }
 
     public Optional<ConfigKeyDef> find(String key) {
