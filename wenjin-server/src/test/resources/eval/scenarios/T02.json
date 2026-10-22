@@ -1,0 +1,75 @@
+{
+  "code": "T02",
+  "title": "教师：全班最薄弱的知识点",
+  "status": "ENABLED",
+  "actor": "teacher",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": [],
+    "note": "老师与教师 AI 助教的对话。全班 4 人有掌握度数据，SE-3.1 数据流图班级均值最低（约 48.8），其次 SE-3.2 用例图、SE-2.1 需求获取、SE-1.1 软件工程概述。助教应先看全班概览，可再下钻该知识点",
+    "roster": [
+      {
+        "name": "李明",
+        "masteryOverrides": [
+          {"nodeCode": "SE-1.1", "raw": 0.90}, {"nodeCode": "SE-2.1", "raw": 0.85},
+          {"nodeCode": "SE-3.1", "raw": 0.80}, {"nodeCode": "SE-3.2", "raw": 0.85}
+        ],
+        "correctAnswers": 8,
+        "lastPracticeDaysAgo": 1
+      },
+      {
+        "name": "陈静",
+        "masteryOverrides": [
+          {"nodeCode": "SE-1.1", "raw": 0.85}, {"nodeCode": "SE-2.1", "raw": 0.80},
+          {"nodeCode": "SE-3.1", "raw": 0.45}, {"nodeCode": "SE-3.2", "raw": 0.70}
+        ],
+        "mistakes": [{"nodeCode": "SE-3.1", "misconceptionNodeCode": "SE-2.1"}],
+        "correctAnswers": 5,
+        "lastPracticeDaysAgo": 2
+      },
+      {
+        "name": "赵强",
+        "masteryOverrides": [
+          {"nodeCode": "SE-1.1", "raw": 0.30}, {"nodeCode": "SE-2.1", "raw": 0.25},
+          {"nodeCode": "SE-3.1", "raw": 0.20}, {"nodeCode": "SE-3.2", "raw": 0.25}
+        ],
+        "mistakes": [
+          {"nodeCode": "SE-3.2", "misconceptionNodeCode": "SE-2.1"},
+          {"nodeCode": "SE-3.1", "misconceptionNodeCode": "SE-2.1"}
+        ],
+        "lastPracticeDaysAgo": 16
+      },
+      {
+        "name": "孙悦",
+        "masteryOverrides": [
+          {"nodeCode": "SE-1.1", "raw": 0.80}, {"nodeCode": "SE-2.1", "raw": 0.75},
+          {"nodeCode": "SE-3.1", "raw": 0.50}, {"nodeCode": "SE-3.2", "raw": 0.55}
+        ],
+        "snapshots": [{"nodeCode": "SE-3.2", "daysAgo": 9, "score": 0.90}],
+        "correctAnswers": 4,
+        "lastPracticeDaysAgo": 2
+      },
+      {"name": "周婷"}
+    ]
+  },
+  "script": [
+    {"user": "哪个知识点全班最薄弱？"}
+  ],
+  "hard": {
+    "mustCallTools": ["get_class_overview"],
+    "mustNotCallTools": ["query_mastery", "recall_student_context", "start_practice"],
+    "maxToolCalls": 3,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false,
+    "replyMustContain": ["数据流图"],
+    "replyMustNotContain": ["eval_roster_"]
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "evidence_grounding", "desc": "最薄弱知识点及均值来自工具返回，不编造数字", "threshold": 4},
+      {"key": "actionability", "desc": "给出针对该知识点的教学建议", "threshold": 3},
+      {"key": "expression", "desc": "表达清晰简洁", "threshold": 3}
+    ]
+  }
+}

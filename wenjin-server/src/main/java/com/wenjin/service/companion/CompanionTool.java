@@ -24,6 +24,11 @@ public interface CompanionTool {
         return List.of();
     }
 
+    /** 工具受众（方向 7）；默认学生伴侣工具。教师助教工具覆盖为 {@link ToolAudience#TEACHER}。 */
+    default ToolAudience audience() {
+        return ToolAudience.STUDENT;
+    }
+
     default String label() {
         Map<String, Object> toolSchema = schema();
         if (toolSchema == null) {
@@ -45,6 +50,15 @@ public interface CompanionTool {
      */
     default boolean sideEffecting() {
         return false;
+    }
+
+    /**
+     * 只读且可在同一 run 内按参数去重缓存（{@link ToolGovernor}）、同轮多个时可并行执行
+     * （{@link CompanionOrchestrator}）。默认沿用 {@link ToolGovernor#READ_CACHEABLE_TOOLS} 名单；
+     * 新的只读工具（如教师助教工具）覆写为 true 即可，无需改名单。{@link #sideEffecting()} 为 true 时无效。
+     */
+    default boolean readCacheable() {
+        return ToolGovernor.READ_CACHEABLE_TOOLS.contains(name());
     }
 
     /**

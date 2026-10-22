@@ -1,0 +1,75 @@
+{
+  "code": "T01",
+  "title": "教师：本周需要关注的学生",
+  "status": "ENABLED",
+  "actor": "teacher",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": [],
+    "note": "老师与教师 AI 助教的对话。班级 5 人：赵强（掌握度极低且 16 天未练习）、周婷（从未诊断也从未作答）、孙悦（SE-3.2 近 7 天明显下滑）需要关注；李明、陈静正常。助教须调用关注名单工具并点名这些学生及原因",
+    "roster": [
+      {
+        "name": "李明",
+        "masteryOverrides": [
+          {"nodeCode": "SE-1.1", "raw": 0.90}, {"nodeCode": "SE-2.1", "raw": 0.85},
+          {"nodeCode": "SE-3.1", "raw": 0.80}, {"nodeCode": "SE-3.2", "raw": 0.85}
+        ],
+        "correctAnswers": 8,
+        "lastPracticeDaysAgo": 1
+      },
+      {
+        "name": "陈静",
+        "masteryOverrides": [
+          {"nodeCode": "SE-1.1", "raw": 0.85}, {"nodeCode": "SE-2.1", "raw": 0.80},
+          {"nodeCode": "SE-3.1", "raw": 0.45}, {"nodeCode": "SE-3.2", "raw": 0.70}
+        ],
+        "mistakes": [{"nodeCode": "SE-3.1", "misconceptionNodeCode": "SE-2.1"}],
+        "correctAnswers": 5,
+        "lastPracticeDaysAgo": 2
+      },
+      {
+        "name": "赵强",
+        "masteryOverrides": [
+          {"nodeCode": "SE-1.1", "raw": 0.30}, {"nodeCode": "SE-2.1", "raw": 0.25},
+          {"nodeCode": "SE-3.1", "raw": 0.20}, {"nodeCode": "SE-3.2", "raw": 0.25}
+        ],
+        "mistakes": [
+          {"nodeCode": "SE-3.2", "misconceptionNodeCode": "SE-2.1"},
+          {"nodeCode": "SE-3.1", "misconceptionNodeCode": "SE-2.1"}
+        ],
+        "lastPracticeDaysAgo": 16
+      },
+      {
+        "name": "孙悦",
+        "masteryOverrides": [
+          {"nodeCode": "SE-1.1", "raw": 0.80}, {"nodeCode": "SE-2.1", "raw": 0.75},
+          {"nodeCode": "SE-3.1", "raw": 0.50}, {"nodeCode": "SE-3.2", "raw": 0.55}
+        ],
+        "snapshots": [{"nodeCode": "SE-3.2", "daysAgo": 9, "score": 0.90}],
+        "correctAnswers": 4,
+        "lastPracticeDaysAgo": 2
+      },
+      {"name": "周婷"}
+    ]
+  },
+  "script": [
+    {"user": "这周哪些学生需要关注？为什么？"}
+  ],
+  "hard": {
+    "mustCallTools": ["list_students_needing_attention"],
+    "mustNotCallTools": ["query_mastery", "recall_student_context", "start_practice"],
+    "maxToolCalls": 3,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false,
+    "replyMustContain": ["赵强", "周婷"],
+    "replyMustNotContain": ["eval_roster_"]
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "evidence_grounding", "desc": "点名的学生与原因都来自工具返回的名单，不编造学生或数据", "threshold": 4},
+      {"key": "actionability", "desc": "给出对老师可执行的跟进建议（谁、做什么）", "threshold": 3},
+      {"key": "expression", "desc": "表达清晰、条理分明，按轻重缓急排序", "threshold": 3}
+    ]
+  }
+}

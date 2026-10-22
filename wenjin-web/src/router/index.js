@@ -19,6 +19,7 @@ const TeacherDashboard = () => import('../views/TeacherDashboard.vue')
 const TeacherAgentTrace = () => import('../views/TeacherAgentTrace.vue')
 const TeacherRag = () => import('../views/TeacherRag.vue')
 const TeacherReports = () => import('../views/TeacherReports.vue')
+const TeacherAssistant = () => import('../views/TeacherAssistant.vue')
 const GraphExtractReview = () => import('../views/GraphExtractReview.vue')
 const NodePractice = () => import('../views/NodePractice.vue')
 const AdminLayout = () => import('../layouts/AdminLayout.vue')
@@ -50,6 +51,7 @@ const routes = [
   { path: '/teacher/agent-runs', name: 'teacher-agent-runs', component: TeacherAgentTrace, meta: { title: 'Agent 轨迹' } },
   { path: '/teacher/rag', name: 'teacher-rag', component: TeacherRag, meta: { title: '语料审核' } },
   { path: '/teacher/reports', name: 'teacher-reports', component: TeacherReports, meta: { title: '周报' } },
+  { path: '/teacher/assistant', name: 'teacher-assistant', component: TeacherAssistant, meta: { title: 'AI 助教' } },
   { path: '/teacher/graph-extract-review', name: 'teacher-graph-extract-review', component: GraphExtractReview, meta: { title: '抽取审核' } },
   { path: '/practice', name: 'practice', component: NodePractice, meta: { title: '节点练习' } },
   // 系统管理后台：独立布局（不带学生/教师 TopBar），仅 role===3 可进入

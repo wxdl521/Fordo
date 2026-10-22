@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.wenjin.mapper.TeacherAnalyticsMapper">
+
+    <!-- 只统计在用的学生账号：sys_user.role=2(学生) 且 status=1(启用)；选课表里的教师/管理员/禁用账号一律排除 -->
+    <sql id="activeStudentOnly">
+        AND EXISTS (SELECT 1 FROM sys_user su
+                    WHERE su.id = sc.student_id AND su.role = 2 AND su.status = 1)
+    </sql>
+
+    <select id="selectRoster" resultType="com.wenjin.service.teacher.TeacherAnalyticsRows$RosterRow">
+        SELECT u.id AS student_id, u.real_name, u.username
+        FROM student_course sc
+        JOIN sys_user u ON u.id = sc.student_id
+        WHERE sc.course_id = #{courseId}
+        <include refid="activeStudentOnly"/>
+        ORDER BY u.id
+    </select>
+
+    <!-- LEFT JOIN：没有任何作答的学生也返回一行（lastAnswerAt 为空、计数为 0）；命中 idx_student_course_time -->
+    <select id="selectStudentActivity" resultType="com.wenjin.service.teacher.TeacherAnalyticsRows$StudentActivityRow">
+        SELECT sc.student_id AS student_id,
+               MAX(ar.answered_at) AS last_answer_at,
+               COALESCE(SUM(ar.answered_at &gt;= #{since7}), 0) AS answers7,
+               COALESCE(SUM(ar.answered_at &gt;= #{since7} AND ar.is_correct = 0), 0) AS wrong7,
+               COALESCE(SUM(ar.answered_at &gt;= #{since14}), 0) AS answers14,
+               COALESCE(SUM(ar.answered_at &gt;= #{since14} AND ar.is_correct = 1), 0) AS correct14
+        FROM student_course sc
+        LEFT JOIN answer_record ar
+               ON ar.student_id = sc.student_id
+              AND ar.course_id = sc.course_id
+              AND ar.is_correct IS NOT NULL
+        WHERE sc.course_id = #{courseId}
+        <include refid="activeStudentOnly"/>
+        GROUP BY sc.student_id
+    </select>
+
+    <select id="selectSnapshotsAtOrBefore" resultType="com.wenjin.entity.StudentMastery">
+        SELECT s.student_id,
+               s.course_id,
+               s.node_id,
+               s.mastery_score,
+               s.mastery_level,
+               s.snapshot_at AS updated_at
+        FROM mastery_snapshot s
+        JOIN (
+            SELECT ms.student_id, ms.node_id, MAX(ms.id) AS mid
+            FROM student_course sc
+            JOIN mastery_snapshot ms
+              ON ms.student_id = sc.student_id
+             AND ms.course_id = sc.course_id
+            WHERE sc.course_id = #{courseId}
+            <include refid="activeStudentOnly"/>
+              AND ms.snapshot_at &lt;= #{cutoff}
+            GROUP BY ms.student_id, ms.node_id
+        ) t ON t.mid = s.id
+    </select>
+
+    <select id="selectDailyAnswers" resultType="com.wenjin.service.teacher.TeacherAnalyticsRows$DailyAnswerRow">
+        SELECT DATE_FORMAT(ar.answered_at, '%Y-%m-%d') AS day,
+               COUNT(*) AS answers,
+               COUNT(DISTINCT ar.student_id) AS active_students
+        FROM student_course sc
+        JOIN answer_record ar
+          ON ar.student_id = sc.student_id
+         AND ar.course_id = sc.course_id
+        WHERE sc.course_id = #{courseId}
+        <include refid="activeStudentOnly"/>
+          AND ar.answered_at &gt;= #{since}
+        GROUP BY DATE_FORMAT(ar.answered_at, '%Y-%m-%d')
+    </select>
+
+    <!-- 只计数：从不选取 companion_message.content -->
+    <select id="selectDailyCompanion" resultType="com.wenjin.service.teacher.TeacherAnalyticsRows$DailyCompanionRow">
+        SELECT DATE_FORMAT(m.created_at, '%Y-%m-%d') AS day,
+               COUNT(DISTINCT m.conversation_id) AS conversations
+        FROM student_course sc
+        JOIN companion_conversation c
+          ON c.student_id = sc.student_id
+         AND c.course_id = sc.course_id
+        JOIN companion_message m
+          ON m.conversation_id = c.id
+         AND m.role = 1
+         AND m.created_at &gt;= #{since}
+        WHERE sc.course_id = #{courseId}
+        <include refid="activeStudentOnly"/>
+        GROUP BY DATE_FORMAT(m.created_at, '%Y-%m-%d')
+    </select>
+
+    <select id="selectQuestionErrorStats" resultType="com.wenjin.service.teacher.TeacherAnalyticsRows$QuestionErrorRow">
+        SELECT q.id AS question_id,
+               q.stem AS stem,
+               q.type AS type,
+               n.node_code AS node_code,
+               n.name AS node_name,
+               COUNT(*) AS attempts,
+               SUM(ar.is_correct = 0) AS wrong_count
+        FROM student_course sc
+        JOIN answer_record ar
+          ON ar.student_id = sc.student_id
+         AND ar.course_id = sc.course_id
+        JOIN question q
+          ON q.id = ar.question_id
+         AND q.course_id = sc.course_id
+         AND q.type IN (1, 2, 3)
+        LEFT JOIN (
+            SELECT question_id, MIN(node_id) AS node_id
+            FROM question_node
+            WHERE weight = 1
+            GROUP BY question_id
+        ) qn ON qn.question_id = q.id
+        LEFT JOIN kg_node n
+          ON n.id = qn.node_id
+         AND n.archived_at IS NULL
+        WHERE sc.course_id = #{courseId}
+        <include refid="activeStudentOnly"/>
+          AND ar.answered_at &gt;= #{since}
+          AND ar.is_correct IS NOT NULL
+        <if test="nodeCode != null and nodeCode != ''">
+          AND n.node_code = #{nodeCode}
+        </if>
+        GROUP BY q.id, n.node_code, n.name
+        HAVING COUNT(*) &gt;= #{minSample}
+           AND SUM(ar.is_correct = 0) &gt; 0
+        ORDER BY SUM(ar.is_correct = 0) / COUNT(*) DESC, COUNT(*) DESC, q.id
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectAnswerChoices" resultType="com.wenjin.service.teacher.TeacherAnalyticsRows$AnswerChoiceRow">
+        SELECT ar.question_id AS question_id,
+               ar.student_answer AS student_answer,
+               COUNT(*) AS cnt
+        FROM student_course sc
+        JOIN answer_record ar
+          ON ar.student_id = sc.student_id
+         AND ar.course_id = sc.course_id
+        WHERE sc.course_id = #{courseId}
+        <include refid="activeStudentOnly"/>
+          AND ar.answered_at &gt;= #{since}
+          AND ar.is_correct IS NOT NULL
+          AND ar.question_id IN
+        <foreach collection="questionIds" item="qid" open="(" separator="," close=")">#{qid}</foreach>
+        GROUP BY ar.question_id, ar.student_answer
+    </select>
+
+</mapper>

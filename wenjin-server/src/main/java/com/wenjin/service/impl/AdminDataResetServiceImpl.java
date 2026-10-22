@@ -40,7 +40,12 @@ import java.util.Map;
  *   <li>{@code student_memory}（课程维度长期记忆，逻辑外键）</li>
  *   <li>{@code agent_plan_task} — 逻辑引用 agent_plan（经父表 JOIN）</li>
  *   <li>{@code agent_plan}（学生学习计划）</li>
+ *   <li>{@code teacher_message} — 逻辑引用 teacher_conversation（经父表 JOIN）</li>
+ *   <li>{@code teacher_conversation}（教师 AI 助教会话，内容含学生姓名与学情）</li>
  * </ol>
+ * <p><b>教师助教留痕的处理决策</b>：{@code agent_run} 的 TEACHER_CHAT 行按本注释下面的原则保留
+ * （用量/监控），但其步骤 {@code agent_step.input_json/output_json}（含学生姓名、学情）与
+ * {@code agent_run.input_digest} 置空（UPDATE，不计入 deleted）。</p>
  * <p><b>保留</b>：student_course（只断开 current_path_id）、图谱（kg_node / kg_edge）、题库（question*）、用户；
  * 以及运行留痕 agent_run / agent_step（监控与教师端轨迹、用量统计的来源，不是学习状态；
  * 其 conversation_id 为逻辑引用，会话删后成悬空 id，不影响读取）、教师侧 agent_report、ai_job、
@@ -109,8 +114,13 @@ public class AdminDataResetServiceImpl implements AdminDataResetService {
         deleted.put("student_memory", resetMapper.deleteStudentMemory(courseId));
         deleted.put("agent_plan_task", resetMapper.deleteAgentPlanTasks(courseId));
         deleted.put("agent_plan", resetMapper.deleteAgentPlans(courseId));
+        deleted.put("teacher_message", resetMapper.deleteTeacherMessages(courseId));
+        deleted.put("teacher_conversation", resetMapper.deleteTeacherConversations(courseId));
+        int teacherTraceCleared = resetMapper.clearTeacherChatStepIo(courseId)
+                + resetMapper.clearTeacherChatRunDigest(courseId);
 
-        log.info("学习数据已重置 courseId={} deleted={} currentPathCleared={}", courseId, deleted, currentPathCleared);
+        log.info("学习数据已重置 courseId={} deleted={} currentPathCleared={} teacherTraceCleared={}",
+                courseId, deleted, currentPathCleared, teacherTraceCleared);
         return new AdminDataResetVO(deleted, currentPathCleared);
     }
 }

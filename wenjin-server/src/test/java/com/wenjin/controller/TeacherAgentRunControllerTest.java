@@ -54,7 +54,7 @@ class TeacherAgentRunControllerTest {
         };
         TeacherAgentRunController controller = new TeacherAgentRunController(fake);
 
-        Result<AgentRunPageVO> res = controller.list(7L, 55L, 2, 100);
+        Result<AgentRunPageVO> res = controller.list(7L, 55L, null, 2, 100);
 
         assertThat(course.get()).isEqualTo(7L);
         assertThat(student.get()).isEqualTo(55L);
@@ -88,7 +88,7 @@ class TeacherAgentRunControllerTest {
             }
         });
 
-        Result<AgentRunPageVO> res = controller.list(1L, null, 1, 20);
+        Result<AgentRunPageVO> res = controller.list(1L, null, null, 1, 20);
         assertThat(res.getCode()).isEqualTo(0);
         assertThat(res.getData().getItems()).hasSize(1);
         assertThat(res.getData().getItems().get(0).getStepCount()).isEqualTo(2);
@@ -109,7 +109,7 @@ class TeacherAgentRunControllerTest {
             }
         });
 
-        assertThatThrownBy(() -> controller.list(99L, null, 1, 20))
+        assertThatThrownBy(() -> controller.list(99L, null, null, 1, 20))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(ResultCode.NOT_FOUND.getCode());
@@ -177,11 +177,36 @@ class TeacherAgentRunControllerTest {
             }
         });
 
-        assertThatThrownBy(() -> controller.list(1L, null, 1, 20))
+        assertThatThrownBy(() -> controller.list(1L, null, null, 1, 20))
                 .extracting("code")
                 .isEqualTo(ResultCode.NOT_FOUND.getCode());
         assertThatThrownBy(() -> controller.steps(1L))
                 .extracting("code")
                 .isEqualTo(ResultCode.NOT_FOUND.getCode());
+    }
+
+    @Test
+    @DisplayName("list: kind 透传给服务（方向 7）")
+    void list_passesKind() {
+        AtomicReference<String> kind = new AtomicReference<>("unset");
+        TeacherAgentRunController controller = new TeacherAgentRunController(new TeacherAgentRunService() {
+            @Override
+            public AgentRunPageVO listRuns(Long courseId, Long studentId, int p, int s) {
+                throw new AssertionError("5-arg overload expected");
+            }
+
+            @Override
+            public AgentRunPageVO listRuns(Long courseId, Long studentId, String k, int p, int s) {
+                kind.set(k);
+                return new AgentRunPageVO();
+            }
+
+            @Override
+            public List<AgentStepVO> listSteps(Long runId) {
+                return List.of();
+            }
+        });
+        controller.list(1L, null, "TEACHER_CHAT", 1, 20);
+        assertThat(kind.get()).isEqualTo("TEACHER_CHAT");
     }
 }

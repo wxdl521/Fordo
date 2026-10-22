@@ -77,13 +77,15 @@ public final class EvalHarness {
 
     /** REPLAY executor over a custom golden source (e.g. a modified golden in a test). */
     public ReplayEvalExecutor replayExecutor(Function<String, GoldenFile> goldenSource) {
-        EvalScenarioEnvironment env = EvalScenarioEnvironment.replay(aiClient, toolProperties, goldenSource);
+        EvalScenarioEnvironment env = EvalScenarioEnvironment.replay(aiClient, toolProperties, goldenSource)
+                .withAiProperties(aiProperties);
         return new ReplayEvalExecutor(scenarioLoader, turnRunner, checker, featureFlags, fixture(), goldenLoader, env);
     }
 
     /** LIVE executor over the base client; {@code record} non-null enables RECORD. */
     public LiveEvalExecutor liveExecutor(EvalScenarioEnvironment.RecordSettings record) {
-        return liveExecutor(EvalScenarioEnvironment.live(aiClient, toolProperties, record));
+        return liveExecutor(EvalScenarioEnvironment.live(aiClient, toolProperties, record)
+                .withAiProperties(aiProperties));
     }
 
     public LiveEvalExecutor liveExecutor(EvalScenarioEnvironment environment) {

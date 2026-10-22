@@ -6,11 +6,16 @@ import java.util.Objects;
 /**
  * A scenario execution with its conversation transcript (for the judge and calibration export).
  */
-public record ScenarioRun(EvalCaseOutcome outcome, List<Exchange> exchanges) {
+public record ScenarioRun(EvalCaseOutcome outcome, List<Exchange> exchanges, String actor) {
+
+    public ScenarioRun(EvalCaseOutcome outcome, List<Exchange> exchanges) {
+        this(outcome, exchanges, null);
+    }
 
     public ScenarioRun {
         Objects.requireNonNull(outcome, "outcome");
         exchanges = exchanges == null ? List.of() : List.copyOf(exchanges);
+        actor = actor == null || actor.isBlank() ? "student" : actor;
     }
 
     /** One user message and the companion's streamed reply. */
@@ -29,12 +34,13 @@ public record ScenarioRun(EvalCaseOutcome outcome, List<Exchange> exchanges) {
 
     /** Plain-text transcript: one "学生/伴侣" block per exchange, tools in between. */
     public String transcript() {
+        boolean teacher = "teacher".equals(actor);
         StringBuilder sb = new StringBuilder();
         for (Exchange e : exchanges) {
             if (!sb.isEmpty()) {
                 sb.append('\n');
             }
-            sb.append("学生：").append(e.user()).append('\n');
+            sb.append(teacher ? "老师：" : "学生：").append(e.user()).append('\n');
             if (!e.tools().isEmpty()) {
                 sb.append("（工具：").append(String.join(", ", e.tools())).append("）\n");
             }
@@ -43,7 +49,7 @@ public record ScenarioRun(EvalCaseOutcome outcome, List<Exchange> exchanges) {
                 e.evidence().forEach(line -> sb.append("  ").append(line).append('\n'));
                 sb.append("）\n");
             }
-            sb.append("伴侣：").append(e.reply());
+            sb.append(teacher ? "AI 助教：" : "伴侣：").append(e.reply());
         }
         return sb.toString();
     }

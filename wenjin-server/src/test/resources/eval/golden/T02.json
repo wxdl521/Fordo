@@ -1,0 +1,40 @@
+{
+  "scenario": "T02",
+  "format": 2,
+  "recordedAt": "2026-10-22T00:00:00Z",
+  "model": "synthetic",
+  "synthetic": true,
+  "turns": [
+    {
+      "rounds": [
+        {
+          "content": "",
+          "toolCalls": [
+            {
+              "name": "get_class_overview",
+              "arguments": {}
+            }
+          ],
+          "finishReason": "tool_calls"
+        },
+        {
+          "content": "",
+          "toolCalls": [
+            {
+              "name": "get_node_mastery",
+              "arguments": {
+                "nodeCode": "SE-3.1"
+              }
+            }
+          ],
+          "finishReason": "tool_calls"
+        },
+        {
+          "content": "全班最薄弱的知识点是「数据流图」（SE-3.1），班级平均有效掌握度约 48.7 分，是所有已评估知识点里最低的（其次是用例图约 58.7 分、需求获取约 66.2 分）。\n\n进一步看这个知识点：5 名选课学生里，只有 1 人已掌握；赵强（20 分）还属于未学，陈静（45 分）和孙悦（50 分）处于薄弱，周婷还没有诊断数据。建议下次课安排一次数据流图分层分解的专项讲练，并优先照顾这几位同学。",
+          "toolCalls": [],
+          "finishReason": "stop"
+        }
+      ]
+    }
+  ]
+}

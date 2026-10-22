@@ -51,9 +51,9 @@ class EvalSuiteTest {
                 .filter(d -> d.resolvedStatus() == EvalScenarioStatus.PENDING)
                 .count();
         assertThat(enabled + pending).isEqualTo(docs.size());
-        assertThat(enabled).isEqualTo(20);
+        assertThat(enabled).isEqualTo(24); // 20 student + T01-T04 teacher
         assertThat(pending).isEqualTo(3); // S18 + M10 S20,S21 (PENDING golden)
-        assertThat(docs.stream().map(EvalScenarioDocument::code)).contains("S01", "S09", "S13", "S18", "S19", "S20", "S21", "S22", "S23");
+        assertThat(docs.stream().map(EvalScenarioDocument::code)).contains("S01", "S09", "S13", "S18", "S19", "S20", "S21", "S22", "S23", "T01", "T02", "T03", "T04");
     }
 
     @Test

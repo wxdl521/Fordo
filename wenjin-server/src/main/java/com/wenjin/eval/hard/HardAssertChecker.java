@@ -49,6 +49,8 @@ public final class HardAssertChecker {
         checkDegraded(hard, steps, failures);
         checkCitationsValid(hard, steps, failures);
         checkReplyMustNotContain(hard, response, failures);
+        checkReplyMustContain(hard, response, failures);
+        checkGuardCodesExpected(hard, steps, failures);
 
         return HardAssertResult.fail(failures);
     }
@@ -228,6 +230,45 @@ public final class HardAssertChecker {
             if (s != null && !s.isBlank() && response.contains(s)) {
                 failures.add(new HardAssertFailure("replyMustNotContain",
                         "final response contains forbidden text: " + s));
+            }
+        }
+    }
+
+    /** {@code replyMustContain}: every listed substring must appear in the final reply. */
+    private static void checkReplyMustContain(HardAssertions hard,
+                                              String response,
+                                              List<HardAssertFailure> failures) {
+        List<String> required = hard.replyMustContain();
+        if (required == null || required.isEmpty()) {
+            return;
+        }
+        String text = response == null ? "" : response;
+        for (String s : required) {
+            if (s != null && !s.isBlank() && !text.contains(s)) {
+                failures.add(new HardAssertFailure("replyMustContain",
+                        "final response does not contain required text: " + s));
+            }
+        }
+    }
+
+    /** {@code guardCodesExpected}: each listed code must be the error code of at least one GUARD step. */
+    private static void checkGuardCodesExpected(HardAssertions hard,
+                                                List<EvalStepView> steps,
+                                                List<HardAssertFailure> failures) {
+        List<String> expected = hard.guardCodesExpected();
+        if (expected == null || expected.isEmpty()) {
+            return;
+        }
+        Set<String> seen = new LinkedHashSet<>();
+        for (EvalStepView step : steps) {
+            if (step.isGuard() && step.errorCode() != null) {
+                seen.add(step.errorCode());
+            }
+        }
+        for (String code : expected) {
+            if (code != null && !code.isBlank() && !seen.contains(code)) {
+                failures.add(new HardAssertFailure("guardCodesExpected",
+                        "expected a GUARD step with error code " + code + "; guard codes seen=" + seen));
             }
         }
     }

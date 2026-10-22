@@ -77,7 +77,9 @@ class AuditedInventoryTest {
             "TeacherRagController#reject=RAG_MAPPING_REJECT:RAG",
             "TeacherRagController#batchApprove=RAG_MAPPING_BATCH_APPROVE:RAG",
             "TeacherRagController#upload=RAG_SOURCE_UPLOAD:RAG",
-            "TeacherRagController#reembed=RAG_REEMBED:RAG");
+            "TeacherRagController#reembed=RAG_REEMBED:RAG",
+            // 教师 AI 助教（方向 7）：只记动作 + 课程 id，不记消息内容
+            "TeacherAssistantController#chat=TEACHER_ASSISTANT_CHAT:COURSE");
 
     @Test
     @DisplayName("被 @Audited 标注的控制器方法恰好是约定清单")

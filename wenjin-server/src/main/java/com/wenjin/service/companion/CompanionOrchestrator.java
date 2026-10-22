@@ -14,6 +14,7 @@ import com.wenjin.support.CompanionFinalTextSanitizer;
 import com.wenjin.support.StreamingToolProtocolFilter;
 import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.dto.CodeResultVO;
+import com.wenjin.dto.InsightCard;
 import com.wenjin.dto.ProbeStartVO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -149,6 +150,8 @@ public final class CompanionOrchestrator {
         private final ToolExecutionState state;
         private final List<Map<String, Object>> schemas;
         private final Map<String, String> labels;
+        /** 本轮提供的工具（按名）；名单外的调用由 ToolGovernor 拒绝。 */
+        private final Map<String, CompanionTool> offered;
         private final List<String> toolsCalled = new ArrayList<>();
         private final Map<String, String> signals = new LinkedHashMap<>();
         private List<Map<String, Object>> messages;
@@ -161,8 +164,12 @@ public final class CompanionOrchestrator {
             this.citations = req.injectedChunkIds() == null ? null : new CitationGuard(req.injectedChunkIds());
             this.out = out;
             this.text = new TextAccumulator(out, Math.max(0, req.maxOutputChars()), req.truncationNotice());
-            this.state = new ToolExecutionState(req.maxToolCalls());
             List<CompanionTool> tools = req.tools() == null ? List.of() : req.tools();
+            this.offered = toolsByName(tools);
+            // 学生会话沿用「预留 1 槽给副作用工具」；老师会话只有在提供了副作用工具时才预留
+            boolean teacher = req.toolContext() != null && req.toolContext().isTeacher();
+            boolean reserve = !teacher || tools.stream().anyMatch(t -> t != null && t.sideEffecting());
+            this.state = new ToolExecutionState(req.maxToolCalls(), offered.keySet(), reserve);
             this.schemas = tools.stream().map(CompanionTool::schema).toList();
             this.labels = buildToolLabels(tools);
             this.messages = new ArrayList<>(req.messages());
@@ -345,7 +352,8 @@ public final class CompanionOrchestrator {
                 return false;
             }
             for (CompanionAiClient.ToolCall call : calls) {
-                if (!ToolGovernor.READ_CACHEABLE_TOOLS.contains(toolName(call))) {
+                CompanionTool tool = offered.get(toolName(call));
+                if (tool == null || tool.sideEffecting() || !tool.readCacheable()) {
                     return false;
                 }
             }
@@ -409,6 +417,9 @@ public final class CompanionOrchestrator {
             }
             if (result != null && result.codeCard() != null) {
                 out.codeResult(result.codeCard());
+            }
+            if (result != null && result.insightCard() != null) {
+                out.insightCard(result.insightCard());
             }
         }
 
@@ -664,6 +675,11 @@ public final class CompanionOrchestrator {
         }
 
         @Override
+        public void insightCard(InsightCard card) {
+            call(() -> delegate.insightCard(card));
+        }
+
+        @Override
         public void citations(List<Long> valid, List<Long> invalid) {
             call(() -> delegate.citations(valid, invalid));
         }
@@ -673,6 +689,16 @@ public final class CompanionOrchestrator {
 
     private static String toolName(CompanionAiClient.ToolCall call) {
         return call == null || call.name() == null ? "" : call.name();
+    }
+
+    private static Map<String, CompanionTool> toolsByName(List<CompanionTool> tools) {
+        Map<String, CompanionTool> byName = new LinkedHashMap<>();
+        for (CompanionTool tool : tools) {
+            if (tool != null && tool.name() != null && !tool.name().isBlank()) {
+                byName.putIfAbsent(tool.name(), tool);
+            }
+        }
+        return byName;
     }
 
     private static Map<String, String> buildToolLabels(List<CompanionTool> tools) {

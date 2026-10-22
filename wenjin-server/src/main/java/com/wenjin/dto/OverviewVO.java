@@ -61,7 +61,7 @@ public class OverviewVO {
 
     @Data
     public static class Ai {
-        /** 学生侧 AI（agent_run）调用次数 */
+        /** AI 运行（agent_run）次数：学生伴侣、诊断/计划等与教师助教（TEACHER_CHAT）合计；分类见 byKind */
         private long runs;
         /** status=2 的次数 */
         private long failedRuns;

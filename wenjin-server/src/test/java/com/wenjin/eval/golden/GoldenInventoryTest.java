@@ -24,7 +24,10 @@ class GoldenInventoryTest {
             "query_mastery", "get_node_detail", "start_practice", "trace_prerequisites",
             "get_learning_frontier", "get_review_queue", "schedule_review", "recall_student_context",
             "record_observation", "search_materials", "probe_understanding", "draft_study_plan",
-            "get_plan_progress", "get_recent_mistakes", "run_code_check");
+            "get_plan_progress", "get_recent_mistakes", "run_code_check",
+            // teacher AI assistant tools (actor=teacher scenarios) and tools a golden may attempt to be GUARDed
+            "get_class_overview", "list_students_needing_attention", "get_student_profile", "get_node_mastery",
+            "get_question_error_stats", "get_activity_trend");
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 

@@ -71,4 +71,9 @@ public class FeatureFlagsProperties {
      * {@code CodeExecutionService.available()} 为 false，执行请求一律 UNAVAILABLE。
      */
     private volatile boolean codeCheckEnabled = true;
+
+    /**
+     * 教师 AI 助教（方向 7）：/api/teacher/assistant/**。关闭时这些接口统一 404（前端提示功能未开启）。
+     */
+    private volatile boolean teacherAssistantEnabled = true;
 }

@@ -23,6 +23,7 @@ public class LimitsProperties {
     private final Supervisor supervisor = new Supervisor();
     private final Proactive proactive = new Proactive();
     private final Code code = new Code();
+    private final TeacherAssistant teacherAssistant = new TeacherAssistant();
 
     /**
      * 伴侣会话预算（wenjin.limits.companion.*）。前四项每次请求现读，可由管理后台「系统配置」运行时改写，
@@ -257,5 +258,22 @@ public class LimitsProperties {
         /** 回给模型的失败用例条数，以及每条用例每个字段的预览字符数 */
         private int toolMaxFailureCases = 3;
         private int toolCaseFieldChars = 100;
+    }
+
+    /**
+     * 教师 AI 助教（wenjin.limits.teacher-assistant.*，方向 7）。每次请求现读。
+     */
+    @Data
+    public static class TeacherAssistant {
+        /** 可调用工具的轮数（其后至多再有一轮无工具总结） */
+        private int maxRounds = 4;
+        /** 每次回答最多工具调用次数（含被拦截的调用） */
+        private int maxToolCalls = 8;
+        /** 单轮 AI 回复累计字符上限，超出截断 */
+        private int maxOutputChars = 8000;
+        /** 老师单条消息最大字符数（接口另有 4000 字硬上限） */
+        private int maxInputChars = 2000;
+        /** 工具返回名单 / 表格卡片的最大行数（由助教工具读取） */
+        private int listMaxRows = 20;
     }
 }

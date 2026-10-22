@@ -36,15 +36,18 @@ final class ScenarioDriver {
                              ScenarioLifecycle lifecycle) {
         ScenarioLifecycle hooks = lifecycle == null ? ScenarioLifecycle.NONE : lifecycle;
         long studentId;
+        long actingUserId;
         long courseId;
         Set<String> whitelist;
         if (fixture != null) {
             fixture.prepareScenario(scenario);
             studentId = fixture.world().studentId();
+            actingUserId = scenario.forTeacher() ? fixture.world().teacherId() : studentId;
             courseId = fixture.world().courseId();
             whitelist = fixture.world().nodeCodes();
         } else {
             studentId = 0L;
+            actingUserId = 0L;
             courseId = 0L;
             whitelist = Set.of();
         }
@@ -67,7 +70,7 @@ final class ScenarioDriver {
                 CompanionTurnRunner.TurnResult result;
                 try {
                     result = turnRunner.runTurn(new CompanionTurnRunner.TurnRequest(
-                            studentId, courseId, conversationId, turn.user()));
+                            actingUserId, courseId, conversationId, turn.user(), scenario.resolvedActor()));
                 } catch (RuntimeException e) {
                     executionError = e.getClass().getSimpleName() + ": " + e.getMessage();
                     exchanges.add(new ScenarioRun.Exchange(turn.user(), "", List.of()));
@@ -86,6 +89,7 @@ final class ScenarioDriver {
                         turnTools.add(step.name());
                     }
                 }
+                turnTools.removeAll(blockedTools(result.steps()));
                 toolsCalled.addAll(turnTools);
                 exchanges.add(new ScenarioRun.Exchange(turn.user(),
                         result.reply() == null ? "" : result.reply().text(), List.copyOf(turnTools),
@@ -135,7 +139,26 @@ final class ScenarioDriver {
         if (fatal != null) {
             throw fatal; // 已恢复共享状态；JVM 级错误不吞
         }
-        return new ScenarioRun(outcome, exchanges);
+        return new ScenarioRun(outcome, exchanges, scenario.resolvedActor());
+    }
+
+    /**
+     * Tools the governor refused as {@code TOOL_NOT_ALLOWED} (not offered / wrong audience) and that never ran.
+     * They are attempts, not calls: they do not count as {@code toolsCalled} (tool-selection accuracy), while the
+     * GUARD step keeps counting against {@code maxToolCalls} and satisfies {@code guardCodesExpected}.
+     */
+    static Set<String> blockedTools(List<EvalStepView> steps) {
+        Set<String> blocked = new LinkedHashSet<>();
+        Set<String> executed = new LinkedHashSet<>();
+        for (EvalStepView step : steps) {
+            if (step.isGuard() && "TOOL_NOT_ALLOWED".equals(step.errorCode())) {
+                blocked.add(step.name());
+            } else if (step.isToolCall()) {
+                executed.add(step.name());
+            }
+        }
+        blocked.removeAll(executed);
+        return blocked;
     }
 
     /** Copy of an outcome with extra hard failures appended. */

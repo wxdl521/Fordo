@@ -122,6 +122,8 @@ describe('AdminOverview', () => {
   it('renders the AI by-kind / by-model tables, the jobs summary and the daily detail tables', async () => {
     const wrapper = await mountPage()
 
+    expect(tid(wrapper, 'admin-overview-card-ai-runs').text()).toContain('教师助教')
+
     const kindRows = tid(wrapper, 'admin-overview-ai-kind-table').findAll('tbody tr')
     expect(kindRows).toHaveLength(2)
     expect(kindRows[0].text()).toContain('COMPANION_CHAT')

@@ -552,6 +552,45 @@ class CompanionServiceImplTest {
     }
 
     @Test
+    void studentTurnNeverOffersTeacherAudienceTools() {
+        Long conversationId = 309L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("need advice")));
+        CompanionTool teacherTool = new CompanionTool() {
+            @Override
+            public String name() {
+                return "get_class_overview";
+            }
+
+            @Override
+            public Map<String, Object> schema() {
+                return Map.of("type", "function", "function", Map.of("name", "get_class_overview"));
+            }
+
+            @Override
+            public com.wenjin.service.companion.ToolAudience audience() {
+                return com.wenjin.service.companion.ToolAudience.TEACHER;
+            }
+
+            @Override
+            public String execute(ToolContext ctx, com.fasterxml.jackson.databind.JsonNode args) {
+                throw new UnsupportedOperationException("teacher tool must not run for students");
+            }
+        };
+        configureTools(true, 2, 3, List.of(teacherTool, fakeTool(
+                "query_mastery",
+                "正在查询你的掌握情况…",
+                Map.of("type", "object", "properties", Map.of()))));
+
+        scriptTurns(text("ok"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, new RecordingSink());
+
+        assertThat(turnSchemas.get(0)).hasSize(1);
+        assertThat(turnSchemas.get(0).toString()).contains("query_mastery").doesNotContain("get_class_overview");
+    }
+
+    @Test
     void streamReplyWithToolsIncludesNodeCodeLookupInSystemPrompt() {
         Long conversationId = 318L;
         KgNode focusNode = new KgNode();

@@ -58,6 +58,7 @@ describe('AdminMaintenance', () => {
     expect(page).toContain('入口诊断、快速诊断与练习会话')
     expect(page).toContain('学习路径')
     expect(page).toContain('AI 学习伴侣的对话与学生记忆')
+    expect(page).toContain('教师 AI 助教的会话')
     expect(page).toContain('选课关系、班级、知识图谱、题库、账号')
 
     expect(tid(wrapper, 'admin-maint-confirm').attributes('disabled')).toBeDefined()

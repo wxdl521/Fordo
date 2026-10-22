@@ -1,6 +1,7 @@
 package com.wenjin.service.companion;
 
 import com.wenjin.dto.CodeResultVO;
+import com.wenjin.dto.InsightCard;
 import com.wenjin.dto.PracticeStartVO;
 
 /**
@@ -10,6 +11,7 @@ import com.wenjin.dto.PracticeStartVO;
  * @param cached  true when the result was served from {@code TraceContext.toolCache}
  *                (status should be recorded as {@code CACHED}; budget not consumed).
  * @param codeCard  card for the SSE {@code code_result} event (run_code_check); never carries source
+ * @param insightCard table card for the SSE {@code insight_card} event (teacher assistant tools)
  */
 public record ToolExecutionResult(String toolCallId,
                                   String toolName,
@@ -18,11 +20,18 @@ public record ToolExecutionResult(String toolCallId,
                                   PracticeStartVO practiceCard,
                                   boolean guarded,
                                   boolean cached,
-                                  CodeResultVO codeCard) {
+                                  CodeResultVO codeCard,
+                                  InsightCard insightCard) {
+
+    public ToolExecutionResult(String toolCallId, String toolName, boolean ok, String content,
+                               PracticeStartVO practiceCard, boolean guarded, boolean cached,
+                               CodeResultVO codeCard) {
+        this(toolCallId, toolName, ok, content, practiceCard, guarded, cached, codeCard, null);
+    }
 
     public ToolExecutionResult(String toolCallId, String toolName, boolean ok, String content,
                                PracticeStartVO practiceCard, boolean guarded, boolean cached) {
-        this(toolCallId, toolName, ok, content, practiceCard, guarded, cached, null);
+        this(toolCallId, toolName, ok, content, practiceCard, guarded, cached, null, null);
     }
 
     public ToolExecutionResult(String toolCallId, String toolName, boolean ok, String content) {
@@ -43,6 +52,7 @@ public record ToolExecutionResult(String toolCallId,
         if (!ok) {
             practiceCard = null;
             codeCard = null;
+            insightCard = null;
         }
         if (cached) {
             // Cached hits are successful short-circuits, never governor intercepts.
