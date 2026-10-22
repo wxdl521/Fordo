@@ -497,12 +497,32 @@ public class TeacherAnalyticsService {
     record Resolution<T>(List<T> matches) {
     }
 
-    /** 展示名：real_name，空则脱敏用户名。 */
+    static final int DISPLAY_NAME_MAX = 20;
+
+    /**
+     * 展示名：real_name，空则脱敏用户名。real_name 来自公开注册，属不可信输入：去控制字符/换行、折叠空白、
+     * 去开头的 = + @（防公式/提示注入的纵深防御）、截断到 20 个字符。
+     */
     public static String displayName(RosterRow r) {
-        if (r != null && StringUtils.hasText(r.getRealName())) {
-            return r.getRealName().trim();
+        if (r != null) {
+            String cleaned = sanitizeName(r.getRealName());
+            if (!cleaned.isEmpty()) {
+                return cleaned;
+            }
         }
         return maskUsername(r == null ? null : r.getUsername());
+    }
+
+    static String sanitizeName(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String s = raw.replaceAll("[\\p{Cntrl}\\p{Cf}\\s]+", " ").trim();
+        s = s.replaceAll("^[=+@\\s]+", "");
+        if (s.codePointCount(0, s.length()) > DISPLAY_NAME_MAX) {
+            s = s.substring(0, s.offsetByCodePoints(0, DISPLAY_NAME_MAX)) + "…";
+        }
+        return s;
     }
 
     static String maskUsername(String username) {
