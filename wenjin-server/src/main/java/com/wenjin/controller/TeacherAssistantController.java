@@ -2,6 +2,7 @@ package com.wenjin.controller;
 
 import com.wenjin.audit.AuditInterceptor;
 import com.wenjin.audit.Audited;
+import com.wenjin.common.BusinessException;
 import com.wenjin.common.Result;
 import com.wenjin.config.CurrentUser;
 import com.wenjin.dto.CompanionMessageVO;
@@ -50,6 +51,9 @@ import java.util.concurrent.TimeUnit;
 @RequestMapping("/api/teacher/assistant")
 @Validated
 public class TeacherAssistantController {
+
+    /** 非业务异常对外只给通用提示，避免泄露内部细节（堆栈/SQL/上游报错）。 */
+    private static final String GENERIC_ERROR = "助教暂时不可用，请稍后重试";
 
     private static final Logger log = LoggerFactory.getLogger(TeacherAssistantController.class);
 
@@ -106,7 +110,8 @@ public class TeacherAssistantController {
                 log.error("Teacher assistant chat error", e);
                 try {
                     emitter.send(SseEmitter.event().name("error")
-                            .data(Map.of("message", e.getMessage() != null ? e.getMessage() : "Unknown error")));
+                            .data(Map.of("message", e instanceof BusinessException && e.getMessage() != null
+                                    ? e.getMessage() : GENERIC_ERROR)));
                 } catch (Exception sendError) {
                     log.debug("Failed to send error event via SSE: {}", sendError.toString());
                 }
@@ -138,6 +143,7 @@ public class TeacherAssistantController {
             @RequestParam(value = "limit", required = false) Integer limit) {
         assistantService.assertEnabled();
         CurrentPrincipal principal = CurrentUser.requireTeacher();
+        courseAccessService.assertManageCourse(assistantService.requireOwnedCourseId(principal.userId(), id));
         return Result.ok(assistantService.getMessages(principal.userId(), id, beforeId, limit));
     }
 
@@ -146,6 +152,7 @@ public class TeacherAssistantController {
     public Result<Void> deleteConversation(@PathVariable("id") @Positive Long id) {
         assistantService.assertEnabled();
         CurrentPrincipal principal = CurrentUser.requireTeacher();
+        courseAccessService.assertManageCourse(assistantService.requireOwnedCourseId(principal.userId(), id));
         assistantService.deleteConversation(principal.userId(), id);
         return Result.ok(null);
     }

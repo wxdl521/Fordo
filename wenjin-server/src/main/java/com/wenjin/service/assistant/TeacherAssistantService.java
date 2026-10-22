@@ -185,6 +185,15 @@ public class TeacherAssistantService {
         }).toList();
     }
 
+    /** 校验会话归属并返回其课程 id（供控制器再次校验课程管理权：教师失去课程后旧会话也不可读/删）。 */
+    public long requireOwnedCourseId(long teacherId, long conversationId) {
+        Long courseId = requireOwned(teacherId, conversationId).getCourseId();
+        if (courseId == null) {
+            throw notFound();
+        }
+        return courseId;
+    }
+
     public List<CompanionMessageVO> getMessages(long teacherId, long conversationId, Long beforeId, Integer limit) {
         requireOwned(teacherId, conversationId);
         List<TeacherMessage> rows = messageMapper.selectKeysetByConversation(

@@ -1,5 +1,6 @@
 package com.wenjin.controller;
 
+import com.wenjin.common.BusinessException;
 import com.wenjin.common.Result;
 import com.wenjin.config.AccessGuard;
 import com.wenjin.config.CurrentUser;
@@ -166,7 +167,8 @@ public class CompanionController {
                     // 发送 error 事件
                     emitter.send(SseEmitter.event()
                             .name("error")
-                            .data(Map.of("message", e.getMessage() != null ? e.getMessage() : "Unknown error")));
+                            .data(Map.of("message", e instanceof BusinessException && e.getMessage() != null
+                                    ? e.getMessage() : "服务暂时不可用，请稍后重试")));
                 } catch (Exception sendError) {
                     log.error("Failed to send error event via SSE", sendError);
                 }

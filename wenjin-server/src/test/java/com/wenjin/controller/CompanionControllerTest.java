@@ -354,7 +354,7 @@ class CompanionControllerTest {
 
         String stream = result.getResponse().getContentAsString(StandardCharsets.UTF_8);
         assertThat(stream).contains("event:error");
-        assertThat(stream).contains("\"message\":\"boom\"");
+        assertThat(stream).doesNotContain("boom").contains("\"message\":\"服务暂时不可用，请稍后重试\"");
         assertThat(stream).doesNotContain("event:done");
     }
 

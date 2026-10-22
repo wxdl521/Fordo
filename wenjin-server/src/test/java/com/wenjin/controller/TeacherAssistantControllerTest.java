@@ -155,6 +155,38 @@ class TeacherAssistantControllerTest {
         String stream = result.getResponse().getContentAsString(StandardCharsets.UTF_8);
         assertThat(stream).contains("event:error");
         assertThat(stream).doesNotContain("event:done");
+        assertThat(stream).doesNotContain("boom").contains("助教暂时不可用");
+    }
+
+    @Test
+    @DisplayName("chat：BusinessException 的消息原样透出")
+    void chat_businessErrorKeepsMessage() throws Exception {
+        when(service.startTurn(anyLong(), anyLong(), any(), anyString())).thenReturn(88L);
+        doThrow(new BusinessException(ResultCode.BAD_REQUEST, "今日额度已用完")).when(service)
+                .streamReply(anyLong(), anyLong(), any(), any());
+        MvcResult result = mvc.perform(post("/api/teacher/assistant/chat")
+                        .header("Authorization", bearer(TEACHER))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"courseId\":5,\"message\":\"hi\"}"))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+        result.getAsyncResult();
+        assertThat(result.getResponse().getContentAsString(StandardCharsets.UTF_8)).contains("今日额度已用完");
+    }
+
+    @Test
+    @DisplayName("会话所属课程已失去管理权 → 读消息 / 删除均 404，不触达数据")
+    void lostCourse_messagesAndDelete404() throws Exception {
+        when(service.requireOwnedCourseId(TEACHER, 99L)).thenReturn(7L);
+        doThrow(new BusinessException(ResultCode.NOT_FOUND, "资源不存在")).when(courseAccess).assertManageCourse(7L);
+        mvc.perform(get("/api/teacher/assistant/conversations/99/messages")
+                        .header("Authorization", bearer(TEACHER)))
+                .andExpect(status().isNotFound());
+        mvc.perform(delete("/api/teacher/assistant/conversations/99")
+                        .header("Authorization", bearer(TEACHER)))
+                .andExpect(status().isNotFound());
+        verify(service, never()).getMessages(anyLong(), anyLong(), any(), any());
+        verify(service, never()).deleteConversation(anyLong(), anyLong());
     }
 
     @Test
