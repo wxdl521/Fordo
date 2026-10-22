@@ -410,6 +410,22 @@ M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `R
   - **向量索引**：`VectorIndexCache` 按 `(courseId, modelId)` 缓存 `CourseVectorIndex`（chunkIds + 归一化 float[][] + 每块 APPROVED 节点集），切换模型不会混用向量；在入库完成、嵌入作业完成、映射通过 / 驳回 / 批量通过后（事务提交后，`RagCorpusChangedEvent` / `RagSourceIngestedEvent`）失效重载。查询向量 LRU（`query-cache-size`）。
 - **嵌入作业 `RAG_EMBED`（R2）**：入库成功（NODE_REF 同步粘贴与 `DOC_INGEST` 作业两条路径）且向量模式开时，**事务提交后**自动派发（属主=来源创建教师，`request_key=emb:{sourceId}:{modelId}:{minChunkId}`）；作业按来源分批嵌入并 upsert `doc_chunk_embedding`，`content_sha` 未变的块跳过，批间上报进度续租；向量模式关时以 `SKIPPED` 成功结束。嵌入失败只让该作业 FAILED，**绝不影响入库**。重新入库清障时一并删除旧向量。
 - **重建向量**：`POST /api/teacher/rag/courses/{courseId}/reembed`（教师管理权 + `@Audited RAG_REEMBED`）→ 课程全部 READY 来源各派发一个 `RAG_EMBED`（`request_key=emb:{sourceId}:{modelId}:r{epochMinute}`，同一分钟内重复点击幂等），返回 `{model, sourceCount, jobIds}`；`rag-enabled` / `rag-vector-enabled` 关 → 404，无可用嵌入模型 → 503。更换嵌入模型或维度后需执行一次。`GET /api/teacher/rag/sources` 每行增加 `totalChunks`、`embeddedChunks`（当前模型下已有向量的块数；向量模式关时为 `null`）、`embeddingModel`。
+- **召回评测（R5，`RetrievalRecallIT`）**：20 块语料（`src/test/resources/eval/rag/corpus.json`，覆盖 8 个评测节点，含 4 个相近话题干扰项）× 35 条标注查询（`retrieval-set.json`：literal 10 / paraphrase 12 / cross 6 / hard 强改写 4 / scoped 3），语料在测试内建一个临时课程 `EVAL_RECALL`（用后即删），不影响回放夹具。对比 FULLTEXT 与 HYBRID(hash 离线嵌入)，输出 recall@1/3/5 与 MRR 到 `wenjin-server/target/eval-rag/report.md|json`。断言：HYBRID(hash) recall@5 ≥ FULLTEXT recall@5（防退化）且 FULLTEXT recall@5 ≥ 0.80（基线下限）。
+  ```powershell
+  $env:WENJIN_EVAL_IT = "true"
+  .\mvnw.cmd test "-Dtest=RetrievalRecallIT" "-Dwenjin.eval.jdbc-url=jdbc:mysql://127.0.0.1:3306/wenjin_eval"
+  # 追加真实嵌入对比（HYBRID(live) 行）：
+  $env:WENJIN_AI_EMBEDDING_ENABLED = "true"; $env:WENJIN_AI_EMBEDDING_API_KEY = "your-embedding-key"
+  .\mvnw.cmd test "-Dtest=RetrievalRecallIT" "-Dwenjin.eval.rag.live=true" "-Dwenjin.eval.jdbc-url=jdbc:mysql://127.0.0.1:3306/wenjin_eval"
+  ```
+  最近一次实测（本地 MySQL 8 ngram_token_size=2，topK=5，HYBRID(live) 未跑）：
+
+  | 方法 | recall@1 | recall@3 | recall@5 | MRR |
+  |---|---|---|---|---|
+  | FULLTEXT | 0.757 | 0.886 | 0.900 | 0.857 |
+  | HYBRID(hash) | 0.714 | 0.914 | 0.929 | 0.833 |
+
+  解读：小语料上 ngram 二元组重叠已很宽松，字面与普通改写查询全文 recall@5 即 1.0；差异集中在强改写（hard：FULLTEXT 0.50 → HYBRID(hash) 0.75）。哈希嵌入只是字符 n-gram 特征，不是语义模型，MRR 略低于全文（融合时把几个相近干扰块提前）；真实语义嵌入的收益需用 key 跑 HYBRID(live) 验证。
 - **注入**：`rag-enabled` 且有命中时填充 RETRIEVAL 不可信包裹块；节点范围 = 会话焦点节点 + 其**直接前置**（`limits.rag.expand-prerequisites`，`RetrievalScopeResolver`；只取未归档、非『待复核』的前置边），放宽规则不变。
 - **引用校验（R4，端到端）**：系统提示静态段「资料引用」要求句末标注 `资料 #<编号>`（编号只能来自本轮注入片段或 `search_materials` 返回的 `chunkId`，未覆盖须说「课程资料未覆盖」）。本 turn 可引用集合 = 注入的 chunkId ∪ `search_materials` 结果 chunkId（`CitationGuard`，工具路径与 legacy 路径共用）。turn 结束对最终文本提取 `资料 #N`，经 `CitationValidator` 校验：
   - SSE 新事件 `citations` `{valid:[…], invalid:[…]}`，仅在回复含引用时发送，顺序在最后一个 `token`（及 `practice_card`）之后、`probe_card`/`done` 之前；

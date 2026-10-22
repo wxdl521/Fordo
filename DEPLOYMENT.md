@@ -569,6 +569,7 @@ wenjin:
     | 参数 | 默认 | 说明 |
     | --- | --- | --- |
     | `WENJIN_EVAL_IT=true` | 未设 = 跳过 | 启用 `ReplayScenarioIT` / `LiveEvalPipelineIT` / `EvalFixtureIT` |
+    | `-Dwenjin.eval.rag.live=true` | 未设 = 不跑 | `RetrievalRecallIT` 额外用真实嵌入（需 `WENJIN_AI_EMBEDDING_API_KEY`）跑 HYBRID(live)，报告 `target/eval-rag/report.md` |
     | `WENJIN_EVAL_LIVE=true` + `WENJIN_AI_API_KEY` | 未设 = 跳过 | 启用 `LiveEvalSuiteIT`（真实模型，按 `wenjin.ai.base-url/model`） |
     | `-Dwenjin.eval.jdbc-url` / `WENJIN_EVAL_JDBC_URL` | Testcontainers `mysql:8.4` | 指向本机评测库，如 `jdbc:mysql://127.0.0.1:3306/wenjin_eval`；账号 `-Dwenjin.eval.jdbc-user` / `-password`（默认 root/root） |
     | `-Dwenjin.eval.repeat` | `3` | LIVE 每场景重复次数 |
