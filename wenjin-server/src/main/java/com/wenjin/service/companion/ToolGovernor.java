@@ -40,6 +40,11 @@ import java.util.concurrent.TimeoutException;
  *
  * <p>Order: resolve tool → parse/validate args (no budget) → cache hit (no budget)
  * → tryConsume → execute. Unknown tools still consume budget (whitelist intercept).
+ *
+ * <p>Whitelist (direction 7): a call is rejected as {@code TOOL_NOT_ALLOWED} (GUARD, budget consumed,
+ * same message as an unknown tool) when the tool is not registered, is not in this turn's offered set
+ * ({@link ToolExecutionState#isOffered}), or its {@link CompanionTool#audience()} differs from
+ * {@link ToolContext#audience()}. This applies to student sessions as well.
  */
 @Component
 public class ToolGovernor {
@@ -115,9 +120,16 @@ public class ToolGovernor {
         String argsJson = call.argumentsJson() == null ? "{}" : call.argumentsJson();
         ToolExecutionResult result;
 
-        CompanionTool tool = registry.get(toolName);
+        CompanionTool registered = registry.get(toolName);
+        CompanionTool tool = registered != null && state.isOffered(toolName) && audienceMatches(ctx, registered)
+                ? registered
+                : null;
+        if (registered != null && tool == null) {
+            log.warn("companion tool rejected (not offered this turn or audience mismatch): tool={} audience={}",
+                    toolName, ctx == null ? null : ctx.audience());
+        }
         if (tool == null) {
-            // Unknown tool: still consume budget (whitelist intercept), then GUARD.
+            // Unknown / not offered / wrong audience: still consume budget (whitelist intercept), then GUARD.
             if (!state.tryConsume(false)) {
                 result = failed(toolCallId, toolName,
                         ToolErrorCodes.TOOL_BUDGET_EXCEEDED,
@@ -161,7 +173,7 @@ public class ToolGovernor {
 
         // Read-only cache hit: return immediately without consuming budget.
         String cacheKey = null;
-        if (isCacheable(toolName) && traceCtx != null) {
+        if (isCacheable(tool) && traceCtx != null) {
             cacheKey = cacheKey(toolName, args);
             ToolCacheEntry hit = traceCtx.toolCache().get(cacheKey);
             if (hit != null && hit.payload() != null) {
@@ -213,8 +225,14 @@ public class ToolGovernor {
         return result;
     }
 
-    private static boolean isCacheable(String toolName) {
-        return toolName != null && READ_CACHEABLE_TOOLS.contains(toolName);
+    private static boolean isCacheable(CompanionTool tool) {
+        return tool != null && !tool.sideEffecting() && tool.readCacheable();
+    }
+
+    private static boolean audienceMatches(ToolContext ctx, CompanionTool tool) {
+        ToolAudience sessionAudience = ctx == null ? ToolAudience.STUDENT : ctx.audience();
+        ToolAudience toolAudience = tool.audience() == null ? ToolAudience.STUDENT : tool.audience();
+        return sessionAudience == toolAudience;
     }
 
     private static boolean isMemoryWrite(String toolName) {
@@ -475,7 +493,8 @@ public class ToolGovernor {
                 result.practiceCard(),
                 false,
                 false,
-                result.codeCard());
+                result.codeCard(),
+                result.insightCard());
     }
 
     private boolean looksLikeErrorEnvelope(String content) {
@@ -583,7 +602,7 @@ public class ToolGovernor {
                        long started,
                        ToolExecutionResult result) {
         long elapsedMs = (System.nanoTime() - started) / 1_000_000;
-        Long studentId = ctx == null ? null : ctx.studentId();
+        Long studentId = ctx == null ? null : ctx.actorUserId();
         Long courseId = ctx == null ? null : ctx.courseId();
         log.info("companion_tool uid={} courseId={} tool={} args={} elapsedMs={} ok={} cached={} result={}",
                 studentId,
