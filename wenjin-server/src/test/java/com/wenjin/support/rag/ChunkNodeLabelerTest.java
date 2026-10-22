@@ -93,4 +93,14 @@ class ChunkNodeLabelerTest {
         assertThat(labeler.label(null, null)).isEmpty();
         assertThat(new ChunkNodeLabeler(null).label("死锁", "")).isEmpty();
     }
+
+    @Test
+    @DisplayName("文档标题（路径根）含节点名时不给每个 chunk 加路径分")
+    void rootTitleDoesNotScore() {
+        assertThat(labeler.label("本节讨论若干细节。", "死锁导论")).isEmpty();
+        assertThat(labeler.label("本节讨论若干细节。", "死锁导论>第一章 概述")).isEmpty();
+        // 非根的章节标题仍然加权
+        assertThat(labeler.label("本节讨论若干细节。", "死锁导论>死锁")).extracting(Label::nodeCode)
+                .containsExactly("N2");
+    }
 }

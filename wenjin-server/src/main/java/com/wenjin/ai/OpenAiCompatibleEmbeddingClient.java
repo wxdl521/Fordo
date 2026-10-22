@@ -32,19 +32,33 @@ public class OpenAiCompatibleEmbeddingClient implements EmbeddingClient {
 
     private final AiProperties properties;
     private final RestClient restClient;
+    /** 读超时 → 客户端；null 表示测试构造（一律复用 restClient）。 */
+    private final java.util.function.Function<Duration, RestClient> shortTimeoutFactory;
+    private final java.util.concurrent.ConcurrentMap<Long, RestClient> shortClients =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     @Autowired
     public OpenAiCompatibleEmbeddingClient(AiProperties properties) {
         this(properties, RestClient.builder().requestFactory(ClientHttpRequestFactories.get(
                 ClientHttpRequestFactorySettings.DEFAULTS
                         .withConnectTimeout(Duration.ofSeconds(10))
-                        .withReadTimeout(Duration.ofSeconds(60)))));
+                        .withReadTimeout(Duration.ofSeconds(60)))),
+                readTimeout -> RestClient.builder().requestFactory(ClientHttpRequestFactories.get(
+                        ClientHttpRequestFactorySettings.DEFAULTS
+                                .withConnectTimeout(Duration.ofSeconds(2))
+                                .withReadTimeout(readTimeout))).build());
     }
 
     /** 测试用：注入可绑定 MockRestServiceServer 的 builder。 */
     OpenAiCompatibleEmbeddingClient(AiProperties properties, RestClient.Builder builder) {
+        this(properties, builder, null);
+    }
+
+    private OpenAiCompatibleEmbeddingClient(AiProperties properties, RestClient.Builder builder,
+                                            java.util.function.Function<Duration, RestClient> shortTimeoutFactory) {
         this.properties = properties;
         this.restClient = builder.build();
+        this.shortTimeoutFactory = shortTimeoutFactory;
     }
 
     @Override
@@ -61,6 +75,20 @@ public class OpenAiCompatibleEmbeddingClient implements EmbeddingClient {
 
     @Override
     public List<float[]> embed(List<String> texts) {
+        return embedWith(restClient, texts);
+    }
+
+    /** 在线查询路径：读超时收紧；超时即抛 AI_ERROR（调用方回退全文）。 */
+    @Override
+    public List<float[]> embedForQuery(List<String> texts, Duration timeout) {
+        if (shortTimeoutFactory == null || timeout == null || timeout.isZero() || timeout.isNegative()) {
+            return embedWith(restClient, texts);
+        }
+        RestClient c = shortClients.computeIfAbsent(timeout.toMillis(), k -> shortTimeoutFactory.apply(timeout));
+        return embedWith(c, texts);
+    }
+
+    private List<float[]> embedWith(RestClient client, List<String> texts) {
         if (texts == null || texts.isEmpty()) {
             return List.of();
         }
@@ -78,18 +106,18 @@ public class OpenAiCompatibleEmbeddingClient implements EmbeddingClient {
         List<float[]> out = new ArrayList<>(texts.size());
         for (int from = 0; from < texts.size(); from += batch) {
             List<String> part = texts.subList(from, Math.min(texts.size(), from + batch));
-            out.addAll(callBatch(e, part));
+            out.addAll(callBatch(client, e, part));
         }
         return out;
     }
 
-    private List<float[]> callBatch(AiProperties.Embedding e, List<String> part) {
+    private List<float[]> callBatch(RestClient client, AiProperties.Embedding e, List<String> part) {
         String url = trimTrailingSlash(e.getBaseUrl()) + "/embeddings";
         Map<String, Object> body = buildBody(e.getModel(), part, e.getDimension());
         JsonNode root;
         try {
             // 部分网关把 JSON 标成 application/octet-stream，按 byte[] 读再 Jackson 解析
-            byte[] raw = restClient.post().uri(url)
+            byte[] raw = client.post().uri(url)
                     .header("Authorization", "Bearer " + e.getApiKey())
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body).retrieve().body(byte[].class);

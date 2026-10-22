@@ -107,4 +107,20 @@ class CitationGuardTest {
         assertThat(step.durationMs()).isEqualTo(3);
         assertThat(List.of(step.tokensIn(), step.tokensOut())).containsExactly(0, 0);
     }
+
+    @Test
+    void truncatedSearchMaterialsJsonFallsBackToRegexIds() {
+        CitationGuard guard = new CitationGuard(Set.of());
+        // 被截断的 JSON（尾部缺括号 / 最后一项残缺）
+        guard.addToolResult("search_materials",
+                "{\"items\":[{\"chunkId\":31,\"snippet\":\"a\"},{\"chunkId\": 32,\"snippet\":\"bb\"},{\"chunkId\":3");
+        assertThat(guard.citable()).contains(31L, 32L);
+    }
+
+    @Test
+    void overflowCitationIsReportedInvalidInStepOutput() {
+        CitationGuard guard = new CitationGuard(Set.of(1L));
+        StepRecord step = guard.toStep(guard.check("见资料 #99999999999999999999999 与资料 #1"), 1);
+        assertThat(step.outputJson()).isEqualTo("{\"valid\":[1],\"invalid\":[-1]}");
+    }
 }

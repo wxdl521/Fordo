@@ -18,7 +18,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -63,7 +67,9 @@ class HybridRetrieverTest {
     void setUp() {
         flags = new FeatureFlagsProperties();
         limits = new LimitsProperties();
+        limits.getRag().setAllowHashingEmbedding(true); // Java 默认已改 false，哈希嵌入须显式开
         limits.getRag().setVectorMinScore(0.05);
+        limits.getRag().setVectorOnlyMinScore(0.0); // 既有用例不受「仅向量」门槛影响；门槛见专门用例
         fulltext = new RecordingFulltext();
         indexCache = new VectorIndexCache(embeddingRepository, mapMapper);
         ActiveEmbeddingResolver resolver = new ActiveEmbeddingResolver(flags, limits, null); // → 哈希嵌入
@@ -254,6 +260,160 @@ class HybridRetrieverTest {
         RetrievalService.RetrievalResult r = service.search(COURSE, List.of("N9"), "栈 后进先出", 3, true);
         assertThat(r.scopeWidened()).isTrue();
         assertThat(r.hits()).extracting(RetrievalHit::chunkId).contains(12L);
+    }
+
+    @Test
+    @DisplayName("仅向量命中须 ≥ vector-only-min-score；同时被全文命中的块只受 vector-min-score")
+    void vectorOnlyHitsNeedHigherCosine() {
+        limits.getRag().setVectorOnlyMinScore(0.99);
+        fulltext.respond(List.of(ft(11, 5.0)));
+        // 13 只有向量命中（余弦 < 0.99）→ 被剔除，只剩全文候选
+        assertThat(hybrid.retrieve(COURSE, List.of(), "先根遍历的顺序", 2))
+                .extracting(RetrievalHit::chunkId).containsExactly(11L);
+
+        // 13 同时被全文命中 → 不受 0.99 约束
+        fulltext.respond(List.of(ft(11, 5.0), ft(13, 4.0)));
+        assertThat(hybrid.retrieve(COURSE, List.of(), "先根遍历的顺序", 2))
+                .extracting(RetrievalHit::chunkId).contains(13L);
+
+        limits.getRag().setVectorOnlyMinScore(0.0);
+        fulltext.respond(List.of(ft(11, 5.0)));
+        assertThat(hybrid.retrieve(COURSE, List.of(), "先根遍历的顺序", 2))
+                .extracting(RetrievalHit::chunkId).contains(13L);
+    }
+
+    @Test
+    @DisplayName("向量失败后进入冷却：期间不再调用向量侧（纯全文），到期后重新探测")
+    void vectorFailureCooldown() {
+        AtomicInteger calls = new AtomicInteger();
+        EmbeddingClient broken = new EmbeddingClient() {
+            @Override
+            public List<float[]> embed(List<String> texts) {
+                calls.incrementAndGet();
+                throw new BusinessException(ResultCode.AI_ERROR, "timeout");
+            }
+
+            @Override
+            public String modelId() {
+                return HASH.modelId();
+            }
+
+            @Override
+            public boolean available() {
+                return true;
+            }
+        };
+        limits.getRag().setVectorCooldownSeconds(60);
+        MutableClock clock = new MutableClock();
+        VectorRetriever vector = new VectorRetriever(new ActiveEmbeddingResolver(flags, limits, broken), indexCache,
+                new QueryEmbeddingCache(limits), chunkMapper, limits);
+        HybridRetriever h = new HybridRetriever(fulltext, vector, limits, clock);
+        List<RetrievalHit> ftHits = List.of(ft(11, 3.25));
+        fulltext.respond(ftHits);
+
+        assertThat(h.retrieve(COURSE, List.of(), "遍历", 4)).isSameAs(ftHits);
+        assertThat(calls.get()).isEqualTo(1);
+
+        clock.advanceSeconds(30);
+        assertThat(h.retrieve(COURSE, List.of(), "另一个查询", 4)).isSameAs(ftHits);
+        assertThat(calls.get()).isEqualTo(1); // 冷却内：没有再打嵌入
+        assertThat(fulltext.calls.get(fulltext.calls.size() - 1))
+                .isEqualTo(new Call(COURSE, List.of(), "另一个查询", 4)); // 纯全文，topK 不放大
+
+        clock.advanceSeconds(31);
+        assertThat(h.retrieve(COURSE, List.of(), "再一个查询", 4)).isSameAs(ftHits);
+        assertThat(calls.get()).isEqualTo(2); // 冷却到期：重新探测（再次失败 → 再次冷却）
+        h.retrieve(COURSE, List.of(), "又一个查询", 4);
+        assertThat(calls.get()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("冷却为 0 → 每次都探测向量侧")
+    void cooldownZeroDisables() {
+        AtomicInteger calls = new AtomicInteger();
+        EmbeddingClient broken = new EmbeddingClient() {
+            @Override
+            public List<float[]> embed(List<String> texts) {
+                calls.incrementAndGet();
+                throw new BusinessException(ResultCode.AI_ERROR, "down");
+            }
+
+            @Override
+            public String modelId() {
+                return HASH.modelId();
+            }
+
+            @Override
+            public boolean available() {
+                return true;
+            }
+        };
+        limits.getRag().setVectorCooldownSeconds(0);
+        VectorRetriever vector = new VectorRetriever(new ActiveEmbeddingResolver(flags, limits, broken), indexCache,
+                new QueryEmbeddingCache(limits), chunkMapper, limits);
+        HybridRetriever h = new HybridRetriever(fulltext, vector, limits, new MutableClock());
+        h.retrieve(COURSE, List.of(), "a1", 4);
+        h.retrieve(COURSE, List.of(), "a2", 4);
+        assertThat(calls.get()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("查询嵌入走短超时通道（query-embed-timeout-ms），而不是批量 embed")
+    void queryEmbeddingUsesShortTimeout() {
+        List<Duration> seen = new ArrayList<>();
+        EmbeddingClient spy = new EmbeddingClient() {
+            @Override
+            public List<float[]> embed(List<String> texts) {
+                throw new AssertionError("在线查询不应走批量通道");
+            }
+
+            @Override
+            public List<float[]> embedForQuery(List<String> texts, Duration timeout) {
+                seen.add(timeout);
+                return HASH.embed(texts);
+            }
+
+            @Override
+            public String modelId() {
+                return HASH.modelId();
+            }
+
+            @Override
+            public boolean available() {
+                return true;
+            }
+        };
+        limits.getRag().setQueryEmbedTimeoutMs(1234);
+        new QueryEmbeddingCache(limits).embedQuery(spy, "遍历");
+        assertThat(seen).containsExactly(Duration.ofMillis(1234));
+    }
+
+    static final class MutableClock extends Clock {
+        private long millis = 1_000_000L;
+
+        void advanceSeconds(long s) {
+            millis += s * 1000;
+        }
+
+        @Override
+        public java.time.ZoneId getZone() {
+            return java.time.ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(java.time.ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return Instant.ofEpochMilli(millis);
+        }
+
+        @Override
+        public long millis() {
+            return millis;
+        }
     }
 
     private static RetrievalHit ft(long id, double score) {

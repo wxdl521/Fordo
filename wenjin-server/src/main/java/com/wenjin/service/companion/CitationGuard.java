@@ -29,6 +29,10 @@ public final class CitationGuard {
     public static final String INVALID_MARK = "（引用无效）";
 
     private static final Pattern REF = Pattern.compile("资料\\s*#(\\d+)");
+    /** 截断 JSON 时的兜底提取（要求数字后跟 , 或 }，避免把被截断的半个数字当成编号）。 */
+    private static final Pattern CHUNK_ID = Pattern.compile("\"chunkId\"\\s*:\\s*(\\d+)\\s*[,}]");
+    /** 溢出 long 的畸形编号在 step 的 invalid 数组里的占位（使 citationsValid 判失败）。 */
+    public static final long OVERFLOW_ID = -1L;
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final Set<Long> citable = new LinkedHashSet<>();
@@ -65,7 +69,14 @@ public final class CitationGuard {
                 }
             }
         } catch (Exception e) {
-            // 非 JSON：不贡献可引用集合
+            // 可能被截断：按正则兜底收集 chunkId；纯非 JSON 文本无匹配，不贡献可引用集合
+            Matcher m = CHUNK_ID.matcher(content);
+            while (m.find()) {
+                Long id = parseId(m.group(1));
+                if (id != null) {
+                    citable.add(id);
+                }
+            }
         }
     }
 
@@ -125,10 +136,14 @@ public final class CitationGuard {
     }
 
     public StepRecord toStep(Verdict verdict, int durationMs) {
+        List<Long> invalid = new ArrayList<>(verdict.invalid());
+        if (verdict.overflow()) {
+            invalid.add(OVERFLOW_ID);
+        }
         List<Long> cited = new ArrayList<>(verdict.valid());
-        cited.addAll(verdict.invalid());
+        cited.addAll(invalid);
         String input = "{\"cited\":" + idsJson(cited) + ",\"citable\":" + idsJson(citable) + "}";
-        String output = "{\"valid\":" + idsJson(verdict.valid()) + ",\"invalid\":" + idsJson(verdict.invalid()) + "}";
+        String output = "{\"valid\":" + idsJson(verdict.valid()) + ",\"invalid\":" + idsJson(invalid) + "}";
         return new StepRecord(AgentStepType.CITATION, STEP_NAME, AgentStepStatus.OK, input, output,
                 0, 0, Math.max(0, durationMs), null);
     }

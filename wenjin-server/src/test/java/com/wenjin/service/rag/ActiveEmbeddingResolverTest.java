@@ -70,6 +70,7 @@ class ActiveEmbeddingResolverTest {
     @Test
     @DisplayName("无真实客户端 bean（null）时按哈希规则")
     void nullReal() {
+        limits.getRag().setAllowHashingEmbedding(true);
         ActiveEmbeddingResolver r = new ActiveEmbeddingResolver(flags, limits, null);
         assertThat(r.resolve()).isPresent();
         limits.getRag().setAllowHashingEmbedding(false);

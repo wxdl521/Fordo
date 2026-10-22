@@ -124,6 +124,30 @@ class CompanionCitationTest {
         assertThat(promptCap.getValue()).contains("## 资料引用").contains("课程资料未覆盖");
     }
 
+    @Test
+    @DisplayName("RAG off: neither prompt carries the 资料引用 section")
+    void ragOffPromptsHaveNoCitationRules() {
+        String tool = CompanionServiceImpl.buildSystemPrompt("软件工程", List.of("用例图"), List.of(),
+                null, null, null, null, null, false);
+        assertThat(tool).doesNotContain("## 资料引用").doesNotContain("资料 #");
+        assertThat(tool).contains("## 课程知识点范围");
+
+        configureTools(false, List.of());
+        FeatureFlagsProperties flags = new FeatureFlagsProperties();
+        flags.setRagEnabled(false);
+        ReflectionTestUtils.setField(service, "featureFlags", flags);
+        ArgumentCaptor<String> promptCap = ArgumentCaptor.forClass(String.class);
+        doAnswer(inv -> {
+            Consumer<String> cb = inv.getArgument(3);
+            cb.accept("好的");
+            return null;
+        }).when(aiClient).stream(promptCap.capture(), any(), any(), any());
+
+        service.streamReply(900L, new RecordingSink());
+
+        assertThat(promptCap.getValue()).doesNotContain("## 资料引用");
+    }
+
     // ── tools path ────────────────────────────────────────────────────────
 
     @Test

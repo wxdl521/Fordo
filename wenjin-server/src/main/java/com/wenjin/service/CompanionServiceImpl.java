@@ -261,7 +261,8 @@ public class CompanionServiceImpl implements CompanionService {
                 conversation.getStudentId(),
                 conversation.getCourseId(),
                 conversation.getNodeCode(),
-                toolOrchestrationAvailable);
+                toolOrchestrationAvailable,
+                isRagEnabled());
 
         // MEMORY 槽：memory-enabled 时按 effective top-k 注入并强化选中项
         List<String> memoryLines = loadMemoryLines(
@@ -506,7 +507,8 @@ public class CompanionServiceImpl implements CompanionService {
                             conversation.getStudentId(),
                             conversation.getCourseId(),
                             conversation.getNodeCode(),
-                            false) + (fallbackPromptSuffix == null ? "" : fallbackPromptSuffix);
+                            false,
+                            isRagEnabled()) + (fallbackPromptSuffix == null ? "" : fallbackPromptSuffix);
                 }
                 return fallbackPrompt;
             }
@@ -1033,7 +1035,8 @@ public class CompanionServiceImpl implements CompanionService {
     private String buildSystemPromptForStudent(Long studentId,
                                                Long courseId,
                                                String nodeCode,
-                                               boolean useToolPrompt) {
+                                               boolean useToolPrompt,
+                                               boolean ragEnabled) {
         PromptContext context = buildPromptContext(studentId, courseId, nodeCode, !useToolPrompt);
         if (useToolPrompt) {
             return buildSystemPrompt(
@@ -1044,7 +1047,8 @@ public class CompanionServiceImpl implements CompanionService {
                     context.currentStep(),
                     context.focusNodeCode(),
                     context.focusNodeName(),
-                    context.diagnostic());
+                    context.diagnostic(),
+                    ragEnabled);
         }
         return buildLegacySystemPrompt(
                 context.courseName(),
@@ -1054,7 +1058,8 @@ public class CompanionServiceImpl implements CompanionService {
                 context.currentStep(),
                 context.focusNodeCode(),
                 context.focusNodeName(),
-                context.diagnostic());
+                context.diagnostic(),
+                ragEnabled);
     }
 
     private PromptContext buildPromptContext(Long studentId,
@@ -1169,6 +1174,20 @@ public class CompanionServiceImpl implements CompanionService {
                                            String focusNodeCode,
                                            String focusNodeName,
                                            DiagnosticResultVO diagnostic) {
+        return buildSystemPrompt(courseName, whitelist, weakPoints, targetNode, currentStep,
+                focusNodeCode, focusNodeName, diagnostic, true);
+    }
+
+    /** @param ragEnabled false 时不输出「资料引用」段（RAG 关闭时不应让模型标注资料编号） */
+    public static String buildSystemPrompt(String courseName,
+                                           List<String> whitelist,
+                                           List<String> weakPoints,
+                                           LearningPathVO.NodeRef targetNode,
+                                           LearningPathVO.StepVO currentStep,
+                                           String focusNodeCode,
+                                           String focusNodeName,
+                                           DiagnosticResultVO diagnostic,
+                                           boolean ragEnabled) {
         String cn = (courseName == null || courseName.isBlank()) ? "课程" : courseName;
         StringBuilder sb = new StringBuilder();
 
@@ -1206,7 +1225,9 @@ public class CompanionServiceImpl implements CompanionService {
         sb.append("- 不要直接念答案或照搬解析；先让学生说出当时的想法，再引导其自己发现错误。\n");
         sb.append("- 讲完后系统会自动就误区节点出一道理解探针题，无需你另行出题。\n\n");
 
-        appendCitationRules(sb);
+        if (ragEnabled) {
+            appendCitationRules(sb);
+        }
 
         sb.append("## 课程知识点范围\n");
         if (whitelist != null) {
@@ -1252,7 +1273,8 @@ public class CompanionServiceImpl implements CompanionService {
                                                   LearningPathVO.StepVO currentStep,
                                                   String focusNodeCode,
                                                   String focusNodeName,
-                                                  DiagnosticResultVO diagnostic) {
+                                                  DiagnosticResultVO diagnostic,
+                                                  boolean ragEnabled) {
         String cn = (courseName == null || courseName.isBlank()) ? "课程" : courseName;
         StringBuilder sb = new StringBuilder();
 
@@ -1290,7 +1312,9 @@ public class CompanionServiceImpl implements CompanionService {
             sb.append("学生正在学习：").append(focusNodeName).append("（").append(focusNodeCode).append("）\n\n");
         }
 
-        appendCitationRules(sb);
+        if (ragEnabled) {
+            appendCitationRules(sb);
+        }
 
         sb.append("## 对话规则\n");
         sb.append("- 只回答《").append(cn).append("》课程范围内的问题；超出范围时礼貌地把话题引导回当前焦点节点或学习路径目标。\n");

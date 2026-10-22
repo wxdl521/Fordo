@@ -112,4 +112,42 @@ class OpenAiCompatibleEmbeddingClientTest {
         assertThatThrownBy(() -> client.embed(List.of("a"))).isInstanceOf(BusinessException.class);
         assertThat(client.embed(new ArrayList<>())).isEmpty();
     }
+
+    @Test
+    void embedForQuery_times_out_fast_while_batch_embed_keeps_long_timeout() throws Exception {
+        com.sun.net.httpserver.HttpServer http = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        http.createContext("/embeddings", ex -> {
+            try {
+                Thread.sleep(2500); // 慢于查询超时，快于批量 60s
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            byte[] body = resp(0).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            ex.getResponseHeaders().add("Content-Type", "application/json");
+            try {
+                ex.sendResponseHeaders(200, body.length);
+                ex.getResponseBody().write(body);
+            } catch (java.io.IOException ignored) {
+                // 客户端已超时断开
+            } finally {
+                ex.close();
+            }
+        });
+        http.start();
+        try {
+            props.getEmbedding().setBaseUrl("http://127.0.0.1:" + http.getAddress().getPort());
+            OpenAiCompatibleEmbeddingClient real = new OpenAiCompatibleEmbeddingClient(props);
+
+            long t0 = System.nanoTime();
+            assertThatThrownBy(() -> real.embedForQuery(List.of("q"), java.time.Duration.ofMillis(300)))
+                    .isInstanceOf(BusinessException.class).hasMessageContaining("嵌入模型调用失败");
+            assertThat((System.nanoTime() - t0) / 1_000_000).isLessThan(2000);
+
+            // 批量通道仍是长超时：同样慢的服务端能等到结果
+            assertThat(real.embed(List.of("q"))).hasSize(1);
+        } finally {
+            http.stop(0);
+        }
+    }
 }

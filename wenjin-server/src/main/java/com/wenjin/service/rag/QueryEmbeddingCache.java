@@ -4,6 +4,7 @@ import com.wenjin.ai.EmbeddingClient;
 import com.wenjin.config.LimitsProperties;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,7 +35,7 @@ public class QueryEmbeddingCache {
                 }
             }
         }
-        List<float[]> out = client.embed(List.of(query));
+        List<float[]> out = client.embedForQuery(List.of(query), Duration.ofMillis(timeoutMs()));
         if (out == null || out.size() != 1 || out.get(0) == null) {
             throw new IllegalStateException("查询嵌入返回为空");
         }
@@ -62,6 +63,10 @@ public class QueryEmbeddingCache {
         synchronized (lru) {
             lru.clear();
         }
+    }
+
+    private int timeoutMs() {
+        return limits == null || limits.getRag() == null ? 2500 : limits.getRag().getQueryEmbedTimeoutMs();
     }
 
     private int capacity() {

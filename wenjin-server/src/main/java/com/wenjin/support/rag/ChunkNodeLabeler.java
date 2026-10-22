@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
  * <ul>
  *   <li>节点名完整命中正文：{@value #W_NAME_BODY}（出现 2、3+ 次各 +{@value #W_NAME_REPEAT}）；</li>
  *   <li>名称切分出的关键词（按「、，与和及/」等分隔，去通用词）命中正文：每词 {@value #W_KEYWORD_BODY}，累计上限 {@value #CAP_KEYWORD_BODY}；</li>
- *   <li>标题路径命中：名称完整 +{@value #W_NAME_PATH}、关键词每词 +{@value #W_KEYWORD_PATH}（上限 {@value #CAP_KEYWORD_PATH}）。</li>
+ *   <li>标题路径命中（不含根即文档标题）：名称完整 +{@value #W_NAME_PATH}、关键词每词 +{@value #W_KEYWORD_PATH}（上限 {@value #CAP_KEYWORD_PATH}）。</li>
  * </ul>
  * 得分 ≥ {@value #MIN_SCORE} 的节点中取前 {@value #TOP_N}，置信度 = min({@value #MAX_CONFIDENCE}, 得分 / {@value #SCALE})，
  * 恒低于人工映射的 1.000，便于 {@code batch-approve minConfidence} 筛选。无命中的 chunk 不产生标签。
@@ -76,7 +76,7 @@ public final class ChunkNodeLabeler {
     /** @return 至多 {@link #TOP_N} 个标签，按得分降序（同分按 code 升序）。 */
     public List<Label> label(String content, String headingPath) {
         String body = normalize(content);
-        String path = normalize(headingPath);
+        String path = withoutRootTitle(normalize(headingPath));
         if (body.isEmpty() && path.isEmpty()) {
             return List.of();
         }
@@ -89,6 +89,15 @@ public final class ChunkNodeLabeler {
         }
         hits.sort(Comparator.comparingDouble(Label::score).reversed().thenComparing(Label::nodeCode));
         return hits.size() <= TOP_N ? hits : List.copyOf(hits.subList(0, TOP_N));
+    }
+
+    /**
+     * 标题路径形如「文档标题&gt;章&gt;节」：根（文档标题）对该文档所有 chunk 一视同仁，
+     * 参与路径打分会给每个 chunk 同样加分，故剔除；只有标题（无 &gt;）时路径为空。
+     */
+    private static String withoutRootTitle(String path) {
+        int i = path.indexOf('>');
+        return i < 0 ? "" : path.substring(i + 1);
     }
 
     static BigDecimal confidence(double score) {
