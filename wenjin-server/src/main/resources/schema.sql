@@ -28,7 +28,8 @@
 --   16. V22 增 companion_hint_log（主动陪伴提示条展示/关闭日志，无物理 FK）。
 --   17. V23 增 doc_chunk_embedding（RAG 切块向量，无物理 FK）。
 --   18. V24 增 question.starter_code / code_language 与 question_code_case（编程题题型，无物理 FK）。
---   19. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--   19. V25 增 teacher_conversation / teacher_message（教师 AI 助教会话，无物理 FK）。
+--   20. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -534,10 +535,10 @@ DROP TABLE IF EXISTS `agent_run`;
 CREATE TABLE `agent_run` (
     `id`                  BIGINT       NOT NULL AUTO_INCREMENT COMMENT '轨迹 run ID',
     `request_id`          VARCHAR(64)  NULL COMMENT '关联 RequestIdFilter',
-    `student_id`          BIGINT       NOT NULL COMMENT '学生用户 ID',
+    `student_id`          BIGINT       NOT NULL COMMENT '学生用户 ID（kind=TEACHER_CHAT 时为发起会话的教师 ID）',
     `course_id`           BIGINT       NOT NULL COMMENT '课程 ID',
     `conversation_id`     BIGINT       NULL COMMENT '关联伴侣会话（可空）',
-    `kind`                VARCHAR(32)  NOT NULL COMMENT 'COMPANION_CHAT/DIAGNOSTIC/PLAN_GENERATE/PLAN_REPLAN/...',
+    `kind`                VARCHAR(32)  NOT NULL COMMENT 'COMPANION_CHAT/DIAGNOSTIC/PLAN_GENERATE/PLAN_REPLAN/TEACHER_CHAT/...',
     `status`              TINYINT      NOT NULL DEFAULT 0 COMMENT '0=RUNNING,1=SUCCEEDED,2=FAILED,3=DEGRADED,4=CANCELLED',
     `model`               VARCHAR(64)  NULL COMMENT '模型标识',
     `input_digest`        VARCHAR(200) NULL COMMENT '首条输入前 200 字，非全文',
@@ -820,5 +821,33 @@ CREATE TABLE `question_code_case` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_code_case_question_seq` (`question_id`, `seq`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='编程题测试用例【V24】';
+
+-- ───────────────────────────── 组：教师 AI 助教会话【V25】─────────────────────────────
+
+DROP TABLE IF EXISTS `teacher_message`;
+DROP TABLE IF EXISTS `teacher_conversation`;
+
+CREATE TABLE `teacher_conversation` (
+    `id`                         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '会话ID',
+    `teacher_id`                 BIGINT       NOT NULL COMMENT '会话所有者 sys_user.id（教师或管理员）',
+    `course_id`                  BIGINT       NOT NULL COMMENT '课程 course.id（创建时已校验可管理）',
+    `title`                      VARCHAR(128) NULL COMMENT '会话标题（首问截断）',
+    `summary_text`               MEDIUMTEXT   NULL COMMENT '历史消息滚动摘要（送入模型）',
+    `summary_through_message_id` BIGINT       NULL COMMENT '摘要覆盖到的最后一条消息 id（含）',
+    `created_at`                 DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`                 DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_teacher_conv_owner` (`teacher_id`, `course_id`, `updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='教师 AI 助教会话【V25】';
+
+CREATE TABLE `teacher_message` (
+    `id`              BIGINT   NOT NULL AUTO_INCREMENT COMMENT '消息ID',
+    `conversation_id` BIGINT   NOT NULL COMMENT '所属会话（逻辑外键→teacher_conversation.id）',
+    `role`            TINYINT  NOT NULL COMMENT '角色：1=user, 2=ai',
+    `content`         TEXT     NOT NULL COMMENT '消息正文',
+    `created_at`      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_teacher_msg_conv` (`conversation_id`, `id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='教师 AI 助教会话消息【V25】';
 
 SET FOREIGN_KEY_CHECKS = 1;

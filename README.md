@@ -50,6 +50,7 @@
 - Agent 轨迹：按课程分页查看伴侣等 Agent run，展开 steps 查看工具/LLM 调用与截断后的 I/O。
 - 语料审核：上传课件/教材文件（`.md .txt .pdf .docx`，≤10MB，异步入库 + 按知识点名称自动初标）或粘贴 NODE_REF Markdown，审核 chunk↔知识点映射，来源列表显示入库状态与「未关联 N 块」（M8 / RAG R3）；向量模式开时显示每源嵌入覆盖率（已嵌入/总块数）与「重建向量」按钮（RAG R2）。
 - 周报：确定性学情周报与质量抽查报告（M11，默认关闭）。
+- AI 助教（方向 7）：老师用自然语言问学情（如「这周哪些学生需要关注」「第三章哪个知识点最薄弱」），助教只调用**只读**的老师工具查当前课程的真实数据作答，名单/统计以表格卡片（SSE `insight_card`）展示；会话独立存于 `teacher_conversation/teacher_message`（V25，仅本人可见，ADMIN 亦然），不读学生长期记忆与伴侣对话正文、不做任何写操作。开关 `wenjin.features.teacher-assistant-enabled`（prod 默认关，关则接口 404），限额 `wenjin.limits.teacher-assistant.*`；LLM 关闭或失败时回模板话术并引导到学情看板。轨迹 kind=`TEACHER_CHAT`（`agent_run.student_id` 存老师 id），Agent 轨迹页默认不显示。
 
 ## 技术栈
 
@@ -103,7 +104,7 @@ Fordo/
 
 ## 数据与种子
 
-- **生产 / CI schema 演进**：`wenjin-server/src/main/resources/db/migration/`（Flyway，共 15 个迁移）。
+- **生产 / CI schema 演进**：`wenjin-server/src/main/resources/db/migration/`（Flyway，V1–V25）。
   - `V1__baseline_schema.sql`：空库建全部 20 张表（`CREATE TABLE IF NOT EXISTS`，无 DROP / 种子）。
   - `V2__legacy_milestones.sql`：标记 m01/m02 已并入 V1（`SELECT 1;`）；既有库 `baseline-version: 2` 后从 V3 起。
   - `V3–V9`（加固）：固定诊断冻结、软归档、路径并发护栏、题面 SHA-256 指纹、AI 作业表、伴侣摘要列、关系完整性契约（物理 FK + SIGNAL 预检）。
@@ -257,7 +258,8 @@ npm run dev
 | 教师图谱 | `/api/teacher/graph` | 图谱审核与编辑 |
 | 教师题目 | `/api/teacher/questions` | 题目审核池 |
 | 教师看板 | `/api/teacher/dashboard` | 学情聚合 |
-| 教师 Agent 轨迹 | `/api/teacher/agent-runs` | M5 run 列表与 steps 明细（教师/管理员） |
+| 教师 Agent 轨迹 | `/api/teacher/agent-runs` | M5 run 列表与 steps 明细（教师/管理员）；可选 `kind` 过滤，缺省排除 `TEACHER_CHAT`，`kind=TEACHER_CHAT` 只看本人 |
+| 教师 AI 助教 | `/api/teacher/assistant` | 方向 7：`POST chat`（SSE `meta/tool_start/tool_result/insight_card/token/done/error`，body `{courseId, conversationId?, message}`）、`GET conversations?courseId=`、`GET conversations/{id}/messages`、`DELETE conversations/{id}` |
 | 教师语料 | `/api/teacher/rag` | M8 语料与 chunk↔节点映射审核；`POST courses/{courseId}/reembed` 重建向量（R2） |
 | 教师周报 | `/api/teacher/reports` | M11 周报/抽查报告（`multi-agent-enabled` 开启后） |
 | 管理用户 | `/api/system-admin/users` | 角色开通/变更（仅 ADMIN） |

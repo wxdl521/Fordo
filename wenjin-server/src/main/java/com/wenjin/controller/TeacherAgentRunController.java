@@ -6,6 +6,7 @@ import com.wenjin.dto.AgentStepVO;
 import com.wenjin.service.TeacherAgentRunService;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,17 +33,19 @@ public class TeacherAgentRunController {
     }
 
     /**
-     * GET /api/teacher/agent-runs?courseId=&amp;studentId=&amp;page=&amp;size=
-     * <p>size 在服务层夹紧到 ≤50。
+     * GET /api/teacher/agent-runs?courseId=&amp;studentId=&amp;kind=&amp;page=&amp;size=
+     * <p>size 在服务层夹紧到 ≤50。kind 缺省时排除 TEACHER_CHAT（教师助教轨迹）；
+     * kind=TEACHER_CHAT 只返回当前用户自己的助教轨迹。
      */
     @GetMapping
     public Result<AgentRunPageVO> list(
             @RequestParam @Positive Long courseId,
             @RequestParam(required = false) @Positive Long studentId,
+            @RequestParam(required = false) @Size(max = 32) String kind,
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "20") int size
     ) {
-        return Result.ok(teacherAgentRunService.listRuns(courseId, studentId, page, size));
+        return Result.ok(teacherAgentRunService.listRuns(courseId, studentId, kind, page, size));
     }
 
     /**

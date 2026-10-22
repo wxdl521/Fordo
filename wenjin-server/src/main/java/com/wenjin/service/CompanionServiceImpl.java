@@ -36,6 +36,7 @@ import com.wenjin.service.companion.CompanionTool;
 import com.wenjin.service.companion.ReflectionCoordinator;
 import com.wenjin.service.companion.RunCodeCheckTool;
 import com.wenjin.service.companion.StrategySwitcher;
+import com.wenjin.service.companion.ToolAudience;
 import com.wenjin.service.companion.ToolContext;
 import com.wenjin.service.companion.ToolGovernor;
 import com.wenjin.service.plan.PlanCancelGuard;
@@ -767,6 +768,8 @@ public class CompanionServiceImpl implements CompanionService {
         // Lexicographic by tool name so schema/dict order is stable across injectors.
         return companionTools.stream()
                 .filter(Objects::nonNull)
+                // 方向 7：学生会话只提供学生工具（老师助教工具不得出现在学生侧）
+                .filter(tool -> tool.audience() == null || tool.audience() == ToolAudience.STUDENT)
                 .filter(tool -> tool.schema() != null)
                 .filter(tool -> memoryOn || !isMemoryTool(tool.name()))
                 .filter(tool -> ragOn || !isRagTool(tool.name()))

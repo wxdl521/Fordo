@@ -426,6 +426,7 @@ npm run build        # 产出 dist/
 | 已配置 | `wenjin.features.multi-agent-enabled` | M11 多智能体周报 / Supervisor 抽查（默认关） | 小 |
 | 已配置 | `wenjin.features.proactive-enabled` / `wenjin.limits.proactive` | 方向 4 主动陪伴（opener / 提示条 / 小红点）开关与限额 | 小 |
 | 已配置 | `wenjin.features.code-check-enabled` / `wenjin.code-check.*` / `wenjin.limits.code` | 方向 6 编程题判分沙箱（docker / Judge0 后端、资源上限、限流）；见 §4.3 | 中 |
+| 已配置 | `wenjin.features.teacher-assistant-enabled` / `wenjin.limits.teacher-assistant` | 方向 7 教师 AI 助教（只读学情问答）开关与限额；见 §4.4 | 小 |
 | 已配置 | `wenjin.eval.judge-model` | M6 LLM-as-judge 模型名（可选） | 极小 |
 | 已配置 | `wenjin.limits.trace` / `wenjin.limits.tools` | step I/O 与工具结果截断 | 小 |
 | 已配置 | `wenjin.limits.prompt` / `wenjin.limits.memory` | M7 分槽预算与记忆强度/注入 | 小 |
@@ -441,6 +442,7 @@ npm run build        # 产出 dist/
 | 已迁移 | Flyway `V21__answer_record_time_index.sql` | `answer_record.idx_student_course_time`（错因辅导按时间取最近错题；仅加索引，大表建议低峰执行） | 小 |
 | 已迁移 | Flyway `V22__companion_hint_log.sql` | `companion_hint_log`（主动陪伴提示条展示/关闭日志） | 小 |
 | 待部署 | Flyway `V24__code_question.sql` | `question` 增 `starter_code` / `code_language`（可空列，加列即可）+ 新表 `question_code_case`（编程题测试用例，无物理 FK）；纯加法，旧题不受影响；回滚前需无 type=5 题 | 小 |
+| 待部署 | Flyway `V25__teacher_assistant_conversation.sql` | 新表 `teacher_conversation` / `teacher_message`（教师 AI 助教会话，无物理 FK）；纯加法，不动既有表 | 小 |
 | 已迁移 | Flyway `V23__doc_chunk_embedding.sql` | `doc_chunk_embedding`（RAG 切块向量，float32 LE MEDIUMBLOB；仅建新表，向量由后续嵌入作业回填，无 key 时不受影响） | 小 |
 
 ### 4.1 配置清单（调度与基线）
@@ -773,6 +775,27 @@ docker 后端（JDK 21）判分结果可能不同。部署前用 `curl -H "X-Aut
 注意：发给大模型的工具结果与 agent 轨迹里的结果摘要仍含非 hidden 用例对比与 stdout 前 300 字（这是讲解所需），按
 对话数据同等对待。
 
+### 4.4 教师 AI 助教（方向 7）
+
+老师在 `/teacher/assistant` 用自然语言问学情，助教只调用 **只读、受众为 TEACHER** 的工具查当前课程的真实数据作答
+（名单/统计以 `insight_card` 表格卡片下发）。v1 **不做任何写操作**。生产默认关闭（`WENJIN_FEATURE_TEACHER_ASSISTANT=false`）；
+关闭时 `/api/teacher/assistant/**` 统一 404，其余功能不受影响。依赖 **V25**（`teacher_conversation` / `teacher_message`）。
+
+| 键 | 默认 | 说明 |
+|----|------|------|
+| `wenjin.features.teacher-assistant-enabled` | dev `true` / prod `${WENJIN_FEATURE_TEACHER_ASSISTANT:false}` / e2e `true` | 总开关；管理后台可热改 |
+| `wenjin.limits.teacher-assistant.max-rounds` | 4 | 可调用工具的轮数（其后至多一轮无工具总结） |
+| `wenjin.limits.teacher-assistant.max-tool-calls` | 8 | 每次回答的工具调用上限（含被拦截的调用） |
+| `wenjin.limits.teacher-assistant.max-output-chars` | 8000 | 单次回答字符上限，超出截断并提示 |
+| `wenjin.limits.teacher-assistant.max-input-chars` | 2000 | 老师单条消息上限（超出 413；接口另有 4000 硬上限） |
+| `wenjin.limits.teacher-assistant.list-max-rows` | 20 | 工具名单 / 表格卡片最大行数 |
+
+- **鉴权**：教师/管理员角色 + `assertManageCourse(courseId)`（非本人课程 404），会话归属按 `teacher_id`（ADMIN 也只能看自己的会话，他人会话 404）；全部在请求线程完成，工具只拿到已授权课程。
+- **工具隔离**：`ToolGovernor` 拒绝本轮未提供的工具与受众不符的工具（`TOOL_NOT_ALLOWED`），学生伴侣同样生效；学生会话只提供 STUDENT 工具。
+- **LLM 降级**：`wenjin.ai.enabled=false`、伴侣紧急开关 `companion-llm-enabled=false`（同样作用于助教）或模型调用失败时，回一句模板话术并引导到「学情看板」，run 记 DEGRADED。
+- **隐私**：助教不读 `student_memory`、不读学生与伴侣的对话正文；老师会话不触发记忆蒸馏。审计 `TEACHER_ASSISTANT_CHAT` 只记动作与课程 id，不记消息内容。
+- **轨迹**：kind = `TEACHER_CHAT`，`agent_run.student_id` 列存**发起会话的老师 id**；`/api/teacher/agent-runs` 默认排除该 kind，`?kind=TEACHER_CHAT` 只返回当前用户自己的助教轨迹；管理后台 AI 统计按 kind 自动出现。
+
 ---
 
 ## 5. 端到端部署步骤
@@ -948,6 +971,7 @@ process.
 | `WENJIN_FEATURE_COMPANION_LLM` | M9 伴侣 LLM | prod 默认 **true** | 紧急设 `false` → 零 LLM 降级 |
 | `WENJIN_FEATURE_PLAN` | M10 学习计划 | prod 默认 false | 关则计划工具/re-plan/brief 计划段关闭 |
 | `WENJIN_FEATURE_CODE_CHECK` | 方向 6 编程题判分沙箱 | prod 默认 false | 开启前按 §4.3 准备 Judge0（推荐）或 docker + 预拉镜像 |
+| `WENJIN_FEATURE_TEACHER_ASSISTANT` | 方向 7 教师 AI 助教 | prod 默认 false | 需先 migrate V25；关则 `/api/teacher/assistant/**` 404 |
 | `WENJIN_CODE_CHECK_BACKEND` | 沙箱后端 | `docker` | 生产推荐 `judge0`（独立主机） |
 | `WENJIN_CODE_CHECK_JUDGE0_URL` / `_TOKEN` | Judge0 基址 / AUTHN_TOKEN | 空 | 仅 backend=judge0 |
 | `WENJIN_CODE_CHECK_DOCKER_IMAGE` / `WENJIN_CODE_CHECK_WORK_DIR` | 沙箱镜像 / 宿主临时目录 | `eclipse-temurin:21-jdk` / tmpdir | 仅 backend=docker；镜像须预拉 |

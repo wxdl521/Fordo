@@ -47,6 +47,7 @@ class ConfigRegistryTest {
             "wenjin.features.multi-agent-enabled",
             "wenjin.features.proactive-enabled",
             "wenjin.features.code-check-enabled",
+            "wenjin.features.teacher-assistant-enabled",
             "wenjin.limits.companion.max-input-chars",
             "wenjin.limits.companion.max-ai-output-chars",
             "wenjin.limits.companion.max-context-chars",
@@ -118,7 +119,8 @@ class ConfigRegistryTest {
         assertVolatile(AiProperties.Embedding.class, "enabled", "baseUrl", "apiKey", "model", "dimension", "batchSize");
         assertVolatile(FeatureFlagsProperties.class, "fixedDiagnosticEnabled", "graphReconcileEnabled",
                 "aiJobDispatchEnabled", "agentTraceEnabled", "memoryEnabled", "ragEnabled", "reflectionEnabled",
-                "companionLlmEnabled", "planEnabled", "multiAgentEnabled", "proactiveEnabled", "codeCheckEnabled");
+                "companionLlmEnabled", "planEnabled", "multiAgentEnabled", "proactiveEnabled", "codeCheckEnabled",
+                "teacherAssistantEnabled");
         assertVolatile(CodeCheckProperties.Judge0.class, "baseUrl", "apiKey");
         assertVolatile(LimitsProperties.Companion.class, "maxInputChars", "maxAiOutputChars",
                 "maxContextChars", "maxRecentMessages");

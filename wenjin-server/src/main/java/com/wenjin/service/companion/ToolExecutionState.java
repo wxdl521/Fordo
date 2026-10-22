@@ -7,6 +7,9 @@ package com.wenjin.service.companion;
  * 避免模型用尽只读查询配额后无法发起练习。
  * <p>
  * 另计 {@code record_observation} 每 run 写入次数（与总工具次数独立）。
+ * <p>
+ * 方向 7：可携带「本轮提供的工具名单」。{@link ToolGovernor} 拒绝名单外的调用（{@code TOOL_NOT_ALLOWED}），
+ * 防止模型编造未提供的工具名（如学生会话里调老师工具）。名单为 {@code null} 表示调用方未声明（仅旧单测）。
  */
 public final class ToolExecutionState {
 
@@ -16,12 +19,33 @@ public final class ToolExecutionState {
     private int nonSideUsed;
     private int memoryWrites;
     private final java.util.Map<String, Integer> perToolUsed = new java.util.HashMap<>();
+    /** 本轮提供的工具名单；null = 未声明（不做名单校验）。 */
+    private final java.util.Set<String> offeredToolNames;
 
     public ToolExecutionState(int maxToolCalls) {
+        this(maxToolCalls, null, true);
+    }
+
+    /** 带本轮提供工具名单；预留副作用槽（学生伴侣语义）。 */
+    public ToolExecutionState(int maxToolCalls, java.util.Set<String> offeredToolNames) {
+        this(maxToolCalls, offeredToolNames, true);
+    }
+
+    /**
+     * @param offeredToolNames      本轮提供的工具名单（null = 不校验）
+     * @param reserveSideEffectSlot true 时 max&gt;=2 预留 1 槽给有副作用的工具；本轮没有副作用工具时应传 false
+     */
+    public ToolExecutionState(int maxToolCalls, java.util.Set<String> offeredToolNames, boolean reserveSideEffectSlot) {
         this.maxToolCalls = Math.max(0, maxToolCalls);
         // max>=2 时预留 1 槽给有副作用的工具
-        int reserve = this.maxToolCalls >= 2 ? 1 : 0;
+        int reserve = reserveSideEffectSlot && this.maxToolCalls >= 2 ? 1 : 0;
         this.nonSideCap = Math.max(0, this.maxToolCalls - reserve);
+        this.offeredToolNames = offeredToolNames == null ? null : java.util.Set.copyOf(offeredToolNames);
+    }
+
+    /** 该工具名是否在本轮提供名单内（未声明名单时恒 true）。 */
+    public boolean isOffered(String toolName) {
+        return offeredToolNames == null || (toolName != null && offeredToolNames.contains(toolName));
     }
 
     /**
