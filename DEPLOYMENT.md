@@ -440,6 +440,7 @@ npm run build        # 产出 dist/
 | 已迁移 | Flyway `V15__agent_report.sql` | `agent_report`（M11 多智能体产出，可选） | 中 |
 | 已迁移 | Flyway `V21__answer_record_time_index.sql` | `answer_record.idx_student_course_time`（错因辅导按时间取最近错题；仅加索引，大表建议低峰执行） | 小 |
 | 已迁移 | Flyway `V22__companion_hint_log.sql` | `companion_hint_log`（主动陪伴提示条展示/关闭日志） | 小 |
+| 待部署 | Flyway `V24__code_question.sql` | `question` 增 `starter_code` / `code_language`（可空列，加列即可）+ 新表 `question_code_case`（编程题测试用例，无物理 FK）；纯加法，旧题不受影响；回滚前需无 type=5 题 | 小 |
 | 已迁移 | Flyway `V23__doc_chunk_embedding.sql` | `doc_chunk_embedding`（RAG 切块向量，float32 LE MEDIUMBLOB；仅建新表，向量由后续嵌入作业回填，无 key 时不受影响） | 小 |
 
 ### 4.1 配置清单（调度与基线）

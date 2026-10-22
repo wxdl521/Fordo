@@ -2,6 +2,7 @@ package com.wenjin.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.wenjin.dto.CodeQuestionUpdateRequest;
 import com.wenjin.dto.QuestionReviewRequest;
 import com.wenjin.dto.QuestionStatusCount;
 import com.wenjin.dto.ReviewAllRequest;
@@ -9,17 +10,23 @@ import com.wenjin.dto.TeacherQuestionPageVO;
 import com.wenjin.dto.TeacherQuestionVO;
 import com.wenjin.entity.KgNode;
 import com.wenjin.entity.Question;
+import com.wenjin.entity.QuestionCodeCase;
 import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
+import com.wenjin.support.CodeQuestionRules;
 import com.wenjin.support.QuestionStatus;
+import com.wenjin.support.QuestionType;
 
 import com.wenjin.mapper.KgNodeMapper;
+import com.wenjin.mapper.QuestionCodeCaseMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
 import com.wenjin.security.CourseAccessService;
+import com.wenjin.service.QuestionWriteService;
 import com.wenjin.service.TeacherQuestionService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,6 +46,16 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
     private final QuestionNodeMapper questionNodeMapper;
     private final KgNodeMapper nodeMapper;
     private final CourseAccessService courseAccessService;
+    private final QuestionCodeCaseMapper codeCaseMapper;
+    private final QuestionWriteService questionWriteService;
+
+    /** wenjin.limits.code.max-cases（字段默认值供单测直接构造使用）。 */
+    @Value("${wenjin.limits.code.max-cases:20}")
+    private int codeMaxCases = 20;
+
+    /** wenjin.limits.code.source-max-chars。 */
+    @Value("${wenjin.limits.code.source-max-chars:10000}")
+    private int codeSourceMaxChars = 10000;
 
     @Override
     public TeacherQuestionPageVO list(Long courseId, Integer status, String nodeCode, String conf, int page, int size) {
@@ -150,6 +167,39 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
         return total;
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public TeacherQuestionVO updateCode(Long courseId, Long questionId, CodeQuestionUpdateRequest req) {
+        if (courseId == null || courseId <= 0) {
+            throw new IllegalArgumentException("courseId 无效: " + courseId);
+        }
+        if (questionId == null || questionId <= 0) {
+            throw new IllegalArgumentException("questionId 无效: " + questionId);
+        }
+        courseAccessService.assertQuestionsBelongToCourse(courseId, List.of(questionId));
+        if (req == null) {
+            throw new IllegalArgumentException("request 不能为空");
+        }
+        Question q = questionMapper.selectById(questionId);
+        if (q == null || q.getType() == null || q.getType() != QuestionType.CODE) {
+            throw new IllegalArgumentException("题目不是编程题: " + questionId);
+        }
+        String error = CodeQuestionRules.validate(req.getStarterCode(), req.getCases(),
+                codeMaxCases, codeSourceMaxChars);
+        if (error != null) {
+            throw new IllegalArgumentException(error);
+        }
+        String starter = (req.getStarterCode() == null || req.getStarterCode().isBlank())
+                ? null : req.getStarterCode();
+        // 字符串列名 UpdateWrapper（Lambda set 在纯单测里会抛）
+        questionMapper.update(null, new UpdateWrapper<Question>()
+                .eq("id", questionId)
+                .set("starter_code", starter));
+        questionWriteService.replaceCodeCases(questionId, req.getCases());
+        q.setStarterCode(starter);
+        return batchToVO(List.of(q)).get(0);
+    }
+
     private int resolveTargetStatus(String action) {
         switch (action.toLowerCase()) {
             case "pass":
@@ -248,10 +298,42 @@ public class TeacherQuestionServiceImpl implements TeacherQuestionService {
             }
         }
 
+        Map<Long, List<QuestionCodeCase>> casesMap = new HashMap<>();
+        List<Long> codeIds = questions.stream()
+                .filter(q -> q.getType() != null && q.getType() == QuestionType.CODE)
+                .map(Question::getId).collect(Collectors.toList());
+        if (!codeIds.isEmpty()) {
+            for (QuestionCodeCase c : codeCaseMapper.selectList(
+                    new LambdaQueryWrapper<QuestionCodeCase>()
+                            .in(QuestionCodeCase::getQuestionId, codeIds)
+                            .orderByAsc(QuestionCodeCase::getSeq))) {
+                casesMap.computeIfAbsent(c.getQuestionId(), k -> new ArrayList<>()).add(c);
+            }
+        }
+
         return questions.stream()
-                .map(q -> toVO(q, optionsMap.getOrDefault(q.getId(), Collections.emptyList()),
-                        qnMap.getOrDefault(q.getId(), Collections.emptyList()), nodeMap))
+                .map(q -> withCode(toVO(q, optionsMap.getOrDefault(q.getId(), Collections.emptyList()),
+                        qnMap.getOrDefault(q.getId(), Collections.emptyList()), nodeMap),
+                        q, casesMap.getOrDefault(q.getId(), List.of())))
                 .collect(Collectors.toList());
+    }
+
+    /** 编程题附加 starterCode / 语言 / 全部用例（教师可见 hidden）。 */
+    private TeacherQuestionVO withCode(TeacherQuestionVO vo, Question q, List<QuestionCodeCase> cases) {
+        if (q.getType() == null || q.getType() != QuestionType.CODE) {
+            return vo;
+        }
+        vo.setStarterCode(q.getStarterCode());
+        vo.setCodeLanguage(q.getCodeLanguage() == null ? "java" : q.getCodeLanguage());
+        vo.setCases(cases.stream().map(c -> {
+            TeacherQuestionVO.CaseVO cv = new TeacherQuestionVO.CaseVO();
+            cv.setSeq(c.getSeq());
+            cv.setStdin(c.getStdin());
+            cv.setExpectedStdout(c.getExpectedStdout());
+            cv.setHidden(c.getHidden() != null && c.getHidden() == 1);
+            return cv;
+        }).collect(Collectors.toList()));
+        return vo;
     }
 
     private TeacherQuestionVO toVO(Question q, List<QuestionOption> options,

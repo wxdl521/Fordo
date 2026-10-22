@@ -46,6 +46,8 @@
             q.difficulty,
             q.answer,
             q.analysis,
+            q.starter_code,
+            q.code_language,
             q.source,
             q.status,
             q.confidence,

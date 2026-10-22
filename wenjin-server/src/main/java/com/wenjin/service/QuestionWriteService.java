@@ -7,20 +7,26 @@ import com.wenjin.ai.dto.AiQuestion;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.dto.AnnotateRequest;
+import com.wenjin.dto.CodeCaseItem;
 import com.wenjin.dto.ImportBankResult;
 import com.wenjin.dto.QuestionBankFile;
 import com.wenjin.entity.Course;
 import com.wenjin.entity.Question;
+import com.wenjin.entity.QuestionCodeCase;
 import com.wenjin.entity.QuestionNode;
 import com.wenjin.entity.QuestionOption;
 import com.wenjin.mapper.CourseMapper;
+import com.wenjin.mapper.QuestionCodeCaseMapper;
 import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.mapper.QuestionNodeMapper;
 import com.wenjin.mapper.QuestionOptionMapper;
+import com.wenjin.support.CodeQuestionRules;
 import com.wenjin.support.QuestionStatus;
+import com.wenjin.support.QuestionType;
 import com.wenjin.support.StemHash;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -28,6 +34,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.sql.SQLException;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -51,17 +59,28 @@ public class QuestionWriteService {
     private final QuestionNodeMapper questionNodeMapper;
     private final CourseMapper courseMapper;
     private final GraphQueryService graphQueryService;
+    private final QuestionCodeCaseMapper codeCaseMapper;
+
+    /** 编程题用例数上限（wenjin.limits.code.max-cases；字段默认值供单测直接 new 使用）。 */
+    @Value("${wenjin.limits.code.max-cases:20}")
+    private int codeMaxCases = 20;
+
+    /** 编程题起始代码长度上限（wenjin.limits.code.source-max-chars）。 */
+    @Value("${wenjin.limits.code.source-max-chars:10000}")
+    private int codeSourceMaxChars = 10000;
 
     public QuestionWriteService(QuestionMapper questionMapper,
                                 QuestionOptionMapper questionOptionMapper,
                                 QuestionNodeMapper questionNodeMapper,
                                 CourseMapper courseMapper,
-                                GraphQueryService graphQueryService) {
+                                GraphQueryService graphQueryService,
+                                QuestionCodeCaseMapper codeCaseMapper) {
         this.questionMapper = questionMapper;
         this.questionOptionMapper = questionOptionMapper;
         this.questionNodeMapper = questionNodeMapper;
         this.courseMapper = courseMapper;
         this.graphQueryService = graphQueryService;
+        this.codeCaseMapper = codeCaseMapper;
     }
 
     /**
@@ -209,13 +228,25 @@ public class QuestionWriteService {
                         nodeCode, stemPreview(stem));
                 continue;
             }
+            // 仅 type=CODE 走编程题分支；其它取值（含 AI 清洗可能带出的 type）沿用旧的单选行为
+            boolean isCode = bq.getType() != null && "CODE".equalsIgnoreCase(bq.getType().trim());
+            if (isCode) {
+                String codeError = CodeQuestionRules.validate(bq.getStarterCode(), bq.getCases(),
+                        codeMaxCases, codeSourceMaxChars);
+                if (codeError != null) {
+                    result.setSkipped(result.getSkipped() + 1);
+                    result.setInvalidCodeSkipped(result.getInvalidCodeSkipped() + 1);
+                    log.warn("题库导入跳过编程题：{}，题干前 20 字「{}」", codeError, stemPreview(stem));
+                    continue;
+                }
+            }
             String hash = StemHash.sha256Hex(stem);
             if (existingHashes.contains(hash)) {
                 result.setSkipped(result.getSkipped() + 1);
                 continue;
             }
             try {
-                persistBankQuestion(courseId, stem, hash, bq, codeToId);
+                persistBankQuestion(courseId, stem, hash, bq, codeToId, isCode);
                 existingHashes.add(hash);
                 result.setImported(result.getImported() + 1);
             } catch (BusinessException ex) {
@@ -227,16 +258,17 @@ public class QuestionWriteService {
                 }
             }
         }
-        log.info("题库导入完成 courseId={} -> imported={} skipped={}（其中 nodeCode 非法 {}）aiCleaned={}",
+        log.info("题库导入完成 courseId={} -> imported={} skipped={}（其中 nodeCode 非法 {}、编程题非法 {}）aiCleaned={}",
                 courseId, result.getImported(), result.getSkipped(),
-                result.getInvalidNodeSkipped(), aiCleaned);
+                result.getInvalidNodeSkipped(), result.getInvalidCodeSkipped(), aiCleaned);
         return result;
     }
 
     private void persistBankQuestion(Long courseId, String stem, String stemHash,
-                                     QuestionBankFile.BankQuestion bq, Map<String, Long> codeToId) {
+                                     QuestionBankFile.BankQuestion bq, Map<String, Long> codeToId,
+                                     boolean isCode) {
         String answerKey = null;
-        if (bq.getOptions() != null) {
+        if (!isCode && bq.getOptions() != null) {
             for (QuestionBankFile.BankOption o : bq.getOptions()) {
                 if (Boolean.TRUE.equals(o.getCorrect())) {
                     answerKey = o.getKey();
@@ -249,16 +281,24 @@ public class QuestionWriteService {
         question.setCourseId(courseId);
         question.setStem(stem);
         question.setStemHash(stemHash);
-        question.setType(1);
+        question.setType(isCode ? QuestionType.CODE : 1);
         question.setDifficulty(bq.getDifficulty() == null ? DEFAULT_DIFFICULTY : bq.getDifficulty());
         question.setAnswer(answerKey);
         question.setAnalysis(bq.getAnalysis());
+        if (isCode) {
+            question.setStarterCode(StringUtils.hasText(bq.getStarterCode()) ? bq.getStarterCode() : null);
+            question.setCodeLanguage("java");
+        }
         question.setSource(1);
         question.setStatus(QuestionStatus.APPROVED);
         insertQuestionOrConflict(question);
         Long questionId = question.getId();
 
-        if (bq.getOptions() != null) {
+        if (isCode) {
+            replaceCodeCases(questionId, bq.getCases());
+        }
+
+        if (!isCode && bq.getOptions() != null) {
             for (QuestionBankFile.BankOption o : bq.getOptions()) {
                 boolean correct = Boolean.TRUE.equals(o.getCorrect());
                 String pnc = o.getPointNodeCode();
@@ -275,6 +315,30 @@ public class QuestionWriteService {
         }
 
         insertQuestionNode(questionId, bq.getNodeCode(), WEIGHT_MAIN, codeToId);
+    }
+
+    /**
+     * 整体替换某编程题的测试用例（seq 从 1 起按给定顺序编号）。调用方须已完成校验。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void replaceCodeCases(Long questionId, List<CodeCaseItem> cases) {
+        codeCaseMapper.delete(new LambdaQueryWrapper<QuestionCodeCase>()
+                .eq(QuestionCodeCase::getQuestionId, questionId));
+        if (cases == null) {
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        int seq = 1;
+        for (CodeCaseItem c : cases) {
+            QuestionCodeCase row = new QuestionCodeCase();
+            row.setQuestionId(questionId);
+            row.setSeq(seq++);
+            row.setStdin(c.getStdin() == null ? "" : c.getStdin());
+            row.setExpectedStdout(c.getExpectedStdout());
+            row.setHidden(Boolean.TRUE.equals(c.getHidden()) ? 1 : 0);
+            row.setCreatedAt(now);
+            codeCaseMapper.insert(row);
+        }
     }
 
     private void insertQuestionOrConflict(Question question) {

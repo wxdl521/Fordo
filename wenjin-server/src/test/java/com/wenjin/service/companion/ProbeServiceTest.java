@@ -63,6 +63,29 @@ class ProbeServiceTest {
     }
 
     @Test
+    @DisplayName("C2 理解探针排除编程题：题库里只有 CODE 题 → 退化为 EPHEMERAL")
+    void codeQuestionsNeverPickedAsProbe() {
+        KgNode node = node(55L, "SE-1.1", "需求基础");
+        when(nodeMapper.selectOne(any())).thenReturn(node);
+        com.wenjin.entity.QuestionNode link = new com.wenjin.entity.QuestionNode();
+        link.setQuestionId(900L);
+        link.setNodeId(55L);
+        link.setWeight(1);
+        when(questionNodeMapper.selectList(any())).thenReturn(List.of(link));
+        com.wenjin.entity.Question code = new com.wenjin.entity.Question();
+        code.setId(900L);
+        code.setType(5);
+        code.setStatus(1);
+        code.setDifficulty(3);
+        when(questionMapper.selectList(any())).thenReturn(List.of(code));
+
+        ProbeStartVO vo = service.startProbe(1L, 10L, "SE-1.1");
+
+        assertThat(vo.isEphemeral()).isTrue();
+        assertThat(vo.getQuestion().getQuestionId()).isNull();
+    }
+
+    @Test
     @DisplayName("submit incorrect → reexplainAvailable; no mastery path exists")
     void submitIncorrect_reexplain() {
         KgNode node = node(55L, "SE-1.1", "需求基础");
