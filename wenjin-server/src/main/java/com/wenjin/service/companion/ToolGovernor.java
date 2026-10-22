@@ -181,6 +181,16 @@ public class ToolGovernor {
             return result;
         }
 
+        // run_code_check: independent per-run cap, rejected before the shared tool-call budget.
+        if (RunCodeCheckTool.NAME.equals(toolName)
+                && !state.tryConsumeToolCap(toolName, codeToolMaxPerRun())) {
+            result = failed(toolCallId, toolName,
+                    ToolErrorCodes.TOOL_BUDGET_EXCEEDED,
+                    "本轮代码检查次数已达上限，请基于已有结果讲解");
+            audit(ctx, toolName, argsJson, started, result);
+            return result;
+        }
+
         boolean sideEffecting = tool.sideEffecting();
         if (!state.tryConsume(sideEffecting)) {
             result = failed(toolCallId, toolName,
@@ -209,6 +219,13 @@ public class ToolGovernor {
 
     private static boolean isMemoryWrite(String toolName) {
         return toolName != null && MEMORY_WRITE_TOOLS.contains(toolName);
+    }
+
+    private int codeToolMaxPerRun() {
+        if (limits != null && limits.getCode() != null) {
+            return Math.max(0, limits.getCode().getToolMaxPerRun());
+        }
+        return 1;
     }
 
     private int memoryWritePerRun() {
@@ -457,7 +474,8 @@ public class ToolGovernor {
                 truncateSuccessfulContent(result.content()),
                 result.practiceCard(),
                 false,
-                false);
+                false,
+                result.codeCard());
     }
 
     private boolean looksLikeErrorEnvelope(String content) {
@@ -527,6 +545,38 @@ public class ToolGovernor {
         return safe.substring(0, keep) + TRUNCATION_MARKER;
     }
 
+    /**
+     * Arguments as they may be persisted (agent trace) or logged: the tool's own
+     * {@link CompanionTool#redactArgumentsForTrace} applied; unknown tools pass through unchanged.
+     */
+    public String redactArgumentsForTrace(String toolName, String argumentsJson) {
+        CompanionTool tool = toolName == null ? null : registry.get(toolName);
+        if (tool == null) {
+            return argumentsJson;
+        }
+        try {
+            return tool.redactArgumentsForTrace(argumentsJson);
+        } catch (RuntimeException e) {
+            return "{\"redacted\":true}";
+        }
+    }
+
+    /**
+     * Result content as it may be printed in the audit log: the tool's own
+     * {@link CompanionTool#redactResultForLog} applied; unknown tools pass through unchanged.
+     */
+    public String redactResultForLog(String toolName, String content) {
+        CompanionTool tool = toolName == null ? null : registry.get(toolName);
+        if (tool == null) {
+            return content;
+        }
+        try {
+            return tool.redactResultForLog(content);
+        } catch (RuntimeException e) {
+            return "{\"redacted\":true}";
+        }
+    }
+
     private void audit(ToolContext ctx,
                        String toolName,
                        String argsJson,
@@ -539,11 +589,11 @@ public class ToolGovernor {
                 studentId,
                 courseId,
                 toolName,
-                summarize(argsJson, 160),
+                summarize(redactArgumentsForTrace(toolName, argsJson), 160),
                 elapsedMs,
                 result.ok(),
                 result.cached(),
-                summarize(result.content(), 160));
+                summarize(redactResultForLog(toolName, result.content()), 160));
     }
 
     private String summarize(String value, int maxLength) {

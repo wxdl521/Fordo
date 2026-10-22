@@ -27,7 +27,8 @@
 --   15. V21 增 answer_record.idx_student_course_time（错因辅导按时间取最近错题）。
 --   16. V22 增 companion_hint_log（主动陪伴提示条展示/关闭日志，无物理 FK）。
 --   17. V23 增 doc_chunk_embedding（RAG 切块向量，无物理 FK）。
---   18. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--   18. V24 增 question.starter_code / code_language 与 question_code_case（编程题题型，无物理 FK）。
+--   19. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -132,10 +133,12 @@ CREATE TABLE `question` (
     `course_id`  BIGINT   NOT NULL                COMMENT '所属课程（物理外键→course.id）',
     `stem`       TEXT     NOT NULL                COMMENT '题干',
     `stem_hash`  CHAR(64) NOT NULL                COMMENT '题干 SHA-256 十六进制指纹（trim 后，与应用 StemHash 一致）【V6/V9】',
-    `type`       TINYINT  NOT NULL                COMMENT '题型：1=单选, 2=多选, 3=判断, 4=简答',
+    `type`       TINYINT  NOT NULL                COMMENT '题型：1=单选, 2=多选, 3=判断, 4=简答, 5=编程【V24】',
     `difficulty` TINYINT  DEFAULT 1               COMMENT '难度 1–5',
     `answer`     TEXT     DEFAULT NULL            COMMENT '标准答案（客观题存选项标识，简答存参考答案）',
     `analysis`   TEXT     DEFAULT NULL            COMMENT '解析',
+    `starter_code`  TEXT        NULL              COMMENT '编程题起始代码（可空；仅 type=5）【V24】',
+    `code_language` VARCHAR(16) NULL DEFAULT 'java' COMMENT '编程题语言（v1 仅 java）【V24】',
     `source`     TINYINT  DEFAULT 1               COMMENT '来源：1=学校题库, 2=AI生成, 3=人工录入',
     `status`     TINYINT  NOT NULL DEFAULT 0      COMMENT '审核状态：0=待审核,1=已通过,2=已驳回【阶段二补充】',
     `confidence` TINYINT  DEFAULT NULL            COMMENT 'AI 置信度 0–100，NULL=既有生效题【阶段六补充】',
@@ -801,5 +804,21 @@ CREATE TABLE `doc_chunk_embedding` (
     PRIMARY KEY (`chunk_id`),
     KEY `idx_chunk_emb_model` (`model`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='语料切块向量【V23】';
+
+-- ───────────────────────────── 组：编程题测试用例【V24】─────────────────────────────
+
+DROP TABLE IF EXISTS `question_code_case`;
+
+CREATE TABLE `question_code_case` (
+    `id`              BIGINT     NOT NULL AUTO_INCREMENT,
+    `question_id`     BIGINT     NOT NULL COMMENT '所属编程题（逻辑外键→question.id）',
+    `seq`             INT        NOT NULL COMMENT '用例序号（从 1 起，题内唯一）',
+    `stdin`           TEXT       NULL COMMENT '标准输入',
+    `expected_stdout` TEXT       NULL COMMENT '期望标准输出',
+    `hidden`          TINYINT    NOT NULL DEFAULT 0 COMMENT '1=隐藏用例（学生侧不可见输入/期望/实际）',
+    `created_at`      DATETIME   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_code_case_question_seq` (`question_id`, `seq`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='编程题测试用例【V24】';
 
 SET FOREIGN_KEY_CHECKS = 1;

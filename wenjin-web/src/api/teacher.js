@@ -43,6 +43,13 @@ export function fetchQuestions({ courseId, status, nodeCode, conf, page, size },
 export function reviewQuestions(courseId, ids, action) {
   return http.post('/teacher/questions/review', { ids, action }, { params: { courseId } })
 }
+/**
+ * 编辑编程题的起始代码与用例（教师可见/可改全部用例）。
+ * PUT /teacher/questions/{id}/code  body { starterCode, cases:[{seq, stdin, expectedStdout, hidden}] }
+ */
+export function updateQuestionCode(courseId, id, { starterCode, cases }) {
+  return http.put(`/teacher/questions/${id}/code`, { starterCode, cases }, { params: { courseId } })
+}
 /** T6: 服务端全量审批 — 单次请求替代前端"拉全量id→分块回传"方案 */
 export function reviewAllQuestions(courseId, { status, conf, nodeCode, action }) {
   return http.post('/teacher/questions/review-all', { status, conf, nodeCode, action }, { params: { courseId } })

@@ -1,3 +1,5 @@
+import { codeQuestionFields, isCodeType } from './codeResult.js'
+
 function deepClone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value))
 }
@@ -20,7 +22,8 @@ export function normalizePracticeCard(card) {
       q: question.stem,
       o: (question.options || []).map((option) => option.text),
       optionKeys: (question.options || []).map((option) => option.key),
-      type: question.type || 1
+      type: question.type || 1,
+      ...codeQuestionFields(question)
     }))
   }
 }
@@ -60,7 +63,8 @@ export function normalizeProbeCard(card) {
       q: q.stem || '',
       o: (q.options || []).map((option) => option.text),
       optionKeys: (q.options || []).map((option) => option.key),
-      type: q.type || 4
+      type: q.type || 4,
+      ...codeQuestionFields(q)
     }
   }
 }
@@ -95,7 +99,7 @@ export function buildProbeStudentAnswer(message) {
       .filter((v) => v !== undefined)
       .join(',')
   }
-  if (q.type === 4) {
+  if (q.type === 4 || isCodeType(q.type)) {
     return message.answers?.text != null ? String(message.answers.text) : ''
   }
   const idx = message.answers?.single
@@ -187,6 +191,28 @@ export function applyCitations(messages, event) {
   return next
 }
 
+/**
+ * Normalize a `code_result` SSE event into a typed message (rendered as a 代码运行结果 card).
+ * Kept in the typed snapshot like practice/probe cards; never merged into assistant text.
+ */
+export function createCodeResultMessage(event) {
+  return {
+    role: 'code_result',
+    result: {
+      mode: event?.mode || 'RUN',
+      verdict: event?.verdict || null,
+      passedCases: event?.passedCases ?? null,
+      totalCases: event?.totalCases ?? null,
+      compileError: event?.compileError || '',
+      stdout: event?.stdout || '',
+      stderr: event?.stderr || '',
+      cases: Array.isArray(event?.cases) ? event.cases : [],
+      durationMs: event?.durationMs ?? null,
+      message: event?.message || ''
+    }
+  }
+}
+
 export function createToolMessage(event, ok = null) {
   return {
     role: 'tool',
@@ -247,6 +273,8 @@ export function buildPracticeAnswerList(message) {
           .filter((value) => value !== undefined)
           .join(',')
       }
+    } else if (isCodeType(question.type)) {
+      studentAnswer = message.answers?.text?.[questionIndex] ?? question.starterCode ?? ''
     } else if (question.type === 4) {
       studentAnswer = message.answers?.text?.[questionIndex] !== undefined
         ? message.answers.text[questionIndex]

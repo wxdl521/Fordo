@@ -55,6 +55,12 @@ jobs:
           cache: maven
           cache-dependency-path: wenjin-server/pom.xml
 
+      # DockerSandboxIT (failsafe) runs untrusted-code sandbox checks in real containers; it fails (never skips)
+      # when CI=true and Docker is missing. Pull the image once up front so the IT itself does not time out.
+      - name: Pre-pull code sandbox image
+        timeout-minutes: 5
+        run: docker version && docker pull --quiet eclipse-temurin:21-jdk
+
       - name: Maven verify (tests + JaCoCo gates)
         working-directory: wenjin-server
         env:

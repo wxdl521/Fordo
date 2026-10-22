@@ -45,7 +45,7 @@
 - 课程管理：创建课程、删除课程、发布/下架课程。
 - 图谱审核工作台：节点和边的增删改、待审核边处理、星图预览。
 - 课程标准抽取审核：从图片、PDF、Excel 等材料中抽取图谱草稿，审核后全量替换生效，并记录召回率等指标。
-- 题目审核池：AI 出题、存量题标注、JSON/Excel 题库导入、批量审核。
+- 题目审核池：AI 出题（仅选择题，不生成编程题）、存量题标注、JSON/Excel 题库导入、批量审核；**编程题（type=5，仅 Java）**：JSON 导入时 `type:"CODE"` + `starterCode` + `cases:[{stdin, expectedStdout, hidden}]`（至少 1 个用例，上限 `wenjin.limits.code.max-cases`），教师可通过 `PUT /api/teacher/questions/{id}/code?courseId=` 编辑起始代码与全部用例（含 hidden 勾选）。学生只看到起始代码与非 hidden 样例；练习提交经 `CodeExecutionService.judge` 判分（ACCEPTED 记对，其余记错并进掌握度），判题服务不可用/被限流时该题标记 `ungraded`，**不写答题记录、不影响掌握度**；固定/自适应诊断与理解探针不含编程题。
 - 学情看板：按课程聚合学生掌握度和薄弱分布。
 - Agent 轨迹：按课程分页查看伴侣等 Agent run，展开 steps 查看工具/LLM 调用与截断后的 I/O。
 - 语料审核：上传课件/教材文件（`.md .txt .pdf .docx`，≤10MB，异步入库 + 按知识点名称自动初标）或粘贴 NODE_REF Markdown，审核 chunk↔知识点映射，来源列表显示入库状态与「未关联 N 块」（M8 / RAG R3）；向量模式开时显示每源嵌入覆盖率（已嵌入/总块数）与「重建向量」按钮（RAG R2）。
@@ -70,7 +70,7 @@ Fordo/
 │  ├─ src/main/java/com/wenjin/
 │  │  ├─ controller/                   # 学生端、教师端、管理端 API
 │  │  ├─ service/                      # 诊断、练习、路径、复习、伴侣、作业等业务
-│  │  │  ├─ companion/                 # M4 伴侣工具与治理管道（14 个白名单工具）
+│  │  │  ├─ companion/                 # M4 伴侣工具与治理管道（15 个白名单工具）
 │  │  │  ├─ trace/                     # M5 Agent 执行轨迹埋点
 │  │  │  ├─ memory/                    # M7 长期记忆蒸馏/去重/注入
 │  │  │  ├─ rag/                       # M8 检索与语料入库
@@ -112,6 +112,7 @@ Fordo/
 - `schema.sql`：仅本地空库重建快照（含 `DROP TABLE`，**会删数据**），与 V1 最终 DDL 同步；**生产禁用**。
 - 软件工程演示图谱：`wenjin-server/seed/问津_软件工程图谱_v0.3.json`，42 个节点，53 条边。
 - 软件工程演示题库：`wenjin-server/seed/问津_软件工程题库_v0.1.json`，25 道种子题。
+- Java 编程题演示样例：`wenjin-server/seed/问津_Java编程题样例_v0.1.json`，3 道编程题（含 hidden 用例），不自动导入；导入前把 `nodeCode` 改成目标 Java 课程图谱里真实存在的编码。
 - 本地演示账号来自 `data.sql`：
   - 教师：`demo_teacher / demo`
   - 学生：`demo_student / demo`
@@ -273,7 +274,7 @@ M4 把 AI 伴侣从“读取上下文并回答”升级为“按白名单工具�
 - `start_practice` 通过 nodeCode 或 nodeName 发起 M1 自由练习，默认 2 题，夹紧到 1-3 题，并通过 SSE 推送 `practice_card`。
 - 前端 `Companion.vue` 渲染 `tool_start`、`tool_result` 和 `practice_card`，内嵌 `QuestionAnswerCard` 完成作答提交。
 
-> 工具集随里程碑扩展至 **14 个**：M7 增加 `recall_student_context` / `record_observation`；M8 增加 `search_materials`；M9 增加 `probe_understanding`；M10 增加 `draft_study_plan` / `get_plan_progress`；错因辅导增加 `get_recent_mistakes`；另有 `get_review_queue` / `get_learning_frontier` / `trace_prerequisites` / `schedule_review`。详见各里程碑章节。
+> 工具集随里程碑扩展至 **15 个**：M7 增加 `recall_student_context` / `record_observation`；M8 增加 `search_materials`；M9 增加 `probe_understanding`；M10 增加 `draft_study_plan` / `get_plan_progress`；错因辅导增加 `get_recent_mistakes`；方向 6 增加 `run_code_check`（沙箱编译/运行学生贴出的 Java 代码，见下）；另有 `get_review_queue` / `get_learning_frontier` / `trace_prerequisites` / `schedule_review`。详见各里程碑章节。
 
 相关代码：
 
@@ -462,6 +463,7 @@ M9 为伴侣补齐「确认听懂」与「紧急熔断」两个回路。
 - **理解探针**：`probe_understanding` 工具发起单题探针（EWMA 隔离，不写掌握度），经 SSE 推送 `probe_card`；作答未通过时可「换个方式再讲」。
 - **换策略真实生效**：探针提交结果记入进程内 `ProbeOutcomeStore`（不落库，重启即回到默认讲法）；下一 turn 若焦点节点或最近探针节点有 30 分钟内未通过的探针，服务端按 `StrategySwitcher` 顺序（类比→举例→分步→对比→图谱）选下一个讲法，注入 system prompt 动态段「换种讲法」，同一次失败只切换一次；该 turn 视为讲解并再次自动探针。上一讲法无效 / 改用后通过分别写入程序性记忆 `[STRATEGY][无效|有效]`。
 - **错因辅导**：`get_recent_mistakes`（只读、可缓存；参数 `nodeCode?`、`practiceSessionId?`、`limit?` 1–5 默认 3）读取近期客观题错题（单选/多选/判断，排除简答），返回所选 vs 正确选项及所选干扰项 `point_node_code` 指向的误区节点与 `topMisconceptions`；system prompt「错因辅导」规则要求先查错题、针对误区讲清为什么会选错、不直接念答案。本 turn 若该工具给出误区节点，自动探针改为探第一误区节点。
+- **代码求助 `run_code_check`**（方向 6 / C3）：参数 `code`（必填，≤ `wenjin.limits.code.source-max-chars`，默认 10000）、`stdin`（≤ `tool-stdin-max-chars`，默认 2000）、`questionId`（有则按编程题用例判分，否则只运行）。`sideEffecting`，每个 run 最多 1 次（`wenjin.limits.code.tool-max-per-run`，超限返回 `TOOL_BUDGET_EXCEEDED`）；仅当 `CodeExecutionService.available()`（含 `code-check-enabled` 开关与沙箱可用性）为真时才下发该工具与 prompt「代码求助」规则。回给模型的只有结构化摘要（verdict、编译错误前几行、非 hidden 失败用例对比、stdout 前 300 字），**不回显源码**；agent trace 的 TOOL_CALL 入参与 ToolGovernor 审计日志里 `code`/`stdin` 一律脱敏为 `<redacted len=N sha256=xxxxxxxx>`（`CompanionTool.redactArgumentsForTrace`）；SSE 在 `tool_result` 之后发 `code_result` 卡（同样不含源码，不进消息正文）。评测场景 S23 在 eval profile 注入确定性假沙箱回放。
 - **复盘错题入口**：`POST /api/companion/chat` 请求体可选 `reviewPracticeSessionId`（正整数）；控制器校验该练习会话属于当前学生与课程（否则 404），仅本 turn 有效，作为 `get_recent_mistakes` 的默认会话并在 prompt 中提示先复盘。
 - **phase-1 意图路由**：伴侣第一阶段决策输出 `intent ∈ {EXPLAIN, QUERY, PRACTICE, CHAT}`（缺省 CHAT）；EXPLAIN 后可自动发起探针；练习意图命中时短路到 `start_practice`。
 - **零 LLM 降级**：`companion-llm-enabled=false` 或运行时 LLM 连续失败 → `CompanionDegradeService` 模板话术 + 练习卡（due → weak → frontier），run 记 `DEGRADED`。

@@ -572,3 +572,37 @@ describe('Companion race hardening', () => {
     wrapper.unmount()
   })
 })
+
+describe('Companion in-chat practice submit timeout', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listConversations.mockResolvedValue([])
+    fetchConversation.mockResolvedValue({ messages: [] })
+    chatStream.mockResolvedValue(undefined)
+    localStorage.clear()
+  })
+
+  it('widens the request timeout for CODE answers (judged synchronously on submit)', async () => {
+    const { submitPractice } = await import('../src/api/practice.js')
+    submitPractice.mockResolvedValue({ graded: [] })
+    const { wrapper } = await mountCompanion()
+    const message = {
+      card: {
+        sessionId: 9,
+        questions: [
+          { questionId: 1, type: 1, optionKeys: ['A', 'B'] },
+          { questionId: 2, type: 5, starterCode: 'public class Main {}' }
+        ]
+      },
+      answers: { single: { 0: 1 }, multi: {}, text: {} },
+      phase: 'answering'
+    }
+    await api().submitPracticeMessage(message)
+    expect(submitPractice).toHaveBeenCalledTimes(1)
+    const [sessionId, body, config] = submitPractice.mock.calls[0]
+    expect(sessionId).toBe(9)
+    expect(body.answers).toHaveLength(2)
+    expect(config.timeout).toBe(75000)
+    wrapper.unmount()
+  })
+})

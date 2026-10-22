@@ -65,4 +65,10 @@ public class FeatureFlagsProperties {
      * 主动陪伴（方向 4）：伴侣空会话 opener、事件型提示条、导航小红点。关闭时 /api/companion/opener|hints/** 返回 404。
      */
     private volatile boolean proactiveEnabled = true;
+
+    /**
+     * 编程题判分沙箱 / 伴侣 run_code_check（方向 6）。关闭或沙箱后端不可用时
+     * {@code CodeExecutionService.available()} 为 false，执行请求一律 UNAVAILABLE。
+     */
+    private volatile boolean codeCheckEnabled = true;
 }

@@ -52,7 +52,8 @@ class QuestionBankImportDedupTest {
         lenient().doNothing().when(courseAccessService).assertManageCourse(anyLong());
         QuestionWriteService writeService = new QuestionWriteService(
                 questionMapper, questionOptionMapper, questionNodeMapper,
-                courseMapper, graphQueryService);
+                courseMapper, graphQueryService,
+                org.mockito.Mockito.mock(com.wenjin.mapper.QuestionCodeCaseMapper.class));
         return new QuestionBankImportServiceImpl(
                 aiClient, courseAccessService, writeService);
     }

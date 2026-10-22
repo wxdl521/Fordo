@@ -3,6 +3,7 @@ package com.wenjin.sysconfig;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.AiProperties;
+import com.wenjin.config.CodeCheckProperties;
 import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.dto.AdminConfigGroupVO;
@@ -55,11 +56,12 @@ public class SysConfigService {
     private volatile Map<String, Object> defaults;
 
     public SysConfigService(SysConfigMapper mapper, ConfigRegistry registry, ConfigCrypto crypto,
-                            AiProperties ai, FeatureFlagsProperties features, LimitsProperties limits) {
+                            AiProperties ai, FeatureFlagsProperties features, LimitsProperties limits,
+                            CodeCheckProperties codeCheck) {
         this.mapper = mapper;
         this.registry = registry;
         this.crypto = crypto;
-        this.beans = new ConfigBeans(ai, features, limits);
+        this.beans = new ConfigBeans(ai, features, limits, codeCheck);
     }
 
     // ───────────────────────── 启动 ─────────────────────────
@@ -86,6 +88,7 @@ public class SysConfigService {
             return 0;
         }
         int applied = 0;
+        java.util.Set<String> appliedKeys = new java.util.HashSet<>();
         synchronized (lock) {
             for (SysConfig row : rows) {
                 String key = row.getConfigKey();
@@ -96,11 +99,23 @@ public class SysConfigService {
                 }
                 try {
                     def.apply(beans, decode(def, row));
+                    appliedKeys.add(key);
                     applied++;
                 } catch (Exception e) {
                     // message 只来自 ConfigValues / ConfigCrypto，均不含配置值
                     log.warn("sys_config 覆盖值无法应用，已跳过（沿用默认值） key={} 原因={}", key, e.getMessage());
                 }
+            }
+            // 库里改过地址、却没有（可用的）成对令牌覆盖：不得把启动时（环境变量）的令牌发往新地址
+            for (String urlKey : appliedKeys) {
+                registry.boundSecretOf(urlKey).ifPresent(secret -> {
+                    if (!appliedKeys.contains(secret.key())
+                            && !sameUrl(registry.find(urlKey).orElseThrow().read(beans), defaults.get(urlKey))) {
+                        secret.apply(beans, "");
+                        log.warn("{} 已被覆盖为非默认地址，但 {} 没有对应的覆盖值：令牌已置空，请在管理后台重新填写",
+                                urlKey, secret.key());
+                    }
+                });
             }
         }
         log.info("系统配置覆盖已应用 {} 项（库中共 {} 项）", applied, rows.size());
@@ -135,12 +150,21 @@ public class SysConfigService {
         Object value = ConfigValues.parse(def, rawValue);
         ensureDefaults();
         synchronized (lock) {
+            Object before = def.read(beans);
             if (def.isSecret()) {
                 mapper.upsert(def.key(), crypto.encrypt(def.key(), (String) value), 1, operatorId);
             } else {
                 mapper.upsert(def.key(), ConfigValues.serialize(def, value), 0, operatorId);
             }
             def.apply(beans, value);
+            if (!sameUrl(before, value)) {
+                // 地址变了：成对的令牌作废（删覆盖行 + bean 置空），必须重新填写
+                registry.boundSecretOf(def.key()).ifPresent(secret -> {
+                    mapper.deleteById(secret.key());
+                    secret.apply(beans, "");
+                    log.info("{} 已变更，{} 已作废，需重新填写", def.key(), secret.key());
+                });
+            }
         }
         return toItem(def, mapper.selectById(def.key()));
     }
@@ -154,13 +178,37 @@ public class SysConfigService {
         ConfigKeyDef def = requireDef(key);
         Map<String, Object> d = ensureDefaults();
         synchronized (lock) {
+            Object before = def.read(beans);
             mapper.deleteById(def.key());
             def.apply(beans, d.get(def.key()));
+            if (!sameUrl(before, d.get(def.key()))) {
+                // 地址回到默认：令牌也回到与默认地址成对的启动值
+                registry.boundSecretOf(def.key()).ifPresent(secret -> {
+                    mapper.deleteById(secret.key());
+                    secret.apply(beans, d.get(secret.key()));
+                });
+            }
         }
         return toItem(def, null);
     }
 
     // ───────────────────────── 内部 ─────────────────────────
+
+    /** 地址比较：忽略首尾空白与末尾斜杠；非地址值按 equals。 */
+    static boolean sameUrl(Object a, Object b) {
+        return java.util.Objects.equals(normalizeUrl(a), normalizeUrl(b));
+    }
+
+    private static Object normalizeUrl(Object v) {
+        if (!(v instanceof String s)) {
+            return v;
+        }
+        String t = s.strip();
+        while (t.endsWith("/")) {
+            t = t.substring(0, t.length() - 1);
+        }
+        return t;
+    }
 
     private ConfigKeyDef requireDef(String key) {
         return registry.find(key).orElseThrow(() -> new BusinessException(ResultCode.BAD_REQUEST,

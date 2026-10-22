@@ -94,7 +94,7 @@ export function submitProbe(sessionId, payload, config) {
 
 /**
  * Dispatch a parsed companion SSE event to optional callbacks.
- * Supported events: `meta`, `tool_start`, `tool_result`, `practice_card`, `probe_card`, `token`, `citations`
+ * Supported events: `meta`, `tool_start`, `tool_result`, `practice_card`, `probe_card`, `code_result`, `token`, `citations`
  * ({ valid: number[], invalid: number[] }, sent once before `done` when the reply cites 资料 #N), `done`, `error`.
  *
  * @param {string} eventType
@@ -108,6 +108,7 @@ export function submitProbe(sessionId, payload, config) {
  *   onToolResult?: (event: any) => void,
  *   onPracticeCard?: (event: any) => void,
  *   onProbeCard?: (event: any) => void,
+ *   onCodeResult?: (event: any) => void,
  *   onCitations?: (event: { valid: number[], invalid: number[] }) => void
  * }} callbacks
  * @returns {{ handled: boolean, done: boolean }}
@@ -128,6 +129,9 @@ export function dispatchChatStreamEvent(eventType, payload, callbacks = {}) {
       return { handled: true, done: false }
     case 'probe_card':
       callbacks.onProbeCard?.(payload)
+      return { handled: true, done: false }
+    case 'code_result':
+      callbacks.onCodeResult?.(payload)
       return { handled: true, done: false }
     case 'citations':
       callbacks.onCitations?.(payload)
@@ -158,6 +162,7 @@ export function dispatchChatStreamEvent(eventType, payload, callbacks = {}) {
  *   onToolResult?: (event: any) => void,
  *   onPracticeCard?: (event: any) => void,
  *   onProbeCard?: (event: any) => void,
+ *   onCodeResult?: (event: any) => void,
  *   onCitations?: (event: { valid: number[], invalid: number[] }) => void
  * }} callbacks
  * @param {{ signal?: AbortSignal }} [options]

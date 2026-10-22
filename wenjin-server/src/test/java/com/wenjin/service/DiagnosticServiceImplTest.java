@@ -258,6 +258,35 @@ class DiagnosticServiceImplTest {
     }
 
     @Test
+    @DisplayName("C2 固定诊断卷排除编程题：即使 CODE 题已 APPROVED 且挂在章节主节点上也不入卷")
+    void composePaperExcludesCodeQuestions() {
+        List<Question> pool = new ArrayList<>(allQuestions);
+        List<QuestionNode> qns = new ArrayList<>(allQuestionNodes);
+        for (long id = 900; id < 905; id++) {
+            Question code = new Question();
+            code.setId(id);
+            code.setCourseId(COURSE_ID);
+            code.setStem("编程题" + id);
+            code.setType(5);
+            code.setStatus(QuestionStatus.APPROVED);
+            pool.add(code);
+            QuestionNode qn = new QuestionNode();
+            qn.setId(id);
+            qn.setQuestionId(id);
+            qn.setNodeId(100L);
+            qn.setWeight(1);
+            qns.add(qn);
+        }
+        stubComposeHappyPath(pool, qns, allKgNodes);
+
+        PaperVO paper = impl().composePaper(COURSE_ID);
+
+        assertThat(paper.getQuestions()).isNotEmpty();
+        assertThat(paper.getQuestions()).noneMatch(q -> q.getType() != null && q.getType() == 5);
+        assertThat(paper.getQuestions()).noneMatch(q -> q.getQuestionId() >= 900);
+    }
+
+    @Test
     @DisplayName("B 空题库：total=0，不建会话、无 token")
     void emptyPoolReturnsEmptyPaper() {
         when(questionMapper.selectList(any())).thenReturn(List.of());

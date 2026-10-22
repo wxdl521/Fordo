@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.AiProperties;
+import com.wenjin.config.CodeCheckProperties;
 import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.dto.AdminConfigGroupVO;
@@ -43,6 +44,10 @@ class SysConfigServiceTest {
     private static final String PLAIN_KEY = "sk-live-9f8e7d6c5b4a3210";
     private static final String DEFAULT_KEY = "sk-from-env-11112222zzzz";
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final String JUDGE0_URL_KEY = "wenjin.code-check.judge0.base-url";
+    private static final String JUDGE0_TOKEN_KEY = "wenjin.code-check.judge0.api-key";
+    private static final String JUDGE0_URL = "http://judge0.internal:2358";
+    private static final String JUDGE0_ENV_TOKEN = "judge0-env-token-aaaa";
 
     @Mock
     private SysConfigMapper mapper;
@@ -50,6 +55,7 @@ class SysConfigServiceTest {
     private AiProperties ai;
     private FeatureFlagsProperties features;
     private LimitsProperties limits;
+    private CodeCheckProperties codeCheck;
     private ConfigCrypto crypto;
     private SysConfigService service;
 
@@ -64,7 +70,10 @@ class SysConfigServiceTest {
         features = new FeatureFlagsProperties();
         limits = new LimitsProperties();
         crypto = new ConfigCrypto("", "dev-secret-change-me-in-prod", new String[]{"test"});
-        service = new SysConfigService(mapper, new ConfigRegistry(), crypto, ai, features, limits);
+        codeCheck = new CodeCheckProperties();
+        codeCheck.getJudge0().setBaseUrl(JUDGE0_URL);
+        codeCheck.getJudge0().setApiKey(JUDGE0_ENV_TOKEN);
+        service = new SysConfigService(mapper, new ConfigRegistry(), crypto, ai, features, limits, codeCheck);
     }
 
     // ───────────────────────── list ─────────────────────────
@@ -80,7 +89,7 @@ class SysConfigServiceTest {
         List<AdminConfigGroupVO> groups = service.list();
 
         assertThat(groups).extracting(AdminConfigGroupVO::getGroup)
-                .containsExactly("AI 文本", "AI 视觉", "AI 嵌入", "功能开关", "限额");
+                .containsExactly("AI 文本", "AI 视觉", "AI 嵌入", "功能开关", "限额", "代码沙箱");
         AdminConfigItemVO model = item(groups, "wenjin.ai.model");
         assertThat(model.getType()).isEqualTo("string");
         assertThat(model.getValue()).isEqualTo("deepseek-v4-pro");
@@ -278,6 +287,67 @@ class SysConfigServiceTest {
 
         assertThat(service.applyStoredOverrides()).isZero();
         assertThat(ai.getModel()).isEqualTo("deepseek-v4-pro");
+    }
+
+    // ───────────────────── Judge0 基址变更作废令牌（M4）─────────────────────
+
+    @Test
+    @DisplayName("改 Judge0 基址：令牌立即作废（bean 置空 + 删覆盖行），不会被发往新地址；需重新填写")
+    void judge0UrlChange_invalidatesToken() {
+        service.snapshotDefaults();
+        service.update(JUDGE0_URL_KEY, "http://evil.example:2358", 1L);
+
+        assertThat(codeCheck.getJudge0().getBaseUrl()).isEqualTo("http://evil.example:2358");
+        assertThat(codeCheck.getJudge0().getApiKey()).isEmpty();
+        verify(mapper).deleteById(JUDGE0_TOKEN_KEY);
+
+        service.update(JUDGE0_TOKEN_KEY, "new-token-for-new-host", 1L);
+        assertThat(codeCheck.getJudge0().getApiKey()).isEqualTo("new-token-for-new-host");
+    }
+
+    @Test
+    @DisplayName("基址没变（含首尾空白/末尾斜杠差异）：令牌保留")
+    void judge0SameUrl_keepsToken() {
+        service.update(JUDGE0_URL_KEY, JUDGE0_URL + "/", 1L);
+        assertThat(codeCheck.getJudge0().getApiKey()).isEqualTo(JUDGE0_ENV_TOKEN);
+        verify(mapper, never()).deleteById(JUDGE0_TOKEN_KEY);
+    }
+
+    @Test
+    @DisplayName("reset 基址：令牌回到与默认基址成对的启动值（删令牌覆盖行）")
+    void judge0UrlReset_restoresPairedToken() {
+        service.snapshotDefaults();
+        service.update(JUDGE0_URL_KEY, "http://other:2358", 1L);
+        service.update(JUDGE0_TOKEN_KEY, "token-for-other", 1L);
+
+        service.reset(JUDGE0_URL_KEY);
+
+        assertThat(codeCheck.getJudge0().getBaseUrl()).isEqualTo(JUDGE0_URL);
+        assertThat(codeCheck.getJudge0().getApiKey()).isEqualTo(JUDGE0_ENV_TOKEN);
+    }
+
+    @Test
+    @DisplayName("启动应用：库里改过基址却没有令牌覆盖 → 不把环境变量里的令牌发往新地址（置空）；有令牌覆盖则用它")
+    void judge0StoredUrlWithoutToken_doesNotReuseEnvToken() {
+        when(mapper.selectList(any())).thenReturn(List.of(row(JUDGE0_URL_KEY, "http://moved:2358", 0)));
+        service.snapshotDefaults();
+        service.applyStoredOverrides();
+        assertThat(codeCheck.getJudge0().getBaseUrl()).isEqualTo("http://moved:2358");
+        assertThat(codeCheck.getJudge0().getApiKey()).isEmpty();
+
+        codeCheck.getJudge0().setBaseUrl(JUDGE0_URL);
+        codeCheck.getJudge0().setApiKey(JUDGE0_ENV_TOKEN);
+        when(mapper.selectList(any())).thenReturn(List.of(
+                row(JUDGE0_URL_KEY, "http://moved:2358", 0),
+                row(JUDGE0_TOKEN_KEY, crypto.encrypt(JUDGE0_TOKEN_KEY, "token-for-moved"), 1)));
+        service.applyStoredOverrides();
+        assertThat(codeCheck.getJudge0().getApiKey()).isEqualTo("token-for-moved");
+
+        // 库里的基址与默认相同：环境令牌照常可用
+        codeCheck.getJudge0().setApiKey(JUDGE0_ENV_TOKEN);
+        when(mapper.selectList(any())).thenReturn(List.of(row(JUDGE0_URL_KEY, JUDGE0_URL, 0)));
+        service.applyStoredOverrides();
+        assertThat(codeCheck.getJudge0().getApiKey()).isEqualTo(JUDGE0_ENV_TOKEN);
     }
 
     // ───────────────────────── helpers ─────────────────────────

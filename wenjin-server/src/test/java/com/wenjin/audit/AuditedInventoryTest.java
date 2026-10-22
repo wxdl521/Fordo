@@ -68,6 +68,7 @@ class AuditedInventoryTest {
             // 题库
             "TeacherQuestionController#review=QUESTION_REVIEW:QUESTION",
             "TeacherQuestionController#reviewAll=QUESTION_REVIEW_ALL:QUESTION",
+            "TeacherQuestionController#updateCode=QUESTION_CODE_UPDATE:QUESTION",
             "QuestionAdminController#generate=QUESTION_GENERATE:QUESTION",
             "QuestionAdminController#importJson=QUESTION_IMPORT:QUESTION",
             "QuestionAdminController#importExcel=QUESTION_IMPORT:QUESTION",

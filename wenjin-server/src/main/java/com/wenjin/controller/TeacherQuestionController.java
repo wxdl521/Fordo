@@ -2,9 +2,11 @@ package com.wenjin.controller;
 
 import com.wenjin.audit.Audited;
 import com.wenjin.common.Result;
+import com.wenjin.dto.CodeQuestionUpdateRequest;
 import com.wenjin.dto.QuestionReviewRequest;
 import com.wenjin.dto.ReviewAllRequest;
 import com.wenjin.dto.TeacherQuestionPageVO;
+import com.wenjin.dto.TeacherQuestionVO;
 import com.wenjin.service.TeacherQuestionService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -83,5 +85,20 @@ public class TeacherQuestionController {
     ) {
         int affected = teacherQuestionService.reviewAll(courseId, req);
         return Result.ok(affected);
+    }
+
+    /**
+     * 编辑编程题：起始代码 + 全量替换测试用例（含 hidden 勾选）。
+     *
+     * @return 更新后的题目（含全部用例）
+     */
+    @Audited(action = "QUESTION_CODE_UPDATE", target = "QUESTION")
+    @PutMapping("/{questionId}/code")
+    public Result<TeacherQuestionVO> updateCode(
+            @RequestParam @Positive Long courseId,
+            @PathVariable @Positive Long questionId,
+            @Valid @RequestBody CodeQuestionUpdateRequest req
+    ) {
+        return Result.ok(teacherQuestionService.updateCode(courseId, questionId, req));
     }
 }

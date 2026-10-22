@@ -24,7 +24,7 @@ class GoldenInventoryTest {
             "query_mastery", "get_node_detail", "start_practice", "trace_prerequisites",
             "get_learning_frontier", "get_review_queue", "schedule_review", "recall_student_context",
             "record_observation", "search_materials", "probe_understanding", "draft_study_plan",
-            "get_plan_progress", "get_recent_mistakes");
+            "get_plan_progress", "get_recent_mistakes", "run_code_check");
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 

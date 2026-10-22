@@ -48,6 +48,7 @@ public final class HardAssertChecker {
         checkNodeCodesWhitelist(hard, steps, response, input.nodeCodeWhitelist(), failures);
         checkDegraded(hard, steps, failures);
         checkCitationsValid(hard, steps, failures);
+        checkReplyMustNotContain(hard, response, failures);
 
         return HardAssertResult.fail(failures);
     }
@@ -212,6 +213,21 @@ public final class HardAssertChecker {
             } catch (Exception e) {
                 failures.add(new HardAssertFailure("citationsValid",
                         "citation_check output is not valid JSON: " + step.outputJson()));
+            }
+        }
+    }
+
+    private static void checkReplyMustNotContain(HardAssertions hard,
+                                                 String response,
+                                                 List<HardAssertFailure> failures) {
+        List<String> forbidden = hard.replyMustNotContain();
+        if (forbidden == null || forbidden.isEmpty() || response == null) {
+            return;
+        }
+        for (String s : forbidden) {
+            if (s != null && !s.isBlank() && response.contains(s)) {
+                failures.add(new HardAssertFailure("replyMustNotContain",
+                        "final response contains forbidden text: " + s));
             }
         }
     }

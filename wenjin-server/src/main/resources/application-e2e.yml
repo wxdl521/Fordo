@@ -17,6 +17,7 @@ wenjin:
     proactive-enabled: true
     companion-llm-enabled: true
     reflection-enabled: true
+    code-check-enabled: true          # 本机无 docker 时 available()=false → UNAVAILABLE
   limits:
     rag:
       allow-hashing-embedding: true   # e2e 无嵌入 key 时用离线哈希嵌入跑混合检索

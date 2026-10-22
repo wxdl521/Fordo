@@ -14,4 +14,6 @@ public final class QuestionType {
     public static final int TRUE_FALSE = 3;
     /** 简答题（不自动判分） */
     public static final int SHORT_ANSWER = 4;
+    /** 编程题（v1 仅 Java；按 question_code_case 用例在沙箱中判分，见 service.code） */
+    public static final int CODE = 5;
 }

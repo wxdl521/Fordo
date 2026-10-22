@@ -79,6 +79,13 @@
               <span class="cp-tool-state">{{ toolStateText(msg) }}</span>
             </div>
 
+            <div v-else-if="msg.role === 'code_result'" class="cp-practice" data-testid="cp-code-result">
+              <div class="cp-practice-head">
+                <div class="cp-practice-title">代码运行结果</div>
+              </div>
+              <CodeResultView :result="msg.result" />
+            </div>
+
             <div v-else-if="msg.role === 'probe'" class="cp-practice">
               <div class="cp-practice-head">
                 <div class="cp-practice-title">理解探针 · {{ msg.card?.nodeName || msg.card?.nodeCode || '节点' }}</div>
@@ -206,7 +213,14 @@
                       <span class="cp-grade-title">{{ practiceGradeTitle(msg, grade, gradeIndex) }}</span>
                       <span class="cp-grade-state">{{ practiceGradeState(grade) }}</span>
                     </div>
-                    <div v-if="grade.correctAnswer && grade.correct !== true" class="cp-grade-extra">
+                    <CodeResultView
+                      v-if="grade.codeResult || grade.ungraded"
+                      class="cp-grade-code"
+                      :result="grade.codeResult"
+                      :ungraded="!!grade.ungraded"
+                      :message="grade.message || ''"
+                    />
+                    <div v-if="grade.correctAnswer && grade.correct !== true && !grade.codeResult" class="cp-grade-extra">
                       正确答案：{{ grade.correctAnswer }}
                     </div>
                     <div v-if="grade.analysis && grade.correct !== true" class="cp-grade-extra">
@@ -288,6 +302,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import QuestionAnswerCard from '../components/QuestionAnswerCard.vue'
+import CodeResultView from '../components/CodeResultView.vue'
 import CompanionOpener from '../components/CompanionOpener.vue'
 import CompanionHintBar from '../components/CompanionHintBar.vue'
 import {
@@ -304,6 +319,7 @@ import { fetchStudentChunk } from '../api/student.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
 import { useAutoReview } from '../composables/useAutoReview.js'
 import { buildCompanionChatPayload, readCompanionNodeCode } from '../utils/companionContext.js'
+import { codeAnswerCount, isCodeType, practiceSubmitTimeoutMs } from '../utils/codeResult.js'
 import { createDebouncedPersist } from '../utils/companionPersistence.js'
 import { createLatestRequest } from '../utils/latestRequest.js'
 import {
@@ -316,6 +332,7 @@ import {
   conversationSnapshotKey,
   createPracticeMessage,
   createProbeMessage,
+  createCodeResultMessage,
   createToolMessage,
   createTypedMessagesSnapshot,
   normalizeConversationMessage,
@@ -398,6 +415,7 @@ function roleLabel(role) {
   if (role === 'assistant') return 'AI'
   if (role === 'tool') return '工具'
   if (role === 'probe') return '探针'
+  if (role === 'code_result') return '代码'
   return '练习'
 }
 
@@ -464,7 +482,10 @@ function practiceSelectedSet(message) {
 }
 
 function practiceTextValue(message) {
-  return message.answers.text[message.currentIndex] || ''
+  const v = message.answers.text[message.currentIndex]
+  if (v !== undefined) return v
+  const q = practiceCurrentQuestion(message)
+  return isCodeType(q?.type) ? (q.starterCode || '') : ''
 }
 
 function practiceIsMulti(message) {
@@ -480,7 +501,7 @@ function practiceIsLast(message) {
 }
 
 function practiceHasSelection(message) {
-  if (practiceIsShort(message)) return true
+  if (practiceIsShort(message) || isCodeType(practiceCurrentQuestion(message)?.type)) return true
   if (practiceIsMulti(message)) return practiceSelectedSet(message).length > 0
   return typeof practiceSelected(message) === 'number'
 }
@@ -610,7 +631,7 @@ function onPracticeSkip(message) {
 
 function onPracticeNext(message) {
   if (lockPractice(message)) return
-  if (!practiceIsShort(message) && !practiceHasSelection(message)) return
+  if (!practiceIsShort(message) && !isCodeType(practiceCurrentQuestion(message)?.type) && !practiceHasSelection(message)) return
 
   clearPracticeError(message)
   if (practiceIsLast(message)) {
@@ -636,6 +657,9 @@ async function submitPracticeMessage(message) {
   try {
     const result = await submitPractice(message.card.sessionId, {
       answers
+    }, {
+      // 编程题在提交时同步判分：按编程题数放宽超时（默认 15s 不够）
+      timeout: practiceSubmitTimeoutMs(codeAnswerCount(message.card.questions, answers))
     })
     message.submitResult = result
     message.phase = 'result'
@@ -745,6 +769,7 @@ function practiceGradeTitle(message, grade, gradeIndex) {
 }
 
 function practiceGradeState(grade) {
+  if (grade.ungraded) return '未判分'
   if (grade.correct === true) return '正确'
   if (grade.correct === false) return '需复习'
   return '已提交'
@@ -939,6 +964,11 @@ async function sendMessage(text, extra = {}) {
       onPracticeCard: (event) => {
         if (!isCurrent()) return
         msgs.value.push(createPracticeMessage(event))
+        scrollToEnd()
+      },
+      onCodeResult: (event) => {
+        if (!isCurrent()) return
+        msgs.value.push(createCodeResultMessage(event))
         scrollToEnd()
       },
       onProbeCard: (event) => {

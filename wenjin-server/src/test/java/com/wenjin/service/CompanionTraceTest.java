@@ -84,6 +84,8 @@ class CompanionTraceTest {
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.lenient().when(toolGovernor.redactArgumentsForTrace(any(), any()))
+                .thenAnswer(org.mockito.AdditionalAnswers.returnsSecondArg());
         LimitsProperties limits = new LimitsProperties();
         service = new CompanionServiceImpl(
                 conversationMapper,
