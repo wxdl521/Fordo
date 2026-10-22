@@ -53,4 +53,22 @@ class StrategySwitcherTest {
         assertThat(order).hasSize(Strategy.values().length);
         assertThat(EnumSet.copyOf(order)).containsExactlyInAnyOrder(Strategy.values());
     }
+
+    @Test
+    @DisplayName("每种策略都有中文名与讲法说明；重讲指令含节点、策略名与『避免重复』")
+    void labelsAndDirective() {
+        for (Strategy s : Strategy.values()) {
+            assertThat(StrategySwitcher.label(s)).isNotBlank();
+            assertThat(StrategySwitcher.instruction(s)).isNotBlank();
+        }
+        assertThat(StrategySwitcher.label(Strategy.ANALOGY)).isEqualTo("类比");
+        assertThat(StrategySwitcher.label(Strategy.VISUAL_MAP)).isEqualTo("图谱");
+        String directive = StrategySwitcher.reexplainDirective(Strategy.CONTRAST, "用例图（SE-3.2）");
+        assertThat(directive)
+                .contains("用例图（SE-3.2）")
+                .contains("理解探针未通过")
+                .contains("『对比』")
+                .contains(StrategySwitcher.instruction(Strategy.CONTRAST))
+                .contains("避免重复上次的讲法");
+    }
 }

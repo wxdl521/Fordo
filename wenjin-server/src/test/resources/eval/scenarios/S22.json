@@ -1,0 +1,33 @@
+{
+  "code": "S22",
+  "title": "复盘错题（错因辅导）",
+  "status": "ENABLED",
+  "persona": {
+    "masteryOverrides": [
+      {"nodeCode": "SE-3.2", "raw": 0.45, "effective": 0.40}
+    ],
+    "reviewQueue": [],
+    "mistakes": [
+      {"nodeCode": "SE-3.2", "misconceptionNodeCode": "SE-2.1"},
+      {"nodeCode": "SE-3.1", "misconceptionNodeCode": "SE-2.2"}
+    ],
+    "note": "T7 — 用例图题选错（误把需求获取方法当用例），应先 get_recent_mistakes，针对误区节点讲为什么会选错，不直接念答案；讲完后自动就误区节点出探针"
+  },
+  "script": [
+    {"user": "帮我复盘一下刚才那次练习的错题"}
+  ],
+  "hard": {
+    "mustCallTools": ["get_recent_mistakes"],
+    "mustNotCallTools": ["start_practice", "schedule_review"],
+    "maxToolCalls": 4,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "misconception_fit", "desc": "是否围绕误区节点讲清为什么会选错（对比所选与正确选项），而非泛泛讲解或直接念答案", "threshold": 4},
+      {"key": "guidance", "desc": "是否启发式引导学生自己发现错误、给出下一步", "threshold": 3}
+    ]
+  }
+}

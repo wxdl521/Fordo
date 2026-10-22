@@ -4,6 +4,8 @@ import com.wenjin.eval.hard.HardAssertFailure;
 import com.wenjin.eval.hard.HardAssertResult;
 import com.wenjin.eval.judge.JudgeResult;
 import com.wenjin.eval.judge.JudgeScore;
+import com.wenjin.eval.judge.JudgeVerdict;
+import com.wenjin.eval.metrics.EvalCaseMetrics;
 import com.wenjin.eval.runner.EvalCaseOutcome;
 
 import java.io.IOException;
@@ -71,8 +73,8 @@ public final class EvalReportGenerator {
         for (EvalReportCase c : cases) {
             EvalCaseOutcome o = c.outcome();
             String hard = o.skipped() ? "—" : (o.hardPass() ? "PASS" : "FAIL");
-            String judge = formatJudgeSummary(c.judge());
-            String overall = overallLabel(o, c.judge());
+            String judge = formatJudgeSummary(c);
+            String overall = overallLabel(c);
             sb.append("| ")
                     .append(escapeCell(o.scenarioCode())).append(" | ")
                     .append(o.mode()).append(" | ")
@@ -83,6 +85,10 @@ public final class EvalReportGenerator {
         }
         if (cases.isEmpty()) {
             sb.append("| _(empty)_ | — | — | — | — | — |\n");
+        }
+        long na = cases.stream().filter(c -> !c.outcome().skipped() && c.judge() == null).count();
+        if (na > 0) {
+            sb.append("\nJudge N/A (not run, not counted as failure): ").append(na).append('\n');
         }
     }
 
@@ -98,6 +104,15 @@ public final class EvalReportGenerator {
         sb.append("- **Run id**: ").append(o.runId() == null ? "—" : o.runId()).append('\n');
         sb.append("- **Conversation id**: ")
                 .append(o.conversationId() == null ? "—" : o.conversationId()).append('\n');
+        EvalCaseMetrics m = o.metrics();
+        if (m != null) {
+            sb.append("- **Metrics**: ttft=").append(m.ttftMs() == null ? "—" : m.ttftMs() + "ms")
+                    .append(", total=").append(m.totalMs() == null ? "—" : m.totalMs() + "ms")
+                    .append(", llmCalls=").append(m.llmCalls())
+                    .append(", toolCalls=").append(m.toolCalls())
+                    .append(", tokens=").append(m.tokensIn()).append('/').append(m.tokensOut())
+                    .append(m.tokensEstimated() ? " (estimated)" : "").append('\n');
+        }
         sb.append("- **Tools called**: ")
                 .append(o.toolsCalled().isEmpty() ? "_(none)_" : String.join(", ", o.toolsCalled()))
                 .append('\n');
@@ -133,6 +148,14 @@ public final class EvalReportGenerator {
             if (!judge.success()) {
                 sb.append("- **Failure**: ").append(nullToDash(judge.failureReason())).append("\n\n");
             } else {
+                if (!c.dimensions().isEmpty()) {
+                    JudgeVerdict v = c.verdict();
+                    sb.append("- **Verdict**: ").append(v.status());
+                    if (!v.passed()) {
+                        sb.append(" (below threshold: ").append(String.join(", ", v.failedKeys())).append(')');
+                    }
+                    sb.append('\n');
+                }
                 sb.append('\n');
                 sb.append("| Dimension | Score | Reason |\n");
                 sb.append("|-----------|-------|--------|\n");
@@ -146,31 +169,32 @@ public final class EvalReportGenerator {
         }
     }
 
-    private static String formatJudgeSummary(JudgeResult judge) {
+    private static String formatJudgeSummary(EvalReportCase c) {
+        EvalCaseOutcome o = c.outcome();
+        JudgeResult judge = c.judge();
         if (judge == null) {
-            return "—";
+            return o.skipped() ? "—" : "N/A";
         }
         if (!judge.success()) {
             return "FAIL";
         }
+        String label = c.verdict().status() == JudgeVerdict.Status.FAIL ? "FAIL" : "PASS";
         if (judge.scores().isEmpty()) {
-            return "PASS";
+            return label;
         }
         double avg = judge.scores().stream().mapToInt(JudgeScore::score).average().orElse(0);
-        return String.format("PASS (avg %.1f)", avg);
+        return String.format("%s (avg %.1f)", label, avg);
     }
 
-    private static String overallLabel(EvalCaseOutcome o, JudgeResult judge) {
+    /** Overall = hard pass AND judge verdict; a missing judge (N/A) never fails the case. */
+    static String overallLabel(EvalReportCase c) {
+        EvalCaseOutcome o = c.outcome();
         if (o.skipped()) {
             return "SKIP";
         }
-        boolean hardOk = o.hardPass();
-        boolean judgeOk = judge == null || judge.success();
-        // When judge ran and failed contract → not overall pass; score thresholds are suite policy later.
-        if (hardOk && judgeOk) {
-            return "PASS";
-        }
-        return "FAIL";
+        JudgeVerdict v = c.verdict();
+        boolean judgeOk = v.status() != JudgeVerdict.Status.FAIL;
+        return o.hardPass() && judgeOk ? "PASS" : "FAIL";
     }
 
     private static String escapeCell(String s) {

@@ -69,6 +69,6 @@ public record ToolParamSpec(
         return new ToolParamSpec(name, ParamType.ARRAY, required, null, null, null, null, null);
     }
 
-    /** Common knowledge-node code pattern (e.g. KT12). */
-    public static final String NODE_CODE_PATTERN = "^[A-Za-z][A-Za-z0-9_-]{0,31}$";
+    /** Common knowledge-node code pattern (e.g. KT12, SE-3.2 — dots allowed, same as NodeRefMarkdownParser). */
+    public static final String NODE_CODE_PATTERN = "^[A-Za-z][A-Za-z0-9_.-]{0,31}$";
 }

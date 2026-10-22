@@ -167,6 +167,12 @@
         <!-- 操作按钮 -->
         <div class="np-result-actions">
           <router-link :to="backLink" class="np-btn-acc np-btn-link">返回学习路径</router-link>
+          <router-link
+            v-if="reviewLink"
+            :to="reviewLink"
+            class="np-btn-restart np-btn-review"
+            data-testid="np-review-mistakes"
+          >和伴侣复盘错题</router-link>
           <button class="np-btn-restart" @click="restartPractice">再练一次</button>
         </div>
 
@@ -198,6 +204,19 @@ const nodeId = computed(() => {
 const pathItemId = computed(() => {
   const v = Number(route.query.pathItemId)
   return v > 0 ? v : null
+})
+
+/** 有错题时跳伴侣复盘：/companion?nodeCode=<主节点>&review=<练习会话>（课程同行） */
+const reviewLink = computed(() => {
+  const graded = submitResult.value?.graded || []
+  if (!graded.some((g) => g.correct === false)) return null
+  if (!sessionId.value) return null
+  const q = {}
+  if (courseId.value) q.courseId = courseId.value
+  const code = nodeInfo.value?.nodeCode
+  if (code) q.nodeCode = code
+  q.review = sessionId.value
+  return { path: '/companion', query: q }
 })
 
 const backLink = computed(() => {
@@ -1080,6 +1099,8 @@ onBeforeUnmount(() => {
   transition: color 0.15s;
 }
 .np-btn-restart:hover { color: var(--ink); }
+.np-btn-review { color: var(--acc); font-size: 13.5px; text-decoration: none; border: 1px solid var(--acc); border-radius: 999px; padding: 6px 16px; }
+.np-btn-review:hover { color: var(--acc); background: var(--hover); }
 
 /* ── 辅助色变量（对齐 LearningPath） ────────────────────────────── */
 .wj-practice {

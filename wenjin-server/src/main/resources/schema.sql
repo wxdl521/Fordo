@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════
 --  问津 · 知识图谱驱动的个性化学习导航系统
---  本地空库重建快照（当前最终 DDL，含 V3–V20；共 42 张业务表）
+--  本地空库重建快照（当前最终 DDL，含 V3–V22；共 43 张业务表）
 --
 --  ⚠ 仅本地空库 / 会删数据 / 生产禁用
 --    · 本脚本含 DROP TABLE IF EXISTS，会清空目标库业务表数据。
---    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V20）。
+--    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V22）。
 --    · 新增版本化迁移（Vn）后，必须把最终 DDL 同步回本文件，保持本地快照一致。
 --    · 应用启动默认 spring.flyway.enabled=false（WENJIN_FLYWAY_ENABLED），
 --      普通应用账号只有 DML；发布流水线用 migrator 凭据单独跑迁移作业。
@@ -24,7 +24,9 @@
 --   12. V17 增 clazz / clazz_student / clazz_course（管理后台班级；含物理 FK，删班级级联删成员与课程关联行）。
 --   13. V18 增 sys_config（管理后台系统配置覆盖层；secret 存 AES-GCM 密文，无物理 FK）。
 --   14. V19 增 review_pin（今日复习置顶）；V20 增 sys_user.email（注册邮箱，可空唯一）。
---   15. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--   15. V21 增 answer_record.idx_student_course_time（错因辅导按时间取最近错题）。
+--   16. V22 增 companion_hint_log（主动陪伴提示条展示/关闭日志，无物理 FK）。
+--   17. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -322,6 +324,7 @@ CREATE TABLE `answer_record` (
     `fixed_diagnostic_session_id` BIGINT DEFAULT NULL COMMENT '固定诊断会话ID（scene=1 固定卷时非空，物理外键→diagnostic_session.id）【V3】',
     PRIMARY KEY (`id`),
     KEY `idx_student_course` (`student_id`, `course_id`),
+    KEY `idx_student_course_time` (`student_id`, `course_id`, `answered_at`) COMMENT '【V21】错因辅导按时间取最近错题',
     KEY `idx_question` (`question_id`),
     UNIQUE KEY `uk_fixed_diag_session_question` (`fixed_diagnostic_session_id`, `question_id`),
     CONSTRAINT `fk_answer_student` FOREIGN KEY (`student_id`) REFERENCES `sys_user` (`id`),
@@ -765,5 +768,22 @@ CREATE TABLE `review_pin` (
     UNIQUE KEY `uk_review_pin` (`student_id`, `course_id`, `pin_date`, `node_code`),
     KEY `idx_review_pin_lookup` (`student_id`, `course_id`, `pin_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='今日复习手动置顶（伴侣 schedule_review）【V19】';
+
+-- ───────────────────────────── 组：主动陪伴提示日志【V22】─────────────────────────────
+
+DROP TABLE IF EXISTS `companion_hint_log`;
+
+CREATE TABLE `companion_hint_log` (
+    `id`           BIGINT       NOT NULL AUTO_INCREMENT,
+    `student_id`   BIGINT       NOT NULL COMMENT '学生 sys_user.id',
+    `course_id`    BIGINT       NOT NULL COMMENT '课程 course.id',
+    `hint_key`     VARCHAR(96)  NOT NULL COMMENT '提示实例键，如 ERROR_BURST:session:123',
+    `hint_type`    VARCHAR(32)  NOT NULL COMMENT 'ERROR_BURST / DECAY / PLAN_BEHIND',
+    `shown_at`     DATETIME     NOT NULL COMMENT '最近一次展示时间',
+    `dismissed_at` DATETIME     NULL COMMENT '学生关闭时间；非空则不再展示',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_companion_hint` (`student_id`, `course_id`, `hint_key`),
+    KEY `idx_companion_hint_shown` (`student_id`, `course_id`, `shown_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='伴侣主动提示条展示/关闭日志【V22】';
 
 SET FOREIGN_KEY_CHECKS = 1;

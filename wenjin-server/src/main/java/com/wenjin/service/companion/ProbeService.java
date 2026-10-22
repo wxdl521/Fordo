@@ -18,6 +18,7 @@ import com.wenjin.support.AnswerGrader;
 import com.wenjin.support.QuestionPicker;
 import com.wenjin.support.QuestionStatus;
 import com.wenjin.support.QuestionType;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -40,6 +41,8 @@ public class ProbeService {
     private final QuestionMapper questionMapper;
     private final QuestionOptionMapper optionMapper;
     private final QuestionPicker questionPicker;
+    /** 探针结果记录（换策略链路）；可空：未装配时只判分。 */
+    private ProbeOutcomeStore outcomeStore;
 
     public ProbeService(ProbeSessionStore store,
                         KgNodeMapper nodeMapper,
@@ -51,6 +54,11 @@ public class ProbeService {
         this.questionMapper = Objects.requireNonNull(questionMapper, "questionMapper");
         this.optionMapper = Objects.requireNonNull(optionMapper, "optionMapper");
         this.questionPicker = new QuestionPicker(questionNodeMapper, questionMapper);
+    }
+
+    @Autowired(required = false)
+    public void setOutcomeStore(ProbeOutcomeStore outcomeStore) {
+        this.outcomeStore = outcomeStore;
     }
 
     /**
@@ -111,6 +119,11 @@ public class ProbeService {
         ProbeSessionStore.ProbeSession updated = store.submit(
                         sessionId, req.getStudentId(), req.getCourseId(), correct)
                 .orElseThrow(() -> new BusinessException(ResultCode.FORBIDDEN, "提交失败"));
+        if (outcomeStore != null) {
+            // 只在首次判分时记录（重复提交走上方幂等分支）；供下一 turn 决定是否换讲法
+            outcomeStore.recordProbeResult(updated.studentId(), updated.courseId(),
+                    updated.nodeCode(), Boolean.TRUE.equals(updated.correct()));
+        }
         return toSubmitVO(updated);
     }
 

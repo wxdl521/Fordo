@@ -30,13 +30,75 @@ public class ReflectionCoordinator {
 
     private final FeatureFlagsProperties featureFlags;
     private final ProbeService probeService;
+    /** 探针结果与策略状态；null 时不做换策略注入（兼容旧构造）。 */
+    private final ProbeOutcomeStore outcomeStore;
 
     @Autowired(required = false)
     private StudentMemoryService memoryService;
 
     public ReflectionCoordinator(FeatureFlagsProperties featureFlags, ProbeService probeService) {
+        this(featureFlags, probeService, null);
+    }
+
+    @Autowired
+    public ReflectionCoordinator(FeatureFlagsProperties featureFlags,
+                                 ProbeService probeService,
+                                 ProbeOutcomeStore outcomeStore) {
         this.featureFlags = featureFlags;
         this.probeService = probeService;
+        this.outcomeStore = outcomeStore;
+    }
+
+    /**
+     * 本 turn 的换策略指令。
+     *
+     * @param nodeCode         需重讲的节点（最近未通过探针的节点）
+     * @param strategy         新选用的策略
+     * @param previousStrategy 上次讲解所用策略（null = 默认讲法）
+     */
+    public record StrategyDirective(String nodeCode,
+                                    StrategySwitcher.Strategy strategy,
+                                    StrategySwitcher.Strategy previousStrategy) {
+    }
+
+    /**
+     * 组装 system prompt 前调用：若学生在焦点节点（或最近一次探针节点）上有 30 分钟内未通过、且尚未据此换过
+     * 策略的探针，则经 {@link #nextStrategyOnIncorrect} 选下一个策略、把上次策略记为无效并标记已切换。
+     * 最近一次探针已通过且其策略尚未记录 → 记为有效，不注入。{@code reflection-enabled=false} → 不注入、不改状态。
+     */
+    public Optional<StrategyDirective> resolveStrategyDirective(Long studentId, Long courseId, String focusNodeCode) {
+        if (!isReflectionEnabled() || outcomeStore == null || studentId == null || courseId == null) {
+            return Optional.empty();
+        }
+        Optional<ProbeOutcomeStore.NodeOutcome> latest = outcomeStore.latest(studentId, courseId, focusNodeCode);
+        if (latest.isEmpty()) {
+            return Optional.empty();
+        }
+        ProbeOutcomeStore.NodeOutcome outcome = latest.get();
+        String node = outcome.nodeCode();
+        if (outcome.correct()) {
+            if (outcome.strategyUsed() != null && !outcome.outcomeRecorded()) {
+                recordStrategyOutcome(studentId, courseId, outcome.strategyUsed(), true,
+                        "节点 " + node + " 改用该讲法后理解探针通过");
+                outcomeStore.markOutcomeRecorded(studentId, courseId, node);
+            }
+            return Optional.empty();
+        }
+        if (outcome.switchConsumed() || !outcomeStore.isWithinWindow(outcome)) {
+            return Optional.empty();
+        }
+        if (outcome.strategyUsed() != null && !outcome.outcomeRecorded()) {
+            recordStrategyOutcome(studentId, courseId, outcome.strategyUsed(), false,
+                    "节点 " + node + " 用该讲法后理解探针仍未通过");
+            outcomeStore.markOutcomeRecorded(studentId, courseId, node);
+        }
+        ProbeSubmitVO failed = new ProbeSubmitVO();
+        failed.setCorrect(false);
+        failed.setReexplainAvailable(true);
+        failed.setNodeCode(node);
+        Optional<StrategySwitcher.Strategy> next = nextStrategyOnIncorrect(failed, outcome.tried(), Set.of());
+        outcomeStore.markStrategySwitched(studentId, courseId, node, next.orElse(null));
+        return next.map(s -> new StrategyDirective(node, s, outcome.strategyUsed()));
     }
 
     public boolean isReflectionEnabled() {

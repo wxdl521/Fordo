@@ -20,6 +20,9 @@ public final class PracticeIntentDetector {
     private static final Pattern CUE_LITERAL = Pattern.compile(
             "出题|练习|练一下|练一练|刷题|小测|测验|考我|测我|出一道|出两道|出三道|出几道|两道题|几道题|做几道|做两道");
 
+    /** 复盘/错因类请求：即使含「练习」等字样也不是要新出题（交给模型调 get_recent_mistakes）。 */
+    private static final Pattern NEGATIVE_CUE = Pattern.compile("复盘|错题|为什么错|做错|错在");
+
     private static final Pattern CUE_OUT_N = Pattern.compile("出\\s*\\d+\\s*道");
     private static final Pattern CUE_GIVE_ME = Pattern.compile("给我.{0,12}题");
     private static final Pattern CUE_LAI = Pattern.compile("来.{0,8}题");
@@ -45,7 +48,7 @@ public final class PracticeIntentDetector {
         if (userText == null || userText.isBlank()) {
             return Optional.empty();
         }
-        if (!hasPracticeCue(userText)) {
+        if (NEGATIVE_CUE.matcher(userText).find() || !hasPracticeCue(userText)) {
             return Optional.empty();
         }
 

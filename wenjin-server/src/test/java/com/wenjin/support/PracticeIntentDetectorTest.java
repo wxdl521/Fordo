@@ -129,4 +129,17 @@ class PracticeIntentDetectorTest {
         assertThat(intent.get().nodeCode()).isEqualTo("KT01");
         assertThat(intent.get().size()).isEqualTo(2);
     }
+
+    @Test
+    @DisplayName("复盘/错题类请求即使含「练习」也不强制出题")
+    void reviewRequestsAreNotPracticeIntent() {
+        for (String text : List.of(
+                "帮我复盘一下刚才那次练习的错题",
+                "刚才练习为什么错了",
+                "这道题我做错了，练习里错在哪",
+                "看看我练习的错题")) {
+            assertThat(PracticeIntentDetector.detect(text, List.of(SE_OVERVIEW), "KT99", "需求工程"))
+                    .as(text).isEmpty();
+        }
+    }
 }

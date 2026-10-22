@@ -60,7 +60,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Task 7: Companion phase1 / phase2 / TOOL_CALL 埋点 + run 边界（try/finally finishRun）。
+ * Companion 埋点：工具路径每轮一个 llm_round + TOOL_CALL/GUARD；legacy 路径 phase2；run 边界（try/finally finishRun）。
  */
 @ExtendWith(MockitoExtension.class)
 class CompanionTraceTest {
@@ -106,23 +106,17 @@ class CompanionTraceTest {
     }
 
     @Test
-    @DisplayName("tools path: startRun + phase1 + TOOL_CALL + phase2 + finishRun SUCCEEDED")
-    void streamReplyWithTools_recordsFullTrace() {
+    @DisplayName("tools path: startRun + llm_round + TOOL_CALL + llm_round + finishRun SUCCEEDED")
+    void streamReplyWithTools_recordsFullTrace() throws Exception {
         Long conversationId = 700L;
         stubConversation(conversationId, "查询我的掌握度");
         configureTools(true, List.of(fakeTool("query_mastery", "正在查询…")));
 
-        when(aiClient.completeWithTools(any(), any())).thenReturn(
-                new CompanionAiClient.ToolCalls(List.of(
-                        new CompanionAiClient.ToolCall("call-1", "query_mastery", "{\"nodeCode\":\"KT12\"}"))),
-                new CompanionAiClient.FinalText("done"));
+        scriptTurns(
+                turn(null, new CompanionAiClient.ToolCall("call-1", "query_mastery", "{\"nodeCode\":\"KT12\"}")),
+                turn(null, null, "根据掌握度来看…"));
         when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult("call-1", "query_mastery", true, "{\"items\":[]}"));
-        doAnswer(inv -> {
-            Consumer<String> onToken = inv.getArgument(1);
-            onToken.accept("根据掌握度来看…");
-            return null;
-        }).when(aiClient).streamMessages(any(), any());
         when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
 
         service.streamReply(conversationId, t -> { });
@@ -137,13 +131,24 @@ class CompanionTraceTest {
         assertThat(start.firstInput()).contains("查询我的掌握度");
 
         ArgumentCaptor<StepRecord> stepCap = ArgumentCaptor.forClass(StepRecord.class);
-        verify(agentTraceService, times(4)).step(eq(activeCtx), stepCap.capture());
+        verify(agentTraceService, times(3)).step(eq(activeCtx), stepCap.capture());
         List<StepRecord> steps = stepCap.getAllValues();
 
-        // phase1 decision (tool_calls), TOOL_CALL, phase1 final_text stop, phase2 stream
+        // one LLM_CALL per round: tool round, TOOL_CALL, streamed answer round
         List<String> names = steps.stream().map(StepRecord::name).collect(Collectors.toList());
-        assertThat(names).contains("phase1", "query_mastery", "phase2");
-        assertThat(names.stream().filter("phase1"::equals).count()).isEqualTo(2);
+        assertThat(names).containsExactly("llm_round", "query_mastery", "llm_round");
+        assertThat(names).doesNotContain("phase1", "phase2");
+
+        com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+        com.fasterxml.jackson.databind.JsonNode r0 = om.readTree(steps.get(0).outputJson());
+        assertThat(r0.path("round").asInt()).isZero();
+        assertThat(r0.path("toolCalls").get(0).asText()).isEqualTo("query_mastery");
+        assertThat(r0.path("finishReason").asText()).isEqualTo("tool_calls");
+        com.fasterxml.jackson.databind.JsonNode r1 = om.readTree(steps.get(2).outputJson());
+        assertThat(r1.path("round").asInt()).isEqualTo(1);
+        assertThat(r1.path("toolCalls")).isEmpty();
+        assertThat(r1.path("contentChars").asInt()).isEqualTo("根据掌握度来看…".length());
+        assertThat(r1.path("finishReason").asText()).isEqualTo("stop");
 
         StepRecord toolStep = steps.stream()
                 .filter(s -> AgentStepType.TOOL_CALL.equals(s.stepType()))
@@ -156,15 +161,11 @@ class CompanionTraceTest {
         // success path must not be recorded as GUARD
         assertThat(steps.stream().noneMatch(s -> AgentStepType.GUARD.equals(s.stepType()))).isTrue();
 
-        StepRecord phase2 = steps.stream()
-                .filter(s -> "phase2".equals(s.name()))
-                .findFirst()
-                .orElseThrow();
-        assertThat(phase2.stepType()).isEqualTo(AgentStepType.LLM_CALL);
-        assertThat(phase2.status()).isEqualTo(AgentStepStatus.OK);
-        assertThat(phase2.outputJson()).contains("根据掌握度");
-        // chars/2 estimate when no usage
-        assertThat(phase2.tokensOut()).isEqualTo("根据掌握度来看…".length() / 2);
+        StepRecord answerRound = steps.get(2);
+        assertThat(answerRound.stepType()).isEqualTo(AgentStepType.LLM_CALL);
+        assertThat(answerRound.status()).isEqualTo(AgentStepStatus.OK);
+        // chars/2 estimate when the provider reports no usage
+        assertThat(answerRound.tokensOut()).isEqualTo("根据掌握度来看…".length() / 2);
         assertThat(activeCtx.tokensEstimated()).isEqualTo(1);
 
         verify(agentTraceService, times(1)).finishRun(eq(activeCtx), eq(AgentRunStatus.SUCCEEDED), isNull());
@@ -177,10 +178,9 @@ class CompanionTraceTest {
         stubConversation(conversationId, "再查一次掌握度");
         configureTools(true, List.of(fakeTool("query_mastery", "正在查询…")));
 
-        when(aiClient.completeWithTools(any(), any())).thenReturn(
-                new CompanionAiClient.ToolCalls(List.of(
-                        new CompanionAiClient.ToolCall("call-budget", "query_mastery", "{\"nodeCode\":\"KT12\"}"))),
-                new CompanionAiClient.FinalText("budget blocked"));
+        scriptTurns(
+                turn(null, new CompanionAiClient.ToolCall("call-budget", "query_mastery", "{\"nodeCode\":\"KT12\"}")),
+                turn(null, null, "预算已满…"));
         when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult(
                         "call-budget",
@@ -189,17 +189,12 @@ class CompanionTraceTest {
                         "{\"ok\":false,\"code\":\"TOOL_BUDGET_EXCEEDED\",\"message\":\"本轮工具调用次数已达上限\",\"retryable\":false}",
                         null,
                         true));
-        doAnswer(inv -> {
-            Consumer<String> onToken = inv.getArgument(1);
-            onToken.accept("预算已满…");
-            return null;
-        }).when(aiClient).streamMessages(any(), any());
         when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
 
         service.streamReply(conversationId, t -> { });
 
         ArgumentCaptor<StepRecord> stepCap = ArgumentCaptor.forClass(StepRecord.class);
-        verify(agentTraceService, times(4)).step(eq(activeCtx), stepCap.capture());
+        verify(agentTraceService, times(3)).step(eq(activeCtx), stepCap.capture());
         List<StepRecord> steps = stepCap.getAllValues();
 
         StepRecord guard = steps.stream()
@@ -222,10 +217,9 @@ class CompanionTraceTest {
         stubConversation(conversationId, "调用未知工具");
         configureTools(true, List.of(fakeTool("query_mastery", "正在查询…")));
 
-        when(aiClient.completeWithTools(any(), any())).thenReturn(
-                new CompanionAiClient.ToolCalls(List.of(
-                        new CompanionAiClient.ToolCall("call-unk", "missing_tool", "{}"))),
-                new CompanionAiClient.FinalText("unknown"));
+        scriptTurns(
+                turn(null, new CompanionAiClient.ToolCall("call-unk", "missing_tool", "{}")),
+                turn(null, null, "无法调用…"));
         when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
                 new ToolExecutionResult(
                         "call-unk",
@@ -234,11 +228,6 @@ class CompanionTraceTest {
                         "{\"ok\":false,\"code\":\"TOOL_NOT_ALLOWED\",\"message\":\"工具未授权或不存在: missing_tool\",\"retryable\":false}",
                         null,
                         true));
-        doAnswer(inv -> {
-            Consumer<String> onToken = inv.getArgument(1);
-            onToken.accept("无法调用…");
-            return null;
-        }).when(aiClient).streamMessages(any(), any());
         when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
 
         service.streamReply(conversationId, t -> { });
@@ -283,7 +272,7 @@ class CompanionTraceTest {
         assertThat(phase2.tokensOut()).isEqualTo("二次函数是…".length() / 2);
 
         verify(agentTraceService).finishRun(eq(activeCtx), eq(AgentRunStatus.SUCCEEDED), isNull());
-        verify(aiClient, never()).completeWithTools(any(), any());
+        verify(aiClient, never()).streamTurn(any(), any(), any(), any());
     }
 
     @Test
@@ -402,12 +391,7 @@ class CompanionTraceTest {
         Long conversationId = 713L;
         stubConversation(conversationId, "查询我的掌握度");
         configureTools(true, List.of(fakeTool("query_mastery", "正在查询…")));
-        when(aiClient.completeWithTools(any(), any())).thenReturn(new CompanionAiClient.FinalText("done"));
-        doAnswer(inv -> {
-            Consumer<String> onToken = inv.getArgument(1);
-            onToken.accept("好的");
-            return null;
-        }).when(aiClient).streamMessages(any(), any());
+        scriptTurns(turn(null, null, "好的"));
         when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
 
         service.streamReply(conversationId, t -> { });
@@ -458,7 +442,96 @@ class CompanionTraceTest {
         assertThat(startCap.getAllValues()).extracting(StartRunCmd::model).containsOnlyNulls();
     }
 
+    // ── llm_round usage / disconnect / interruption ──────────────────────────
+
+    @Test
+    @DisplayName("real provider usage goes into llm_round tokens and the run is not marked estimated")
+    void streamReplyWithTools_realUsageRecorded() {
+        Long conversationId = 720L;
+        stubConversation(conversationId, "你好");
+        configureTools(true, List.of(fakeTool("query_mastery", "正在查询…")));
+        scriptTurns(turn(new CompanionAiClient.Usage(1200, 34, 1024), null, "你好！"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, t -> { });
+
+        ArgumentCaptor<StepRecord> stepCap = ArgumentCaptor.forClass(StepRecord.class);
+        verify(agentTraceService).step(eq(activeCtx), stepCap.capture());
+        StepRecord round = stepCap.getValue();
+        assertThat(round.name()).isEqualTo("llm_round");
+        assertThat(round.tokensIn()).isEqualTo(1200);
+        assertThat(round.tokensOut()).isEqualTo(34);
+        assertThat(activeCtx.tokensEstimated()).isZero();
+        verify(agentTraceService).finishRun(eq(activeCtx), eq(AgentRunStatus.SUCCEEDED), isNull());
+    }
+
+    @Test
+    @DisplayName("client disconnect mid-stream -> run CANCELLED with CLIENT_DISCONNECTED, partial text persisted")
+    void streamReplyWithTools_clientDisconnect_cancelledRun() {
+        Long conversationId = 721L;
+        stubConversation(conversationId, "讲讲二次函数");
+        configureTools(true, List.of(fakeTool("query_mastery", "正在查询…")));
+        scriptTurns(turn(null, null, "第一段", "第二段"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        List<String> delivered = new ArrayList<>();
+        service.streamReply(conversationId, t -> {
+            if (!delivered.isEmpty()) {
+                throw new IllegalStateException("broken pipe");
+            }
+            delivered.add(t);
+        });
+
+        assertThat(delivered).containsExactly("第一段");
+        verify(agentTraceService).finishRun(eq(activeCtx), eq(AgentRunStatus.CANCELLED), eq("CLIENT_DISCONNECTED"));
+        ArgumentCaptor<CompanionMessage> saved = ArgumentCaptor.forClass(CompanionMessage.class);
+        verify(messageMapper).insert(saved.capture());
+        assertThat(saved.getValue().getContent()).startsWith("第一段");
+    }
+
+    @Test
+    @DisplayName("LLM failure after text was emitted -> run FAILED (LLM_INTERRUPTED), no degrade")
+    void streamReplyWithTools_llmFailsAfterEmission_failedRun() {
+        Long conversationId = 722L;
+        stubConversation(conversationId, "讲讲二次函数");
+        configureTools(true, List.of(fakeTool("query_mastery", "正在查询…")));
+        when(aiClient.streamTurn(any(), any(), any(), any())).thenAnswer(inv -> {
+            Consumer<String> cb = inv.getArgument(3);
+            cb.accept("二次函数的图像");
+            throw new IllegalStateException("upstream reset");
+        });
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, t -> { });
+
+        verify(agentTraceService).finishRun(eq(activeCtx), eq(AgentRunStatus.FAILED), eq("LLM_INTERRUPTED"));
+        ArgumentCaptor<StepRecord> stepCap = ArgumentCaptor.forClass(StepRecord.class);
+        verify(agentTraceService).step(eq(activeCtx), stepCap.capture());
+        assertThat(stepCap.getValue().name()).isEqualTo("llm_round");
+        assertThat(stepCap.getValue().status()).isEqualTo(AgentStepStatus.FAILED);
+        verify(aiClient, never()).stream(any(), any(), any(), any());
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    private record ScriptedTurn(CompanionAiClient.Usage usage, CompanionAiClient.ToolCall call, List<String> deltas) {
+    }
+
+    private static ScriptedTurn turn(CompanionAiClient.Usage usage, CompanionAiClient.ToolCall call, String... deltas) {
+        return new ScriptedTurn(usage, call, List.of(deltas));
+    }
+
+    private void scriptTurns(ScriptedTurn... turns) {
+        java.util.concurrent.atomic.AtomicInteger idx = new java.util.concurrent.atomic.AtomicInteger();
+        when(aiClient.streamTurn(any(), any(), any(), any())).thenAnswer(inv -> {
+            ScriptedTurn t = turns[Math.min(idx.getAndIncrement(), turns.length - 1)];
+            Consumer<String> cb = inv.getArgument(3);
+            t.deltas().forEach(cb);
+            List<CompanionAiClient.ToolCall> calls = t.call() == null ? List.of() : List.of(t.call());
+            return new CompanionAiClient.StreamTurnResult(String.join("", t.deltas()), calls, t.usage(),
+                    calls.isEmpty() ? "stop" : "tool_calls");
+        });
+    }
 
     /** 旧路径（工具关闭）下一个能正常出流的会话。 */
     private void stubLegacyStream(Long conversationId, String userText) {

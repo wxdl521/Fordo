@@ -1,14 +1,28 @@
 {
-  "scenario" : "S09",
-  "recordedAt" : "2026-07-20T12:00:00Z",
-  "model" : "deepseek-chat",
-  "llmCalls" : [ {
-    "idx" : 0,
-    "name" : "phase1",
-    "output" : "{\"type\":\"final_text\",\"text\":\"\"}"
-  }, {
-    "idx" : 1,
-    "name" : "phase2",
-    "output" : "你好！这门课可以按「诊断定位 → 路径学习 → 节点练习 → 复习巩固」推进。建议先从 SE-1.1 建立需求基础概念，或告诉我你想优先攻克的章节。"
-  } ]
+  "scenario": "S09",
+  "format": 2,
+  "recordedAt": "2026-10-21T00:00:00Z",
+  "model": "synthetic",
+  "synthetic": true,
+  "turns": [
+    {
+      "rounds": [
+        {
+          "content": "",
+          "toolCalls": [
+            {
+              "name": "get_learning_frontier",
+              "arguments": {}
+            }
+          ],
+          "finishReason": "tool_calls"
+        },
+        {
+          "content": "欢迎开始学习软件工程！建议的入门顺序是：先读软件工程概述（SE-1.1），了解软件危机与工程化的目标；再学软件生命周期模型（SE-1.2）。你可以先说说你对「软件危机」的理解吗？",
+          "toolCalls": [],
+          "finishReason": "stop"
+        }
+      ]
+    }
+  ]
 }

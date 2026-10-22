@@ -1,5 +1,6 @@
 package com.wenjin.eval.golden;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
@@ -8,14 +9,16 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Objects;
 
 /**
- * Load golden JSON from path or classpath for REPLAY.
+ * Load golden JSON (format v2) from path or classpath for REPLAY.
  */
 public final class GoldenLoader {
 
     public static final String DEFAULT_CLASSPATH_PREFIX = "eval/golden/";
+    public static final String NEED_RE_RECORD = "need re-record";
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -58,18 +61,41 @@ public final class GoldenLoader {
 
     public GoldenFile parse(InputStream in, String sourceName) {
         Objects.requireNonNull(in, "in");
+        String where = sourceName != null ? " (" + sourceName + ")" : "";
+        JsonNode root;
         try {
-            GoldenFile file = mapper.readValue(in, GoldenFile.class);
-            if (file.scenario() == null || file.scenario().isBlank()) {
-                throw new IllegalArgumentException(
-                        "Golden missing scenario" + (sourceName != null ? " (" + sourceName + ")" : ""));
-            }
-            return file;
+            root = mapper.readTree(in);
         } catch (IOException e) {
-            throw new IllegalArgumentException(
-                    "Invalid golden JSON" + (sourceName != null ? " (" + sourceName + ")" : "")
-                            + ": " + e.getMessage(),
-                    e);
+            throw new IllegalArgumentException("Invalid golden JSON" + where + ": " + e.getMessage(), e);
         }
+        if (root == null || !root.isObject()) {
+            throw new IllegalArgumentException("Invalid golden JSON" + where + ": not an object");
+        }
+        if (root.has("llmCalls") || root.path("format").asInt(0) != GoldenFile.FORMAT_V2) {
+            throw new IllegalArgumentException("Unsupported golden format" + where
+                    + ": expected \"format\":2 with turns/rounds (v1 phase1/phase2 llmCalls is obsolete) — "
+                    + NEED_RE_RECORD);
+        }
+        GoldenFile file;
+        try {
+            file = mapper.treeToValue(root, GoldenFile.class);
+        } catch (IOException | IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid golden JSON" + where + ": " + e.getMessage(), e);
+        }
+        if (file.scenario() == null || file.scenario().isBlank()) {
+            throw new IllegalArgumentException("Golden missing scenario" + where);
+        }
+        for (int t = 0; t < file.turns().size(); t++) {
+            List<GoldenFile.GoldenRound> rounds = file.turns().get(t).rounds();
+            for (int r = 0; r < rounds.size(); r++) {
+                for (GoldenFile.GoldenToolCall call : rounds.get(r).toolCalls()) {
+                    if (call.name().isBlank()) {
+                        throw new IllegalArgumentException("Golden" + where + " turns[" + t + "].rounds[" + r
+                                + "] has a tool call without name");
+                    }
+                }
+            }
+        }
+        return file;
     }
 }

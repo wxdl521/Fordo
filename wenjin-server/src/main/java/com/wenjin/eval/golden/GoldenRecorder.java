@@ -2,9 +2,13 @@ package com.wenjin.eval.golden;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.wenjin.eval.hard.EvalStepView;
+import com.wenjin.ai.CompanionAiClient;
+import com.wenjin.eval.golden.GoldenFile.GoldenRound;
+import com.wenjin.eval.golden.GoldenFile.GoldenToolCall;
+import com.wenjin.eval.golden.GoldenFile.GoldenTurn;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -13,8 +17,8 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * RECORD exporter: extract {@code LLM_CALL} steps into a golden JSON file.
- * <p>Pure logic + file write; no Spring dependency.
+ * RECORD exporter: real {@code streamTurn} results (captured by {@link RecordingCompanionAiClient})
+ * → golden v2 JSON. Pure logic + file write; no Spring dependency.
  */
 public final class GoldenRecorder {
 
@@ -38,51 +42,58 @@ public final class GoldenRecorder {
     }
 
     /**
-     * Build a golden document from agent steps (only {@code LLM_CALL}).
+     * Build a v2 golden from recorded turns (outer list = scenario turns, inner = LLM rounds).
      */
-    public GoldenFile build(String scenario, List<EvalStepView> steps) {
-        return build(scenario, defaultModel, Instant.now(), steps);
-    }
-
-    /**
-     * Build with explicit model and recordedAt (stable for unit tests).
-     */
-    public GoldenFile build(String scenario, String model, Instant recordedAt, List<EvalStepView> steps) {
+    public GoldenFile build(String scenario,
+                            String model,
+                            Instant recordedAt,
+                            boolean synthetic,
+                            List<List<CompanionAiClient.StreamTurnResult>> turns) {
         Objects.requireNonNull(scenario, "scenario");
         if (scenario.isBlank()) {
             throw new IllegalArgumentException("scenario is required");
         }
-        String at = recordedAt == null ? Instant.now().toString() : recordedAt.toString();
+        String at = (recordedAt == null ? Instant.now() : recordedAt).toString();
         String m = model == null || model.isBlank() ? defaultModel : model;
-
-        List<GoldenLlmCall> calls = new ArrayList<>();
-        int idx = 0;
-        if (steps != null) {
-            for (EvalStepView step : steps) {
-                if (step == null || !step.isLlmCall()) {
-                    continue;
+        List<GoldenTurn> goldenTurns = new ArrayList<>();
+        if (turns != null) {
+            for (List<CompanionAiClient.StreamTurnResult> rounds : turns) {
+                List<GoldenRound> goldenRounds = new ArrayList<>();
+                if (rounds != null) {
+                    for (CompanionAiClient.StreamTurnResult r : rounds) {
+                        if (r != null) {
+                            goldenRounds.add(toRound(r));
+                        }
+                    }
                 }
-                calls.add(new GoldenLlmCall(idx++, step.name(), step.outputJson()));
+                goldenTurns.add(new GoldenTurn(goldenRounds));
             }
         }
-        return new GoldenFile(scenario, at, m, calls);
+        return new GoldenFile(scenario, GoldenFile.FORMAT_V2, at, m, synthetic, goldenTurns);
     }
 
-    /**
-     * Serialize golden document to JSON string.
-     */
+    static GoldenRound toRound(CompanionAiClient.StreamTurnResult r) {
+        List<GoldenToolCall> calls = new ArrayList<>();
+        if (r.toolCalls() != null) {
+            for (CompanionAiClient.ToolCall c : r.toolCalls()) {
+                if (c != null && c.name() != null && !c.name().isBlank()) {
+                    calls.add(new GoldenToolCall(c.name(), c.argumentsJson()));
+                }
+            }
+        }
+        return new GoldenRound(r.content(), calls, r.finishReason());
+    }
+
     public String toJson(GoldenFile golden) {
         Objects.requireNonNull(golden, "golden");
         try {
-            return mapper.writeValueAsString(golden);
+            return mapper.writeValueAsString(golden) + "\n";
         } catch (IOException e) {
             throw new IllegalStateException("Failed to serialize golden file: " + e.getMessage(), e);
         }
     }
 
-    /**
-     * Write golden JSON to {@code path} (parent dirs created as needed).
-     */
+    /** Write golden JSON (UTF-8) to {@code path}; parent dirs are created as needed. */
     public Path write(GoldenFile golden, Path path) {
         Objects.requireNonNull(golden, "golden");
         Objects.requireNonNull(path, "path");
@@ -91,25 +102,14 @@ public final class GoldenRecorder {
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-            String json = toJson(golden);
-            Files.writeString(path, json);
+            Files.writeString(path, toJson(golden), StandardCharsets.UTF_8);
             return path;
         } catch (IOException e) {
             throw new IllegalStateException("Failed to write golden file: " + path + " — " + e.getMessage(), e);
         }
     }
 
-    /**
-     * Build + write convenience for RECORD mode after a LIVE run.
-     */
-    public Path export(String scenario, String model, Instant recordedAt,
-                       List<EvalStepView> steps, Path path) {
-        return write(build(scenario, model, recordedAt, steps), path);
-    }
-
-    /**
-     * Default path under a base dir: {@code baseDir/S0X.json}.
-     */
+    /** Default path under a base dir: {@code baseDir/S0X.json}. */
     public static Path defaultGoldenPath(Path baseDir, String scenarioCode) {
         Objects.requireNonNull(baseDir, "baseDir");
         Objects.requireNonNull(scenarioCode, "scenarioCode");

@@ -90,6 +90,31 @@ class ProbeServiceTest {
     }
 
     @Test
+    @DisplayName("submit records outcome once into ProbeOutcomeStore (idempotent resubmit not re-recorded)")
+    void submitRecordsOutcome() {
+        ProbeOutcomeStore outcomes = new ProbeOutcomeStore();
+        service.setOutcomeStore(outcomes);
+        KgNode node = node(55L, "SE-1.1", "需求基础");
+        when(nodeMapper.selectOne(any())).thenReturn(node);
+        when(questionNodeMapper.selectList(any())).thenReturn(List.of());
+
+        ProbeStartVO start = service.startProbe(1L, 10L, "SE-1.1");
+        ProbeSubmitRequest req = new ProbeSubmitRequest();
+        req.setStudentId(1L);
+        req.setCourseId(10L);
+        req.setStudentAnswer("");
+        service.submit(start.getSessionId(), req);
+
+        ProbeOutcomeStore.NodeOutcome o = outcomes.latest(1L, 10L, null).orElseThrow();
+        assertThat(o.nodeCode()).isEqualTo("SE-1.1");
+        assertThat(o.correct()).isFalse();
+
+        outcomes.markStrategySwitched(1L, 10L, "SE-1.1", StrategySwitcher.Strategy.ANALOGY);
+        service.submit(start.getSessionId(), req); // idempotent: must not reset switchConsumed
+        assertThat(outcomes.latest(1L, 10L, null).orElseThrow().switchConsumed()).isTrue();
+    }
+
+    @Test
     @DisplayName("bank question preferred when unused")
     void preferBank() {
         KgNode node = node(55L, "SE-3.2", "用例图");

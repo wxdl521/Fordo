@@ -1,14 +1,36 @@
 {
-  "scenario" : "S13",
-  "recordedAt" : "2026-07-20T12:00:00Z",
-  "model" : "deepseek-chat",
-  "llmCalls" : [ {
-    "idx" : 0,
-    "name" : "phase1",
-    "output" : "{\"type\":\"tool_calls\",\"calls\":[{\"id\":\"c1\",\"name\":\"get_node_detail\",\"arguments\":\"{\\\"nodeCode\\\":\\\"SE-3.2\\\"}\"}]}"
-  }, {
-    "idx" : 1,
-    "name" : "phase2",
-    "output" : "结合资料，SE-3.2 用例图的核心是参与者、用例与系统边界（可参考资料 #101）。你先用一句话说明「参与者」是谁？我不会编造未注入的出处。"
-  } ]
+  "scenario": "S13",
+  "format": 2,
+  "recordedAt": "2026-10-21T00:00:00Z",
+  "model": "synthetic",
+  "synthetic": true,
+  "turns": [
+    {
+      "rounds": [
+        {
+          "content": "",
+          "toolCalls": [
+            {
+              "name": "get_node_detail",
+              "arguments": {
+                "nodeCode": "SE-3.2"
+              }
+            },
+            {
+              "name": "search_materials",
+              "arguments": {
+                "query": "用例图"
+              }
+            }
+          ],
+          "finishReason": "tool_calls"
+        },
+        {
+          "content": "结合讲义来看，用例图（SE-3.2）的核心是三件事：系统边界、参与者、用例；包含关系表示必经的公共步骤，扩展关系表示特定条件下的可选行为。你能举一个「扩展」关系的例子吗？",
+          "toolCalls": [],
+          "finishReason": "stop"
+        }
+      ]
+    }
+  ]
 }

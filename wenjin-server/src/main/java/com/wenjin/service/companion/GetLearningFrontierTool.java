@@ -1,33 +1,26 @@
 package com.wenjin.service.companion;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.wenjin.entity.KgEdge;
-import com.wenjin.entity.KgNode;
-import com.wenjin.entity.StudentMastery;
 import com.wenjin.mapper.KgEdgeMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.service.LearningFrontierService;
 import com.wenjin.service.MasteryDecayCalculator;
-import com.wenjin.support.PrereqDirection;
-import com.wenjin.support.ReviewMarker;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * Nodes whose direct prerequisites are all mastered (effective ≥ threshold)
- * but the node itself is not yet mastered — the learning frontier.
+ * but the node itself is not yet mastered — the learning frontier (computed by
+ * {@link LearningFrontierService}, shared with the proactive opener).
  */
 @Component
 public class GetLearningFrontierTool implements CompanionTool {
@@ -36,22 +29,22 @@ public class GetLearningFrontierTool implements CompanionTool {
     private static final int MIN_LIMIT = 1;
     private static final int MAX_LIMIT = 10;
 
-    private final KgNodeMapper nodeMapper;
-    private final KgEdgeMapper edgeMapper;
-    private final StudentMasteryMapper masteryMapper;
-    private final MasteryDecayCalculator decayCalculator;
+    private final LearningFrontierService frontierService;
     private final ObjectMapper objectMapper;
 
+    @Autowired
+    public GetLearningFrontierTool(LearningFrontierService frontierService, ObjectMapper objectMapper) {
+        this.frontierService = Objects.requireNonNull(frontierService, "frontierService");
+        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
+    }
+
+    /** 便捷构造（单测）：直接由 mapper 组装前沿服务。 */
     public GetLearningFrontierTool(KgNodeMapper nodeMapper,
                                    KgEdgeMapper edgeMapper,
                                    StudentMasteryMapper masteryMapper,
                                    MasteryDecayCalculator decayCalculator,
                                    ObjectMapper objectMapper) {
-        this.nodeMapper = Objects.requireNonNull(nodeMapper, "nodeMapper");
-        this.edgeMapper = Objects.requireNonNull(edgeMapper, "edgeMapper");
-        this.masteryMapper = Objects.requireNonNull(masteryMapper, "masteryMapper");
-        this.decayCalculator = Objects.requireNonNull(decayCalculator, "decayCalculator");
-        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
+        this(new LearningFrontierService(nodeMapper, edgeMapper, masteryMapper, decayCalculator), objectMapper);
     }
 
     @Override
@@ -94,80 +87,16 @@ public class GetLearningFrontierTool implements CompanionTool {
     @Override
     public String execute(ToolContext ctx, JsonNode args) throws ToolException {
         int limit = resolveLimit(args);
-
-        List<KgNode> nodes = nodeMapper.selectList(new LambdaQueryWrapper<KgNode>()
-                .eq(KgNode::getCourseId, ctx.courseId())
-                .isNull(KgNode::getArchivedAt));
-        Map<Long, KgNode> nodeById = nodes.stream()
-                .collect(Collectors.toMap(KgNode::getId, Function.identity(), (a, b) -> a));
-
-        List<StudentMastery> masteries = masteryMapper.selectList(new LambdaQueryWrapper<StudentMastery>()
-                .eq(StudentMastery::getStudentId, ctx.studentId())
-                .eq(StudentMastery::getCourseId, ctx.courseId()));
-        Map<Long, Double> effectiveByNodeId = new HashMap<>();
-        for (StudentMastery m : masteries) {
-            if (m.getMasteryScore() == null) {
-                continue;
-            }
-            effectiveByNodeId.put(m.getNodeId(), decayCalculator.effectiveScoreOf(m));
-        }
-
-        List<KgEdge> edges = edgeMapper.selectList(new LambdaQueryWrapper<KgEdge>()
-                .eq(KgEdge::getCourseId, ctx.courseId())
-                .eq(KgEdge::getRelationType, PrereqDirection.RELATION_TYPE_PREREQUISITE)
-                .isNull(KgEdge::getArchivedAt));
-        Map<Long, List<Long>> prereqOf = new HashMap<>();
-        for (KgEdge edge : edges) {
-            if (ReviewMarker.isPending(edge.getRelationNote())) {
-                continue;
-            }
-            Long prereqId = PrereqDirection.prerequisiteNodeId(edge);
-            Long dependentId = PrereqDirection.dependentNodeId(edge);
-            if (prereqId == null || dependentId == null) {
-                continue;
-            }
-            if (!nodeById.containsKey(prereqId) || !nodeById.containsKey(dependentId)) {
-                continue;
-            }
-            prereqOf.computeIfAbsent(dependentId, k -> new ArrayList<>()).add(prereqId);
-        }
-
-        double threshold = decayCalculator.getMasteredThreshold();
-        List<Map<String, Object>> frontier = new ArrayList<>();
-        for (KgNode node : nodes) {
-            double selfEffective = effectiveByNodeId.getOrDefault(node.getId(), 0.0);
-            if (selfEffective >= threshold) {
-                continue;
-            }
-            List<Long> prereqs = prereqOf.getOrDefault(node.getId(), List.of());
-            boolean allPrereqsMastered = true;
-            for (Long prereqId : prereqs) {
-                double pe = effectiveByNodeId.getOrDefault(prereqId, 0.0);
-                if (pe < threshold) {
-                    allPrereqsMastered = false;
-                    break;
-                }
-            }
-            if (!allPrereqsMastered) {
-                continue;
-            }
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (LearningFrontierService.FrontierNode n : frontierService.frontier(ctx.studentId(), ctx.courseId(), limit)) {
             Map<String, Object> item = new LinkedHashMap<>();
-            item.put("code", node.getNodeCode());
-            item.put("name", node.getName());
-            item.put("effective", selfEffective);
-            frontier.add(item);
+            item.put("code", n.code());
+            item.put("name", n.name());
+            item.put("effective", n.effective());
+            items.add(item);
         }
-
-        frontier.sort(Comparator
-                .comparing((Map<String, Object> m) -> (Double) m.get("effective"))
-                .thenComparing(m -> String.valueOf(m.get("code"))));
-
-        if (frontier.size() > limit) {
-            frontier = new ArrayList<>(frontier.subList(0, limit));
-        }
-
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("items", frontier);
+        body.put("items", items);
         return toJson(body);
     }
 

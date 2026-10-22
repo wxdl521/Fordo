@@ -11,6 +11,7 @@ import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.security.TokenService;
 import com.wenjin.service.CompanionService;
 import com.wenjin.service.CourseService;
+import com.wenjin.service.MistakeQueryService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -53,12 +54,15 @@ class CompanionControllerTest {
     @Mock
     private CourseService courseService;
 
+    @Mock
+    private MistakeQueryService mistakeQueryService;
+
     private final TokenService tokenService = new TokenService("test-secret", 3600);
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
-        CompanionController controller = new CompanionController(companionService, courseService);
+        CompanionController controller = new CompanionController(companionService, courseService, mistakeQueryService);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .addInterceptors(TestPrincipalSupport.authInterceptor(tokenService))
                 .setControllerAdvice(new GlobalExceptionHandler())
@@ -133,6 +137,66 @@ class CompanionControllerTest {
         assertThat(requestCaptor.getValue().getMessage()).isEqualTo("help me practice");
         verify(courseService).assertAccessibleByStudent(2L, 5L);
         verify(companionService).streamReply(eq(321L), any(CompanionService.CompanionStreamSink.class));
+    }
+
+    @Test
+    @DisplayName("chat: reviewPracticeSessionId not owned by student/course → 404 before async work")
+    void chat_reviewSessionNotOwned_returns404WithoutStartingTurn() throws Exception {
+        org.mockito.Mockito.doThrow(new com.wenjin.common.BusinessException(ResultCode.NOT_FOUND, "练习会话不存在"))
+                .when(mistakeQueryService).assertPracticeSessionOwned(2L, 5L, 77L);
+
+        mvc.perform(post("/api/companion/chat")
+                        .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "studentId": 2,
+                                  "courseId": 5,
+                                  "message": "帮我复盘一下刚才那次练习的错题",
+                                  "reviewPracticeSessionId": 77
+                                }
+                                """))
+                .andExpect(request().asyncNotStarted())
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(ResultCode.NOT_FOUND.getCode()));
+
+        verify(mistakeQueryService).assertPracticeSessionOwned(2L, 5L, 77L);
+        verify(companionService, never()).startTurn(any());
+    }
+
+    @Test
+    @DisplayName("chat: non-positive reviewPracticeSessionId → 400")
+    void chat_reviewSessionNonPositive_returns400() throws Exception {
+        mvc.perform(post("/api/companion/chat")
+                        .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"courseId": 5, "message": "复盘", "reviewPracticeSessionId": 0}
+                                """))
+                .andExpect(request().asyncNotStarted())
+                .andExpect(status().isBadRequest());
+
+        verify(companionService, never()).startTurn(any());
+    }
+
+    @Test
+    @DisplayName("chat: owned reviewPracticeSessionId is passed to streamReply for this turn only")
+    void chat_ownedReviewSession_passedToStreamReply() throws Exception {
+        when(companionService.startTurn(any(CompanionChatRequest.class))).thenReturn(321L);
+
+        MvcResult result = mvc.perform(post("/api/companion/chat")
+                        .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.TEXT_EVENT_STREAM)
+                        .content("""
+                                {"courseId": 5, "message": "帮我复盘一下刚才那次练习的错题", "reviewPracticeSessionId": 77}
+                                """))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+        result.getAsyncResult();
+
+        verify(mistakeQueryService).assertPracticeSessionOwned(2L, 5L, 77L);
+        verify(companionService).streamReply(eq(321L), eq(77L), any(CompanionService.CompanionStreamSink.class));
     }
 
     @Test

@@ -1,14 +1,30 @@
 {
-  "scenario" : "S08",
-  "recordedAt" : "2026-07-20T12:00:00Z",
-  "model" : "deepseek-chat",
-  "llmCalls" : [ {
-    "idx" : 0,
-    "name" : "phase1",
-    "output" : "{\"type\":\"final_text\",\"text\":\"\"}"
-  }, {
-    "idx" : 1,
-    "name" : "phase2",
-    "output" : "记得你提到的薄弱点是 SE-3.2 用例图。结合摘要：先复习参与者与系统边界，再画一个小例子巩固；需要我按这个顺序带着走吗？"
-  } ]
+  "scenario": "S08",
+  "format": 2,
+  "recordedAt": "2026-10-21T00:00:00Z",
+  "model": "synthetic",
+  "synthetic": true,
+  "turns": [
+    {
+      "rounds": [
+        {
+          "content": "",
+          "toolCalls": [
+            {
+              "name": "query_mastery",
+              "arguments": {
+                "nodeCode": "SE-3.2"
+              }
+            }
+          ],
+          "finishReason": "tool_calls"
+        },
+        {
+          "content": "记得，你的薄弱点是用例图（SE-3.2），目前掌握度还比较低。回顾的路线是：先确认系统边界，再找参与者，最后为每个参与者列用例。我们先拿一个小系统练一遍，好吗？",
+          "toolCalls": [],
+          "finishReason": "stop"
+        }
+      ]
+    }
+  ]
 }

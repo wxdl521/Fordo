@@ -57,6 +57,8 @@ export WENJIN_AUTH_SECRET="$(openssl rand -base64 48)"   # 强随机，妥善保
 
 > 令牌有效期 `wenjin.auth.ttl-seconds` 默认 604800（7 天），按需调整。
 
+> 时区：伴侣主动开场白（问候语、提示「今日」上限）使用 JVM 默认时区，部署时请设 `TZ=Asia/Shanghai`（或 `-Duser.timezone=Asia/Shanghai`）。
+
 ### 2.2 收紧 CORS（已配置化）
 
 **现状**：`WebConfig` 已读取 `wenjin.cors.allowed-origin-patterns`；开发环境默认 `*`，`application-prod.yml` 要求通过 `WENJIN_CORS_ORIGINS` 指定生产来源。
@@ -421,6 +423,7 @@ npm run build        # 产出 dist/
 | 已配置 | `wenjin.features.companion-llm-enabled` | M9 伴侣 LLM 紧急 kill switch | 小 |
 | 已配置 | `wenjin.features.plan-enabled` | M10 学习计划 / daily-brief / re-plan | 小 |
 | 已配置 | `wenjin.features.multi-agent-enabled` | M11 多智能体周报 / Supervisor 抽查（默认关） | 小 |
+| 已配置 | `wenjin.features.proactive-enabled` / `wenjin.limits.proactive` | 方向 4 主动陪伴（opener / 提示条 / 小红点）开关与限额 | 小 |
 | 已配置 | `wenjin.eval.judge-model` | M6 LLM-as-judge 模型名（可选） | 极小 |
 | 已配置 | `wenjin.limits.trace` / `wenjin.limits.tools` | step I/O 与工具结果截断 | 小 |
 | 已配置 | `wenjin.limits.prompt` / `wenjin.limits.memory` | M7 分槽预算与记忆强度/注入 | 小 |
@@ -433,6 +436,8 @@ npm run build        # 产出 dist/
 | 已迁移 | Flyway `V13__rag.sql` | `doc_source` / `doc_chunk` / `chunk_node_map`（M8） | 中 |
 | 已迁移 | Flyway `V14__agent_plan.sql` | `agent_plan` / `agent_plan_task` / `tool_effect_key`（M10） | 中 |
 | 已迁移 | Flyway `V15__agent_report.sql` | `agent_report`（M11 多智能体产出，可选） | 中 |
+| 已迁移 | Flyway `V21__answer_record_time_index.sql` | `answer_record.idx_student_course_time`（错因辅导按时间取最近错题；仅加索引，大表建议低峰执行） | 小 |
+| 已迁移 | Flyway `V22__companion_hint_log.sql` | `companion_hint_log`（主动陪伴提示条展示/关闭日志） | 小 |
 
 ### 4.1 配置清单（调度与基线）
 
@@ -464,6 +469,12 @@ spring:
 | `wenjin.features.companion-llm-enabled` | `true` | `${WENJIN_FEATURE_COMPANION_LLM:true}` | M9 紧急关 LLM；关则零 LLM 模板 + 练习卡，run=`DEGRADED` |
 | `wenjin.features.plan-enabled` | `true` | `${WENJIN_FEATURE_PLAN:false}` | M10 学习计划；关则工具下架、scheduler 不跑、ACTIVE 冻结不删、brief 隐藏计划段 |
 | `wenjin.features.multi-agent-enabled` | `false` | `${WENJIN_FEATURE_MULTI_AGENT:false}` | M11 多智能体；**默认关**；关则零 cron、报告 API 404、相关 AiJob 拒跑 |
+| `wenjin.features.proactive-enabled` | `true` | `${WENJIN_FEATURE_PROACTIVE:false}` | 方向 4 主动陪伴；关则 `/api/companion/opener`、`hints/count`、`hints/dismiss` 返回 404（前端回退固定话术）；开启前须 **V22 migrate** |
+| `wenjin.limits.proactive.max-opener-actions` | `2` | 继承基线 | opener 动作卡上限 |
+| `wenjin.limits.proactive.max-hints-per-day` | `3` | 继承基线 | 每日（自然日）新展示提示条上限 |
+| `wenjin.limits.proactive.hint-cooldown-hours` | `20` | 继承基线 | 同类型提示冷却小时数 |
+| `wenjin.limits.proactive.error-burst-threshold` | `2` | 继承基线 | 单次练习错题数 >= 此值触发复盘动作 / ERROR_BURST 提示 |
+| `wenjin.limits.proactive.error-burst-window-hours` | `24` | 继承基线 | 错题爆发回看窗口（小时） |
 | `wenjin.limits.supervisor.sample-size` | `5` | 继承基线 | Supervisor 每课程每周抽样 COMPANION_CHAT 数 |
 | `wenjin.multi-agent.report-cron` | `0 15 3 * * MON` | 继承基线 | 周一凌晨入队 TEACHER_WEEKLY_REPORT / SUPERVISOR_SAMPLE |
 | `wenjin.limits.plan.daily-task-cap` | `3` | 继承基线 | 每日任务上限 |
@@ -471,6 +482,7 @@ spring:
 | `wenjin.limits.plan.backlog-threshold` | `5` | 继承基线 | daily-brief 复习积压置顶 |
 | `wenjin.plan.replan-cron` | `0 30 4 * * *` | 继承基线 | 每日 re-plan（仅 ACTIVE） |
 | `wenjin.eval.judge-model` | `${WENJIN_EVAL_JUDGE_MODEL:}`（空则回落文本模型） | 同左 | LLM-as-judge 模型；未配置时沿用 `wenjin.ai.model` |
+| `wenjin.eval.price.input-per-mtok` / `output-per-mtok` | `${WENJIN_EVAL_PRICE_IN:0}` / `${WENJIN_EVAL_PRICE_OUT:0}` | 同左 | 评测报告成本估算单价（美元/百万 token）；0 = 不计成本 |
 | `wenjin.limits.trace.max-io-chars` | `8000` | 继承基线 | `agent_step.input_json` / `output_json` 超长截断并追加 `[truncated]` |
 | `wenjin.limits.tools.max-result-chars` | `4000` | 继承基线 | 通用工具结果字符上限（与伴侣侧 `wenjin.companion.tools.max-result-chars` 并存；后者偏对话上下文） |
 | `wenjin.companion.tools.max-result-chars` | `2000` | 继承基线 | 伴侣 ToolGovernor 结果截断（M4） |
@@ -534,11 +546,29 @@ wenjin:
 - **学生端不开放 trace API**：仅教师/管理员经 `TeacherAgentRunController` 读本课 run；学生令牌应 401/403。
 - **Schema**：空库走 Flyway V1…**V15**；既有库 migrate **V10**（`agent_run` / `agent_step`），**V11**（eval），**V12**（`student_memory`），**V13**（RAG 三表 + FULLTEXT ngram），**V14**（计划三表），**V15**（`agent_report`）。`schema.sql` 仅本地空库快照，生产禁用。
 - **发布顺序**：migrate V10 → 滚动应用（可先 flag off）→ 冒烟教师页 `/teacher/agent-runs` → 再开 `WENJIN_FEATURE_AGENT_TRACE`。回滚优先关 flag，不必立刻 drop 表。
-- **M6 评测**：生产默认 `eval-enabled=false`；CI 用 REPLAY 硬断言（`eval-replay` job，不调用外网模型）。LIVE 录 golden / judge 校准仅在有 Key 的受控环境执行。
+- **M6 评测**：生产默认 `eval-enabled=false`，评测装配（`EvalRuntimeConfiguration`）只在 `eval` profile 下生效，生产永不激活。CI `eval-replay` 用 Testcontainers 把每个 ENABLED 场景的 golden 回放进真实编排并做硬断言（不调用外网模型）；CI `eval-live` 为 `workflow_dispatch` 手动任务，读仓库 secret `WENJIN_AI_API_KEY`，产物 `target/eval-live/**`。
+  - **评测库必须独立**：本地用 `wenjin_eval`（`CREATE DATABASE wenjin_eval DEFAULT CHARACTER SET utf8mb4`，表由 Flyway 建，**不要**灌 `schema.sql`）；JDBC 库名为 `wenjin` 时拒跑。
+  - 评测运行参数（系统属性 / 环境变量，仅测试进程使用）：
+
+    | 参数 | 默认 | 说明 |
+    | --- | --- | --- |
+    | `WENJIN_EVAL_IT=true` | 未设 = 跳过 | 启用 `ReplayScenarioIT` / `LiveEvalPipelineIT` / `EvalFixtureIT` |
+    | `WENJIN_EVAL_LIVE=true` + `WENJIN_AI_API_KEY` | 未设 = 跳过 | 启用 `LiveEvalSuiteIT`（真实模型，按 `wenjin.ai.base-url/model`） |
+    | `-Dwenjin.eval.jdbc-url` / `WENJIN_EVAL_JDBC_URL` | Testcontainers `mysql:8.4` | 指向本机评测库，如 `jdbc:mysql://127.0.0.1:3306/wenjin_eval`；账号 `-Dwenjin.eval.jdbc-user` / `-password`（默认 root/root） |
+    | `-Dwenjin.eval.repeat` | `3` | LIVE 每场景重复次数 |
+    | `-Dwenjin.eval.scenarios` | 全部 ENABLED | 逗号分隔；显式列出时可跑 PENDING |
+    | `-Dwenjin.eval.judge` | `false` | 跑 LLM judge（模型 `wenjin.eval.judge-model`），并导出 `calibration.csv` |
+    | `-Dwenjin.eval.record` / `-Dwenjin.eval.record-dir` | `false` / `src/test/resources/eval/golden` | RECORD：把真实 `streamTurn` 输出写成 golden v2 |
+    | `-Dwenjin.eval.out-dir` | `target/eval-live` | LIVE 报告根目录（子目录按时间戳） |
+    | `-Dwenjin.eval.compare=A/report.json,B/report.json` | — | `EvalToolsTest`：两份报告对比 → `target/eval-compare.md` |
+    | `-Dwenjin.eval.calibration-csv=...` | — | `EvalToolsTest`：读回填好 `human_score` 的 CSV，算人机一致率与维度偏差 |
+
+  - 本地 LIVE 一条命令（PowerShell，`wenjin-server` 目录）：`$env:WENJIN_AUTH_SECRET="ci-test-secret-not-for-prod-at-least-32-bytes"; $env:WENJIN_EVAL_LIVE="true"; $env:WENJIN_AI_API_KEY="<key>"; .\mvnw.cmd test "-Dtest=LiveEvalSuiteIT" "-Dwenjin.eval.jdbc-url=jdbc:mysql://127.0.0.1:3306/wenjin_eval" "-Dwenjin.eval.judge=true"`。完整说明见 README「M6 伴侣评测」。
 - **M7 记忆**：生产默认 `memory-enabled=false`；开启前须完成 V12 migrate。关闭时行为回到 M6 基线（空 MEMORY 槽、无 distill 入队、记忆工具不可用）。`record_observation` 超 `write-per-run` 返回 `TOOL_BUDGET_EXCEEDED` + GUARD，且不占用总工具次数。
 - **M8 RAG**：生产默认 `rag-enabled=false`；开启前须完成 **V13 migrate** 与 **`ops/sql/preflight-ngram.sql`**（`ngram_token_size=2`）。关闭时回到 M7 基线（空 RETRIEVAL、`search_materials` 不可用）。**版权**：整本出版教材勿部署到公网 `fordo.thingxue.com`；校内演示环境不受限。NODE_REF 参考文档可入库。
 - **M9 竞赛交付 / 紧急 kill switch**：见下表；**无新 Flyway**（探针会话为进程内 `ProbeSessionStore`，避免占用 M10 的 V14）。
 - **M10 计划**：生产默认 `plan-enabled=false`；开启前须完成 **V14 migrate**。关闭时：计划工具下架、re-plan 不跑、daily-brief 隐藏计划段、已有 ACTIVE 冻结不删。DRAFT 永不进 brief / re-plan。
+- **主动陪伴**：生产默认 `proactive-enabled=false`（`WENJIN_FEATURE_PROACTIVE`）；开启前须 **V22 migrate**（`companion_hint_log`）。零 LLM、读时聚合，关闭时三个接口 404、前端回退固定话术；管理后台「系统配置」可热改开关。
 - **M11 多智能体（可选）**：默认 `multi-agent-enabled=false`（开发/生产一致）；开启前须 **V15 migrate** 且建议 `ai-job-dispatch-enabled=true`。关闭时：无周报 cron、报告 API 404、相关 job kind 拒跑；与 M10 基线一致。Teacher 周报只读证据流/掌握度/练习，**不读 student_memory**。
 
 ### 4.2.1 M9 紧急 kill switch 矩阵

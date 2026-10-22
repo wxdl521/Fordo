@@ -21,6 +21,7 @@ public class LimitsProperties {
     private final Tools tools = new Tools();
     private final Plan plan = new Plan();
     private final Supervisor supervisor = new Supervisor();
+    private final Proactive proactive = new Proactive();
 
     /**
      * 伴侣会话预算（wenjin.limits.companion.*）。前四项每次请求现读，可由管理后台「系统配置」运行时改写，
@@ -156,5 +157,22 @@ public class LimitsProperties {
     public static class Supervisor {
         /** 每课程每周抽样 COMPANION_CHAT run 数 */
         private int sampleSize = 5;
+    }
+
+    /**
+     * 主动陪伴（wenjin.limits.proactive.*，方向 4）。
+     */
+    @Data
+    public static class Proactive {
+        /** opener 最多返回的动作卡数 */
+        private int maxOpenerActions = 2;
+        /** 每日（自然日）最多新展示的提示条数 */
+        private int maxHintsPerDay = 3;
+        /** 同类型提示的冷却小时数（新实例须距同类型上次展示超过此值） */
+        private int hintCooldownHours = 20;
+        /** 单次练习错题数 >= 此值视为错题爆发 */
+        private int errorBurstThreshold = 2;
+        /** 错题爆发的回看窗口（小时） */
+        private int errorBurstWindowHours = 24;
     }
 }

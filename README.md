@@ -6,7 +6,7 @@
 
 ## 当前进度
 
-当前代码已完成 **基线平台 + M1–M11 全部主链路**：学生端学习闭环（诊断/练习/复习/路径）、AI 伴侣（工具调用/长期记忆/RAG/反思探针/学习计划）、教师端（建图/题库/抽取/看板/轨迹/周报）与生产部署骨架。M6 评测骨架落地并纳入 CI（REPLAY 硬断言）；剩余欠债为部分场景 LIVE golden 与 Judge 校准（见 M6 章节）。
+当前代码已完成 **基线平台 + M1–M11 全部主链路**：学生端学习闭环（诊断/练习/复习/路径）、AI 伴侣（工具调用/长期记忆/RAG/反思探针/学习计划）、教师端（建图/题库/抽取/看板/轨迹/周报）与生产部署骨架。M6 评测已能执行真实编排（REPLAY 回放 + LIVE/RECORD）；剩余欠债为用真实模型录制 golden 与 Judge 校准（见 M6 章节）。
 
 | 里程碑 | 状态 | 已落地能力 |
 | --- | --- | --- |
@@ -16,7 +16,7 @@
 | M3 遗忘衰减与复习调度 | 已完成 | 读时指数衰减、raw/effective 双分值、今日复习队列、复习直通 M1 自由练习、ColorMap 褪色态 |
 | M4 伴侣工具调用 | 已完成 | 伴侣两段式工具调用、工具治理（白名单/预算/超时/缓存/截断）、SSE 工具事件、对话内练习卡 |
 | M5 Agent 轨迹 | 已完成 | `agent_run`/`agent_step` 埋点、工具结果截断与 I/O 截断、教师端轨迹列表/steps 明细、特性开关与 Flyway V10 |
-| M6 伴侣评测 | 骨架完成 | 场景 JSON S01–S21、HardAssert 七项硬断言、GoldenRecorder/REPLAY、Judge 骨架、CI `eval-replay` 任务；S18/S20/S21 待 LIVE golden，Judge 校准待真实数据 |
+| M6 伴侣评测 | 真评测已接通 | 场景 JSON S01–S22（含 `liveFaults`；S22 复盘错题，persona 可带 `mistakes`）、真实编排 REPLAY（golden v2）、LIVE/RECORD、指标与 Judge 阈值判定、报告对比与校准工具、CI `eval-replay` + 手动 `eval-live`；golden 仍为合成，待有 Key 后 RECORD 替换；S18/S20/S21 待 LIVE golden |
 | M7 长期记忆 | 已完成 | EPISODIC/SEMANTIC/PROCEDURAL 三层记忆、Jaccard 去重、异步蒸馏、`recall_student_context` / `record_observation` 工具、Flyway V12 |
 | M8 RAG | 已完成 | ngram FULLTEXT 检索、NODE_REF 语料入库、RETRIEVAL 槽注入、`search_materials` 工具、引用校验、Flyway V13 |
 | M9 反思与降级 | 已完成 | 理解探针（`probe_understanding`）、换策略重讲（StrategySwitcher）、零 LLM 降级（kill-switch 矩阵）、phase-1 意图路由 |
@@ -37,6 +37,7 @@
 - 今日复习：由 M3 衰减模型找出“曾经掌握但正在遗忘”的节点，并一键进入复习练习。
 - AI 学习伴侣：SSE 流式对话，支持工具胶囊、节点详情/掌握度/复习队列查询、对话内练习卡、理解探针卡与资料引用。
 - 学习计划与每日简报：AI 起草备考计划（DRAFT→确认 HITL），每日 re-plan 并生成每日简报（M10）。
+- 主动陪伴：伴侣空会话 opener（时段问候 + 最多 2 张动作卡：错题复盘 / 到期复习 / 计划任务 / 薄弱节点 / 学习前沿）与事件型提示条（错题爆发 / 知识遗忘 / 计划落后，带冷却与每日上限、可关闭），导航小红点。确定性读时聚合，零 LLM；`proactive-enabled` 关闭则接口 404、前端回退固定话术。
 - 成长档案：展示掌握度快照和学习变化。
 
 ### 教师端
@@ -69,7 +70,7 @@ Fordo/
 │  ├─ src/main/java/com/wenjin/
 │  │  ├─ controller/                   # 学生端、教师端、管理端 API
 │  │  ├─ service/                      # 诊断、练习、路径、复习、伴侣、作业等业务
-│  │  │  ├─ companion/                 # M4 伴侣工具与治理管道（13 个白名单工具）
+│  │  │  ├─ companion/                 # M4 伴侣工具与治理管道（14 个白名单工具）
 │  │  │  ├─ trace/                     # M5 Agent 执行轨迹埋点
 │  │  │  ├─ memory/                    # M7 长期记忆蒸馏/去重/注入
 │  │  │  ├─ rag/                       # M8 检索与语料入库
@@ -239,6 +240,7 @@ npm run dev
 | 练习 | `/api/practice` | M1 节点练习开始、提交、历史 |
 | 复习 | `/api/review/today` | M3 今日复习队列 |
 | AI 伴侣 | `/api/companion` | SSE 对话、会话列表、会话删除 |
+| 主动陪伴 | `/api/companion/opener`、`/api/companion/hints/count`、`/api/companion/hints/dismiss` | opener（问候+动作卡+提示条）、提示条数量（小红点，只读）、关闭提示；`proactive-enabled` 关则 404 |
 | 理解探针 | `/api/companion/probe/{sessionId}/submit` | M9 探针作答（EWMA 隔离，不写掌握度） |
 | run 取消 | `/api/companion/runs/{id}/cancel` | M10 编排转向/取消 |
 | 学习计划 | `/api/student/plans/*`、`/api/student/daily-brief` | M10 计划确认/取消/当前计划/每日简报 |
@@ -266,7 +268,7 @@ M4 把 AI 伴侣从“读取上下文并回答”升级为“按白名单工具�
 - `start_practice` 通过 nodeCode 或 nodeName 发起 M1 自由练习，默认 2 题，夹紧到 1-3 题，并通过 SSE 推送 `practice_card`。
 - 前端 `Companion.vue` 渲染 `tool_start`、`tool_result` 和 `practice_card`，内嵌 `QuestionAnswerCard` 完成作答提交。
 
-> 工具集随里程碑扩展至 **13 个**：M7 增加 `recall_student_context` / `record_observation`；M8 增加 `search_materials`；M9 增加 `probe_understanding`；M10 增加 `draft_study_plan` / `get_plan_progress`；另有 `get_review_queue` / `get_learning_frontier` / `trace_prerequisites` / `schedule_review`。详见各里程碑章节。
+> 工具集随里程碑扩展至 **14 个**：M7 增加 `recall_student_context` / `record_observation`；M8 增加 `search_materials`；M9 增加 `probe_understanding`；M10 增加 `draft_study_plan` / `get_plan_progress`；错因辅导增加 `get_recent_mistakes`；另有 `get_review_queue` / `get_learning_frontier` / `trace_prerequisites` / `schedule_review`。详见各里程碑章节。
 
 相关代码：
 
@@ -304,39 +306,65 @@ M5 为伴侣等 Agent 编排补齐可观测轨迹，并给教师提供按课程�
 
 生产开关与限流配置见 **`DEPLOYMENT.md`**（`agent-trace-enabled`、`limits.trace` / `limits.tools`、调度池、V10）。
 
-## M6 伴侣评测（REPLAY）
+## M6 伴侣评测（REPLAY / LIVE / RECORD）
 
-M6 用场景脚本 + 硬断言 +（可选）LLM-as-judge 回归伴侣行为。CI 默认跑 **REPLAY**，不依赖 AI Key / Docker。
+M6 用场景脚本 + 硬断言 + LLM-as-judge 回归伴侣行为。三种模式共用同一套执行链：**夹具建世界 → 套 persona → 真实 `CompanionServiceImpl`/`CompanionOrchestrator`/工具 → 读回 `agent_run`/`agent_step` → 硬断言 + 指标**，区别只在 LLM 从哪来。
+
+| 模式 | LLM 来源 | 入口 | 何时跑 |
+| --- | --- | --- | --- |
+| REPLAY | golden v2 逐轮回放（`ReplayCompanionAiClient.streamTurn`） | `ReplayScenarioIT` | CI `eval-replay`（Docker/Testcontainers）；本地指向 `wenjin_eval` |
+| LIVE | 真实模型（`wenjin.ai.*`） | `LiveEvalSuiteIT` | 手动 / CI `eval-live`（`workflow_dispatch`，secret `WENJIN_AI_API_KEY`） |
+| RECORD | LIVE + 录制每轮 `streamTurn` 输出为 golden v2 | `LiveEvalSuiteIT -Dwenjin.eval.record=true` | 有 Key 时替换合成 golden |
 
 | 构件 | 位置 |
 | --- | --- |
-| 场景（事实源） | `wenjin-server/src/test/resources/eval/scenarios/S01.json` … `S21.json` |
-| Golden（REPLAY） | `wenjin-server/src/test/resources/eval/golden/{code}.json`（20 份，缺 S18） |
-| 硬断言 / 执行器 | `com.wenjin.eval.hard`、`runner`、`golden`、`replay`、`fixture` |
-| 报告 | `wenjin-server/target/eval-report.md`（评测测试写出） |
-| Judge 校准草稿 | `wenjin-server/docs/quality/judge-calibration-v1.md`（当前为 placeholder 合成集） |
+| 场景（事实源） | `wenjin-server/src/test/resources/eval/scenarios/S01.json` … `S21.json`（可选 `liveFaults`） |
+| Golden v2 | `wenjin-server/src/test/resources/eval/golden/{code}.json`（20 份，缺 S18；当前均为 `synthetic:true` 手写合成） |
+| 执行链 | `com.wenjin.eval.runner`（`EvalHarness`、`ServiceCompanionTurnRunner`、`LiveEvalSuite`、`EvalScenarioEnvironment`）、`fixture`（`EvalWorldBuilder` 建隔离课程 `EVAL_SE`）、`replay`、`golden`、`hard`、`judge`、`metrics`、`report`、`calibration` |
+| 报告 | REPLAY：`target/eval-report.md`；LIVE：`target/eval-live/<yyyyMMdd-HHmmss>/report.md`、`report.json`（判 judge 时另有 `calibration.csv`） |
 
-- **ENABLED**（CI 硬断言，18 个）：S01–S17、**S19**  
-- **PENDING**（3 个）：**S18**（跨会话记忆引用）、**S20** / **S21**（M10 学习计划；golden 文件已生成，待 LIVE golden 后启用）  
-- S02：`guidance` 阈值 4；system prompt 强化「索要直接答案 → 分步引导」  
-- 开关：`wenjin.features.eval-enabled`（生产默认关，`WENJIN_FEATURE_EVAL`）  
-- Judge 模型：`wenjin.eval.judge-model`（可选，见 DEPLOYMENT；Judge threshold 目前只写入提示词，未强制判罚）
+- **ENABLED**（18 个）：S01–S17、S19；**PENDING**：S18（跨会话记忆，无 golden）、S20/S21（学习计划；显式列出时可跑）。
+- **Golden v2**：`{"scenario","format":2,"recordedAt","model","synthetic","turns":[{"rounds":[{"content","toolCalls":[{"name","arguments"}],"finishReason"}]}]}`，一个 turn 对应脚本一句，一个 round 对应一次 `streamTurn`。回放严格：轮次用尽或有剩余轮次都记为 `replay` 硬失败并提示 **need re-record**（说明编排行为已变）。v1（phase1/phase2）格式已废弃。
+- **`liveFaults`**（真模型无法自然复现的场景）：`{"llmFailures":N}` 让前 N 次 LLM 调用按供应商失败抛出（S07 → 降级）；`{"maxToolCalls":N}` 临时覆盖工具预算（S06 → 预算耗尽 GUARD）。REPLAY/LIVE/RECORD 同样生效。
+- **判定**：硬断言 7 项 + `execution`/`replay` 两项执行检查；Overall = 硬断言通过且 Judge 未判 FAIL（Judge 缺失记 N/A）。指标：TTFT、总耗时、LLM 轮数、工具次数、真实 usage tokens、按单价估成本（`wenjin.eval.price.*`）。
+- **数据库隔离**：评测会重置学生状态、建课，**只能用独立库**（默认 `wenjin_eval`）或 Testcontainers；JDBC URL 库名为 `wenjin` 时 `EvalDatabaseGuard` 直接拒跑。Schema 由 Flyway V1…最新 建立，**不要**用 `schema.sql` 灌评测库（它含 `USE wenjin` + DROP）。
 
-本地 REPLAY（与 CI `eval-replay` 一致）：
+本地准备（一次）：
 
 ```powershell
+mysql -uroot -proot -e "CREATE DATABASE IF NOT EXISTS wenjin_eval DEFAULT CHARACTER SET utf8mb4"
 cd wenjin-server
 $env:WENJIN_AUTH_SECRET = "ci-test-secret-not-for-prod-at-least-32-bytes"
-.\mvnw.cmd -Dtest=com.wenjin.eval.** "-Deval.mode=replay" test
 ```
 
-刷新 golden（工厂合成步 → `GoldenRecorder`，无 AI Key）：
+REPLAY（真实编排回归，约 1 分钟；`-Dwenjin.eval.jdbc-url` 省略时走 Testcontainers，需要 Docker）：
 
 ```powershell
-.\mvnw.cmd "-Dtest=com.wenjin.eval.golden.GenerateEnabledGoldensTest" "-Dwenjin.eval.write-goldens=true" test
+$env:WENJIN_EVAL_IT = "true"
+.\mvnw.cmd test "-Dtest=com.wenjin.eval.**" "-Dwenjin.eval.jdbc-url=jdbc:mysql://127.0.0.1:3306/wenjin_eval"
 ```
 
-有 AI Key 时再做完整 **LIVE+RECORD**；当前 CI 仅保证 golden REPLAY 硬断言绿。
+（`-Dtest=com.wenjin.eval.**` 同时跑评测单测；只跑回放用 `-Dtest=ReplayScenarioIT`。不设 `WENJIN_EVAL_IT` 时 IT 自动跳过。URL 不必带 `&` 参数，缺省会补 `useAffectedRows/characterEncoding=UTF-8/serverTimezone/useSSL/allowPublicKeyRetrieval`。）
+
+LIVE（需要 Key；默认每场景 3 次）：
+
+```powershell
+$env:WENJIN_EVAL_LIVE = "true"
+$env:WENJIN_AI_API_KEY = "<your key>"
+.\mvnw.cmd test "-Dtest=LiveEvalSuiteIT" "-Dwenjin.eval.jdbc-url=jdbc:mysql://127.0.0.1:3306/wenjin_eval" "-Dwenjin.eval.repeat=3" "-Dwenjin.eval.judge=true" "-Dwenjin.eval.scenarios=S01,S04"
+```
+
+RECORD（把真实输出写回 golden，`synthetic:false`；每场景保留首个硬断言通过的那次）：加 `"-Dwenjin.eval.record=true"`（可选 `"-Dwenjin.eval.record-dir=..."`，默认 `src/test/resources/eval/golden`），跑完 `git diff` 审阅再提交。
+
+对比两次报告 / Judge 校准：
+
+```powershell
+.\mvnw.cmd test "-Dtest=EvalToolsTest" "-Dwenjin.eval.compare=target/eval-live/<A>/report.json,target/eval-live/<B>/report.json"   # → target/eval-compare.md
+# 在 calibration.csv 的 human_score 列填人工分（1–5）后：
+.\mvnw.cmd test "-Dtest=EvalToolsTest" "-Dwenjin.eval.calibration-csv=target/eval-live/<B>/calibration.csv"   # 一致率（|人−机|≤1）与各维度偏差
+```
+
+无 Key 时 `LiveEvalPipelineIT` 用按 golden 脚本作答的桩模型 + 假 Judge 走完整 LIVE 链路（夹具、故障注入、RECORD、Judge、聚合、报告），保证接上 Key 只差模型本身。
 
 ## M7 长期记忆（三层 + PromptAssembler）
 
@@ -390,7 +418,10 @@ M9 为伴侣补齐「确认听懂」与「紧急熔断」两个回路。
 
 ### 能力摘要
 
-- **理解探针**：`probe_understanding` 工具发起单题探针（EWMA 隔离，不写掌握度），经 SSE 推送 `probe_card`；作答未通过时可「换个方式再讲」（StrategySwitcher 换策略重讲）。
+- **理解探针**：`probe_understanding` 工具发起单题探针（EWMA 隔离，不写掌握度），经 SSE 推送 `probe_card`；作答未通过时可「换个方式再讲」。
+- **换策略真实生效**：探针提交结果记入进程内 `ProbeOutcomeStore`（不落库，重启即回到默认讲法）；下一 turn 若焦点节点或最近探针节点有 30 分钟内未通过的探针，服务端按 `StrategySwitcher` 顺序（类比→举例→分步→对比→图谱）选下一个讲法，注入 system prompt 动态段「换种讲法」，同一次失败只切换一次；该 turn 视为讲解并再次自动探针。上一讲法无效 / 改用后通过分别写入程序性记忆 `[STRATEGY][无效|有效]`。
+- **错因辅导**：`get_recent_mistakes`（只读、可缓存；参数 `nodeCode?`、`practiceSessionId?`、`limit?` 1–5 默认 3）读取近期客观题错题（单选/多选/判断，排除简答），返回所选 vs 正确选项及所选干扰项 `point_node_code` 指向的误区节点与 `topMisconceptions`；system prompt「错因辅导」规则要求先查错题、针对误区讲清为什么会选错、不直接念答案。本 turn 若该工具给出误区节点，自动探针改为探第一误区节点。
+- **复盘错题入口**：`POST /api/companion/chat` 请求体可选 `reviewPracticeSessionId`（正整数）；控制器校验该练习会话属于当前学生与课程（否则 404），仅本 turn 有效，作为 `get_recent_mistakes` 的默认会话并在 prompt 中提示先复盘。
 - **phase-1 意图路由**：伴侣第一阶段决策输出 `intent ∈ {EXPLAIN, QUERY, PRACTICE, CHAT}`（缺省 CHAT）；EXPLAIN 后可自动发起探针；练习意图命中时短路到 `start_practice`。
 - **零 LLM 降级**：`companion-llm-enabled=false` 或运行时 LLM 连续失败 → `CompanionDegradeService` 模板话术 + 练习卡（due → weak → frontier），run 记 `DEGRADED`。
 - **kill-switch 矩阵**：
@@ -398,7 +429,7 @@ M9 为伴侣补齐「确认听懂」与「紧急熔断」两个回路。
 | 开关 | 关闭时的行为 |
 | --- | --- |
 | `companion-llm-enabled` | 零 LLM 降级模板 + 练习卡；`agent_run.status=DEGRADED` |
-| `reflection-enabled` | 不下发 `probe_understanding`、不自动探针、无换策略回路 |
+| `reflection-enabled` | 不下发 `probe_understanding`、不自动探针（含误区定向探针）、不注入「换种讲法」 |
 | `memory-enabled` | MEMORY 槽为空、记忆工具下架、不派发蒸馏 |
 | `rag-enabled` | RETRIEVAL 槽为空、`search_materials` 下架 |
 | `plan-enabled` | 计划工具下架、re-plan 不跑、brief 隐藏计划段 |

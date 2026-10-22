@@ -37,6 +37,7 @@ class ConfigRegistryTest {
             "wenjin.features.companion-llm-enabled",
             "wenjin.features.plan-enabled",
             "wenjin.features.multi-agent-enabled",
+            "wenjin.features.proactive-enabled",
             "wenjin.limits.companion.max-input-chars",
             "wenjin.limits.companion.max-ai-output-chars",
             "wenjin.limits.companion.max-context-chars",

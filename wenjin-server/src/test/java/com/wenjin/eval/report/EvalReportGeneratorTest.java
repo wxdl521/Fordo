@@ -161,6 +161,27 @@ class EvalReportGeneratorTest {
     }
 
     @Test
+    @DisplayName("threshold enforced in Overall; missing judge is N/A and not a failure")
+    void thresholdAndNa() {
+        EvalCaseOutcome ok = EvalCaseOutcome.completed(
+                "S01", EvalMode.LIVE, HardAssertResult.pass(), 1L, 2L, "a", List.of());
+        EvalCaseOutcome ok2 = EvalCaseOutcome.completed(
+                "S02", EvalMode.LIVE, HardAssertResult.pass(), 3L, 4L, "b", List.of());
+        var dims = List.of(new com.wenjin.eval.scenario.EvalScenarioDocument.JudgeDimension("guidance", "", 4));
+        JudgeResult low = JudgeResult.ok("judge-prompt-v1", List.of(new JudgeScore("guidance", 3, "meh")), 1);
+
+        String md = new EvalReportGenerator(FIXED).generate(List.of(
+                EvalReportCase.of(ok, low, dims),
+                EvalReportCase.of(ok2)));
+
+        assertThat(md).contains(
+                "| S01 | LIVE | no | PASS | FAIL (avg 3.0) | FAIL |",
+                "| S02 | LIVE | no | PASS | N/A | PASS |",
+                "Judge N/A (not run, not counted as failure): 1",
+                "- **Verdict**: FAIL (below threshold: guidance)");
+    }
+
+    @Test
     @DisplayName("write to path under temp dir")
     void writeToPath() throws Exception {
         Path out = tempDir.resolve("eval-report.md");

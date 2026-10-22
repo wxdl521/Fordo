@@ -124,12 +124,12 @@ public final class HardAssertChecker {
                             "tool step '" + step.name() + "' input is not valid JSON"));
                 }
             }
-            if (step.isLlmCall() && "phase1".equals(step.name())) {
-                // phase1 may emit decision JSON or tool-call payload summary; only validate if looks like JSON
+            if (step.isLlmCall() && "llm_round".equals(step.name())) {
+                // llm_round trace output is a JSON round summary; only validate if it looks like JSON
                 String out = step.outputJson();
                 if (out != null && looksLikeJson(out) && !isValidJsonOrEmpty(out)) {
                     failures.add(new HardAssertFailure("jsonContractValid",
-                            "phase1 output looks like JSON but is invalid"));
+                            "llm_round output looks like JSON but is invalid"));
                 }
             }
         }

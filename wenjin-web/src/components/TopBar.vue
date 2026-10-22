@@ -45,7 +45,12 @@
           :to="{ path: link.to, query: link.query }"
           :data-tour="studentTourId(link.to)"
           :style="navLinkStyle($route.path === link.to)"
-        >{{ link.label }}</router-link>
+        >{{ link.label }}<span
+            v-if="link.to === '/companion' && hintCount > 0"
+            data-testid="companion-hint-dot"
+            title="伴侣有新的提示"
+            :style="{ display: 'inline-block', width: '7px', height: '7px', marginLeft: '4px', borderRadius: '50%', background: '#d9534f', verticalAlign: 'super' }"
+          ></span></router-link>
       </template>
     </nav>
 
@@ -63,11 +68,12 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import ThemeToggle from './ThemeToggle.vue'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
 import { useSessionStore } from '../store/session.js'
+import { fetchHintsCount } from '../api/companion.js'
 
 const router = useRouter()
 const route = useRoute()
@@ -83,6 +89,24 @@ defineProps({
 const isTeacher = computed(() => route.path.startsWith('/teacher'))
 
 const { courseId: studentCourseId } = useStudentCourse()
+
+// AI 伴侣未读提示数（路由切换时刷新，失败静默）
+const hintCount = ref(0)
+let hintSeq = 0
+async function refreshHintCount() {
+  const seq = ++hintSeq
+  if (isTeacher.value || !studentCourseId.value || !session.token) {
+    hintCount.value = 0
+    return
+  }
+  try {
+    const data = await fetchHintsCount(studentCourseId.value)
+    if (seq === hintSeq) hintCount.value = Number(data?.count) || 0
+  } catch {
+    if (seq === hintSeq) hintCount.value = 0
+  }
+}
+watch(() => [route.path, studentCourseId.value], refreshHintCount, { immediate: true })
 
 // 学生端导航（携带当前课程，无课则不带 courseId，禁止默认 1）
 const studentLinks = computed(() => {

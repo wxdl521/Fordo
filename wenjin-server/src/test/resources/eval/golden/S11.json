@@ -1,14 +1,30 @@
 {
-  "scenario" : "S11",
-  "recordedAt" : "2026-07-20T12:00:00Z",
-  "model" : "deepseek-chat",
-  "llmCalls" : [ {
-    "idx" : 0,
-    "name" : "phase1",
-    "output" : "{\"type\":\"tool_calls\",\"calls\":[{\"id\":\"c1\",\"name\":\"trace_prerequisites\",\"arguments\":\"{\\\"nodeCode\\\":\\\"SE-3.2\\\"}\"}]}"
-  }, {
-    "idx" : 1,
-    "name" : "phase2",
-    "output" : "我对 SE-3.2 做了先修回溯：建议先巩固 SE-2.1 与 SE-3.1，再回来画用例。你可以先用自己的话解释「参与者」是什么，我们再对照图谱。"
-  } ]
+  "scenario": "S11",
+  "format": 2,
+  "recordedAt": "2026-10-21T00:00:00Z",
+  "model": "synthetic",
+  "synthetic": true,
+  "turns": [
+    {
+      "rounds": [
+        {
+          "content": "",
+          "toolCalls": [
+            {
+              "name": "trace_prerequisites",
+              "arguments": {
+                "nodeCode": "SE-3.2"
+              }
+            }
+          ],
+          "finishReason": "tool_calls"
+        },
+        {
+          "content": "你的直觉是对的：用例图（SE-3.2）的前置是需求获取（SE-2.1），而 SE-2.1 又建立在软件工程概述（SE-1.1）之上。你的 SE-2.1 掌握度也不高，建议先把它补上。先想想：访谈和问卷各适合什么场景？",
+          "toolCalls": [],
+          "finishReason": "stop"
+        }
+      ]
+    }
+  ]
 }

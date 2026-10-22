@@ -117,6 +117,23 @@ class HardAssertCheckerTest {
                         Set.of("KT01"),
                         false, "jsonContractValid"),
 
+                // 8b fail: llm_round trace output that looks like JSON must be valid JSON
+                args("fail_json_contract_llm_round_output",
+                        steps(llm("llm_round", "{\"round\":0,\"toolCalls\":[}")),
+                        "x",
+                        hard(List.of(), List.of(), 4, true, true, false),
+                        Set.of(),
+                        false, "jsonContractValid"),
+
+                // 8c pass: valid llm_round output
+                args("pass_json_contract_llm_round_output",
+                        steps(llm("llm_round",
+                                "{\"round\":0,\"toolCalls\":[],\"contentChars\":1,\"finishReason\":\"stop\"}")),
+                        "x",
+                        hard(List.of(), List.of(), 4, true, true, false),
+                        Set.of(),
+                        true, null),
+
                 // 9 pass: jsonContractValid=false skips
                 args("pass_json_contract_skipped",
                         steps(

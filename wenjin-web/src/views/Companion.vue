@@ -33,19 +33,11 @@
     </aside>
 
     <main class="cp-main">
+      <CompanionHintBar :hints="opener?.hints || []" :course-id="courseId" @send="sendProactive" />
       <div v-if="!msgs.length" class="cp-empty">
         <h2 class="cp-empty-title">你好，我是你的学习伴侣</h2>
         <p class="cp-empty-sub">可以随时问我知识点、学习进度，或者直接在这里完成节点练习。</p>
-        <div class="cp-starters">
-          <button
-            v-for="starter in starters"
-            :key="starter"
-            class="cp-starter"
-            @click="sendStarter(starter)"
-          >
-            {{ starter }}
-          </button>
-        </div>
+        <CompanionOpener :opener="opener" :starters="starters" @send="sendProactive" />
       </div>
 
       <div v-else ref="scrollEl" class="cp-messages" aria-live="polite" aria-relevant="additions text">
@@ -215,6 +207,15 @@
                     </div>
                   </div>
                 </div>
+
+                <button
+                  v-if="practiceHasWrong(msg)"
+                  type="button"
+                  class="cp-reexplain"
+                  data-testid="cp-review-mistakes"
+                  :disabled="typing"
+                  @click="reviewPracticeMistakes(msg)"
+                >复盘错题</button>
               </div>
             </div>
           </div>
@@ -280,17 +281,21 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import QuestionAnswerCard from '../components/QuestionAnswerCard.vue'
+import CompanionOpener from '../components/CompanionOpener.vue'
+import CompanionHintBar from '../components/CompanionHintBar.vue'
 import {
   listConversations,
   fetchConversation,
   deleteConversation,
   chatStream,
   submitProbe,
+  fetchOpener,
   isAbortError
 } from '../api/companion.js'
 import { submitPractice } from '../api/practice.js'
 import { fetchStudentChunk } from '../api/student.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
+import { useAutoReview } from '../composables/useAutoReview.js'
 import { buildCompanionChatPayload, readCompanionNodeCode } from '../utils/companionContext.js'
 import { createDebouncedPersist } from '../utils/companionPersistence.js'
 import { createLatestRequest } from '../utils/latestRequest.js'
@@ -364,6 +369,8 @@ const starters = computed(() => [
   '帮我看看这门课最近的学习节奏是否合理。',
   '给我一组适合现在状态的节点练习。'
 ])
+
+const REVIEW_PROMPT = '帮我复盘一下刚才那次练习的错题'
 
 const hasText = computed(() => input.value.trim().length > 0)
 const canSend = computed(() => hasText.value && !typing.value && conversationLoadingTarget.value === null)
@@ -853,14 +860,32 @@ function appendToAssistant(content) {
   msgs.value = appendAssistantToken(msgs.value, content)
 }
 
-function sendStarter(starter) {
-  input.value = starter
-  sendText()
+/** 开场动作 / 主动提示 / 复盘按钮统一入口：带 cta 参数直接发送（不经输入框）。 */
+function sendProactive({ text, reviewPracticeSessionId, nodeCode } = {}) {
+  if (!text || typing.value || conversationLoadingTarget.value !== null) return Promise.resolve()
+  return sendMessage(text, { reviewPracticeSessionId, nodeCode })
+}
+
+function practiceHasWrong(message) {
+  return !!message.card?.sessionId
+    && (message.submitResult?.graded || []).some((g) => g.correct === false)
+}
+
+function reviewPracticeMistakes(message) {
+  return sendProactive({
+    text: REVIEW_PROMPT,
+    reviewPracticeSessionId: message.card.sessionId,
+    nodeCode: message.card.node?.nodeCode
+  })
 }
 
 async function sendText() {
   if (!canSend.value) return
   const text = input.value.trim()
+  return sendMessage(text)
+}
+
+async function sendMessage(text, extra = {}) {
 
   // Do not pre-push empty assistant — tools/practice must land before final AI reply.
   msgs.value.push({ role: 'user', content: text })
@@ -873,8 +898,9 @@ async function sendText() {
   const payload = buildCompanionChatPayload({
     courseId: courseId.value,
     conversationId: conversationId.value,
-    nodeCode: ctxNodeCode.value,
-    message: text
+    nodeCode: extra.nodeCode || ctxNodeCode.value,
+    message: text,
+    reviewPracticeSessionId: extra.reviewPracticeSessionId
   })
 
   const { signal, isCurrent } = streamGate.next()
@@ -982,16 +1008,50 @@ function formatTime(value) {
   return date.toLocaleDateString('zh-CN')
 }
 
+const opener = ref(null)
+let openerSeq = 0
+async function loadOpener(cid) {
+  const seq = ++openerSeq
+  opener.value = null
+  if (!cid) return
+  try {
+    const data = await fetchOpener(cid)
+    if (seq === openerSeq) opener.value = data || null
+  } catch {
+    // 404（功能关闭）或其他失败：回退到静态 starters
+    if (seq === openerSeq) opener.value = null
+  }
+}
+
 watch(courseId, (value) => {
   // flush → cancel all → clear state → load list for new course
   resetCompanionSessionState()
   conversations.value = []
   if (value) loadConversations()
+  loadOpener(value)
 }, { immediate: true })
 
 watch(() => route.query.nodeCode, (value) => {
   ctxNodeCode.value = readCompanionNodeCode(value)
 }, { immediate: true })
+
+/**
+ * ?review=<practiceSessionId>：自动发起一次错题复盘（每个 id 恰好一次），并清掉 URL 参数防刷新重发；
+ * 正在输出 / 加载会话 / courseId 未就绪时延后到空闲再发，不丢弃。
+ */
+useAutoReview({
+  reviewQuery: () => route.query.review,
+  ready: () => !!courseId.value && !typing.value && conversationLoadingTarget.value === null,
+  clearQuery: () => {
+    const { review: _drop, ...rest } = route.query
+    router.replace({ path: route.path, query: rest })
+  },
+  send: (reviewId) => sendProactive({
+    text: REVIEW_PROMPT,
+    reviewPracticeSessionId: reviewId,
+    nodeCode: ctxNodeCode.value
+  })
+})
 
 watch(msgs, () => {
   scheduleTypedSnapshot()

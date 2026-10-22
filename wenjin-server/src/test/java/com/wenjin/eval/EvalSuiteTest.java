@@ -1,7 +1,6 @@
 package com.wenjin.eval;
 
 import com.wenjin.config.FeatureFlagsProperties;
-import com.wenjin.eval.golden.EnabledScenarioStepsFactory;
 import com.wenjin.eval.golden.GoldenLoader;
 import com.wenjin.eval.report.EvalReportCase;
 import com.wenjin.eval.report.EvalReportGenerator;
@@ -25,7 +24,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 /**
  * Eval suite entry (M6).
  * <p>Default tests: gate + inventory + golden inventory (no Docker).
- * REPLAY hard asserts live in {@link ReplayScenarioHardAssertTest}.
+ * Real REPLAY (orchestrator + DB) lives in {@code ReplayScenarioIT}.
  * Full LIVE+RECORD batch requires AI keys and is opt-in.
  */
 class EvalSuiteTest {
@@ -52,16 +51,16 @@ class EvalSuiteTest {
                 .filter(d -> d.resolvedStatus() == EvalScenarioStatus.PENDING)
                 .count();
         assertThat(enabled + pending).isEqualTo(docs.size());
-        assertThat(enabled).isEqualTo(EnabledScenarioStepsFactory.enabledCodes().size());
+        assertThat(enabled).isEqualTo(19);
         assertThat(pending).isEqualTo(3); // S18 + M10 S20,S21 (PENDING golden)
-        assertThat(docs.stream().map(EvalScenarioDocument::code)).contains("S01", "S09", "S13", "S18", "S19", "S20", "S21");
+        assertThat(docs.stream().map(EvalScenarioDocument::code)).contains("S01", "S09", "S13", "S18", "S19", "S20", "S21", "S22");
     }
 
     @Test
     @DisplayName("ENABLED scenarios have classpath goldens for REPLAY")
     void enabledGoldensPresent() {
         GoldenLoader goldens = new GoldenLoader();
-        for (String code : EnabledScenarioStepsFactory.enabledCodes()) {
+        for (String code : enabledCodes()) {
             assertThat(goldens.loadFromClasspath(code).scenario()).isEqualTo(code);
         }
     }
@@ -80,10 +79,10 @@ class EvalSuiteTest {
                         return EvalReportCase.of(EvalCaseOutcome.skipped(
                                 d.code(), EvalMode.REPLAY, "status=" + d.status()));
                     }
-                    // ENABLED detailed hard results written by ReplayScenarioHardAssertTest;
+                    // ENABLED detailed hard results written by ReplayScenarioIT;
                     // inventory row marks presence for suite-level report.
                     return EvalReportCase.of(EvalCaseOutcome.skipped(
-                            d.code(), EvalMode.REPLAY, "inventory-only (see ReplayScenarioHardAssertTest)"));
+                            d.code(), EvalMode.REPLAY, "inventory-only (see ReplayScenarioIT)"));
                 })
                 .toList();
 
@@ -101,6 +100,13 @@ class EvalSuiteTest {
     @DisplayName("optional full suite hook (disabled by default)")
     void fullSuite_optIn() {
         assertThat(new ScenarioLoader().loadAll()).isNotEmpty();
-        assertThat(EnabledScenarioStepsFactory.enabledCodes()).isNotEmpty();
+        assertThat(enabledCodes()).isNotEmpty();
+    }
+
+    private static List<String> enabledCodes() {
+        return new ScenarioLoader().loadAll().stream()
+                .filter(d -> d.resolvedStatus() == EvalScenarioStatus.ENABLED)
+                .map(EvalScenarioDocument::code)
+                .toList();
     }
 }

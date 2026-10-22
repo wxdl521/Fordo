@@ -20,6 +20,7 @@ public final class ScenarioSchemaValidator {
 
     private static final Pattern CODE_PATTERN = Pattern.compile("^S\\d{2,3}$");
     private static final Set<String> ALLOWED_STATUS = Set.of("ENABLED", "DISABLED", "PENDING");
+    static final int MAX_MISTAKES = 10;
 
     private ScenarioSchemaValidator() {}
 
@@ -48,6 +49,22 @@ public final class ScenarioSchemaValidator {
         validateScript(doc.script());
         validateHard(doc.hard());
         validateJudge(doc.judge());
+        validateLiveFaults(doc.liveFaults());
+    }
+
+    private static void validateLiveFaults(EvalScenarioDocument.LiveFaults faults) {
+        if (faults == null) {
+            return;
+        }
+        if (faults.llmFailures() == null && faults.maxToolCalls() == null) {
+            throw new ScenarioSchemaException("liveFaults must set llmFailures and/or maxToolCalls");
+        }
+        if (faults.llmFailures() != null && (faults.llmFailures() < 1 || faults.llmFailures() > 10)) {
+            throw new ScenarioSchemaException("liveFaults.llmFailures must be in [1,10]");
+        }
+        if (faults.maxToolCalls() != null && (faults.maxToolCalls() < 0 || faults.maxToolCalls() > 20)) {
+            throw new ScenarioSchemaException("liveFaults.maxToolCalls must be in [0,20]");
+        }
     }
 
     private static void validateStatus(EvalScenarioDocument doc) {
@@ -92,6 +109,24 @@ public final class ScenarioSchemaValidator {
                 if (o.effective() != null && (o.effective() < 0.0 || o.effective() > 1.0)) {
                     throw new ScenarioSchemaException(
                             "persona.masteryOverrides[" + i + "].effective must be in [0,1]");
+                }
+            }
+        }
+        if (persona.mistakes() != null) {
+            if (persona.mistakes().size() > MAX_MISTAKES) {
+                throw new ScenarioSchemaException("persona.mistakes must have at most " + MAX_MISTAKES + " entries");
+            }
+            for (int i = 0; i < persona.mistakes().size(); i++) {
+                EvalScenarioDocument.MistakeSeed m = persona.mistakes().get(i);
+                if (m == null) {
+                    throw new ScenarioSchemaException("persona.mistakes[" + i + "] is null");
+                }
+                if (m.nodeCode() == null || m.nodeCode().isBlank()) {
+                    throw new ScenarioSchemaException("persona.mistakes[" + i + "].nodeCode is required");
+                }
+                if (m.misconceptionNodeCode() == null || m.misconceptionNodeCode().isBlank()) {
+                    throw new ScenarioSchemaException(
+                            "persona.mistakes[" + i + "].misconceptionNodeCode is required");
                 }
             }
         }

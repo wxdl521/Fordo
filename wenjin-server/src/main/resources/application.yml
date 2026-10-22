@@ -135,6 +135,12 @@ wenjin:
       weak-drop-limit: 2                         # brief 弱跌节点最多展示数
     supervisor:                                  # M11 Supervisor 抽查
       sample-size: 5                             # 每课程每周抽样 COMPANION_CHAT run 数
+    proactive:                                   # 方向 4 主动陪伴
+      max-opener-actions: 2                      # opener 动作卡上限
+      max-hints-per-day: 3                       # 每日新展示提示条上限
+      hint-cooldown-hours: 20                    # 同类型提示冷却小时数
+      error-burst-threshold: 2                   # 单次练习错题数 >= 此值触发复盘动作/提示
+      error-burst-window-hours: 24               # 错题爆发回看窗口
 
   features:                                      # 功能开关（开发/测试默认开；生产见 application-prod.yml）
     fixed-diagnostic-enabled: true
@@ -148,12 +154,16 @@ wenjin:
     companion-llm-enabled: true                  # M9 伴侣 LLM（关则零 LLM 降级模板）
     plan-enabled: true                           # M10 学习计划（关则工具下架、scheduler 不跑）
     multi-agent-enabled: false                   # M11 多智能体周报/抽查（默认关；关则零调度、报告 API 404）
+    proactive-enabled: true                      # 方向 4 主动陪伴（opener/提示条/小红点；关则接口 404）
   plan:
     replan-cron: "0 30 4 * * *"                  # 每日 re-plan（默认 04:30）
   multi-agent:
     report-cron: "0 15 3 * * MON"                # 周一凌晨入队周报/抽查（仅 multi-agent-enabled）
   eval:                                          # 伴侣评测（M6）
     judge-model: ${WENJIN_EVAL_JUDGE_MODEL:}     # LLM-as-judge 模型；空则回落 wenjin.ai.model
+    price:                                       # 评测成本估算单价（美元/百万 token）；0 表示不计成本
+      input-per-mtok: ${WENJIN_EVAL_PRICE_IN:0}   # 输入 token 单价
+      output-per-mtok: ${WENJIN_EVAL_PRICE_OUT:0} # 输出 token 单价
   jobs:                                          # AI 异步作业 worker
     poll-interval-ms: 2000                       # 领取轮询间隔
     heartbeat-interval-ms: 30000

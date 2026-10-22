@@ -51,6 +51,14 @@ public interface CompanionService {
     void streamReply(Long conversationId, CompanionStreamSink sink);
 
     /**
+     * 同 {@link #streamReply(Long, CompanionStreamSink)}，并为本轮携带已校验归属的复盘练习会话
+     * （仅本 turn 有效，可空）。
+     */
+    default void streamReply(Long conversationId, Long reviewPracticeSessionId, CompanionStreamSink sink) {
+        streamReply(conversationId, sink);
+    }
+
+    /**
      * 查询学生的会话列表（按更新时间倒序，keyset 分页）。
      *
      * @param studentId 学生 ID

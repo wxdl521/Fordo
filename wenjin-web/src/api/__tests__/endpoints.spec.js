@@ -104,6 +104,9 @@ describe('API endpoint contracts', () => {
         'fetchConversation',
         'deleteConversation',
         'submitProbe',
+        'fetchOpener',
+        'fetchHintsCount',
+        'dismissHint',
         'dispatchChatStreamEvent',
         'chatStream'
       ]],
@@ -118,9 +121,9 @@ describe('API endpoint contracts', () => {
       expect(Object.keys(module).sort()).toEqual([...names].sort())
       exportCount += names.length
     }
-    // 61 baseline + 8 teacher RAG/reports + 1 companion submitProbe + 2 student + 1 sendEmailCode
+    // 61 baseline + 8 teacher RAG/reports + 1 companion submitProbe + 2 student + 1 sendEmailCode + 3 companion proactive
     // - 3 removed unused (importQuestionExcelLegacy / fetchPracticeHistory / fetchTeacherReport) = 70
-    expect(exportCount).toBe(70)
+    expect(exportCount).toBe(73)
   })
 
   it('maps user and course operations without forwarding privilege fields', () => {
