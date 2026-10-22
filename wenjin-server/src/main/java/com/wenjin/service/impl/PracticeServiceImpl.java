@@ -242,7 +242,10 @@ public class PracticeServiceImpl implements PracticeService {
 
         // ── 4~7. 组卷抽取（共享组件；Practice 传恒真谓词=不额外过滤，行为与 M1 零变化）
         //    weight=1 主关联 → weight=2 补充 → recency 排除 → I3a 复练兜底 → 难度轻分层
-        List<Question> selected = questionPicker.pick(nodeId, effectiveSize, recentQuestionIds, q -> true);
+        //    F2：编程题仅在沙箱可判分时才下发，否则学生拿到无法判分的题（生产开关默认关）
+        boolean codeGradable = codeJudgeAvailable();
+        List<Question> selected = questionPicker.pick(nodeId, effectiveSize, recentQuestionIds,
+                q -> codeGradable || typeOf(q) != QuestionType.CODE);
 
         // ── 6. 无任何 APPROVED 题 → 抛业务异常 ──────────────────────────────
         if (selected.isEmpty()) {
@@ -467,6 +470,17 @@ public class PracticeServiceImpl implements PracticeService {
         } catch (RuntimeException e) {
             log.warn("编程题判分异常，按未判分处理 questionId={}: {}", questionId, e.toString());
             return unavailable();
+        }
+    }
+
+    /** 沙箱是否可判分：bean 缺失 / available()=false / 抛异常均视为不可用。 */
+    private boolean codeJudgeAvailable() {
+        try {
+            CodeExecutionService svc = codeExecutionProvider.getIfAvailable();
+            return svc != null && svc.available();
+        } catch (RuntimeException e) {
+            log.warn("查询代码沙箱可用性异常，按不可用处理: {}", e.toString());
+            return false;
         }
     }
 

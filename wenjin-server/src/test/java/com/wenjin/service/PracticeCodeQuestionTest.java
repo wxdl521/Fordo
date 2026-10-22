@@ -309,6 +309,7 @@ class PracticeCodeQuestionTest {
         when(practiceSessionMapper.insert(any(PracticeSession.class))).thenReturn(1);
         when(codeCaseMapper.selectList(any())).thenReturn(List.of(
                 codeCase(1, "1 2", "3", 0), codeCase(2, "HIDDEN-IN", "HIDDEN-OUT", 1)));
+        when(codeService.available()).thenReturn(true);
 
         PracticeStartVO vo = impl(codeService).start(STUDENT_ID, COURSE_ID, NODE_ID, null, null);
 
@@ -320,6 +321,88 @@ class PracticeCodeQuestionTest {
         assertThat(q.getSampleCases().get(0).getExpectedStdout()).isEqualTo("3");
         String json = new ObjectMapper().writeValueAsString(vo);
         assertThat(json).doesNotContain("HIDDEN");
+    }
+
+    // ── F2：沙箱不可用时 start 不下发 CODE 题 ──
+
+    private void stubStartWith(Question... questions) {
+        KgNode node = new KgNode();
+        node.setId(NODE_ID);
+        node.setCourseId(COURSE_ID);
+        node.setNodeCode("KT1");
+        node.setName("n");
+        node.setChapter("c");
+        when(kgNodeMapper.selectById(NODE_ID)).thenReturn(node);
+        when(answerRecordMapper.selectList(any())).thenReturn(List.of());
+        List<QuestionNode> links = new java.util.ArrayList<>();
+        for (Question q : questions) {
+            QuestionNode link = new QuestionNode();
+            link.setQuestionId(q.getId());
+            link.setNodeId(NODE_ID);
+            link.setWeight(1);
+            links.add(link);
+        }
+        when(questionNodeMapper.selectList(any())).thenReturn(links);
+        when(questionMapper.selectList(any())).thenReturn(List.of(questions));
+        when(practiceSessionMapper.insert(any(PracticeSession.class))).thenReturn(1);
+        when(codeCaseMapper.selectList(any())).thenReturn(List.of());
+    }
+
+    private Question singleQuestion() {
+        Question q = new Question();
+        q.setId(8L);
+        q.setCourseId(COURSE_ID);
+        q.setStem("选择题");
+        q.setType(QuestionType.SINGLE);
+        q.setStatus(QuestionStatus.APPROVED);
+        q.setDifficulty(3);
+        return q;
+    }
+
+    @Test
+    @DisplayName("F2：无 CodeExecutionService bean → start 只出非 CODE 题")
+    void startSkipsCodeWhenNoService() {
+        stubStartWith(codeQuestion(), singleQuestion());
+
+        PracticeStartVO vo = impl(null).start(STUDENT_ID, COURSE_ID, NODE_ID, null, null);
+
+        assertThat(vo.getQuestions()).extracting(q -> q.getType()).containsOnly(QuestionType.SINGLE);
+    }
+
+    @Test
+    @DisplayName("F2：available()=false → start 只出非 CODE 题；available() 抛异常同样当不可用")
+    void startSkipsCodeWhenUnavailable() {
+        stubStartWith(codeQuestion(), singleQuestion());
+        when(codeService.available()).thenReturn(false);
+        assertThat(impl(codeService).start(STUDENT_ID, COURSE_ID, NODE_ID, null, null).getQuestions())
+                .extracting(q -> q.getType()).containsOnly(QuestionType.SINGLE);
+
+        when(codeService.available()).thenThrow(new IllegalStateException("boom"));
+        assertThat(impl(codeService).start(STUDENT_ID, COURSE_ID, NODE_ID, null, null).getQuestions())
+                .extracting(q -> q.getType()).containsOnly(QuestionType.SINGLE);
+    }
+
+    @Test
+    @DisplayName("F2：只有 CODE 题且沙箱不可用 → 题库不足")
+    void startOnlyCodeAndUnavailableIsInsufficient() {
+        stubStartWith(codeQuestion());
+        when(codeService.available()).thenReturn(false);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> impl(codeService).start(STUDENT_ID, COURSE_ID, NODE_ID, null, null))
+                .isInstanceOf(com.wenjin.common.BusinessException.class);
+    }
+
+    @Test
+    @DisplayName("F2：available()=true → CODE 题与普通题都可出")
+    void startKeepsCodeWhenAvailable() {
+        stubStartWith(codeQuestion(), singleQuestion());
+        when(codeService.available()).thenReturn(true);
+
+        PracticeStartVO vo = impl(codeService).start(STUDENT_ID, COURSE_ID, NODE_ID, null, null);
+
+        assertThat(vo.getQuestions()).extracting(q -> q.getType())
+                .containsExactlyInAnyOrder(QuestionType.SINGLE, QuestionType.CODE);
     }
 
     private QuestionCodeCase codeCase(int seq, String in, String out, int hidden) {
