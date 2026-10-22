@@ -403,7 +403,13 @@ M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `R
 - **NODE_REF 入库**：`DOC_INGEST` 作业解析 Markdown frontmatter + `##` 切块，映射直写 `APPROVED`（样例见 `src/test/resources/rag/node-ref/`）。
 - **文件入库 + 自动初标（R3）**：`POST /api/teacher/rag/sources/upload`（multipart `courseId/file/title?/kind?`，202 返回 `{sourceId,jobId,...}`；同课程同 SHA-256 且非 FAILED/ARCHIVED → 409）→ `DOC_INGEST` 作业按 `source.kind` 分派：NODE_REF 走原路径，课件/教材抽取文本（pdf/docx 复用 `DocumentTextExtractor` 限额）→ 带标题路径切块 → `ChunkNodeLabeler`（确定性、零 LLM）取前 2 个得分 ≥4 的节点写 `PENDING` 映射（置信度=得分/16，上限 0.99），无命中块不可检索，可用 `batch-approve minConfidence` 一键通过。带 NODE_REF frontmatter 的 `.md` 自动转 NODE_REF。
 - **检索**：`RetrievalService` 两段式（节点圈定 → 可选全课程放宽）；`FulltextRetriever` 实现 `RetrieverPort`（向量实现预留）。
-- **注入**：`rag-enabled` 且有命中时填充 RETRIEVAL 不可信包裹块；`CitationValidator` 剔除越界 `citedChunkIds`。
+- **注入**：`rag-enabled` 且有命中时填充 RETRIEVAL 不可信包裹块。
+- **引用校验（R4，端到端）**：系统提示静态段「资料引用」要求句末标注 `资料 #<编号>`（编号只能来自本轮注入片段或 `search_materials` 返回的 `chunkId`，未覆盖须说「课程资料未覆盖」）。本 turn 可引用集合 = 注入的 chunkId ∪ `search_materials` 结果 chunkId（`CitationGuard`，工具路径与 legacy 路径共用）。turn 结束对最终文本提取 `资料 #N`，经 `CitationValidator` 校验：
+  - SSE 新事件 `citations` `{valid:[…], invalid:[…]}`，仅在回复含引用时发送，顺序在最后一个 `token`（及 `practice_card`）之后、`probe_card`/`done` 之前；
+  - **持久化文本**中的无效引用替换为 `（引用无效）`（已流式下发的原文不可撤回，前端据 `citations` 把无效编号划掉、仅 valid 渲染为可点芯片；历史消息无事件，维持原样）；
+  - trace 记一步 `step_type=CITATION`、`name=citation_check`，`output={"valid":[…],"invalid":[…]}`（不计入工具预算）；
+  - `rag-enabled=false` 时整条链关闭：不发事件、不改写文本、不记 step；
+  - 评测：硬断言 `citationsValid`（trace 的 citation_check 步 `invalid` 必须为空）、judge 维度 `citation_faithfulness`；golden 里用 `{{cite:<资料标题>}}`/`{{cite:N}}` 占位符引用 `search_materials` 实际返回的 chunk（chunkId 由数据库分配）。
 - **工具**：`search_materials`（读、可缓存；`query`≤50、`nodeCodes`≤5、`topK` 1..5）。
 - 特性开关 **`wenjin.features.rag-enabled`**：开发默认 `true`；生产默认 `false`（`WENJIN_FEATURE_RAG`）。关闭时：空 RETRIEVAL、工具从 schema 下架。
 - **部署**：上线前执行 `ops/sql/preflight-ngram.sql`，确认 `ngram_token_size=2`。版权：整本出版教材勿部署到公网演示环境。
@@ -414,6 +420,7 @@ M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `R
 - `wenjin-server/src/main/java/com/wenjin/support/rag/`
 - `wenjin-server/src/main/java/com/wenjin/service/rag/`
 - `wenjin-server/src/main/java/com/wenjin/service/companion/SearchMaterialsTool.java`
+- `wenjin-server/src/main/java/com/wenjin/service/companion/CitationGuard.java`
 
 配置明细见 **`DEPLOYMENT.md`**（`rag-enabled`、`limits.rag.*`、V13、ngram 预检）。
 

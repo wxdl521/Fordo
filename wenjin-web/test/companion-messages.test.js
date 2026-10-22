@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import {
   appendAssistantToken,
+  applyCitations,
   applyToolResult,
+  buildPlainTranscript,
   buildPracticeAnswerList,
+  citationRenderKind,
+  neutralizeInvalidCitations,
   createPracticeMessage,
   createToolMessage,
   normalizeConversationMessage,
@@ -170,6 +174,63 @@ describe('companionMessages', () => {
     expect(msgs.map((m) => m.ok)).toEqual([true, null])
     msgs = applyToolResult(msgs, { name: 'query_mastery', ok: false })
     expect(msgs.map((m) => m.ok)).toEqual([true, false])
+  })
+
+  it('applyCitations stamps every assistant bubble of the current turn and nothing earlier', () => {
+    const messages = [
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'old 资料 #1' },
+      { role: 'user', content: 'q2' },
+      { role: 'assistant', content: 'before tool 资料 #2' },
+      { role: 'tool', name: 'search_materials', label: 'x', ok: true },
+      { role: 'assistant', content: 'after tool 资料 #9' }
+    ]
+    const next = applyCitations(messages, { valid: [2], invalid: [9] })
+    expect(next[1].citations).toBeUndefined()
+    expect(next[3].citations).toEqual({ valid: [2], invalid: [9] })
+    expect(next[5].citations).toEqual({ valid: [2], invalid: [9] })
+    expect(next[4]).toBe(messages[4])
+    expect(messages[3].citations).toBeUndefined()
+  })
+
+  it('applyCitations tolerates missing lists and empty message arrays', () => {
+    expect(applyCitations([], { valid: [1] })).toEqual([])
+    const next = applyCitations([{ role: 'assistant', content: 'a' }], {})
+    expect(next[0].citations).toEqual({ valid: [], invalid: [] })
+  })
+
+  it('citationRenderKind: no event keeps legacy chips; with event only valid ids stay chips', () => {
+    expect(citationRenderKind(7, undefined)).toBe('chip')
+    expect(citationRenderKind(7, { valid: [7], invalid: [] })).toBe('chip')
+    expect(citationRenderKind(9, { valid: [7], invalid: [9] })).toBe('invalid')
+    expect(citationRenderKind(11, { valid: [7], invalid: [] })).toBe('invalid')
+  })
+
+  it('neutralizeInvalidCitations mirrors the server rewrite', () => {
+    expect(neutralizeInvalidCitations('见资料 #7 和资料  #9。', [9])).toBe('见资料 #7 和（引用无效）。')
+    expect(neutralizeInvalidCitations('见资料 #7', [])).toBe('见资料 #7')
+    expect(neutralizeInvalidCitations('', [1])).toBe('')
+  })
+
+  it('transcript of a turn with invalid citations equals the server-persisted text, so the typed snapshot still restores', () => {
+    const streamed = applyCitations(
+      [{ role: 'user', content: 'q' }, { role: 'assistant', content: '见资料 #7，也见资料 #9' }],
+      { valid: [7], invalid: [9] }
+    )
+    expect(buildPlainTranscript(streamed)[1].content).toBe('见资料 #7，也见（引用无效）')
+
+    const serverMessages = [
+      normalizeConversationMessage({ role: 'user', content: 'q' }),
+      normalizeConversationMessage({ role: 'ai', content: '见资料 #7，也见（引用无效）' })
+    ]
+    const practice = createPracticeMessage({ sessionId: 1, node: null, questions: [] })
+    const snapshot = {
+      transcript: buildPlainTranscript(streamed),
+      messages: [...streamed, practice]
+    }
+    const restored = restoreTypedMessagesFromSnapshot(serverMessages, snapshot)
+    expect(restored.usedSnapshot).toBe(true)
+    expect(restored.messages[1].citations).toEqual({ valid: [7], invalid: [9] })
   })
 
   it('keeps citation parsing working per bubble', () => {

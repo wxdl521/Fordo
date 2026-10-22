@@ -23,6 +23,8 @@ import java.util.Objects;
 @Component
 public class SearchMaterialsTool implements CompanionTool {
 
+    public static final String NAME = "search_materials";
+
     private final RetrievalService retrievalService;
     private final FeatureFlagsProperties featureFlags;
     private final LimitsProperties limits;
@@ -40,7 +42,7 @@ public class SearchMaterialsTool implements CompanionTool {
 
     @Override
     public String name() {
-        return "search_materials";
+        return NAME;
     }
 
     @Override

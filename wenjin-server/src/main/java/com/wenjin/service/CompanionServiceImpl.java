@@ -28,6 +28,7 @@ import com.wenjin.mapper.CompanionMessageMapper;
 import com.wenjin.mapper.CourseMapper;
 import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
+import com.wenjin.service.companion.CitationGuard;
 import com.wenjin.service.companion.CompanionDegradeService;
 import com.wenjin.service.companion.CompanionOrchestrator;
 import com.wenjin.service.companion.CompanionTool;
@@ -59,11 +60,13 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -261,10 +264,13 @@ public class CompanionServiceImpl implements CompanionService {
 
         // RETRIEVAL 槽：rag-enabled 且有命中时注入不可信包裹块
         String latestUser = latestUserContent(history);
-        List<String> retrievalBlocks = loadRetrievalBlocks(
+        RetrievalInjection retrieval = loadRetrieval(
                 conversation.getCourseId(),
                 conversation.getNodeCode(),
                 latestUser);
+        List<String> retrievalBlocks = retrieval.blocks();
+        // 引用校验的"注入集"；rag-enabled=false 时为 null → 整条校验链（事件 / 改写 / trace）关闭
+        Set<Long> citationInjected = isRagEnabled() ? retrieval.chunkIds() : null;
 
         // 一次学生消息的完整编排 = 一个 run；SSE 异常断开也必须 finishRun
         TraceContext traceCtx = startCompanionTrace(conversation, latestUser);
@@ -289,13 +295,13 @@ public class CompanionServiceImpl implements CompanionService {
             String strategySection = strategyPromptSection(conversation.getCourseId(), strategyDirective);
             if (!toolOrchestrationAvailable) {
                 streamWithLegacyPath(conversationId, systemPrompt + strategySection, ctx, memoryLines,
-                        retrievalBlocks, sink, traceCtx);
+                        retrievalBlocks, citationInjected, sink, traceCtx);
                 return;
             }
             CompanionOrchestrator.Outcome outcome = streamWithTools(conversationId, conversation,
                     systemPrompt + strategySection + reviewPromptSection(reviewPracticeSessionId),
                     strategySection, reviewPracticeSessionId,
-                    latestUser, ctx, memoryLines, retrievalBlocks, usableTools, sink, traceCtx);
+                    latestUser, ctx, memoryLines, retrievalBlocks, citationInjected, usableTools, sink, traceCtx);
             runStatus = outcome.runStatus();
             errorCode = outcome.errorCode();
             if (runStatus == AgentRunStatus.SUCCEEDED) {
@@ -369,6 +375,7 @@ public class CompanionServiceImpl implements CompanionService {
                                       ConversationContextBuilder.BuiltContext ctx,
                                       List<String> memoryLines,
                                       List<String> retrievalBlocks,
+                                      Collection<Long> citationInjected,
                                       CompanionStreamSink sink,
                                       TraceContext traceCtx) {
         ConversationContextBuilder.LegacyPrompt prompt =
@@ -383,8 +390,21 @@ public class CompanionServiceImpl implements CompanionService {
         aiClient.stream(systemPrompt, prompt.history(), prompt.latestUserMessage(),
                 truncatingTokenConsumer(fullReply, sink, maxOut));
         String reply = fullReply.toString();
+        CitationGuard.Verdict verdict = null;
+        CitationGuard guard = citationInjected == null ? null : new CitationGuard(citationInjected);
+        if (guard != null) {
+            long checkStarted = System.currentTimeMillis();
+            verdict = guard.check(reply);
+            reply = verdict.text();
+            if (verdict.hasCitations()) {
+                safeStep(traceCtx, guard.toStep(verdict, elapsedMs(checkStarted)));
+            }
+        }
         saveAiMessage(conversationId, reply);
         recordLegacyStep(traceCtx, inputDigest, reply, started);
+        if (verdict != null && verdict.hasCitations()) {
+            sink.citations(verdict.valid(), verdict.invalid());
+        }
     }
 
     private Consumer<String> truncatingTokenConsumer(StringBuilder fullReply,
@@ -433,6 +453,7 @@ public class CompanionServiceImpl implements CompanionService {
                                                           ConversationContextBuilder.BuiltContext ctx,
                                                           List<String> memoryLines,
                                                           List<String> retrievalBlocks,
+                                                          Collection<Long> citationInjected,
                                                           List<CompanionTool> tools,
                                                           CompanionStreamSink sink,
                                                           TraceContext traceCtx) {
@@ -456,7 +477,8 @@ public class CompanionServiceImpl implements CompanionService {
                 maxToolCalls(),
                 limits.getCompanion().getMaxAiOutputChars(),
                 contextBuilder.outputTruncationNotice(),
-                traceCtx);
+                traceCtx,
+                citationInjected);
 
         CompanionOrchestrator.Shell shell = new CompanionOrchestrator.Shell() {
             private String fallbackPrompt;
@@ -469,7 +491,7 @@ public class CompanionServiceImpl implements CompanionService {
             @Override
             public void streamLegacy(CompanionStreamSink out) {
                 streamWithLegacyPath(conversationId, fallbackSystemPrompt(), ctx, memoryLines,
-                        retrievalBlocks, out, traceCtx);
+                        retrievalBlocks, citationInjected, out, traceCtx);
             }
 
             @Override
@@ -793,16 +815,21 @@ public class CompanionServiceImpl implements CompanionService {
         }
     }
 
+    /** RETRIEVAL 槽注入内容：文本块 + 对应 chunkId（引用校验的"注入集"）。 */
+    record RetrievalInjection(List<String> blocks, Set<Long> chunkIds) {
+        static final RetrievalInjection NONE = new RetrievalInjection(List.of(), Set.of());
+    }
+
     /**
-     * 加载 RETRIEVAL 槽块；flag 关 / 服务缺省 / 无命中时返回空列表（不阻断对话）。
+     * 加载 RETRIEVAL 槽块；flag 关 / 服务缺省 / 无命中时返回空（不阻断对话）。
      * <p>有命中时 formatInjectionBlocks 含不可信包裹；空命中不注入占位（避免污染无关轮次）。
      */
-    List<String> loadRetrievalBlocks(Long courseId, String nodeCode, String userQuery) {
+    RetrievalInjection loadRetrieval(Long courseId, String nodeCode, String userQuery) {
         if (!isRagEnabled() || retrievalService == null || courseId == null) {
-            return List.of();
+            return RetrievalInjection.NONE;
         }
         if (userQuery == null || userQuery.isBlank()) {
-            return List.of();
+            return RetrievalInjection.NONE;
         }
         try {
             int topK = limits != null && limits.getRag() != null
@@ -812,14 +839,18 @@ public class CompanionServiceImpl implements CompanionService {
             RetrievalService.RetrievalResult result = retrievalService.search(
                     courseId, nodeCodes, userQuery.trim(), topK, true);
             if (result == null || result.isEmpty()) {
-                return List.of();
+                return RetrievalInjection.NONE;
             }
             List<String> blocks = retrievalService.formatInjectionBlocks(result);
-            return blocks == null ? List.of() : blocks;
+            if (blocks == null) {
+                return RetrievalInjection.NONE;
+            }
+            Set<Long> ids = retrievalService.injectedChunkIds(result);
+            return new RetrievalInjection(blocks, ids == null ? Set.of() : ids);
         } catch (Exception e) {
             log.warn("retrieval inject failed: courseId={} nodeCode={}: {}",
                     courseId, nodeCode, e.getMessage());
-            return List.of();
+            return RetrievalInjection.NONE;
         }
     }
 
@@ -1155,6 +1186,8 @@ public class CompanionServiceImpl implements CompanionService {
         sb.append("- 不要直接念答案或照搬解析；先让学生说出当时的想法，再引导其自己发现错误。\n");
         sb.append("- 讲完后系统会自动就误区节点出一道理解探针题，无需你另行出题。\n\n");
 
+        appendCitationRules(sb);
+
         sb.append("## 课程知识点范围\n");
         if (whitelist != null) {
             for (String nodeName : whitelist) {
@@ -1181,6 +1214,15 @@ public class CompanionServiceImpl implements CompanionService {
         }
 
         return sb.toString();
+    }
+
+    /** 资料引用规则（静态文案，工具路径与 legacy 路径共用，利于前缀缓存）。 */
+    static void appendCitationRules(StringBuilder sb) {
+        sb.append("## 资料引用\n");
+        sb.append("- 使用课程资料中的事实时，在句末标注 `资料 #<编号>`，例如「……由参与者、用例和系统边界组成。资料 #12」。\n");
+        sb.append("- 编号只能来自本轮已注入的资料片段，或 search_materials 返回的 chunkId；禁止自行编造、猜测或沿用以前对话里的编号。\n");
+        sb.append("- 资料没有覆盖学生的问题时，明确说「课程资料未覆盖」，再基于课程知识点作答；不得编造出处。\n");
+        sb.append("- 没有用到资料的内容不要标注编号。\n\n");
     }
 
     private static String buildLegacySystemPrompt(String courseName,
@@ -1227,6 +1269,8 @@ public class CompanionServiceImpl implements CompanionService {
             sb.append("## 当前焦点节点\n");
             sb.append("学生正在学习：").append(focusNodeName).append("（").append(focusNodeCode).append("）\n\n");
         }
+
+        appendCitationRules(sb);
 
         sb.append("## 对话规则\n");
         sb.append("- 只回答《").append(cn).append("》课程范围内的问题；超出范围时礼貌地把话题引导回当前焦点节点或学习路径目标。\n");

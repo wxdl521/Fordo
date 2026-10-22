@@ -14,11 +14,16 @@ public record ScenarioRun(EvalCaseOutcome outcome, List<Exchange> exchanges) {
     }
 
     /** One user message and the companion's streamed reply. */
-    public record Exchange(String user, String reply, List<String> tools) {
+    public record Exchange(String user, String reply, List<String> tools, List<String> evidence) {
         public Exchange {
             user = user == null ? "" : user;
             reply = reply == null ? "" : reply;
             tools = tools == null ? List.of() : List.copyOf(tools);
+            evidence = evidence == null ? List.of() : List.copyOf(evidence);
+        }
+
+        public Exchange(String user, String reply, List<String> tools) {
+            this(user, reply, tools, List.of());
         }
     }
 
@@ -32,6 +37,11 @@ public record ScenarioRun(EvalCaseOutcome outcome, List<Exchange> exchanges) {
             sb.append("学生：").append(e.user()).append('\n');
             if (!e.tools().isEmpty()) {
                 sb.append("（工具：").append(String.join(", ", e.tools())).append("）\n");
+            }
+            if (!e.evidence().isEmpty()) {
+                sb.append("（检索到的资料：\n");
+                e.evidence().forEach(line -> sb.append("  ").append(line).append('\n'));
+                sb.append("）\n");
             }
             sb.append("伴侣：").append(e.reply());
         }
