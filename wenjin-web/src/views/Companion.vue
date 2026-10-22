@@ -56,12 +56,19 @@
 
             <div v-else-if="msg.role === 'assistant' && msg.content" class="cp-msg-body">
               <template v-for="(seg, si) in citationSegments(msg.content)" :key="si">
-                <button
-                  v-if="seg.type === 'citation' && seg.chunkId"
-                  type="button"
-                  class="cp-cite-chip"
-                  @click="openCitation(seg.chunkId)"
-                >{{ seg.value }}</button>
+                <template v-if="seg.type === 'citation' && seg.chunkId">
+                  <button
+                    v-if="citationRenderKind(seg.chunkId, msg.citations) === 'chip'"
+                    type="button"
+                    class="cp-cite-chip"
+                    @click="openCitation(seg.chunkId)"
+                  >{{ seg.value }}</button>
+                  <span
+                    v-else
+                    class="cp-cite-invalid"
+                    title="该引用不在本轮检索到的资料中"
+                  >{{ seg.value }}</span>
+                </template>
                 <span v-else>{{ seg.value }}</span>
               </template>
             </div>
@@ -302,8 +309,10 @@ import { createLatestRequest } from '../utils/latestRequest.js'
 import {
   appendAssistantToken,
   applyToolResult,
+  applyCitations,
   buildPracticeAnswerList,
   buildProbeStudentAnswer,
+  citationRenderKind,
   conversationSnapshotKey,
   createPracticeMessage,
   createProbeMessage,
@@ -937,6 +946,10 @@ async function sendMessage(text, extra = {}) {
         msgs.value.push(createProbeMessage(event))
         scrollToEnd()
       },
+      onCitations: (event) => {
+        if (!isCurrent()) return
+        msgs.value = applyCitations(msgs.value, event)
+      },
       onToken: (token) => {
         if (!isCurrent()) return
         appendToAssistant(token)
@@ -1345,6 +1358,14 @@ onUnmounted(() => {
 
 .cp-cite-chip:hover {
   border-color: var(--acc);
+}
+
+/* 本轮 citations 事件判定为无效的引用：不可点，划掉 + 灰字 */
+.cp-cite-invalid {
+  margin: 0 2px;
+  color: var(--mut);
+  text-decoration: line-through;
+  white-space: nowrap;
 }
 
 .cp-reexplain {
