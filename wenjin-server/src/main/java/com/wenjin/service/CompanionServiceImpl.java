@@ -12,6 +12,7 @@ import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.service.memory.MemoryJobEnqueueService;
 import com.wenjin.service.memory.StudentMemoryService;
+import com.wenjin.service.rag.RetrievalScopeResolver;
 import com.wenjin.service.rag.RetrievalService;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
@@ -119,6 +120,10 @@ public class CompanionServiceImpl implements CompanionService {
     /** RAG 检索注入；缺省或 rag-enabled=false 时 RETRIEVAL 槽为空。 */
     @Autowired(required = false)
     private RetrievalService retrievalService;
+
+    /** R2：注入节点范围 = 焦点 + 直接前置（expand-prerequisites）；缺省时只用焦点节点。 */
+    @Autowired(required = false)
+    private RetrievalScopeResolver retrievalScopeResolver;
 
     @Autowired(required = false)
     private FeatureFlagsProperties featureFlags;
@@ -835,7 +840,7 @@ public class CompanionServiceImpl implements CompanionService {
             int topK = limits != null && limits.getRag() != null
                     ? Math.max(1, limits.getRag().getInjectTopK())
                     : 4;
-            List<String> nodeCodes = StringUtils.hasText(nodeCode) ? List.of(nodeCode.trim()) : List.of();
+            List<String> nodeCodes = retrievalScope(courseId, nodeCode);
             RetrievalService.RetrievalResult result = retrievalService.search(
                     courseId, nodeCodes, userQuery.trim(), topK, true);
             if (result == null || result.isEmpty()) {
@@ -851,6 +856,21 @@ public class CompanionServiceImpl implements CompanionService {
             log.warn("retrieval inject failed: courseId={} nodeCode={}: {}",
                     courseId, nodeCode, e.getMessage());
             return RetrievalInjection.NONE;
+        }
+    }
+
+    /** 注入节点范围：焦点 + 直接前置（resolver 缺省 / 失败时只用焦点节点）；放宽规则不变。 */
+    List<String> retrievalScope(Long courseId, String nodeCode) {
+        List<String> focusOnly = StringUtils.hasText(nodeCode) ? List.of(nodeCode.trim()) : List.of();
+        if (retrievalScopeResolver == null || focusOnly.isEmpty()) {
+            return focusOnly;
+        }
+        try {
+            List<String> scope = retrievalScopeResolver.scopeFor(courseId, nodeCode);
+            return scope == null || scope.isEmpty() ? focusOnly : scope;
+        } catch (Exception e) {
+            log.warn("retrieval scope expand failed: courseId={} nodeCode={}: {}", courseId, nodeCode, e.getMessage());
+            return focusOnly;
         }
     }
 

@@ -90,6 +90,16 @@ public class TeacherRagController {
         return Result.ok(Map.of("affected", affected));
     }
 
+    /**
+     * POST /api/teacher/rag/courses/{courseId}/reembed（R2）：全课程回填向量，按 READY 来源派发 RAG_EMBED。
+     * 返回 {model, sourceCount, jobIds}；rag / rag-vector 开关关 → 404，无可用嵌入模型 → 503。
+     */
+    @Audited(action = "RAG_REEMBED", target = "RAG")
+    @PostMapping("/courses/{courseId}/reembed")
+    public Result<Map<String, Object>> reembed(@PathVariable("courseId") @Positive Long courseId) {
+        return Result.ok(teacherRagService.reembedCourse(courseId));
+    }
+
     /** POST /api/teacher/rag/sources/node-ref body: { courseId, title?, markdown } */
     @PostMapping("/sources/node-ref")
     public Result<DocSourceVO> createNodeRef(@Valid @RequestBody NodeRefIngestRequest req) {

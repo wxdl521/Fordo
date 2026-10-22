@@ -29,6 +29,8 @@ import com.wenjin.security.CourseAccessService;
 import com.wenjin.support.ChunkMapReviewStatus;
 import com.wenjin.support.DocSourceKind;
 import com.wenjin.support.DocSourceStatus;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -62,6 +64,12 @@ public class TeacherRagService {
     private final FeatureFlagsProperties featureFlags;
     private final AiJobPayloadSubmissionService payloadSubmissionService;
 
+    /** R2：映射审核后发 {@link RagCorpusChangedEvent}（提交后失效向量索引）；缺省时跳过。 */
+    private ApplicationEventPublisher events;
+
+    /** R2：嵌入覆盖率与「重建向量」；缺省时覆盖率为 null、重建 404。 */
+    private RagEmbedService ragEmbedService;
+
     private static final Set<String> UPLOAD_EXTS = Set.of("md", "txt", "pdf", "docx");
 
     public TeacherRagService(DocSourceMapper sourceMapper,
@@ -78,6 +86,16 @@ public class TeacherRagService {
         this.courseAccessService = Objects.requireNonNull(courseAccessService);
         this.featureFlags = featureFlags;
         this.payloadSubmissionService = payloadSubmissionService;
+    }
+
+    @Autowired(required = false)
+    public void setEventPublisher(ApplicationEventPublisher events) {
+        this.events = events;
+    }
+
+    @Autowired(required = false)
+    public void setRagEmbedService(RagEmbedService ragEmbedService) {
+        this.ragEmbedService = ragEmbedService;
     }
 
     public List<DocSourceVO> listSources(Long courseId) {
@@ -97,6 +115,8 @@ public class TeacherRagService {
         List<Long> sourceIds = rows.stream().map(DocSource::getId).filter(Objects::nonNull).toList();
         Map<Long, Long> chunkCounts = countChunksBySource(sourceIds);
         Map<Long, Long> pendingCounts = countPendingMapsBySource(sourceIds);
+        // 向量模式开时给出当前模型的嵌入覆盖率；关时 embeddedChunks 为 null（前端隐藏该列与「重建向量」）
+        String activeModel = ragEmbedService == null ? null : ragEmbedService.activeModelId().orElse(null);
 
         List<DocSourceVO> out = new ArrayList<>(rows.size());
         for (DocSource s : rows) {
@@ -112,6 +132,11 @@ public class TeacherRagService {
             Long unlinked = s.getStatus() != null && s.getStatus() == DocSourceStatus.READY
                     ? chunkMapper.countUnlinkedBySource(s.getId()) : 0L;
             vo.setUnlinkedChunkCount(unlinked == null ? 0L : unlinked);
+            vo.setTotalChunks(vo.getChunkCount());
+            if (activeModel != null) {
+                vo.setEmbeddedChunks(ragEmbedService.embeddedCount(s.getId(), activeModel));
+                vo.setEmbeddingModel(activeModel);
+            }
             out.add(vo);
         }
         return out;
@@ -224,6 +249,7 @@ public class TeacherRagService {
             mapMapper.updateById(m);
             n++;
         }
+        publishCorpusChanged(courseId, "MAP_BATCH_APPROVE");
         return n;
     }
 
@@ -373,6 +399,32 @@ public class TeacherRagService {
         row.setReviewedBy(teacherId);
         row.setReviewedAt(LocalDateTime.now());
         mapMapper.updateById(row);
+        publishCorpusChanged(row.getCourseId(),
+                targetStatus == ChunkMapReviewStatus.APPROVED ? "MAP_APPROVE" : "MAP_REJECT");
+    }
+
+    /**
+     * R2：教师「重建向量」——课程全部 READY 来源按 source 派发 RAG_EMBED。
+     * rag-enabled / rag-vector-enabled 关 → 404；无可用嵌入模型 → 503。
+     */
+    public Map<String, Object> reembedCourse(Long courseId) {
+        assertRagEnabled();
+        if (ragEmbedService == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage());
+        }
+        return ragEmbedService.reembedCourse(courseId);
+    }
+
+    private void publishCorpusChanged(Long courseId, String reason) {
+        if (events == null || courseId == null) {
+            return;
+        }
+        try {
+            events.publishEvent(new RagCorpusChangedEvent(courseId, reason));
+        } catch (RuntimeException e) {
+            org.slf4j.LoggerFactory.getLogger(TeacherRagService.class)
+                    .warn("publish RagCorpusChangedEvent failed courseId={}: {}", courseId, e.getMessage());
+        }
     }
 
     private void assertRagEnabled() {

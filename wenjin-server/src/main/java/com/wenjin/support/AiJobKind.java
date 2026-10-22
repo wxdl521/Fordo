@@ -33,6 +33,13 @@ public final class AiJobKind {
     public static final String DOC_INGEST = "DOC_INGEST";
 
     /**
+     * 语料切块向量化（R2）：owner=来源创建教师 / 发起重建的教师。
+     * request_key={@code emb:{sourceId}:{modelId}:{minChunkId}}（入库后自动）或
+     * {@code emb:{sourceId}:{modelId}:r{epochMinute}}（重建向量）；request_json 含 sourceId、model。
+     */
+    public static final String RAG_EMBED = "RAG_EMBED";
+
+    /**
      * 教师学情周报（M11 可选）。
      * request_key={@code course:{courseId}:period:{periodStart}}。
      */

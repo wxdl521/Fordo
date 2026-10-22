@@ -12,6 +12,7 @@ import com.wenjin.service.memory.SummaryRefreshService;
 import com.wenjin.service.multiagent.SupervisorSampleReportService;
 import com.wenjin.service.multiagent.TeacherWeeklyReportService;
 import com.wenjin.service.rag.DocIngestService;
+import com.wenjin.service.rag.RagEmbedService;
 import com.wenjin.support.AiJobErrorCodes;
 import com.wenjin.support.AiJobHeartbeatScheduler;
 import com.wenjin.support.AiJobKind;
@@ -43,6 +44,7 @@ public class AiJobWorker {
     private final MemoryDistillService memoryDistillService;
     private final SummaryRefreshService summaryRefreshService;
     private final DocIngestService docIngestService;
+    private final RagEmbedService ragEmbedService;
     private final TeacherWeeklyReportService teacherWeeklyReportService;
     private final SupervisorSampleReportService supervisorSampleReportService;
     private final PrincipalLoader principalLoader;
@@ -59,6 +61,7 @@ public class AiJobWorker {
                        MemoryDistillService memoryDistillService,
                        SummaryRefreshService summaryRefreshService,
                        DocIngestService docIngestService,
+                       RagEmbedService ragEmbedService,
                        TeacherWeeklyReportService teacherWeeklyReportService,
                        SupervisorSampleReportService supervisorSampleReportService,
                        PrincipalLoader principalLoader,
@@ -74,6 +77,7 @@ public class AiJobWorker {
         this.memoryDistillService = memoryDistillService;
         this.summaryRefreshService = summaryRefreshService;
         this.docIngestService = docIngestService;
+        this.ragEmbedService = ragEmbedService;
         this.teacherWeeklyReportService = teacherWeeklyReportService;
         this.supervisorSampleReportService = supervisorSampleReportService;
         this.principalLoader = principalLoader;
@@ -168,6 +172,7 @@ public class AiJobWorker {
             case AiJobKind.MEMORY_DISTILL -> runMemoryDistill(job, leaseToken, request, heartbeat);
             case AiJobKind.SUMMARY_REFRESH -> runSummaryRefresh(job, leaseToken, request, heartbeat);
             case AiJobKind.DOC_INGEST -> runDocIngest(job, leaseToken, request, heartbeat);
+            case AiJobKind.RAG_EMBED -> runRagEmbed(job, leaseToken, request, heartbeat);
             case AiJobKind.TEACHER_WEEKLY_REPORT -> runTeacherWeeklyReport(job, leaseToken, request, heartbeat);
             case AiJobKind.SUPERVISOR_SAMPLE -> runSupervisorSample(job, leaseToken, request, heartbeat);
             default -> throw new BusinessException(ResultCode.BAD_REQUEST, "未知作业类型: " + kind);
@@ -252,6 +257,20 @@ public class AiJobWorker {
             }
             throw e;
         }
+    }
+
+    /** R2：来源切块向量化；批间上报进度（续租 + 租约丢失即停）；向量模式关时 SKIPPED 成功。 */
+    private Object runRagEmbed(AiJob job,
+                               String leaseToken,
+                               Map<String, Object> request,
+                               HeartbeatGuard heartbeat) {
+        long sourceId = MemoryDistillService.longVal(request, "sourceId", 0L);
+        markProgressOrLose(job.getId(), leaseToken, 10, heartbeat);
+        heartbeat.requireOwned();
+        Object result = ragEmbedService.embedSource(sourceId, job.getCourseId(),
+                p -> markProgressOrLose(job.getId(), leaseToken, Math.min(90, Math.max(10, p)), heartbeat));
+        markProgressOrLose(job.getId(), leaseToken, 95, heartbeat);
+        return result;
     }
 
     private Object runMemoryDistill(AiJob job,

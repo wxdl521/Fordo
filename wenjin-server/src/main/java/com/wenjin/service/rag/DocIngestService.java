@@ -25,6 +25,8 @@ import com.wenjin.support.rag.NodeRefMarkdownParser.Section;
 import com.wenjin.support.rag.TextChunker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -56,6 +58,12 @@ public class DocIngestService {
 
     private final DocumentTextExtractor extractor;
 
+    /** R2：入库成功后发 {@link RagSourceIngestedEvent}（提交后失效索引 + 派发 RAG_EMBED）；缺省时跳过。 */
+    private ApplicationEventPublisher events;
+
+    /** R2：重新入库清障时一并删除旧 chunk 的向量；缺省时跳过。 */
+    private ChunkEmbeddingRepository embeddingRepository;
+
     public DocIngestService(DocSourceMapper sourceMapper,
                              DocChunkMapper chunkMapper,
                              ChunkNodeMapMapper mapMapper,
@@ -66,6 +74,16 @@ public class DocIngestService {
         this.mapMapper = Objects.requireNonNull(mapMapper);
         this.nodeMapper = Objects.requireNonNull(nodeMapper);
         this.extractor = Objects.requireNonNull(extractor);
+    }
+
+    @Autowired(required = false)
+    public void setEventPublisher(ApplicationEventPublisher events) {
+        this.events = events;
+    }
+
+    @Autowired(required = false)
+    public void setChunkEmbeddingRepository(ChunkEmbeddingRepository embeddingRepository) {
+        this.embeddingRepository = embeddingRepository;
     }
 
     /** 作业入口：按 source.kind 分派（NODE_REF → 原路径；其余 → 文件入库 + 自动初标）。 */
@@ -169,6 +187,7 @@ public class DocIngestService {
             }
         }
         sourceMapper.updateStatus(sourceId, DocSourceStatus.READY);
+        publishIngested(source, chunkIds);
         result.put("status", "READY");
         result.put("chunkCount", chunkIds.size());
         result.put("labeledChunks", labeled);
@@ -277,6 +296,7 @@ public class DocIngestService {
         }
 
         sourceMapper.updateStatus(sourceId, DocSourceStatus.READY);
+        publishIngested(source, chunkIds);
         result.put("status", "READY");
         result.put("nodeCode", parsed.nodeCode());
         result.put("chunkCount", chunkCount);
@@ -300,7 +320,24 @@ public class DocIngestService {
         return ingestNodeRef(sourceId, new String(bytes, StandardCharsets.UTF_8));
     }
 
+    /** 入库成功事件；发布失败只记日志，绝不影响入库。 */
+    private void publishIngested(DocSource source, List<Long> chunkIds) {
+        if (events == null || source == null || source.getCourseId() == null || chunkIds.isEmpty()) {
+            return;
+        }
+        try {
+            long minChunkId = chunkIds.stream().filter(Objects::nonNull).mapToLong(Long::longValue).min().orElse(0L);
+            events.publishEvent(new RagSourceIngestedEvent(
+                    source.getCourseId(), source.getId(), source.getCreatedBy(), minChunkId));
+        } catch (RuntimeException e) {
+            log.warn("publish RagSourceIngestedEvent failed sourceId={}: {}", source.getId(), e.getMessage());
+        }
+    }
+
     void clearSourceArtifacts(long sourceId) {
+        if (embeddingRepository != null) {
+            embeddingRepository.deleteBySourceId(sourceId);
+        }
         mapMapper.deleteBySourceId(sourceId);
         chunkMapper.deleteBySourceId(sourceId);
     }
