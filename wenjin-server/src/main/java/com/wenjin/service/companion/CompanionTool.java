@@ -55,6 +55,15 @@ public interface CompanionTool {
         return true;
     }
 
+    /**
+     * Privacy hook: returns the tool-call arguments in a form that is safe to persist in the agent trace
+     * and print in the governor audit log. Default is the identity; tools whose arguments carry
+     * student-authored content (e.g. source code) override it.
+     */
+    default String redactArgumentsForTrace(String argumentsJson) {
+        return argumentsJson;
+    }
+
     String execute(ToolContext ctx, JsonNode args) throws ToolException;
 
     default ToolExecutionResult executeForGovernor(String toolCallId,

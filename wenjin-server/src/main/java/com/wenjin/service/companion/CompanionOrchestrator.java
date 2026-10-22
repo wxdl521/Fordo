@@ -455,7 +455,7 @@ public final class CompanionOrchestrator {
             // Governor intercepts (budget/whitelist/args/timeout) → GUARD; actual execution → TOOL_CALL
             String stepType = result != null && result.guarded() ? AgentStepType.GUARD : AgentStepType.TOOL_CALL;
             step(new StepRecord(stepType, name, status,
-                    call == null ? null : call.argumentsJson(),
+                    call == null ? null : toolGovernor.redactArgumentsForTrace(name, call.argumentsJson()),
                     result == null ? null : result.content(),
                     0, 0, elapsedMs, errorCode));
         }

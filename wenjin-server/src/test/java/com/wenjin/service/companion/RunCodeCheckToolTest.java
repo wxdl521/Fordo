@@ -285,4 +285,71 @@ class RunCodeCheckToolTest {
         assertThat(ToolParamValidator.validate(specs, args("{\"code\":\"" + "a".repeat(51) + "\"}"))).contains("code");
         assertThat(ToolParamValidator.validate(specs, args("{\"code\":\"" + "a".repeat(50) + "\"}"))).isNull();
     }
+
+    // ── F4: privacy redaction ──
+
+    @Test
+    void redactReplacesCodeAndStdinKeepsOthers() throws Exception {
+        String json = mapper.writeValueAsString(java.util.Map.of(
+                "code", SOURCE, "stdin", "secret input", "questionId", 5));
+
+        String redacted = tool.redactArgumentsForTrace(json);
+
+        assertThat(redacted).doesNotContain("secretMarkerLine").doesNotContain("secret input");
+        var node = mapper.readTree(redacted);
+        assertThat(node.path("code").asText()).matches("<redacted len=" + SOURCE.length() + " sha256=[0-9a-f]{8}>");
+        assertThat(node.path("stdin").asText()).matches("<redacted len=12 sha256=[0-9a-f]{8}>");
+        assertThat(node.path("questionId").asInt()).isEqualTo(5);
+        assertThat(tool.redactArgumentsForTrace(json)).isEqualTo(redacted);
+    }
+
+    @Test
+    void redactHandlesMissingFieldsAndGarbage() {
+        assertThat(tool.redactArgumentsForTrace(null)).isNull();
+        assertThat(tool.redactArgumentsForTrace("{\"questionId\":3}")).isEqualTo("{\"questionId\":3}");
+        String garbage = "{\"code\":\"" + SECRET_LINE;
+        assertThat(tool.redactArgumentsForTrace(garbage)).doesNotContain("secretMarkerLine").contains("redacted");
+        assertThat(tool.redactArgumentsForTrace("[\"" + SECRET_LINE + "\"]")).doesNotContain("secretMarkerLine");
+    }
+
+    @Test
+    void defaultToolRedactionIsIdentity() {
+        CompanionTool plain = new CompanionTool() {
+            @Override public String name() { return "plain"; }
+            @Override public java.util.Map<String, Object> schema() { return java.util.Map.of(); }
+            @Override public String execute(ToolContext ctx, JsonNode args) { return "{}"; }
+        };
+        assertThat(plain.redactArgumentsForTrace("{\"code\":\"x\"}")).isEqualTo("{\"code\":\"x\"}");
+    }
+
+    @Test
+    void governorAuditLogNeverPrintsSource() throws Exception {
+        when(service.run(anyLong(), anyString(), anyString())).thenReturn(run(Verdict.ACCEPTED, "ok", "", null));
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(ToolGovernor.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            ToolGovernor governor = new ToolGovernor(List.of(tool), mapper, new CompanionToolProperties(),
+                    new LimitsProperties());
+            String args = "{\"code\":" + mapper.writeValueAsString(SOURCE) + ",\"questionId\":5}";
+            governor.execute(new ToolContext(7L, 1L), new CompanionAiClient.ToolCall("c1", "run_code_check", args),
+                    new ToolExecutionState(6));
+        } finally {
+            logger.detachAppender(appender);
+        }
+        String all = appender.list.stream().map(e -> e.getFormattedMessage()).reduce("", String::concat);
+        assertThat(all).contains("tool=run_code_check").contains("<redacted len=").contains("questionId")
+                .doesNotContain("secretMarkerLine");
+    }
+
+    @Test
+    void governorRedactDelegatesAndPassesUnknownToolsThrough() {
+        ToolGovernor governor = new ToolGovernor(List.of(tool), mapper, new CompanionToolProperties(),
+                new LimitsProperties());
+        assertThat(governor.redactArgumentsForTrace("run_code_check", "{\"code\":\"abc\"}")).contains("<redacted len=3");
+        assertThat(governor.redactArgumentsForTrace("other", "{\"code\":\"abc\"}")).isEqualTo("{\"code\":\"abc\"}");
+        assertThat(governor.redactArgumentsForTrace(null, "x")).isEqualTo("x");
+    }
 }

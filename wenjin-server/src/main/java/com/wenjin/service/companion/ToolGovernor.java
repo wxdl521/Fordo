@@ -545,6 +545,22 @@ public class ToolGovernor {
         return safe.substring(0, keep) + TRUNCATION_MARKER;
     }
 
+    /**
+     * Arguments as they may be persisted (agent trace) or logged: the tool's own
+     * {@link CompanionTool#redactArgumentsForTrace} applied; unknown tools pass through unchanged.
+     */
+    public String redactArgumentsForTrace(String toolName, String argumentsJson) {
+        CompanionTool tool = toolName == null ? null : registry.get(toolName);
+        if (tool == null) {
+            return argumentsJson;
+        }
+        try {
+            return tool.redactArgumentsForTrace(argumentsJson);
+        } catch (RuntimeException e) {
+            return "{\"redacted\":true}";
+        }
+    }
+
     private void audit(ToolContext ctx,
                        String toolName,
                        String argsJson,
@@ -557,7 +573,7 @@ public class ToolGovernor {
                 studentId,
                 courseId,
                 toolName,
-                summarize(argsJson, 160),
+                summarize(redactArgumentsForTrace(toolName, argsJson), 160),
                 elapsedMs,
                 result.ok(),
                 result.cached(),

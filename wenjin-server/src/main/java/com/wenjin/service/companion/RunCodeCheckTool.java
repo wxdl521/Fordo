@@ -112,6 +112,49 @@ public class RunCodeCheckTool implements CompanionTool {
         return schema;
     }
 
+    /**
+     * The student's source / stdin must not land in the trace or logs: {@code code} and {@code stdin} become
+     * {@code <redacted len=N sha256=xxxxxxxx>} (first 8 hex chars); other args stay. Unparseable JSON is
+     * replaced wholesale, since it may still contain source.
+     */
+    @Override
+    public String redactArgumentsForTrace(String argumentsJson) {
+        if (argumentsJson == null || argumentsJson.isBlank()) {
+            return argumentsJson;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(argumentsJson);
+            if (!(node instanceof com.fasterxml.jackson.databind.node.ObjectNode obj)) {
+                return redactedBlob(argumentsJson);
+            }
+            for (String key : List.of("code", "stdin")) {
+                JsonNode v = obj.get(key);
+                if (v != null && v.isTextual()) {
+                    obj.put(key, redactedMarker(v.asText()));
+                }
+            }
+            return objectMapper.writeValueAsString(obj);
+        } catch (JsonProcessingException e) {
+            return redactedBlob(argumentsJson);
+        }
+    }
+
+    private static String redactedBlob(String raw) {
+        return "{\"redacted\":\"" + redactedMarker(raw).replace("\"", "") + "\"}";
+    }
+
+    private static String redactedMarker(String text) {
+        String hex;
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            hex = java.util.HexFormat.of().formatHex(digest, 0, 4);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            hex = "00000000";
+        }
+        return "<redacted len=" + text.length() + " sha256=" + hex + ">";
+    }
+
     @Override
     public ToolExecutionResult executeForGovernor(String toolCallId,
                                                   ToolContext ctx,
