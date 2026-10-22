@@ -110,9 +110,12 @@ class RetrievalRecallIT extends EvalDbSupport {
 
     @AfterEach
     void tearDown() {
-        dropCourse();
-        flags.setRagVectorEnabled(vectorBefore);
-        limits.getRag().setAllowHashingEmbedding(hashingBefore);
+        try {
+            dropCourse();
+        } finally {
+            flags.setRagVectorEnabled(vectorBefore);
+            limits.getRag().setAllowHashingEmbedding(hashingBefore);
+        }
     }
 
     private void dropCourse() {
@@ -137,6 +140,11 @@ class RetrievalRecallIT extends EvalDbSupport {
 
     private record QueryResult(String id, String type, String query, List<String> relevant, List<String> ranked,
                                double[] recallAtK, double rr) {}
+
+    /** Cosine distribution of (query, chunk) pairs: relevant = chunk is a labelled answer, irrelevant = all others. */
+    private record CosineDist(String label, int n, double min, double median, double max) {}
+
+    private record ModelCosine(String model, CosineDist relevant, CosineDist irrelevant) {}
 
     private record Aggregate(String name, int queries, double[] recallAtK, double mrr, Map<String, double[]> byType) {}
 
@@ -221,6 +229,52 @@ class RetrievalRecallIT extends EvalDbSupport {
         }
     }
 
+    private static double cosine(float[] a, float[] b) {
+        double dot = 0;
+        double na = 0;
+        double nb = 0;
+        for (int i = 0; i < a.length; i++) {
+            dot += (double) a[i] * b[i];
+            na += (double) a[i] * a[i];
+            nb += (double) b[i] * b[i];
+        }
+        return na == 0 || nb == 0 ? 0 : dot / Math.sqrt(na * nb);
+    }
+
+    private static CosineDist dist(String label, List<Double> xs) {
+        if (xs.isEmpty()) {
+            return new CosineDist(label, 0, 0, 0, 0);
+        }
+        List<Double> sorted = new ArrayList<>(xs);
+        java.util.Collections.sort(sorted);
+        int n = sorted.size();
+        double median = n % 2 == 1 ? sorted.get(n / 2) : (sorted.get(n / 2 - 1) + sorted.get(n / 2)) / 2;
+        return new CosineDist(label, n, sorted.get(0), median, sorted.get(n - 1));
+    }
+
+    /** Embeds every corpus chunk and every query with {@code embedder}; splits all pairs by relevance. */
+    private ModelCosine cosineDistribution(EmbeddingClient embedder, JsonNode queries) {
+        List<Long> ids = new ArrayList<>(keyByChunk.keySet());
+        List<String> texts = ids.stream().map(id -> docChunkMapper.selectById(id).getContent()).toList();
+        List<float[]> chunkVecs = embedder.embed(texts);
+        List<String> qTexts = new ArrayList<>();
+        queries.forEach(q -> qTexts.add(q.get("query").asText()));
+        List<float[]> qVecs = embedder.embed(qTexts);
+        List<Double> rel = new ArrayList<>();
+        List<Double> irrel = new ArrayList<>();
+        int qi = 0;
+        for (JsonNode q : queries) {
+            Set<String> relevant = new LinkedHashSet<>();
+            q.get("relevant").forEach(r -> relevant.add(r.asText()));
+            for (int ci = 0; ci < ids.size(); ci++) {
+                double c = cosine(qVecs.get(qi), chunkVecs.get(ci));
+                (relevant.contains(keyByChunk.get(ids.get(ci))) ? rel : irrel).add(c);
+            }
+            qi++;
+        }
+        return new ModelCosine(embedder.modelId(), dist("relevant", rel), dist("irrelevant", irrel));
+    }
+
     private HybridRetriever hybrid(EmbeddingClient real, VectorIndexCache cache) {
         var resolver = new ActiveEmbeddingResolver(flags, limits, real);
         var vector = new VectorRetriever(resolver, cache, new QueryEmbeddingCache(limits), docChunkMapper, limits);
@@ -264,7 +318,13 @@ class RetrievalRecallIT extends EvalDbSupport {
             liveNote = "ran with " + real.modelId();
         }
 
-        writeReports(aggregates, detail, liveNote);
+        List<ModelCosine> cosines = new ArrayList<>();
+        cosines.add(cosineDistribution(hashClient, queries));
+        if (detail.containsKey("HYBRID(live)")) {
+            cosines.add(cosineDistribution(real, queries));
+        }
+
+        writeReports(aggregates, detail, liveNote, cosines);
 
         Aggregate ftAgg = aggregates.get(0);
         Aggregate hashAgg = aggregates.get(1);
@@ -280,8 +340,8 @@ class RetrievalRecallIT extends EvalDbSupport {
         return String.format("%.3f", v);
     }
 
-    private void writeReports(List<Aggregate> aggs, Map<String, List<QueryResult>> detail, String liveNote)
-            throws Exception {
+    private void writeReports(List<Aggregate> aggs, Map<String, List<QueryResult>> detail, String liveNote,
+                              List<ModelCosine> cosines) throws Exception {
         Path dir = Path.of("target", "eval-rag");
         Files.createDirectories(dir);
 
@@ -294,6 +354,17 @@ class RetrievalRecallIT extends EvalDbSupport {
             md.append("| ").append(a.name()).append(" | ").append(f(a.recallAtK()[0])).append(" | ")
                     .append(f(a.recallAtK()[1])).append(" | ").append(f(a.recallAtK()[2])).append(" | ")
                     .append(f(a.mrr())).append(" |\n");
+        }
+        md.append("\n## 余弦分布（全部 query × chunk 对；用于按模型标定 vector-min-score / vector-only-min-score）\n\n");
+        md.append("当前阈值：vector-min-score=").append(limits.getRag().getVectorMinScore())
+                .append("，vector-only-min-score=").append(limits.getRag().getVectorOnlyMinScore()).append("\n\n");
+        md.append("| 模型 | 类别 | n | min | median | max |\n|---|---|---|---|---|---|\n");
+        for (ModelCosine m : cosines) {
+            for (CosineDist d : List.of(m.relevant(), m.irrelevant())) {
+                md.append("| ").append(m.model()).append(" | ").append(d.label()).append(" | ").append(d.n())
+                        .append(" | ").append(f(d.min())).append(" | ").append(f(d.median())).append(" | ")
+                        .append(f(d.max())).append(" |\n");
+            }
         }
         md.append("\n## 按查询类型（recall@5 / MRR）\n\n| 类型 | n |");
         aggs.forEach(a -> md.append(' ').append(a.name()).append(" |"));
@@ -334,6 +405,18 @@ class RetrievalRecallIT extends EvalDbSupport {
         root.put("queries", aggs.get(0).queries());
         root.put("topK", TOP_K);
         root.put("live", liveNote);
+        ArrayNode cos = root.putArray("cosineDistribution");
+        for (ModelCosine m : cosines) {
+            ObjectNode o = cos.addObject();
+            o.put("model", m.model());
+            for (CosineDist d : List.of(m.relevant(), m.irrelevant())) {
+                ObjectNode x = o.putObject(d.label());
+                x.put("n", d.n());
+                x.put("min", d.min());
+                x.put("median", d.median());
+                x.put("max", d.max());
+            }
+        }
         ArrayNode methods = root.putArray("methods");
         for (Aggregate a : aggs) {
             ObjectNode m = methods.addObject();

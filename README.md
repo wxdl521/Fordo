@@ -402,10 +402,10 @@ M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `R
 
 - Flyway **`V13__rag.sql`**：`doc_source` / `doc_chunk`（FULLTEXT ngram）/ `chunk_node_map`。
 - **NODE_REF 入库**：`DOC_INGEST` 作业解析 Markdown frontmatter + `##` 切块，映射直写 `APPROVED`（样例见 `src/test/resources/rag/node-ref/`）。
-- **文件入库 + 自动初标（R3）**：`POST /api/teacher/rag/sources/upload`（multipart `courseId/file/title?/kind?`，202 返回 `{sourceId,jobId,...}`；同课程同 SHA-256 且非 FAILED/ARCHIVED → 409）→ `DOC_INGEST` 作业按 `source.kind` 分派：NODE_REF 走原路径，课件/教材抽取文本（pdf/docx 复用 `DocumentTextExtractor` 限额）→ 带标题路径切块 → `ChunkNodeLabeler`（确定性、零 LLM）取前 2 个得分 ≥4 的节点写 `PENDING` 映射（置信度=得分/16，上限 0.99），无命中块不可检索，可用 `batch-approve minConfidence` 一键通过。带 NODE_REF frontmatter 的 `.md` 自动转 NODE_REF。
+- **文件入库 + 自动初标（R3）**：`POST /api/teacher/rag/sources/upload`（multipart `courseId/file/title?/kind?`，202 返回 `{sourceId,jobId,...}`；同课程同 SHA-256 且非 FAILED/ARCHIVED → 409；INGESTING 超过 `ingest-stale-minutes` 视为卡死不计重复，作业终态失败 / 取消 / 被回收而来源仍 INGESTING 的由 worker tick 兜底置 FAILED）→ `DOC_INGEST` 作业按 `source.kind` 分派：NODE_REF 走原路径，课件/教材抽取文本（pdf/docx 复用 `DocumentTextExtractor` 限额）→ 带标题路径切块 → `ChunkNodeLabeler`（确定性、零 LLM）取前 2 个得分 ≥4 的节点写 `PENDING` 映射（置信度=得分/16，上限 0.99），无命中块不可检索，可用 `batch-approve minConfidence` 一键通过。带 NODE_REF frontmatter 的 `.md` 自动转 NODE_REF。
 - **检索**：`RetrievalService` 两段式（节点圈定 → 圈内零命中时可选全课程放宽，规则不变）；生效的 `RetrieverPort` 是 `HybridRetriever`（`@Primary`，RAG R2）：
-  - `FulltextRetriever`（MATCH AGAINST）与 `VectorRetriever`（内存暴力余弦）各取 `topK × candidate-multiplier` 候选 → **RRF** 融合（`score = Σ 1/(fusion-k + rank)`）→ topK，命中 `score` 为融合分；向量侧低于 `vector-min-score` 的不入候选；节点圈定与「仅 READY 来源 + APPROVED 映射」过滤与全文同语义。
-  - **回退纯全文**（直接返回 `fulltext.retrieve(courseId, nodeCodes, query, topK)`，与 M8 逐字节一致）：`rag-vector-enabled=false`、无可用嵌入客户端、该课程当前模型无向量、查询嵌入失败（只 warn 不抛）。日志 `mode=FULLTEXT|HYBRID` 标明实际路径。
+  - `FulltextRetriever`（MATCH AGAINST）与 `VectorRetriever`（内存暴力余弦）各取 `topK × candidate-multiplier` 候选 → **RRF** 融合（`score = Σ 1/(fusion-k + rank)`）→ topK，命中 `score` 为融合分；向量侧低于 `vector-min-score` 的不入候选，且**仅向量命中**（不在全文候选里）的块须 ≥ `vector-only-min-score`（默认 0.5，随模型标定，见 DEPLOYMENT）；节点圈定与「仅 READY 来源 + APPROVED 映射」过滤与全文同语义。
+  - **回退纯全文**（直接返回 `fulltext.retrieve(courseId, nodeCodes, query, topK)`，与 M8 逐字节一致）：`rag-vector-enabled=false`、无可用嵌入客户端、该课程当前模型无向量、查询嵌入失败 / 超过 `query-embed-timeout-ms`（默认 2.5s，只 warn 不抛；随后 `vector-cooldown-seconds`（默认 60s）内直接纯全文）。日志 `mode=FULLTEXT|HYBRID` 标明实际路径。
   - **嵌入客户端选择**（`ActiveEmbeddingResolver`，每次现读）：真实 `OpenAiCompatibleEmbeddingClient` `available()`（enabled 且有 key）→ 用它；否则 `limits.rag.allow-hashing-embedding=true`（开发 / e2e）→ 离线 `HashingEmbeddingClient`（`hash-ngram@1024`）；否则向量模式关（生产默认）。
   - **向量索引**：`VectorIndexCache` 按 `(courseId, modelId)` 缓存 `CourseVectorIndex`（chunkIds + 归一化 float[][] + 每块 APPROVED 节点集），切换模型不会混用向量；在入库完成、嵌入作业完成、映射通过 / 驳回 / 批量通过后（事务提交后，`RagCorpusChangedEvent` / `RagSourceIngestedEvent`）失效重载。查询向量 LRU（`query-cache-size`）。
 - **嵌入作业 `RAG_EMBED`（R2）**：入库成功（NODE_REF 同步粘贴与 `DOC_INGEST` 作业两条路径）且向量模式开时，**事务提交后**自动派发（属主=来源创建教师，`request_key=emb:{sourceId}:{modelId}:{minChunkId}`）；作业按来源分批嵌入并 upsert `doc_chunk_embedding`，`content_sha` 未变的块跳过，批间上报进度续租；向量模式关时以 `SKIPPED` 成功结束。嵌入失败只让该作业 FAILED，**绝不影响入库**。重新入库清障时一并删除旧向量。
@@ -422,10 +422,14 @@ M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `R
 
   | 方法 | recall@1 | recall@3 | recall@5 | MRR |
   |---|---|---|---|---|
-  | FULLTEXT | 0.757 | 0.886 | 0.900 | 0.857 |
-  | HYBRID(hash) | 0.714 | 0.914 | 0.929 | 0.833 |
+  | FULLTEXT | 0.743 | 0.900 | 0.900 | 0.848 |
+  | HYBRID(hash)（默认门槛 vector-only-min-score=0.5） | 0.729 | 0.900 | 0.900 | 0.829 |
 
-  解读：小语料上 ngram 二元组重叠已很宽松，字面与普通改写查询全文 recall@5 即 1.0；差异集中在强改写（hard：FULLTEXT 0.50 → HYBRID(hash) 0.75）。哈希嵌入只是字符 n-gram 特征，不是语义模型，MRR 略低于全文（融合时把几个相近干扰块提前）；真实语义嵌入的收益需用 key 跑 HYBRID(live) 验证。
+  报告另含**余弦分布表**（全部 query × chunk 对，相关 / 无关各自的 min / median / max），用于按嵌入模型标定两个余弦门槛；哈希嵌入实测：relevant 0.000 / 0.324 / 0.560，irrelevant -0.092 / 0.058 / 0.374（n=41 / 659）。注意 FULLTEXT 行在同一库上多次运行也有 ±0.015 的小波动（InnoDB ngram 全文评分），读数请看区间而非单点。
+
+  门槛引入后的变化（诚实记录）：此前无「仅向量」门槛时 HYBRID(hash) 为 0.714 / 0.914 / 0.929 / 0.833，靠哈希向量把强改写（hard）从 0.50 拉到 0.75；现在哈希嵌入的相关对中位数（0.32）远低于 0.5，仅向量命中基本被挡，HYBRID(hash) 收敛为接近纯全文（hard 0.50）。这是预期取舍：门槛按「宁可少召回也不把无关块注入提示」设定，哈希嵌入不是语义模型；真实语义嵌入的相关对余弦通常更高，须按其分布标定后再评估收益。
+
+  解读：小语料上 ngram 二元组重叠已很宽松，字面与普通改写查询全文 recall@5 即 1.0；强改写（hard）是全文的短板（0.50）。哈希嵌入只是字符 n-gram 特征，不是语义模型，MRR 略低于全文（融合时把几个相近干扰块提前）；真实语义嵌入的收益需用 key 跑 HYBRID(live) 验证。
 - **注入**：`rag-enabled` 且有命中时填充 RETRIEVAL 不可信包裹块；节点范围 = 会话焦点节点 + 其**直接前置**（`limits.rag.expand-prerequisites`，`RetrievalScopeResolver`；只取未归档、非『待复核』的前置边），放宽规则不变。
 - **引用校验（R4，端到端）**：系统提示静态段「资料引用」要求句末标注 `资料 #<编号>`（编号只能来自本轮注入片段或 `search_materials` 返回的 `chunkId`，未覆盖须说「课程资料未覆盖」）。本 turn 可引用集合 = 注入的 chunkId ∪ `search_materials` 结果 chunkId（`CitationGuard`，工具路径与 legacy 路径共用）。turn 结束对最终文本提取 `资料 #N`，经 `CitationValidator` 校验：
   - SSE 新事件 `citations` `{valid:[…], invalid:[…]}`，仅在回复含引用时发送，顺序在最后一个 `token`（及 `practice_card`）之后、`probe_card`/`done` 之前；
@@ -436,7 +440,7 @@ M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `R
 - **工具**：`search_materials`（读、可缓存；`query`≤50、`nodeCodes`≤5、`topK` 1..5）。
 - 特性开关 **`wenjin.features.rag-enabled`**：开发默认 `true`；生产默认 `false`（`WENJIN_FEATURE_RAG`）。关闭时：空 RETRIEVAL、工具从 schema 下架（向量 / 嵌入作业随之全关）。
 - 特性开关 **`wenjin.features.rag-vector-enabled`**（R2）：开发 / e2e 默认 `true`；生产默认 `false`（`WENJIN_FEATURE_RAG_VECTOR`）；评测 profile 固定 `false`（回放保持纯全文）。关闭时检索纯全文、入库后不派发嵌入作业、重建向量 404；管理后台「系统配置」可热改。
-- 限额 `wenjin.limits.rag.*`（R2）：`fusion-k`(60)、`candidate-multiplier`(3)、`vector-min-score`(0.2)、`allow-hashing-embedding`(开发 true / 生产 false)、`query-cache-size`(512)、`expand-prerequisites`(true)。
+- 限额 `wenjin.limits.rag.*`（R2）：`fusion-k`(60)、`candidate-multiplier`(3)、`vector-min-score`(0.2)、`vector-only-min-score`(0.5)、`query-embed-timeout-ms`(2500)、`vector-cooldown-seconds`(60)、`ingest-stale-minutes`(60)、`allow-hashing-embedding`(Java 默认 false；开发 / e2e yml 显式 true；生产 false)、`query-cache-size`(512)、`expand-prerequisites`(true)。
 - **部署**：上线前执行 `ops/sql/preflight-ngram.sql`，确认 `ngram_token_size=2`。版权：整本出版教材勿部署到公网演示环境。
 
 相关代码：

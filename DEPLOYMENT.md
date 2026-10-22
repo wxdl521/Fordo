@@ -506,7 +506,11 @@ spring:
 | `wenjin.limits.rag.fusion-k` | `60` | 继承基线 | R2 RRF 常数：`score = Σ 1/(k + rank)` |
 | `wenjin.limits.rag.candidate-multiplier` | `3` | 继承基线 | R2 全文 / 向量各取 `topK × 倍数` 候选再融合 |
 | `wenjin.limits.rag.vector-min-score` | `0.2` | 继承基线 | R2 向量命中最低余弦 |
-| `wenjin.limits.rag.allow-hashing-embedding` | `true`（e2e 同） | **`false`**（`application-prod.yml`） | R2 无真实嵌入 key 时是否用离线 `HashingEmbeddingClient`（`hash-ngram@1024`）；生产禁止，只用真实嵌入模型 |
+| `wenjin.limits.rag.vector-only-min-score` | `0.5` | 继承基线 | R2 复核：仅向量命中（不在全文候选里）的块须达到的余弦下限；同时被全文命中的块沿用 `vector-min-score`。**随模型而异，启用前须标定**（见下） |
+| `wenjin.limits.rag.query-embed-timeout-ms` | `2500` | 继承基线 | R2 复核：在线查询嵌入读超时；批量 `RAG_EMBED` 仍 60s |
+| `wenjin.limits.rag.vector-cooldown-seconds` | `60` | 继承基线 | R2 复核：向量侧失败（超时 / 报错）后跳过向量检索、纯全文的冷却秒数；0 关闭 |
+| `wenjin.limits.rag.ingest-stale-minutes` | `60` | 继承基线 | R2 复核：INGESTING 来源超过此分钟数视为卡死，不再计入上传去重（须大于租约 15 分钟 × 最大领取 3 次 = 45） |
+| `wenjin.limits.rag.allow-hashing-embedding` | Java 默认 `false`；`application.yml` / e2e 显式 `true` | **`false`**（`application-prod.yml`） | R2 无真实嵌入 key 时是否用离线 `HashingEmbeddingClient`（`hash-ngram@1024`）；生产禁止，只用真实嵌入模型 |
 | `wenjin.limits.rag.query-cache-size` | `512` | 继承基线 | R2 查询向量 LRU 条数（键含 modelId；0 关闭） |
 | `wenjin.limits.rag.expand-prerequisites` | `true` | 继承基线 | R2 伴侣 RETRIEVAL 注入节点范围 = 焦点 + 直接前置 |
 
@@ -550,6 +554,9 @@ wenjin:
       fusion-k: 60
       candidate-multiplier: 3
       vector-min-score: 0.2
+      vector-only-min-score: 0.5      # 须按模型标定
+      query-embed-timeout-ms: 2500
+      vector-cooldown-seconds: 60
       allow-hashing-embedding: true   # prod: false
       query-cache-size: 512
       expand-prerequisites: true
@@ -590,6 +597,9 @@ wenjin:
   4. 回填存量语料：教师端「语料审核 → 重建向量」（或 `POST /api/teacher/rag/courses/{courseId}/reembed`，教师令牌），来源列表的「向量」列显示 `已嵌入/总块数`。之后新入库语料在入库事务提交后自动派发嵌入作业。
   - 向量按 `modelId`（如 `embedding-3@1024`）隔离：**更换模型或维度后须再次「重建向量」**，期间该课程因「当前模型无向量」自动回退纯全文，不会混用旧向量。
   - 嵌入失败只让 `RAG_EMBED` 作业 FAILED（`AI_ERROR`），不影响入库与检索；查询嵌入失败时单次检索回退纯全文并打 warn。
+  - **启用前必须按模型标定阈值**（`WENJIN_FEATURE_RAG_VECTOR=true` 之前）：余弦分布随嵌入模型差异很大，仓库默认值（`vector-min-score=0.2`、`vector-only-min-score=0.5`）只在离线哈希嵌入上实测过。标定步骤：配好嵌入 key 后在 `wenjin-server` 跑 `RetrievalRecallIT`（`-Dwenjin.eval.rag.live=true`，命令见 README「召回评测」），读 `target/eval-rag/report.md` 的「余弦分布」表——相关对（relevant）与无关对（irrelevant）的 min / median / max。`vector-min-score` 取略低于 relevant 的低分位、高于 irrelevant 的 median；`vector-only-min-score` 取略高于 irrelevant 的 max（让纯向量命中几乎不引入无关块），并用 recall@k 表确认没有因门槛过高退化为纯全文。每换一次嵌入模型须重新标定。
+  - **超时与冷却**：在线查询嵌入读超时 `query-embed-timeout-ms`（默认 2.5s，批量嵌入作业不受影响）；向量侧一旦失败，`vector-cooldown-seconds`（默认 60s）内检索直接走纯全文，不再每次等超时，到期后下一次检索自动探测恢复。冷却状态是进程内的。
+  - **已知限制（有意不修）**：①`VectorIndexCache` 是进程内缓存 → 与现有单副本部署约束一致，多副本下其他实例要等各自的失效事件 / 重启才会感知语料变化；换过模型后旧 `modelId` 的索引会留在内存里直到该课程发生失效事件（有界于课程数 × 用过的模型数）。②`doc_chunk_embedding` 每块只有一行向量（主键 chunk_id）：切换模型会覆盖旧模型向量，回切旧模型须再「重建向量」。③上传去重没有唯一约束：同一教师/多个教师并发上传相同文件，可能两份都通过去重而产生重复来源（可在语料审核里归档多余的一份）。
   - 内存：每课程每模型一份暴力检索索引（1024 维 ≈ 4KB/块），在入库 / 嵌入完成 / 映射审核后失效重载；大语料（数万块）需评估堆内存。
 - **M9 竞赛交付 / 紧急 kill switch**：见下表；**无新 Flyway**（探针会话为进程内 `ProbeSessionStore`，避免占用 M10 的 V14）。
 - **M10 计划**：生产默认 `plan-enabled=false`；开启前须完成 **V14 migrate**。关闭时：计划工具下架、re-plan 不跑、daily-brief 隐藏计划段、已有 ACTIVE 冻结不删。DRAFT 永不进 brief / re-plan。

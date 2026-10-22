@@ -115,6 +115,40 @@ class TeacherRagServiceUploadTest {
     }
 
     @Test
+    @DisplayName("去重只计非卡死来源：INGESTING 超过 ingest-stale-minutes 不算重复，并被置 FAILED")
+    void upload_staleIngestingIgnoredInDedupe() {
+        com.wenjin.config.LimitsProperties limits = new com.wenjin.config.LimitsProperties();
+        limits.getRag().setIngestStaleMinutes(30);
+        service.setLimits(limits);
+        when(sourceMapper.selectCount(any())).thenReturn(0L);
+        when(sourceMapper.insert(any(DocSource.class))).thenAnswer(inv -> {
+            ((DocSource) inv.getArgument(0)).setId(78L);
+            return 1;
+        });
+        when(submissions.submitForCourse(any(), anyString(), anyString(), any(), any())).thenReturn(new AiJobVO());
+
+        java.time.LocalDateTime before = java.time.LocalDateTime.now();
+        service.uploadSource(10L, file("a.md", "x"), null, null);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<DocSource>> dupWrapper =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        verify(sourceMapper).selectCount(dupWrapper.capture());
+        com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?> w =
+                (com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?>) dupWrapper.getValue();
+        assertThat(w.getSqlSegment()).contains("created_at").contains("status");
+        // 阈值 = now - 30min（不是默认 60min）
+        assertThat(w.getParamNameValuePairs().values()).anySatisfy(v -> {
+            assertThat(v).isInstanceOf(java.time.LocalDateTime.class);
+            java.time.LocalDateTime t = (java.time.LocalDateTime) v;
+            assertThat(t).isBetween(before.minusMinutes(31), java.time.LocalDateTime.now().minusMinutes(29));
+        });
+        // 同文件卡死的 INGESTING 被清理
+        verify(sourceMapper).update(org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<DocSource>>any());
+    }
+
+    @Test
     @DisplayName("非法扩展名 / 空文件 / 非法 kind → 400；rag 关闭 → 404")
     void upload_validation() {
         assertThatThrownBy(() -> service.uploadSource(10L, file("a.exe", "x"), null, null))

@@ -137,6 +137,10 @@ public class LimitsProperties {
          * Java 默认 false；开发（application.yml）/ e2e 显式置 true（可无 key 演示混合检索），生产保持 false。
          */
         private boolean allowHashingEmbedding = false;
+        /**
+         * INGESTING 来源超过此分钟数仍未结束视为卡死，不再计入上传去重（须大于租约 × 最大领取次数 = 45 分钟）。
+         */
+        private int ingestStaleMinutes = 60;
         /** 查询向量 LRU 缓存条数（按 modelId+查询串）；0 关闭（R2） */
         private int queryCacheSize = 512;
         /** 伴侣 RETRIEVAL 注入的节点范围是否扩展到焦点节点的直接前置（R2） */

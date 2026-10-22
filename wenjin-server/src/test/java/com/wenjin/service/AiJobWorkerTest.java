@@ -116,6 +116,27 @@ class AiJobWorkerTest {
     }
 
     @Test
+    void tick_sweepsOrphanedIngestingSourcesAfterRecovery() {
+        when(aiJobService.claimNext()).thenReturn(null);
+
+        worker.tick();
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(aiJobService, docIngestService);
+        order.verify(aiJobService).recoverStale();
+        order.verify(docIngestService).failOrphanedIngestingSources();
+    }
+
+    @Test
+    void tick_orphanSweepFailureDoesNotBlockClaiming() {
+        when(docIngestService.failOrphanedIngestingSources()).thenThrow(new RuntimeException("db down"));
+        when(aiJobService.claimNext()).thenReturn(null);
+
+        worker.tick();
+
+        verify(aiJobService).claimNext();
+    }
+
+    @Test
     void missingActor_isLeaseQualifiedRevokedWithoutEffectOrDomainWork() {
         when(sysUserMapper.selectById(10L)).thenReturn(null);
 

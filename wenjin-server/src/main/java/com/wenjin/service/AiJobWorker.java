@@ -96,6 +96,13 @@ public class AiJobWorker {
         } catch (Exception e) {
             log.warn("AI job recoverStale failed: {}", e.getMessage());
         }
+        try {
+            if (docIngestService != null) {
+                docIngestService.failOrphanedIngestingSources();
+            }
+        } catch (Exception e) {
+            log.warn("DOC_INGEST orphan source sweep failed: {}", e.getMessage());
+        }
         AiJob job;
         try {
             job = aiJobService.claimNext();

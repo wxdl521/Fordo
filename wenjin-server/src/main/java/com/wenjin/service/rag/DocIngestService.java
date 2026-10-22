@@ -105,6 +105,15 @@ public class DocIngestService {
     }
 
     /**
+     * 兜底：DOC_INGEST 作业已终态失败 / 取消（租约丢失、worker 宕机、重试耗尽被回收等 worker catch 之外的路径）
+     * 而来源仍 INGESTING 的，置 FAILED，使其可重传。由 {@code AiJobWorker.tick} 在 recoverStale 之后调用。
+     */
+    @Transactional
+    public int failOrphanedIngestingSources() {
+        return sourceMapper.failIngestingWithTerminalJob();
+    }
+
+    /**
      * COURSEWARE/TEXTBOOK 文件入库：抽取文本 → 带标题路径切块 → 自动初标（PENDING 映射）。
      * md/txt 带 NODE_REF frontmatter 时转走原 NODE_REF 路径。
      */

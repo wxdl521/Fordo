@@ -88,6 +88,14 @@ public class TeacherRagService {
         this.payloadSubmissionService = payloadSubmissionService;
     }
 
+    /** 去重的卡死 INGESTING 判定阈值；缺省 60 分钟。 */
+    private com.wenjin.config.LimitsProperties limits;
+
+    @Autowired(required = false)
+    public void setLimits(com.wenjin.config.LimitsProperties limits) {
+        this.limits = limits;
+    }
+
     @Autowired(required = false)
     public void setEventPublisher(ApplicationEventPublisher events) {
         this.events = events;
@@ -331,13 +339,23 @@ public class TeacherRagService {
             throw new BusinessException(ResultCode.BAD_REQUEST, "读取上传文件失败");
         }
         String hash = sha256Hex(bytes);
+        // 超过阈值仍 INGESTING 的来源视为卡死（作业丢租约 / worker 死亡），不算重复
+        LocalDateTime staleBefore = LocalDateTime.now().minusMinutes(ingestStaleMinutes());
         Long dup = sourceMapper.selectCount(new QueryWrapper<DocSource>()
                 .eq("course_id", courseId)
                 .eq("file_hash", hash)
-                .notIn("status", DocSourceStatus.FAILED, DocSourceStatus.ARCHIVED));
+                .notIn("status", DocSourceStatus.FAILED, DocSourceStatus.ARCHIVED)
+                .and(w -> w.ne("status", DocSourceStatus.INGESTING).or().ge("created_at", staleBefore)));
         if (dup != null && dup > 0) {
             throw new BusinessException(ResultCode.CONFLICT, "该文件已上传过");
         }
+        // 顺手把卡死的同文件 INGESTING 来源置 FAILED，避免列表里永远转圈
+        sourceMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<DocSource>()
+                .set("status", DocSourceStatus.FAILED)
+                .eq("course_id", courseId)
+                .eq("file_hash", hash)
+                .eq("status", DocSourceStatus.INGESTING)
+                .lt("created_at", staleBefore));
 
         String resolvedTitle = StringUtils.hasText(title) ? title.trim() : stripExt(filename);
         if (resolvedTitle.length() > 200) {
@@ -368,6 +386,10 @@ public class TeacherRagService {
         vo.setKind(resolvedKind);
         vo.setStatus(DocSourceStatus.INGESTING);
         return vo;
+    }
+
+    private int ingestStaleMinutes() {
+        return limits == null || limits.getRag() == null ? 60 : Math.max(1, limits.getRag().getIngestStaleMinutes());
     }
 
     private static String stripExt(String filename) {
