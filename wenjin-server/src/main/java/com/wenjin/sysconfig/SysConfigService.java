@@ -3,6 +3,7 @@ package com.wenjin.sysconfig;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.AiProperties;
+import com.wenjin.config.CodeCheckProperties;
 import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.dto.AdminConfigGroupVO;
@@ -55,11 +56,12 @@ public class SysConfigService {
     private volatile Map<String, Object> defaults;
 
     public SysConfigService(SysConfigMapper mapper, ConfigRegistry registry, ConfigCrypto crypto,
-                            AiProperties ai, FeatureFlagsProperties features, LimitsProperties limits) {
+                            AiProperties ai, FeatureFlagsProperties features, LimitsProperties limits,
+                            CodeCheckProperties codeCheck) {
         this.mapper = mapper;
         this.registry = registry;
         this.crypto = crypto;
-        this.beans = new ConfigBeans(ai, features, limits);
+        this.beans = new ConfigBeans(ai, features, limits, codeCheck);
     }
 
     // ───────────────────────── 启动 ─────────────────────────
