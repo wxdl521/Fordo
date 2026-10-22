@@ -120,6 +120,22 @@ class ReplayScenarioIT extends EvalDbSupport {
     }
 
     @Test
+    @DisplayName("S23 code help: real run_code_check tool hits the fake sandbox; model-facing result has the compile error but no source; reply does not echo code")
+    void s23_codeHelpRunsSandboxWithoutEchoingSource() {
+        EvalScenarioDocument s23 = harness.scenarioLoader().loadByCode("S23").orElseThrow();
+
+        ScenarioRun run = harness.replayExecutor().runDetailed(s23);
+
+        assertThat(run.outcome().hardPass()).as("%s", run.outcome().hardResult().failures()).isTrue();
+        String toolOutput = jdbc.queryForObject(
+                "SELECT output_json FROM agent_step WHERE run_id = ? AND name = 'run_code_check'",
+                String.class, run.outcome().runId());
+        assertThat(toolOutput).contains("COMPILE_ERROR").contains("';' expected")
+                .doesNotContain("System.out.println").doesNotContain("public class Main");
+        assertThat(run.outcome().finalResponse()).doesNotContain("System.out.println(total);");
+    }
+
+    @Test
     @DisplayName("a golden without the required tool round fails mustCallTools and reports replay drift")
     void brokenGolden_fails() {
         EvalScenarioDocument s04 = harness.scenarioLoader().loadByCode("S04").orElseThrow();

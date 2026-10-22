@@ -176,6 +176,14 @@ public final class ScenarioSchemaValidator {
                 }
             }
         }
+        if (hard.replyMustNotContain() != null) {
+            for (int i = 0; i < hard.replyMustNotContain().size(); i++) {
+                String s = hard.replyMustNotContain().get(i);
+                if (s == null || s.isBlank()) {
+                    throw new ScenarioSchemaException("hard.replyMustNotContain[" + i + "] must be non-blank");
+                }
+            }
+        }
         if (hard.maxToolCalls() != null && hard.maxToolCalls() < 0) {
             throw new ScenarioSchemaException("hard.maxToolCalls must be >= 0");
         }

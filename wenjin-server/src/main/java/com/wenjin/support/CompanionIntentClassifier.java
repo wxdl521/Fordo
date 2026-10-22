@@ -18,7 +18,8 @@ public final class CompanionIntentClassifier {
             Set.of("draft_study_plan", "get_plan_progress", "query_mastery", "get_review_queue");
 
     private static final Set<String> EXPLAIN_TOOLS =
-            Set.of("get_node_detail", "search_materials", "trace_prerequisites", "get_recent_mistakes");
+            Set.of("get_node_detail", "search_materials", "trace_prerequisites", "get_recent_mistakes",
+                    "run_code_check");
 
     private static final List<String> EXPLAIN_KEYWORDS = List.of(
             "讲讲", "讲一下", "讲起", "讲解", "讲清", "解释", "什么是", "是什么",

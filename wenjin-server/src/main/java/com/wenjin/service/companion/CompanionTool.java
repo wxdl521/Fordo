@@ -47,6 +47,14 @@ public interface CompanionTool {
         return false;
     }
 
+    /**
+     * Runtime availability beyond feature flags (e.g. an external sandbox is reachable).
+     * {@code CompanionServiceImpl} drops unavailable tools from the schema offered to the model.
+     */
+    default boolean available() {
+        return true;
+    }
+
     String execute(ToolContext ctx, JsonNode args) throws ToolException;
 
     default ToolExecutionResult executeForGovernor(String toolCallId,

@@ -76,13 +76,23 @@ public record EvalScenarioDocument(
             Boolean nodeCodesInWhitelist,
             Boolean degradedExpected,
             /** true：trace 的 citation_check 步 invalid 必须为空（回复里的 资料 #N ⊆ 本 turn 可引用集合） */
-            Boolean citationsValid
+            Boolean citationsValid,
+            /** 最终回复不得包含的子串（如学生源码的整行：不回显源码）；逐项精确子串匹配 */
+            List<String> replyMustNotContain
     ) {
-        /** 兼容旧调用方（无 citationsValid）。 */
+        /** 兼容旧调用方（无 citationsValid / replyMustNotContain）。 */
         public HardAssertions(List<String> mustCallTools, List<String> mustNotCallTools, Integer maxToolCalls,
                               Boolean jsonContractValid, Boolean nodeCodesInWhitelist, Boolean degradedExpected) {
             this(mustCallTools, mustNotCallTools, maxToolCalls, jsonContractValid, nodeCodesInWhitelist,
-                    degradedExpected, null);
+                    degradedExpected, null, null);
+        }
+
+        /** 兼容旧调用方（无 replyMustNotContain）。 */
+        public HardAssertions(List<String> mustCallTools, List<String> mustNotCallTools, Integer maxToolCalls,
+                              Boolean jsonContractValid, Boolean nodeCodesInWhitelist, Boolean degradedExpected,
+                              Boolean citationsValid) {
+            this(mustCallTools, mustNotCallTools, maxToolCalls, jsonContractValid, nodeCodesInWhitelist,
+                    degradedExpected, citationsValid, null);
         }
     }
 

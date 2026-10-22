@@ -7,6 +7,7 @@ import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
 import com.wenjin.dto.PracticeStartVO;
+import com.wenjin.dto.CodeResultVO;
 import com.wenjin.dto.ProbeStartVO;
 import com.wenjin.service.CompanionService;
 import com.wenjin.service.CourseService;
@@ -132,6 +133,11 @@ public class CompanionController {
                     @Override
                     public void probeCard(ProbeStartVO card) {
                         sendEvent(emitter, "probe_card", card, "probe_card");
+                    }
+
+                    @Override
+                    public void codeResult(CodeResultVO card) {
+                        sendEvent(emitter, "code_result", card, "code_result");
                     }
 
                     @Override

@@ -86,6 +86,11 @@ wenjin:
       timeout-ms: 5000
       max-result-chars: 2000
       intent-routing-enabled: true  # 练习意图路由：自然语言要题时强制 start_practice
+    code-tool:                      # run_code_check（方向 6 / C3）
+      max-per-run: 1
+      source-max-chars: 10000
+      stdin-max-chars: 2000
+      stdout-preview-chars: 300
   limits:                                        # 资源预算（会话上下文 / 草稿 / 图片 / 文档）
     companion:
       max-input-chars: 4000                      # 单条用户输入上限
