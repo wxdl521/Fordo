@@ -6,6 +6,10 @@ server:
       force: true
 
 spring:
+  profiles:
+    # 默认激活 dev：本地/开发启动无需带 --spring.profiles.active，AuthSecretGuard 放宽默认密钥。
+    # 生产部署用环境变量 SPRING_PROFILES_ACTIVE=prod（或 --spring.profiles.active=prod）覆盖，届时须配 WENJIN_AUTH_SECRET。
+    active: ${SPRING_PROFILES_ACTIVE:dev}
   application:
     name: wenjin-server
   autoconfigure:
@@ -70,8 +74,8 @@ wenjin:
   companion:
     tools:
       enabled: true
-      max-rounds: 2
-      max-tool-calls: 4              # 含 1 次副作用预留：最多约 3 次只读 + 1 次 start_practice
+      max-rounds: 4
+      max-tool-calls: 8              # 含 1 次副作用预留：最多约 7 次只读 + 1 次 start_practice
       timeout-ms: 5000
       max-result-chars: 2000
       intent-routing-enabled: true  # 练习意图路由：自然语言要题时强制 start_practice
@@ -95,7 +99,7 @@ wenjin:
       jaccard-threshold: 0.6                     # ≥ 阈值视为同义，强化已有不插入
       max-content-chars: 500
       inject-top-k: 5                            # MEMORY 槽按 effective 注入条数
-      write-per-run: 2                           # record_observation 每 run 上限
+      write-per-run: 4                           # record_observation 每 run 上限
     rag:                                         # 语料检索 / 注入（M8）
       inject-top-k: 4                            # RETRIEVAL 注入 top-k
       search-default-top-k: 3                    # search_materials 默认 topK
