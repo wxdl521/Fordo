@@ -80,17 +80,19 @@ class DockerRunnerScriptTest {
     private ShRun runCase(String fakeJavaBody, String stdin, int lim) throws Exception {
         Assumptions.assumeTrue(!System.getProperty("os.name", "").toLowerCase().contains("win"),
                 "case.sh 行为测试只在 POSIX 宿主（CI）上跑");
-        Path bin = Files.createDirectories(tmp.resolve("bin"));
+        // 每次调用用独立目录：同一测试内多次 runCase 不得复用上一轮的 fifo / rc 文件
+        Path base = Files.createTempDirectory(tmp, "run");
+        Path bin = Files.createDirectories(base.resolve("bin"));
         Path java = bin.resolve("java");
         Files.writeString(java, "#!/bin/sh\n" + fakeJavaBody + "\n", StandardCharsets.UTF_8);
         Files.setPosixFilePermissions(java, PosixFilePermissions.fromString("rwxr-xr-x"));
-        Path in = Files.createDirectories(tmp.resolve("in"));
+        Path in = Files.createDirectories(base.resolve("in"));
         Files.writeString(in.resolve("stdin.txt"), stdin, StandardCharsets.UTF_8);
-        Path work = Files.createDirectories(tmp.resolve("t"));
+        Path work = Files.createDirectories(base.resolve("t"));
         String script = DockerRunnerScript.caseScript()
                 .replace("/in/stdin.txt", in.resolve("stdin.txt").toString())
                 .replace("T=/tmp/wj", "T=" + work.resolve("wj"));
-        Path sh = tmp.resolve("case.sh");
+        Path sh = base.resolve("case.sh");
         Files.writeString(sh, script, StandardCharsets.UTF_8);
         String path = bin + ":" + System.getenv().getOrDefault("PATH", "/usr/bin:/bin");
         List<String> cmd = List.of("/usr/bin/env", "PATH=" + path, "RCFILE=" + work.resolve("wj").resolve("rc"),
