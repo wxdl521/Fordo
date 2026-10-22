@@ -55,7 +55,7 @@ final class StudentRateLimiter {
         }
     }
 
-    /** 退回最近一次（请求最终没有执行，例如等不到并发许可）。 */
+    /** 退回最近一次（请求没有得到执行结果：等不到并发许可，或沙箱基础设施失败）。 */
     void refund(long studentId) {
         Deque<Instant> q = hits.get(studentId);
         if (q == null) {

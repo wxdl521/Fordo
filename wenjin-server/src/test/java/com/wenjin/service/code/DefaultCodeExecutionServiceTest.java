@@ -400,6 +400,28 @@ class DefaultCodeExecutionServiceTest {
         assertThat(service.run(1L, OK_SOURCE, "").verdict()).isEqualTo(Verdict.ACCEPTED);
     }
 
+    @Test
+    @DisplayName("沙箱基础设施失败（FAILED / 抛异常 / null）退回限流名额；学生自身的失败（编译错、超时等）照常计次")
+    void rateLimit_refundedOnInfrastructureFailure() {
+        limits.getCode().setPerStudentPerHour(1);
+        caseTable.put(9L, List.of(new CodeTestCase(1, "", "", false)));
+
+        sandbox.next = req -> SandboxResult.failed("docker exploded");
+        assertThat(service.run(1L, OK_SOURCE, "").verdict()).isEqualTo(Verdict.UNAVAILABLE);
+        assertThat(service.judge(1L, 9L, OK_SOURCE).verdict()).isEqualTo(Verdict.UNAVAILABLE);
+        sandbox.next = req -> {
+            throw new IllegalStateException("boom");
+        };
+        assertThat(service.run(1L, OK_SOURCE, "").verdict()).isEqualTo(Verdict.UNAVAILABLE);
+        sandbox.next = req -> null;
+        assertThat(service.run(1L, OK_SOURCE, "").verdict()).isEqualTo(Verdict.UNAVAILABLE);
+
+        // 名额还在：一次真正的执行（这里是编译错误——学生自己的问题）照常计次
+        sandbox.next = req -> new SandboxResult(SandboxResult.Status.COMPILE_ERROR, "err", List.of(), null);
+        assertThat(service.run(1L, OK_SOURCE, "").verdict()).isEqualTo(Verdict.COMPILE_ERROR);
+        assertThat(service.run(1L, OK_SOURCE, "").verdict()).isEqualTo(Verdict.RATE_LIMITED);
+    }
+
     // ───────────────────────── 并发 ─────────────────────────
 
     @Test

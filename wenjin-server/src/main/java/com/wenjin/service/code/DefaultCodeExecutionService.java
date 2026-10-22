@@ -293,7 +293,7 @@ public class DefaultCodeExecutionService implements CodeExecutionService {
     private record Execution(SandboxResult result, Verdict refusal, String message) {
     }
 
-    /** 限流 → 并发许可 → 沙箱。等不到许可时退回限流名额。 */
+    /** 限流 → 并发许可 → 沙箱。等不到许可、或沙箱基础设施失败（FAILED / 异常）时退回限流名额。 */
     private Execution execute(long studentId, String source, List<String> stdins) {
         if (!rateLimiter.tryAcquire(studentId)) {
             return new Execution(null, Verdict.RATE_LIMITED,
@@ -311,12 +311,23 @@ public class DefaultCodeExecutionService implements CodeExecutionService {
             log.info("代码沙箱并发已满，拒绝 studentId={}", studentId);
             return new Execution(null, Verdict.UNAVAILABLE, MSG_BUSY);
         }
+        SandboxResult r;
         try {
-            SandboxResult r = sandbox.execute(new SandboxRequest(source, stdins, SandboxLimits.from(code())));
-            return new Execution(r == null ? SandboxResult.failed("null result") : r, null, null);
+            r = sandbox.execute(new SandboxRequest(source, stdins, SandboxLimits.from(code())));
+        } catch (RuntimeException e) {
+            rateLimiter.refund(studentId); // 基础设施问题不消耗学生名额
+            throw e;
         } finally {
             permits.release();
         }
+        if (r == null) {
+            r = SandboxResult.failed("null result");
+        }
+        if (r.status() == SandboxResult.Status.FAILED) {
+            // 后端不可用 / 执行异常（结果为 UNAVAILABLE、不计分）：退回限流名额，学生没有得到任何执行结果
+            rateLimiter.refund(studentId);
+        }
+        return new Execution(r, null, null);
     }
 
     /** 单个用例在比对之前的 verdict（同一用例内：输出超限优先于超时，死循环刷屏判资源超限）。 */
