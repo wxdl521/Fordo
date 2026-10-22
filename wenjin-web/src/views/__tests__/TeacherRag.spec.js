@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   rejectRagMapping: vi.fn(),
   batchApproveRagMappings: vi.fn(),
   createNodeRefSource: vi.fn(),
-  uploadRagSource: vi.fn()
+  uploadRagSource: vi.fn(),
+  reembedRagCourse: vi.fn()
 }))
 
 vi.mock('../../api/teacher.js', () => ({
@@ -18,7 +19,8 @@ vi.mock('../../api/teacher.js', () => ({
   rejectRagMapping: (...a) => mocks.rejectRagMapping(...a),
   batchApproveRagMappings: (...a) => mocks.batchApproveRagMappings(...a),
   createNodeRefSource: (...a) => mocks.createNodeRefSource(...a),
-  uploadRagSource: (...a) => mocks.uploadRagSource(...a)
+  uploadRagSource: (...a) => mocks.uploadRagSource(...a),
+  reembedRagCourse: (...a) => mocks.reembedRagCourse(...a)
 }))
 
 vi.mock('../../composables/useTeacherCourse.js', () => ({
@@ -151,6 +153,86 @@ describe('TeacherRag 文件入库', () => {
     mocks.fetchRagSources.mockResolvedValue([source({ status: 2, chunkCount: 0 })])
     const w = await mountPage()
     expect(w.find('tr[data-status="2"]').text()).toContain('失败')
+    w.unmount()
+  })
+})
+
+describe('TeacherRag 向量覆盖与重建（R2）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.fetchRagMappings.mockResolvedValue({ items: [], total: 0, page: 1, size: 20 })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('向量模式关（embeddedChunks 为 null）→ 不显示覆盖列与「重建向量」', async () => {
+    mocks.fetchRagSources.mockResolvedValue([source({ embeddedChunks: null, totalChunks: 5 })])
+    const w = await mountPage()
+    expect(w.find('[data-testid="coverage-cell"]').exists()).toBe(false)
+    expect(w.find('[data-testid="reembed"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('向量模式开 → 覆盖列显示 已嵌入/总块数，未覆盖完整时标警示', async () => {
+    mocks.fetchRagSources.mockResolvedValue([
+      source({ id: 1, embeddedChunks: 3, totalChunks: 5, embeddingModel: 'hash-ngram@1024' }),
+      source({ id: 2, embeddedChunks: 4, totalChunks: 4, embeddingModel: 'hash-ngram@1024' })
+    ])
+    const w = await mountPage()
+    const cells = w.findAll('[data-testid="coverage-cell"]')
+    expect(cells.map((c) => c.text())).toEqual(['3/5', '4/4'])
+    expect(cells[0].classes()).toContain('warn')
+    expect(cells[1].classes()).not.toContain('warn')
+    expect(cells[0].attributes('title')).toContain('hash-ngram@1024')
+    w.unmount()
+  })
+
+  it('点击「重建向量」→ reembedRagCourse(课程) 并提示作业数，随后刷新列表', async () => {
+    mocks.fetchRagSources.mockResolvedValue([source({ embeddedChunks: 0, totalChunks: 5 })])
+    mocks.reembedRagCourse.mockResolvedValue({ model: 'embedding-3@1024', sourceCount: 2, jobIds: [11, 12] })
+    const w = await mountPage()
+    await w.get('[data-testid="reembed"]').trigger('click')
+    await flushPromises()
+    expect(mocks.reembedRagCourse).toHaveBeenCalledWith(7)
+    expect(w.get('[data-testid="reembed-notice"]').text()).toContain('2')
+    expect(w.get('[data-testid="reembed-notice"]').text()).toContain('embedding-3@1024')
+    expect(mocks.fetchRagSources).toHaveBeenCalledTimes(2)
+    w.unmount()
+  })
+
+  it('重建向量 404/503 → 显示对应提示', async () => {
+    mocks.fetchRagSources.mockResolvedValue([source({ embeddedChunks: 0, totalChunks: 5 })])
+    mocks.reembedRagCourse.mockRejectedValueOnce(Object.assign(new Error('资源不存在'), { httpStatus: 404 }))
+    const w = await mountPage()
+    await w.get('[data-testid="reembed"]').trigger('click')
+    await flushPromises()
+    expect(w.get('[data-testid="reembed-notice"]').text()).toContain('向量检索未开启')
+
+    mocks.reembedRagCourse.mockRejectedValueOnce(
+      Object.assign(new Error('未配置可用的嵌入模型，无法重建向量'), { httpStatus: 503 }))
+    await w.get('[data-testid="reembed"]').trigger('click')
+    await flushPromises()
+    expect(w.get('[data-testid="reembed-notice"]').text()).toContain('未配置可用的嵌入模型')
+    w.unmount()
+  })
+
+  it('重建后向量未覆盖完整时每 3s 静默轮询，覆盖完成后停止', async () => {
+    vi.useFakeTimers()
+    mocks.fetchRagSources
+      .mockResolvedValueOnce([source({ embeddedChunks: 0, totalChunks: 5 })])
+      .mockResolvedValueOnce([source({ embeddedChunks: 2, totalChunks: 5 })])
+      .mockResolvedValueOnce([source({ embeddedChunks: 5, totalChunks: 5 })])
+    mocks.reembedRagCourse.mockResolvedValue({ model: 'm', sourceCount: 1, jobIds: [1] })
+    const w = await mountPage()
+    await w.get('[data-testid="reembed"]').trigger('click')
+    await flushPromises()
+    expect(mocks.fetchRagSources).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(mocks.fetchRagSources).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(9000)
+    expect(mocks.fetchRagSources).toHaveBeenCalledTimes(3)
     w.unmount()
   })
 })

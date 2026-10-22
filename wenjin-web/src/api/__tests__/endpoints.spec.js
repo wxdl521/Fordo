@@ -97,6 +97,7 @@ describe('API endpoint contracts', () => {
         'batchApproveRagMappings',
         'createNodeRefSource',
         'uploadRagSource',
+        'reembedRagCourse',
         'fetchTeacherReports'
       ]],
       [companion, [
@@ -125,7 +126,8 @@ describe('API endpoint contracts', () => {
     // 61 baseline + 8 teacher RAG/reports + 1 companion submitProbe + 2 student + 1 sendEmailCode + 3 companion proactive
     // - 3 removed unused (importQuestionExcelLegacy / fetchPracticeHistory / fetchTeacherReport) = 70
     // + 1 uploadRagSource (R3 file ingest) -> 74 total with the three above counted in 73
-    expect(exportCount).toBe(74)
+    // + 1 reembedRagCourse (R2 hybrid retrieval) -> 75
+    expect(exportCount).toBe(75)
   })
 
   it('maps user and course operations without forwarding privilege fields', () => {
@@ -650,5 +652,10 @@ describe('API endpoint contracts', () => {
     ])
     expect(config).toEqual({ headers: { 'Content-Type': 'multipart/form-data' } })
     expect(Array.from(http.post.mock.calls[1][1].keys())).toEqual(['courseId', 'file'])
+  })
+
+  it('posts a course-wide RAG re-embed without a body', () => {
+    teacher.reembedRagCourse(9)
+    expect(http.post).toHaveBeenCalledWith('/teacher/rag/courses/9/reembed')
   })
 })

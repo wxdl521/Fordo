@@ -124,6 +124,15 @@ export function uploadRagSource(courseId, file, opts = {}) {
   })
 }
 
+/**
+ * 「重建向量」：全课程按 READY 来源派发 RAG_EMBED（R2）。rag / rag-vector 关 → 404，无嵌入模型 → 503。
+ * @param {number} courseId
+ * @returns {Promise<{ model: string, sourceCount: number, jobIds: number[] }>}
+ */
+export function reembedRagCourse(courseId) {
+  return http.post(`/teacher/rag/courses/${courseId}/reembed`)
+}
+
 // ── 多智能体报告（教师端）──
 export function fetchTeacherReports(courseId, kind, config = {}) {
   return http.get('/teacher/reports', {

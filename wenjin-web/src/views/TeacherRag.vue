@@ -24,7 +24,12 @@
       <div class="actions">
         <button class="btn" data-testid="open-upload" @click="openUpload('file')">上传文件</button>
         <button class="btn ghost" data-testid="open-paste" @click="openUpload('paste')">粘贴 NODE_REF Markdown</button>
+        <button v-if="vectorOn" class="btn ghost" data-testid="reembed" :disabled="reembedding"
+                title="按当前嵌入模型为全部就绪来源回填向量（内容未变的块自动跳过）" @click="doReembed">
+          {{ reembedding ? '提交中…' : '重建向量' }}
+        </button>
         <span v-if="hasIngesting" class="muted" data-testid="ingesting-hint">有来源入库中，列表自动刷新…</span>
+        <span v-if="reembedNotice" class="muted" data-testid="reembed-notice" role="status">{{ reembedNotice }}</span>
       </div>
       <table class="data-table">
         <thead>
@@ -35,6 +40,7 @@
             <th>切块</th>
             <th>待审</th>
             <th>未关联</th>
+            <th v-if="vectorOn">向量</th>
             <th>创建时间</th>
           </tr>
         </thead>
@@ -49,10 +55,14 @@
                 :title="'未关联块无 PENDING/APPROVED 映射，学生端检索不到'">
               {{ row.status === 1 ? `未关联 ${row.unlinkedChunkCount ?? 0} 块` : '—' }}
             </td>
+            <td v-if="vectorOn" data-testid="coverage-cell" :class="{ warn: isUncovered(row) }"
+                :title="`已嵌入 / 切块总数（模型 ${row.embeddingModel || '—'}）`">
+              {{ coverageText(row) }}
+            </td>
             <td class="muted">{{ row.createdAt || '—' }}</td>
           </tr>
           <tr v-if="!sources.length">
-            <td colspan="7" class="empty-row">暂无语料来源</td>
+            <td :colspan="vectorOn ? 8 : 7" class="empty-row">暂无语料来源</td>
           </tr>
         </tbody>
       </table>
@@ -175,7 +185,8 @@ import {
   rejectRagMapping,
   batchApproveRagMappings,
   createNodeRefSource,
-  uploadRagSource
+  uploadRagSource,
+  reembedRagCourse
 } from '../api/teacher.js'
 import { useTeacherCourse } from '../composables/useTeacherCourse.js'
 import { createLatestRequest } from '../utils/latestRequest.js'
@@ -221,6 +232,13 @@ const nodeRefPlaceholder = [
 ].join('\n')
 
 const hasIngesting = computed(() => sources.value.some((s) => s.status === 0))
+// R2：向量模式开时后端返回 embeddedChunks（关时为 null）
+const vectorOn = computed(() => sources.value.some((s) => s.embeddedChunks != null))
+const hasUncovered = computed(() => sources.value.some((s) => isUncovered(s)))
+const reembedding = ref(false)
+const reembedNotice = ref('')
+// 「重建向量」后向量作业异步执行：在覆盖完整前静默轮询
+let embedWatch = false
 const canSubmit = computed(() =>
   uploadMode.value === 'file' ? !!uploadFile.value : !!uploadMd.value.trim()
 )
@@ -249,6 +267,14 @@ function statusLabel(s) {
 function reviewLabel(s) {
   return ({ 0: '待审', 1: '已通过', 2: '已驳回' })[s] ?? String(s)
 }
+function isUncovered(row) {
+  return row?.status === 1 && row.embeddedChunks != null
+    && Number(row.embeddedChunks) < Number(row.totalChunks ?? row.chunkCount ?? 0)
+}
+function coverageText(row) {
+  if (row?.status !== 1 || row.embeddedChunks == null) return '—'
+  return `${row.embeddedChunks}/${row.totalChunks ?? row.chunkCount ?? 0}`
+}
 function formatConf(c) {
   if (c == null) return '—'
   const n = Number(c)
@@ -271,7 +297,9 @@ function stopPolling() {
 // 入库是异步作业：有 INGESTING 来源时每 3s 静默刷新列表（最多 200 次），直到全部落到 READY/FAILED
 function schedulePoll() {
   stopPolling()
-  if (disposed || tab.value !== 'sources' || !hasIngesting.value || pollCount >= POLL_MAX) return
+  const pending = hasIngesting.value || (embedWatch && hasUncovered.value)
+  if (!pending) embedWatch = false
+  if (disposed || tab.value !== 'sources' || !pending || pollCount >= POLL_MAX) return
   pollTimer = setTimeout(async () => {
     pollTimer = null
     pollCount += 1
@@ -383,6 +411,27 @@ async function doBatchApprove() {
     if (!isAbortError(e)) error.value = e?.message || '批量通过失败'
   } finally {
     batching.value = false
+  }
+}
+
+async function doReembed() {
+  if (!courseId.value || reembedding.value) return
+  reembedding.value = true
+  reembedNotice.value = ''
+  try {
+    const data = await reembedRagCourse(courseId.value)
+    const n = Array.isArray(data?.jobIds) ? data.jobIds.length : 0
+    reembedNotice.value = `已提交 ${n} 个向量作业（模型 ${data?.model || '—'}），完成后覆盖率自动刷新`
+    embedWatch = true
+    pollCount = 0
+    await loadSources({ silent: true })
+  } catch (e) {
+    if (isAbortError(e)) return
+    reembedNotice.value = isNotFound(e)
+      ? '向量检索未开启（rag-vector-enabled）'
+      : (e?.message || '重建向量失败')
+  } finally {
+    reembedding.value = false
   }
 }
 
