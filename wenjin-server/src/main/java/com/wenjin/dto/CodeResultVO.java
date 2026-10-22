@@ -36,9 +36,21 @@ public record CodeResultVO(String mode,
                 r.compileError(), r.stdout(), r.stderr(), List.of(), r.durationMs(), r.message());
     }
 
+    /**
+     * hidden 用例在此再次脱敏（与练习侧 {@link CodeJudgeVO} 一致）：无论上游是否填充，hidden 用例的
+     * stdin / expected / actual 预览一律置空，只保留序号、通过与否、verdict、耗时。
+     */
     public static CodeResultVO ofJudge(CodeJudgeResult r) {
+        List<CaseResult> cases = r.cases().stream().map(CodeResultVO::redactHidden).toList();
         return new CodeResultVO(MODE_JUDGE, r.verdict() == null ? null : r.verdict().name(),
-                r.passedCases(), r.totalCases(), r.compileError(), null, null, r.cases(),
+                r.passedCases(), r.totalCases(), r.compileError(), null, null, cases,
                 r.durationMs(), r.message());
+    }
+
+    private static CaseResult redactHidden(CaseResult c) {
+        if (c == null || !c.hidden()) {
+            return c;
+        }
+        return new CaseResult(c.index(), c.passed(), true, c.verdict(), null, null, null, c.durationMs());
     }
 }
