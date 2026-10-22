@@ -685,18 +685,51 @@ management:
 `DOCKER_HOST=unix:///run/user/<uid>/docker.sock`），被攻破也只到该用户；③若只能用 docker 组，应用主机不得承载其它
 敏感服务，且严格限制该账户。绝不要把 `/var/run/docker.sock` 挂进对公网的容器。
 
-**每次执行的隔离参数**（`DockerCodeSandbox.runCommand`，单测逐项断言，`DockerSandboxIT` 在 CI 真机验证）：
+**执行模型：编译一次，每个用例一个一次性容器**（`DockerCodeSandbox.compileCommand` / `caseCommand`，单测逐项断言，
+`DockerSandboxIT` 在 CI 真机验证）。两类容器共用同一组隔离参数：
 
 ```
-docker run --rm --name wj-code-<uuid> --pull never --network none --cpus 1.0 --memory 256m --memory-swap 256m   --pids-limit 64 --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 --cap-drop ALL   --security-opt no-new-privileges --user 65534:65534 --ulimit core=0:0 --ulimit nofile=1024:1024   --workdir /tmp --env HOME=/tmp --mount type=bind,source=<宿主临时目录>,target=/work,readonly   --entrypoint timeout eclipse-temurin:21-jdk -s KILL <编译+用例×(运行+1)+10> /bin/sh /work/run.sh
+# 编译容器（源码只读、class 输出目录是唯一可写挂载；不挂任何用例输入）
+docker run --rm --name wj-code-<uuid> --pull never --log-driver none --network none --cpus 1.0 --memory 256m \
+  --memory-swap 256m --pids-limit 64 --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
+  --cap-drop ALL --security-opt no-new-privileges --user 65534:65534 --ulimit core=0:0 --ulimit nofile=1024:1024 \
+  --workdir /tmp --env HOME=/tmp \
+  --mount type=bind,source=<run>/src,target=/src,readonly \
+  --mount type=bind,source=<run>/classes,target=/classes \
+  --mount type=bind,source=<run>/wj,target=/wj,readonly \
+  --entrypoint timeout eclipse-temurin:21-jdk -s KILL 15 /bin/sh /wj/compile.sh 128
+
+# 第 i 个用例的容器（class 目录只读 + 只有本用例自己的输入目录只读）
+docker run --rm --name wj-code-<uuid> ...同上隔离参数... \
+  --mount type=bind,source=<run>/classes,target=/classes,readonly \
+  --mount type=bind,source=<run>/in/<i>,target=/in,readonly \
+  --mount type=bind,source=<run>/wj,target=/wj,readonly \
+  --entrypoint timeout eclipse-temurin:21-jdk -s KILL 3 /bin/sh /wj/case.sh 65537 128
 ```
 
-容器内 runner 先 `timeout` 编译、再逐用例 `timeout` 运行（`-Xmx`、`-XX:+ExitOnOutOfMemoryError`），输出在容器内
-`head -c` 截断后 base64 回传；容器 PID 1 是 `timeout -s KILL`，即使应用崩溃容器也会自行到期结束；应用侧再加整体墙钟
-（编译 + 用例×(运行+1) + 20s），超时 `docker rm -f`。
-宿主临时目录放在 `WENJIN_CODE_CHECK_WORK_DIR`（默认 `java.io.tmpdir`），须可被 docker 守护进程绑定挂载，
-路径不能含逗号；Linux 上目录/文件放宽为 0755/0644 供容器内 uid 65534 只读访问；SELinux 宿主可能需为该目录设
-`container_file_t` 标签。应用本身跑在容器里并通过 socket 调宿主 docker 时，该目录必须是**宿主**路径（同路径挂载）。
+- 编译：`javac -proc:none`（不跑注解处理器，编译阶段不执行学生代码），诊断经 stdout 回传；PID 1 的 `timeout` 到期即
+  编译超时。
+- 用例：`java -Xmx… -XX:+ExitOnOutOfMemoryError -cp /classes Main < /in/stdin.txt`；stdout / stderr 在容器内
+  `head -c` 截到 output-max-bytes+1，就是容器自己的 stdout / stderr（`--log-driver none` 不影响 attach 回传，只是不落
+  docker 日志）。脚本以学生程序的退出码退出，其中 124–127 改写为 1——学生无法伪造 docker 自身失败的 125–127。
+- **信任边界**：用例容器里学生代码与脚本同为 uid 65534，学生能改 /tmp、给 PID 1 发信号、经 `/proc/1/fd/1` 直写、
+  `setsid` 逃出进程组——但只能影响**它自己这个用例**：一个容器里只有本用例的输入（hidden 用例的输入在别的容器里），
+  期望输出从不进任何容器；耗时与「是否超时」只取应用侧测得的墙钟，应用侧再截断 stdout/stderr 并比对。PID 1 到期后整个
+  PID 命名空间被内核回收，逃逸进程一并结束。
+- **墙钟**：每个容器 = 容器内寿命（编译 15s / 用例 3s）+ 10s 余量，到期 `docker rm -f`；整次执行预算 = 编译 + 用例数 ×
+  (运行 + 1) + 20s，每起一个用例容器前检查，耗尽则剩余用例判 TIMEOUT。
+- **fail-fast**：首个 TIMEOUT / RESOURCE_LIMIT 用例之后不再运行剩余用例，它们按同一 verdict 计为未通过（Judge0 后端同）。
+- **宿主临时目录**：`<WENJIN_CODE_CHECK_WORK_DIR 或 java.io.tmpdir>/wj-code-sandbox/`——0700、属主必须是应用账户、
+  不得是符号链接（不满足即本次执行失败，不会在别人能控制的目录里写学生代码）；每次执行一个 0700 的 `run-*`：
+  `src/`(0755) + `Main.java`(0644)、`classes/`(0777，编译容器写入，`umask 000` 使产物可被应用账户删除)、`wj/`(0755，
+  两段脚本 0644)、`in/<i>/stdin.txt`(0755/0644)。容器经绑定挂载直接看到子目录本身，挂载由 docker 守护进程完成
+  （rootful = root；rootless = 应用账户本人），不需要穿越 0700 的父目录；宿主上的其它本地用户则无法穿越。
+  该目录须可被 docker 守护进程绑定挂载、路径不能含逗号；SELinux 宿主可能需为它设 `container_file_t` 标签；
+  应用本身跑在容器里并通过 socket 调宿主 docker 时，必须是**宿主**路径（同路径挂载）。
+
+**可用性探测不在请求路径上**：docker（`docker version` + `docker image inspect`）/ Judge0（`GET /about`）由后台线程在
+启动时立即探测一次、之后每 `availability-cache-seconds` 刷新；练习组卷、判分前检查、伴侣每轮工具过滤只读最近一次结果，
+从不阻塞（首个探测完成前视为不可用）。
 
 **配置键**（dev 基线 = `application.yml`；prod 只覆盖开关）：
 
@@ -705,9 +738,9 @@ docker run --rm --name wj-code-<uuid> --pull never --network none --cpus 1.0 --m
 | `wenjin.features.code-check-enabled` | dev `true` / prod `${WENJIN_FEATURE_CODE_CHECK:false}` / e2e `true` | 总开关；管理后台可热改 |
 | `wenjin.code-check.backend` | `${WENJIN_CODE_CHECK_BACKEND:docker}` | `docker` / `judge0` / `none` |
 | `wenjin.code-check.docker.binary` / `.image` / `.work-dir` | `docker` / `eclipse-temurin:21-jdk` / 空 | `WENJIN_CODE_CHECK_DOCKER_BINARY` / `_IMAGE` / `WENJIN_CODE_CHECK_WORK_DIR` |
-| `wenjin.code-check.docker.availability-cache-seconds` | 30 | `docker version` + `image inspect` 结果缓存 |
-| `wenjin.code-check.judge0.base-url` / `.api-key` | 空 / 空 | `WENJIN_CODE_CHECK_JUDGE0_URL` / `_TOKEN`；管理后台「代码沙箱」可热改，token 加密存储 |
-| `wenjin.code-check.judge0.language-id` / `.request-timeout-seconds` | 62 / 30 | Judge0 CE 1.13 的 Java |
+| `wenjin.code-check.docker.availability-cache-seconds` | 30 | 可用性后台刷新间隔（`docker version` + `image inspect`） |
+| `wenjin.code-check.judge0.base-url` / `.api-key` | 空 / 空 | `WENJIN_CODE_CHECK_JUDGE0_URL` / `_TOKEN`；管理后台「代码沙箱」可热改，token 加密存储。**改基址会立即作废 token**（删覆盖值、置空，须重新填写）；库里覆盖了非默认基址却没有 token 覆盖时，启动也不会沿用环境变量里的 token |
+| `wenjin.code-check.judge0.language-id` / `.request-timeout-seconds` / `.availability-cache-seconds` | 62 / 30 / 30 | 见下方「Judge0 的 Java 版本」 |
 | `wenjin.limits.code.source-max-chars` / `max-cases` | 10000 / 20 | 超出拒绝（用例超上限不做部分判分） |
 | `wenjin.limits.code.compile-timeout-seconds` / `run-timeout-seconds` | 15 / 3 | 编译墙钟 / 每用例墙钟（含 JVM 启动） |
 | `wenjin.limits.code.memory-mb` / `jvm-heap-mb` / `cpus` / `pids` | 256 / 128 / 1.0 / 64 | 容器内存（禁 swap，含 tmpfs）/ -Xmx / CPU / 进程线程数 |
@@ -716,15 +749,29 @@ docker run --rm --name wj-code-<uuid> --pull never --network none --cpus 1.0 --m
 | `wenjin.limits.code.per-student-per-hour` / `stdin-max-chars` | 30 / 65536 | 每学生滑动一小时次数（≤0 不限）/ 自由运行 stdin 上限 |
 | `wenjin.limits.code.tool-max-per-run` / `tool-stdin-max-chars` / `tool-stdout-preview-chars` | 1 / 2000 / 300 | 伴侣 `run_code_check` 工具：每 run 次数 / stdin 参数上限 / 回模型 stdout 预览（code 参数复用 `source-max-chars`；另有 `tool-stderr-preview-chars` 等预览项） |
 
-**容量估算**：每个并发执行最多占 1 CPU + 256MB；`max-concurrent` 按「应用主机空闲核数」设置。单次判分耗时约
-容器启动 0.5–1s + 编译 1–2s + 每用例 0.3–1s（JVM 启动）。
+**Judge0 的 Java 版本**：Judge0 CE 的语言表里 Java 只有 `62 = Java (OpenJDK 13.0.1)`（`compile_cmd` 为
+`javac %s Main.java`、`run_cmd` 为 `java Main`），**不支持 record、文本块、`instanceof` 模式匹配等 JDK 14+ 语法**，与
+docker 后端（JDK 21）判分结果可能不同。部署前用 `curl -H "X-Auth-Token: <token>" http://<judge0>:2358/languages`
+查看实际语言表：若自建镜像提供了 Java 17/21 的条目，就把 `wenjin.code-check.judge0.language-id` 改成该 id；否则在
+课程说明里要求学生按 Java 13 语法作答，或生产改用 docker 后端。Judge0 的提交接口不能给运行时 JVM 传参数（`compiler_options`
+只给 javac），所以堆上限只能靠 `memory_limit`（问津按 `wenjin.limits.code.memory-mb` 发送）由 isolate 强制。
+
+**容量与耗时**：每个并发执行最多占 1 CPU + 256MB；`max-concurrent` 按「应用主机空闲核数」设置。每用例一个容器带来
+约 0.3–1s / 用例的额外开销（容器创建 + 启动 + 销毁，另加一次 JVM 启动）：典型判分 = 编译容器 1.5–3s + 用例数 ×
+(0.6–1.5s)，例如 4 个用例约 4–9s；死循环等超时用例触发 fail-fast，最坏单题 ≈ 编译 + 已过用例 + 一个 3s 超时用例。
+练习提交是同步判分：前端按「15s + 60s × 编程题数（上限 180s）」放宽该请求的超时，nginx 的 `proxy_read_timeout`
+（示例 600s）需大于它。
 
 **单实例约束**：每学生限流计数与并发信号量都是**进程内**的；多实例部署时每台各自计数（实际上限 ≈ 实例数 × 配额），
 与 RAG 向量缓存等的单副本约束一致。
 
 **上线检查**：`docker version`、`docker image inspect eclipse-temurin:21-jdk` 在应用账户下成功 → 开
 `WENJIN_FEATURE_CODE_CHECK=true` → 以学生身份在编程题上提交一次正确代码（ACCEPTED）与一次死循环（TIMEOUT）。
-日志只记 verdict / 耗时 / studentId，不记源码与输出。
+日志卫生：沙箱与判分日志只记 verdict / 通过数 / 耗时 / studentId / questionId，不记源码、输入与输出；伴侣
+`run_code_check` 在轨迹与工具审计日志中的参数（`code` / `stdin`）记为 `<redacted len=… sha256=…>`，审计日志中的工具
+**结果**也只保留 verdict / passed / total / exitCode / durationMs 等结构字段（学生程序输出、编译输出、用例内容一律不打）。
+注意：发给大模型的工具结果与 agent 轨迹里的结果摘要仍含非 hidden 用例对比与 stdout 前 300 字（这是讲解所需），按
+对话数据同等对待。
 
 ---
 

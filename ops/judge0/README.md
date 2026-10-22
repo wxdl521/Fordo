@@ -16,6 +16,9 @@
    ```
    基址与 token 也可在管理后台「系统配置 → 代码沙箱」热改（token 加密存储）。
 
-`language_id` 默认 62（Judge0 CE 1.13 的 Java / OpenJDK 13）；如镜像提供更新的 Java，改
-`wenjin.code-check.judge0.language-id`。问津逐用例提交（`wait=true`），不发送期望输出，比对在问津侧完成。
+`language_id` 默认 62 = Java (OpenJDK 13.0.1)，这是 Judge0 CE 语言表里唯一的 Java：**不支持 record、文本块等
+JDK 14+ 语法**。部署后先 `curl -H "X-Auth-Token: <token>" http://127.0.0.1:2358/languages` 查看实际语言表，若自建镜像带了
+Java 17/21，就把 `wenjin.code-check.judge0.language-id` 改成对应 id。运行时 JVM 参数无法逐次提交指定（`compiler_options`
+只给 javac），内存上限由 isolate 按问津发送的 `memory_limit` 强制。
+在管理后台修改 Judge0 基址会立即作废已保存的 token（防止把 token 发到新地址），需要重新填写。问津逐用例提交（`wait=true`），不发送期望输出，比对在问津侧完成。
 Judge0 的 server/workers 需要 `privileged: true`（isolate 管理 cgroups），这正是建议独立主机的原因。

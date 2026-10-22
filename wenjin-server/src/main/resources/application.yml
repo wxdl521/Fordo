@@ -195,11 +195,11 @@ wenjin:
       binary: ${WENJIN_CODE_CHECK_DOCKER_BINARY:docker}
       image: ${WENJIN_CODE_CHECK_DOCKER_IMAGE:eclipse-temurin:21-jdk}  # 须预先 docker pull（运行时 --pull never）
       work-dir: ${WENJIN_CODE_CHECK_WORK_DIR:}   # 宿主临时目录父目录；空 = java.io.tmpdir
-      availability-cache-seconds: 30
+      availability-cache-seconds: 30            # 可用性后台刷新间隔（请求路径只读缓存值）
     judge0:
       base-url: ${WENJIN_CODE_CHECK_JUDGE0_URL:} # 自托管 Judge0；空 = 不可用
       api-key: ${WENJIN_CODE_CHECK_JUDGE0_TOKEN:}
-      language-id: 62                            # Java（Judge0 CE 1.13: OpenJDK 13）
+      language-id: 62                            # Judge0 CE 唯一的 Java = OpenJDK 13（无 record/文本块）；用 GET /languages 查自建镜像
       request-timeout-seconds: 30
       availability-cache-seconds: 30
   plan:
