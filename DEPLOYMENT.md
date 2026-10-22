@@ -419,6 +419,7 @@ npm run build        # 产出 dist/
 | 已配置 | `wenjin.features.eval-enabled` | M6 伴侣评测套件 / runner | 小 |
 | 已配置 | `wenjin.features.memory-enabled` | M7 伴侣长期记忆（注入 / 蒸馏 / 工具） | 小 |
 | 已配置 | `wenjin.features.rag-enabled` | M8 RAG 语料检索 / RETRIEVAL / search_materials | 小 |
+| 已配置 | `wenjin.features.rag-vector-enabled` | RAG R2 混合检索（全文 + 向量 RRF）与 `RAG_EMBED` 嵌入作业；关则纯全文 | 小 |
 | 已配置 | `wenjin.features.reflection-enabled` | M9 反思探针 / 换策略重讲 | 小 |
 | 已配置 | `wenjin.features.companion-llm-enabled` | M9 伴侣 LLM 紧急 kill switch | 小 |
 | 已配置 | `wenjin.features.plan-enabled` | M10 学习计划 / daily-brief / re-plan | 小 |
@@ -427,7 +428,7 @@ npm run build        # 产出 dist/
 | 已配置 | `wenjin.eval.judge-model` | M6 LLM-as-judge 模型名（可选） | 极小 |
 | 已配置 | `wenjin.limits.trace` / `wenjin.limits.tools` | step I/O 与工具结果截断 | 小 |
 | 已配置 | `wenjin.limits.prompt` / `wenjin.limits.memory` | M7 分槽预算与记忆强度/注入 | 小 |
-| 已配置 | `wenjin.limits.rag` | M8 检索 top-k / snippet | 小 |
+| 已配置 | `wenjin.limits.rag` | M8 检索 top-k / snippet；R2 融合 / 候选倍数 / 向量阈值 / 哈希嵌入许可 / 查询缓存 / 前置扩展 | 小 |
 | 已配置 | `wenjin.limits.plan` / `wenjin.plan.replan-cron` | M10 算法 cap / weak / re-plan 调度 | 小 |
 | 已配置 | `wenjin.limits.supervisor` / `wenjin.multi-agent.report-cron` | M11 抽查 sample-size / 周报入队 cron | 小 |
 | 已迁移 | Flyway `V10__agent_trace.sql` | `agent_run` / `agent_step` 表 | 中 |
@@ -466,6 +467,7 @@ spring:
 | `wenjin.features.eval-enabled` | `true` | `${WENJIN_FEATURE_EVAL:false}` | M6 评测套件总开关；关闭时 LIVE/REPLAY executor 整体 skip |
 | `wenjin.features.memory-enabled` | `true` | `${WENJIN_FEATURE_MEMORY:false}` | M7 长期记忆；关则 MEMORY 空、不 distill、记忆工具下架 |
 | `wenjin.features.rag-enabled` | `true` | `${WENJIN_FEATURE_RAG:false}` | M8 RAG；关则 RETRIEVAL 空、`search_materials` 下架 |
+| `wenjin.features.rag-vector-enabled` | `true`（e2e 同） | `${WENJIN_FEATURE_RAG_VECTOR:false}` | RAG R2 混合检索；需 `rag-enabled` 同开。关或无可用嵌入客户端 → 纯全文（与 M8 逐字节一致）、入库后不派发 `RAG_EMBED`、`POST /api/teacher/rag/courses/{id}/reembed` 返回 404；管理后台可热改；评测 profile 固定 `false` |
 | `wenjin.features.reflection-enabled` | `true` | `${WENJIN_FEATURE_REFLECTION:false}` | M9 反思；关则不下发 `probe_understanding`、不自动探针 |
 | `wenjin.features.companion-llm-enabled` | `true` | `${WENJIN_FEATURE_COMPANION_LLM:true}` | M9 紧急关 LLM；关则零 LLM 模板 + 练习卡，run=`DEGRADED` |
 | `wenjin.features.plan-enabled` | `true` | `${WENJIN_FEATURE_PLAN:false}` | M10 学习计划；关则工具下架、scheduler 不跑、ACTIVE 冻结不删、brief 隐藏计划段 |
@@ -501,6 +503,12 @@ spring:
 | `wenjin.limits.rag.inject-top-k` | `4` | 继承基线 | RETRIEVAL 注入 top-k |
 | `wenjin.limits.rag.search-default-top-k` | `3` | 继承基线 | `search_materials` 默认 topK |
 | `wenjin.limits.rag.snippet-chars` | `200` | 继承基线 | 工具返回 snippet 上限 |
+| `wenjin.limits.rag.fusion-k` | `60` | 继承基线 | R2 RRF 常数：`score = Σ 1/(k + rank)` |
+| `wenjin.limits.rag.candidate-multiplier` | `3` | 继承基线 | R2 全文 / 向量各取 `topK × 倍数` 候选再融合 |
+| `wenjin.limits.rag.vector-min-score` | `0.2` | 继承基线 | R2 向量命中最低余弦 |
+| `wenjin.limits.rag.allow-hashing-embedding` | `true`（e2e 同） | **`false`**（`application-prod.yml`） | R2 无真实嵌入 key 时是否用离线 `HashingEmbeddingClient`（`hash-ngram@1024`）；生产禁止，只用真实嵌入模型 |
+| `wenjin.limits.rag.query-cache-size` | `512` | 继承基线 | R2 查询向量 LRU 条数（键含 modelId；0 关闭） |
+| `wenjin.limits.rag.expand-prerequisites` | `true` | 继承基线 | R2 伴侣 RETRIEVAL 注入节点范围 = 焦点 + 直接前置 |
 
 ```yaml
 wenjin:
@@ -509,6 +517,7 @@ wenjin:
     eval-enabled: true          # prod: ${WENJIN_FEATURE_EVAL:false}
     memory-enabled: true        # prod: ${WENJIN_FEATURE_MEMORY:false}
     rag-enabled: true           # prod: ${WENJIN_FEATURE_RAG:false}
+    rag-vector-enabled: true    # prod: ${WENJIN_FEATURE_RAG_VECTOR:false}
     reflection-enabled: true    # prod: ${WENJIN_FEATURE_REFLECTION:false}
     companion-llm-enabled: true # prod: ${WENJIN_FEATURE_COMPANION_LLM:true}
     plan-enabled: true          # prod: ${WENJIN_FEATURE_PLAN:false}
@@ -538,6 +547,12 @@ wenjin:
       inject-top-k: 4
       search-default-top-k: 3
       snippet-chars: 200
+      fusion-k: 60
+      candidate-multiplier: 3
+      vector-min-score: 0.2
+      allow-hashing-embedding: true   # prod: false
+      query-cache-size: 512
+      expand-prerequisites: true
 ```
 
 **决策笔记**：
@@ -567,6 +582,14 @@ wenjin:
   - 本地 LIVE 一条命令（PowerShell，`wenjin-server` 目录）：`$env:WENJIN_AUTH_SECRET="ci-test-secret-not-for-prod-at-least-32-bytes"; $env:WENJIN_EVAL_LIVE="true"; $env:WENJIN_AI_API_KEY="<key>"; .\mvnw.cmd test "-Dtest=LiveEvalSuiteIT" "-Dwenjin.eval.jdbc-url=jdbc:mysql://127.0.0.1:3306/wenjin_eval" "-Dwenjin.eval.judge=true"`。完整说明见 README「M6 伴侣评测」。
 - **M7 记忆**：生产默认 `memory-enabled=false`；开启前须完成 V12 migrate。关闭时行为回到 M6 基线（空 MEMORY 槽、无 distill 入队、记忆工具不可用）。`record_observation` 超 `write-per-run` 返回 `TOOL_BUDGET_EXCEEDED` + GUARD，且不占用总工具次数。
 - **M8 RAG**：生产默认 `rag-enabled=false`；开启前须完成 **V13 migrate** 与 **`ops/sql/preflight-ngram.sql`**（`ngram_token_size=2`）。关闭时回到 M7 基线（空 RETRIEVAL、`search_materials` 不可用）。**版权**：整本出版教材勿部署到公网 `fordo.thingxue.com`；校内演示环境不受限。NODE_REF 参考文档可入库。
+- **RAG 混合检索（R2）**：生产默认 `rag-vector-enabled=false` 且 `allow-hashing-embedding=false` → 纯全文。启用真实向量检索：
+  1. 确认 **V23 migrate**（`doc_chunk_embedding`）、`ai-job-dispatch-enabled=true`（嵌入走 `RAG_EMBED` 异步作业）、`rag-enabled=true`；
+  2. 配置嵌入模型：`WENJIN_AI_EMBEDDING_ENABLED=true` + `WENJIN_AI_EMBEDDING_API_KEY`（默认智谱 `embedding-3`、1024 维；也可在管理后台「系统配置 → AI 嵌入」热改并「测试连接」）；
+  3. 开 `WENJIN_FEATURE_RAG_VECTOR=true`（或后台热改）；
+  4. 回填存量语料：教师端「语料审核 → 重建向量」（或 `POST /api/teacher/rag/courses/{courseId}/reembed`，教师令牌），来源列表的「向量」列显示 `已嵌入/总块数`。之后新入库语料在入库事务提交后自动派发嵌入作业。
+  - 向量按 `modelId`（如 `embedding-3@1024`）隔离：**更换模型或维度后须再次「重建向量」**，期间该课程因「当前模型无向量」自动回退纯全文，不会混用旧向量。
+  - 嵌入失败只让 `RAG_EMBED` 作业 FAILED（`AI_ERROR`），不影响入库与检索；查询嵌入失败时单次检索回退纯全文并打 warn。
+  - 内存：每课程每模型一份暴力检索索引（1024 维 ≈ 4KB/块），在入库 / 嵌入完成 / 映射审核后失效重载；大语料（数万块）需评估堆内存。
 - **M9 竞赛交付 / 紧急 kill switch**：见下表；**无新 Flyway**（探针会话为进程内 `ProbeSessionStore`，避免占用 M10 的 V14）。
 - **M10 计划**：生产默认 `plan-enabled=false`；开启前须完成 **V14 migrate**。关闭时：计划工具下架、re-plan 不跑、daily-brief 隐藏计划段、已有 ACTIVE 冻结不删。DRAFT 永不进 brief / re-plan。
 - **主动陪伴**：生产默认 `proactive-enabled=false`（`WENJIN_FEATURE_PROACTIVE`）；开启前须 **V22 migrate**（`companion_hint_log`）。零 LLM、读时聚合，关闭时三个接口 404、前端回退固定话术；管理后台「系统配置」可热改开关。

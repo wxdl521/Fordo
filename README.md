@@ -18,7 +18,7 @@
 | M5 Agent 轨迹 | 已完成 | `agent_run`/`agent_step` 埋点、工具结果截断与 I/O 截断、教师端轨迹列表/steps 明细、特性开关与 Flyway V10 |
 | M6 伴侣评测 | 真评测已接通 | 场景 JSON S01–S22（含 `liveFaults`；S22 复盘错题，persona 可带 `mistakes`）、真实编排 REPLAY（golden v2）、LIVE/RECORD、指标与 Judge 阈值判定、报告对比与校准工具、CI `eval-replay` + 手动 `eval-live`；golden 仍为合成，待有 Key 后 RECORD 替换；S18/S20/S21 待 LIVE golden |
 | M7 长期记忆 | 已完成 | EPISODIC/SEMANTIC/PROCEDURAL 三层记忆、Jaccard 去重、异步蒸馏、`recall_student_context` / `record_observation` 工具、Flyway V12 |
-| M8 RAG | 已完成 | ngram FULLTEXT 检索、NODE_REF 语料入库、RETRIEVAL 槽注入、`search_materials` 工具、引用校验、Flyway V13 |
+| M8 RAG | 已完成 | ngram FULLTEXT + 向量混合检索（RRF）、NODE_REF / 文件语料入库与嵌入作业、RETRIEVAL 槽注入、`search_materials` 工具、引用校验、Flyway V13/V23 |
 | M9 反思与降级 | 已完成 | 理解探针（`probe_understanding`）、换策略重讲（StrategySwitcher）、零 LLM 降级（kill-switch 矩阵）、phase-1 意图路由 |
 | M10 学习计划 | 已完成 | 确定性 PlanAlgorithm（due/weak/frontier 打包）、DRAFT→确认 HITL、每日 re-plan、daily-brief、run 级取消、Flyway V14 |
 | M11 多智能体 | 已完成（默认关） | 教师周报（确定性聚合 + 可选 LLM 叙述）、Supervisor 质量抽查（复用 M6 Judge）、Flyway V15 |
@@ -48,7 +48,7 @@
 - 题目审核池：AI 出题、存量题标注、JSON/Excel 题库导入、批量审核。
 - 学情看板：按课程聚合学生掌握度和薄弱分布。
 - Agent 轨迹：按课程分页查看伴侣等 Agent run，展开 steps 查看工具/LLM 调用与截断后的 I/O。
-- 语料审核：上传课件/教材文件（`.md .txt .pdf .docx`，≤10MB，异步入库 + 按知识点名称自动初标）或粘贴 NODE_REF Markdown，审核 chunk↔知识点映射，来源列表显示入库状态与「未关联 N 块」（M8 / RAG R3）。
+- 语料审核：上传课件/教材文件（`.md .txt .pdf .docx`，≤10MB，异步入库 + 按知识点名称自动初标）或粘贴 NODE_REF Markdown，审核 chunk↔知识点映射，来源列表显示入库状态与「未关联 N 块」（M8 / RAG R3）；向量模式开时显示每源嵌入覆盖率（已嵌入/总块数）与「重建向量」按钮（RAG R2）。
 - 周报：确定性学情周报与质量抽查报告（M11，默认关闭）。
 
 ## 技术栈
@@ -184,6 +184,7 @@ $env:WENJIN_AI_MODEL = "deepseek-v4-pro"
 $env:WENJIN_AI_VISION_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 $env:WENJIN_AI_VISION_MODEL = "glm-5v-turbo"
 # RAG 嵌入（可选，默认关闭；需 V23 迁移；管理后台「系统配置 → AI 嵌入」可热改）
+# 未配置时开发环境用离线哈希嵌入跑混合检索（limits.rag.allow-hashing-embedding=true）；生产须配真实 key 才有向量检索
 $env:WENJIN_AI_EMBEDDING_ENABLED = "true"
 $env:WENJIN_AI_EMBEDDING_API_KEY = "your-embedding-key"   # 默认智谱 embedding-3，1024 维
 # 可选：WENJIN_AI_EMBEDDING_BASE_URL / _MODEL / _DIMENSION / _BATCH_SIZE
@@ -256,7 +257,7 @@ npm run dev
 | 教师题目 | `/api/teacher/questions` | 题目审核池 |
 | 教师看板 | `/api/teacher/dashboard` | 学情聚合 |
 | 教师 Agent 轨迹 | `/api/teacher/agent-runs` | M5 run 列表与 steps 明细（教师/管理员） |
-| 教师语料 | `/api/teacher/rag` | M8 语料与 chunk↔节点映射审核 |
+| 教师语料 | `/api/teacher/rag` | M8 语料与 chunk↔节点映射审核；`POST courses/{courseId}/reembed` 重建向量（R2） |
 | 教师周报 | `/api/teacher/reports` | M11 周报/抽查报告（`multi-agent-enabled` 开启后） |
 | 管理用户 | `/api/system-admin/users` | 角色开通/变更（仅 ADMIN） |
 
@@ -402,8 +403,14 @@ M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `R
 - Flyway **`V13__rag.sql`**：`doc_source` / `doc_chunk`（FULLTEXT ngram）/ `chunk_node_map`。
 - **NODE_REF 入库**：`DOC_INGEST` 作业解析 Markdown frontmatter + `##` 切块，映射直写 `APPROVED`（样例见 `src/test/resources/rag/node-ref/`）。
 - **文件入库 + 自动初标（R3）**：`POST /api/teacher/rag/sources/upload`（multipart `courseId/file/title?/kind?`，202 返回 `{sourceId,jobId,...}`；同课程同 SHA-256 且非 FAILED/ARCHIVED → 409）→ `DOC_INGEST` 作业按 `source.kind` 分派：NODE_REF 走原路径，课件/教材抽取文本（pdf/docx 复用 `DocumentTextExtractor` 限额）→ 带标题路径切块 → `ChunkNodeLabeler`（确定性、零 LLM）取前 2 个得分 ≥4 的节点写 `PENDING` 映射（置信度=得分/16，上限 0.99），无命中块不可检索，可用 `batch-approve minConfidence` 一键通过。带 NODE_REF frontmatter 的 `.md` 自动转 NODE_REF。
-- **检索**：`RetrievalService` 两段式（节点圈定 → 可选全课程放宽）；`FulltextRetriever` 实现 `RetrieverPort`（向量实现预留）。
-- **注入**：`rag-enabled` 且有命中时填充 RETRIEVAL 不可信包裹块。
+- **检索**：`RetrievalService` 两段式（节点圈定 → 圈内零命中时可选全课程放宽，规则不变）；生效的 `RetrieverPort` 是 `HybridRetriever`（`@Primary`，RAG R2）：
+  - `FulltextRetriever`（MATCH AGAINST）与 `VectorRetriever`（内存暴力余弦）各取 `topK × candidate-multiplier` 候选 → **RRF** 融合（`score = Σ 1/(fusion-k + rank)`）→ topK，命中 `score` 为融合分；向量侧低于 `vector-min-score` 的不入候选；节点圈定与「仅 READY 来源 + APPROVED 映射」过滤与全文同语义。
+  - **回退纯全文**（直接返回 `fulltext.retrieve(courseId, nodeCodes, query, topK)`，与 M8 逐字节一致）：`rag-vector-enabled=false`、无可用嵌入客户端、该课程当前模型无向量、查询嵌入失败（只 warn 不抛）。日志 `mode=FULLTEXT|HYBRID` 标明实际路径。
+  - **嵌入客户端选择**（`ActiveEmbeddingResolver`，每次现读）：真实 `OpenAiCompatibleEmbeddingClient` `available()`（enabled 且有 key）→ 用它；否则 `limits.rag.allow-hashing-embedding=true`（开发 / e2e）→ 离线 `HashingEmbeddingClient`（`hash-ngram@1024`）；否则向量模式关（生产默认）。
+  - **向量索引**：`VectorIndexCache` 按 `(courseId, modelId)` 缓存 `CourseVectorIndex`（chunkIds + 归一化 float[][] + 每块 APPROVED 节点集），切换模型不会混用向量；在入库完成、嵌入作业完成、映射通过 / 驳回 / 批量通过后（事务提交后，`RagCorpusChangedEvent` / `RagSourceIngestedEvent`）失效重载。查询向量 LRU（`query-cache-size`）。
+- **嵌入作业 `RAG_EMBED`（R2）**：入库成功（NODE_REF 同步粘贴与 `DOC_INGEST` 作业两条路径）且向量模式开时，**事务提交后**自动派发（属主=来源创建教师，`request_key=emb:{sourceId}:{modelId}:{minChunkId}`）；作业按来源分批嵌入并 upsert `doc_chunk_embedding`，`content_sha` 未变的块跳过，批间上报进度续租；向量模式关时以 `SKIPPED` 成功结束。嵌入失败只让该作业 FAILED，**绝不影响入库**。重新入库清障时一并删除旧向量。
+- **重建向量**：`POST /api/teacher/rag/courses/{courseId}/reembed`（教师管理权 + `@Audited RAG_REEMBED`）→ 课程全部 READY 来源各派发一个 `RAG_EMBED`（`request_key=emb:{sourceId}:{modelId}:r{epochMinute}`，同一分钟内重复点击幂等），返回 `{model, sourceCount, jobIds}`；`rag-enabled` / `rag-vector-enabled` 关 → 404，无可用嵌入模型 → 503。更换嵌入模型或维度后需执行一次。`GET /api/teacher/rag/sources` 每行增加 `totalChunks`、`embeddedChunks`（当前模型下已有向量的块数；向量模式关时为 `null`）、`embeddingModel`。
+- **注入**：`rag-enabled` 且有命中时填充 RETRIEVAL 不可信包裹块；节点范围 = 会话焦点节点 + 其**直接前置**（`limits.rag.expand-prerequisites`，`RetrievalScopeResolver`；只取未归档、非『待复核』的前置边），放宽规则不变。
 - **引用校验（R4，端到端）**：系统提示静态段「资料引用」要求句末标注 `资料 #<编号>`（编号只能来自本轮注入片段或 `search_materials` 返回的 `chunkId`，未覆盖须说「课程资料未覆盖」）。本 turn 可引用集合 = 注入的 chunkId ∪ `search_materials` 结果 chunkId（`CitationGuard`，工具路径与 legacy 路径共用）。turn 结束对最终文本提取 `资料 #N`，经 `CitationValidator` 校验：
   - SSE 新事件 `citations` `{valid:[…], invalid:[…]}`，仅在回复含引用时发送，顺序在最后一个 `token`（及 `practice_card`）之后、`probe_card`/`done` 之前；
   - **持久化文本**中的无效引用替换为 `（引用无效）`（已流式下发的原文不可撤回，前端据 `citations` 把无效编号划掉、仅 valid 渲染为可点芯片；历史消息无事件，维持原样）；
@@ -411,18 +418,20 @@ M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `R
   - `rag-enabled=false` 时整条链关闭：不发事件、不改写文本、不记 step；
   - 评测：硬断言 `citationsValid`（trace 的 citation_check 步 `invalid` 必须为空）、judge 维度 `citation_faithfulness`；golden 里用 `{{cite:<资料标题>}}`/`{{cite:N}}` 占位符引用 `search_materials` 实际返回的 chunk（chunkId 由数据库分配）。
 - **工具**：`search_materials`（读、可缓存；`query`≤50、`nodeCodes`≤5、`topK` 1..5）。
-- 特性开关 **`wenjin.features.rag-enabled`**：开发默认 `true`；生产默认 `false`（`WENJIN_FEATURE_RAG`）。关闭时：空 RETRIEVAL、工具从 schema 下架。
+- 特性开关 **`wenjin.features.rag-enabled`**：开发默认 `true`；生产默认 `false`（`WENJIN_FEATURE_RAG`）。关闭时：空 RETRIEVAL、工具从 schema 下架（向量 / 嵌入作业随之全关）。
+- 特性开关 **`wenjin.features.rag-vector-enabled`**（R2）：开发 / e2e 默认 `true`；生产默认 `false`（`WENJIN_FEATURE_RAG_VECTOR`）；评测 profile 固定 `false`（回放保持纯全文）。关闭时检索纯全文、入库后不派发嵌入作业、重建向量 404；管理后台「系统配置」可热改。
+- 限额 `wenjin.limits.rag.*`（R2）：`fusion-k`(60)、`candidate-multiplier`(3)、`vector-min-score`(0.2)、`allow-hashing-embedding`(开发 true / 生产 false)、`query-cache-size`(512)、`expand-prerequisites`(true)。
 - **部署**：上线前执行 `ops/sql/preflight-ngram.sql`，确认 `ngram_token_size=2`。版权：整本出版教材勿部署到公网演示环境。
 
 相关代码：
 
-- `wenjin-server/src/main/resources/db/migration/V13__rag.sql`
+- `wenjin-server/src/main/resources/db/migration/V13__rag.sql`、`V23__doc_chunk_embedding.sql`
 - `wenjin-server/src/main/java/com/wenjin/support/rag/`
 - `wenjin-server/src/main/java/com/wenjin/service/rag/`
 - `wenjin-server/src/main/java/com/wenjin/service/companion/SearchMaterialsTool.java`
 - `wenjin-server/src/main/java/com/wenjin/service/companion/CitationGuard.java`
 
-配置明细见 **`DEPLOYMENT.md`**（`rag-enabled`、`limits.rag.*`、V13、ngram 预检）。
+配置明细见 **`DEPLOYMENT.md`**（`rag-enabled`、`rag-vector-enabled`、`limits.rag.*`、嵌入 key、V13/V23、ngram 预检）。
 
 ## M9 反思与降级（probe 探针 + kill-switch 矩阵）
 
@@ -444,6 +453,7 @@ M9 为伴侣补齐「确认听懂」与「紧急熔断」两个回路。
 | `reflection-enabled` | 不下发 `probe_understanding`、不自动探针（含误区定向探针）、不注入「换种讲法」 |
 | `memory-enabled` | MEMORY 槽为空、记忆工具下架、不派发蒸馏 |
 | `rag-enabled` | RETRIEVAL 槽为空、`search_materials` 下架 |
+| `rag-vector-enabled` | 检索退回纯全文（与 M8 一致）、不派发嵌入作业、重建向量 404 |
 | `plan-enabled` | 计划工具下架、re-plan 不跑、brief 隐藏计划段 |
 
 相关代码：
