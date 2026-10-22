@@ -3,11 +3,18 @@
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.wenjin.mapper.TeacherAnalyticsMapper">
 
+    <!-- 只统计在用的学生账号：sys_user.role=2(学生) 且 status=1(启用)；选课表里的教师/管理员/禁用账号一律排除 -->
+    <sql id="activeStudentOnly">
+        AND EXISTS (SELECT 1 FROM sys_user su
+                    WHERE su.id = sc.student_id AND su.role = 2 AND su.status = 1)
+    </sql>
+
     <select id="selectRoster" resultType="com.wenjin.service.teacher.TeacherAnalyticsRows$RosterRow">
         SELECT u.id AS student_id, u.real_name, u.username
         FROM student_course sc
         JOIN sys_user u ON u.id = sc.student_id
         WHERE sc.course_id = #{courseId}
+        <include refid="activeStudentOnly"/>
         ORDER BY u.id
     </select>
 
@@ -25,6 +32,7 @@
               AND ar.course_id = sc.course_id
               AND ar.is_correct IS NOT NULL
         WHERE sc.course_id = #{courseId}
+        <include refid="activeStudentOnly"/>
         GROUP BY sc.student_id
     </select>
 
@@ -43,6 +51,7 @@
               ON ms.student_id = sc.student_id
              AND ms.course_id = sc.course_id
             WHERE sc.course_id = #{courseId}
+            <include refid="activeStudentOnly"/>
               AND ms.snapshot_at &lt;= #{cutoff}
             GROUP BY ms.student_id, ms.node_id
         ) t ON t.mid = s.id
@@ -57,6 +66,7 @@
           ON ar.student_id = sc.student_id
          AND ar.course_id = sc.course_id
         WHERE sc.course_id = #{courseId}
+        <include refid="activeStudentOnly"/>
           AND ar.answered_at &gt;= #{since}
         GROUP BY DATE_FORMAT(ar.answered_at, '%Y-%m-%d')
     </select>
@@ -74,6 +84,7 @@
          AND m.role = 1
          AND m.created_at &gt;= #{since}
         WHERE sc.course_id = #{courseId}
+        <include refid="activeStudentOnly"/>
         GROUP BY DATE_FORMAT(m.created_at, '%Y-%m-%d')
     </select>
 
@@ -103,6 +114,7 @@
           ON n.id = qn.node_id
          AND n.archived_at IS NULL
         WHERE sc.course_id = #{courseId}
+        <include refid="activeStudentOnly"/>
           AND ar.answered_at &gt;= #{since}
           AND ar.is_correct IS NOT NULL
         <if test="nodeCode != null and nodeCode != ''">
@@ -124,6 +136,7 @@
           ON ar.student_id = sc.student_id
          AND ar.course_id = sc.course_id
         WHERE sc.course_id = #{courseId}
+        <include refid="activeStudentOnly"/>
           AND ar.answered_at &gt;= #{since}
           AND ar.is_correct IS NOT NULL
           AND ar.question_id IN

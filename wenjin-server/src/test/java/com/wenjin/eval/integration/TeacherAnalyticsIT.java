@@ -89,13 +89,16 @@ class TeacherAnalyticsIT extends EvalDbSupport {
             long s3 = user(tag + "_s3", "甲同学二号", 2);
             long s4 = user(tag + "_s4", null, 2);
             long ghost = user(tag + "_g", "幽灵", 2);
-            users.addAll(List.of(s1, s2, s3, s4, ghost, teacher));
+            long disabled = user(tag + "_d", "禁用生", 2);
+            jdbc.update("UPDATE sys_user SET status=0 WHERE id=?", disabled);
+            long coTeacher = user(tag + "_ct", "助教老师", 1); // 误入选课表的教师账号
+            users.addAll(List.of(s1, s2, s3, s4, ghost, teacher, disabled, coTeacher));
             course = insert("INSERT INTO course (code, name, teacher_id, status) VALUES (?,?,?,1)", tag, "IT课", teacher);
             long c = course;
             long n1 = insert("INSERT INTO kg_node (course_id, node_code, name, chapter) VALUES (?,?,?,?)", c, "N1", "变量", "第一章");
             long n2 = insert("INSERT INTO kg_node (course_id, node_code, name, chapter) VALUES (?,?,?,?)", c, "N2", "循环", "第一章");
             long n3 = insert("INSERT INTO kg_node (course_id, node_code, name, chapter) VALUES (?,?,?,?)", c, "N3", "类", "第二章");
-            for (long s : List.of(s1, s2, s3, s4)) {
+            for (long s : List.of(s1, s2, s3, s4, disabled, coTeacher)) {
                 jdbc.update("INSERT INTO student_course (student_id, course_id) VALUES (?,?)", s, c);
             }
             // mastery: s1 strong, s2 weak, s3 partial; s4 none; ghost (not enrolled) has data that must not show
@@ -104,6 +107,9 @@ class TeacherAnalyticsIT extends EvalDbSupport {
                 jdbc.update("INSERT INTO student_mastery (student_id, course_id, node_id, mastery_score, mastery_level)"
                         + " VALUES (?,?,?,?,?)", row[0], c, row[1], row[2], row[2] >= 75 ? 2 : row[2] >= 40 ? 1 : 0);
             }
+            // disabled student + enrolled teacher carry data too: roster/aggregates must ignore them (M4)
+            jdbc.update("INSERT INTO student_mastery (student_id, course_id, node_id, mastery_score, mastery_level)"
+                    + " VALUES (?,?,?,5,0), (?,?,?,5,0)", disabled, c, n1, coTeacher, c, n1);
             // snapshot: s1 was at 100 on N1 eight days ago -> 7-day drop
             jdbc.update("INSERT INTO mastery_snapshot (student_id, course_id, node_id, mastery_score, mastery_level, snapshot_at)"
                     + " VALUES (?,?,?,100,2, DATE_SUB(NOW(), INTERVAL 8 DAY))", s1, c, n1);
@@ -119,6 +125,8 @@ class TeacherAnalyticsIT extends EvalDbSupport {
             answer(s3, c, qa, "B", 0, 3, 1);
             answer(s1, c, qa, "A", 1, 3, 1);
             answer(ghost, c, qa, "B", 0, 1, 2);
+            answer(disabled, c, qa, "B", 0, 1, 2);
+            answer(coTeacher, c, qa, "B", 0, 1, 2);
             // qb: only 3 attempts -> gated
             answer(s2, c, qb, "B", 0, 1, 2);
             answer(s3, c, qb, "B", 0, 1, 2);
@@ -136,7 +144,7 @@ class TeacherAnalyticsIT extends EvalDbSupport {
 
             // ── overview
             ClassOverview o = service.classOverview(c);
-            assertThat(o.students()).isEqualTo(4);
+            assertThat(o.students()).isEqualTo(4); // disabled / teacher accounts excluded
             assertThat(o.diagnosed()).isEqualTo(3);
             assertThat(o.distribution()).isEqualTo(new StudentDistribution(1, 1, 1, 1));
             assertThat(o.weakestNodes().get(0).nodeCode()).isEqualTo("N3");
