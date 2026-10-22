@@ -129,6 +129,10 @@ public class PracticeServiceImpl implements PracticeService {
     /** 代码执行门面；无该 bean（C1 未装配/开关关闭）时视为不可用，编程题不判分。 */
     private final ObjectProvider<CodeExecutionService> codeExecutionProvider;
 
+    /** 编程题未判分提示（会话已随提交关闭，所以引导重新开始一次练习，而不是「稍后重试」）。 */
+    static final String MSG_CODE_UNAVAILABLE = "判题服务暂不可用，本题未计分，可重新开始一次练习";
+    static final String MSG_CODE_RATE_LIMITED = "代码运行次数已达每小时上限，本题未计分，可稍后重新开始一次练习";
+
     /** 编程题源码入库长度上限（wenjin.limits.code.source-max-chars）。 */
     @Value("${wenjin.limits.code.source-max-chars:10000}")
     private int codeSourceMaxChars = 10000;
@@ -327,12 +331,19 @@ public class PracticeServiceImpl implements PracticeService {
             throw new BusinessException(ResultCode.BAD_REQUEST, "作答列表不能为空");
         }
         Set<Long> frozenIds = parseFrozenIds(session.getQuestionIds());
+        Set<Long> seen = new java.util.HashSet<>();
         for (PracticeSubmitRequest.AnswerItem item : answers) {
             if (item.getQuestionId() == null || !frozenIds.contains(item.getQuestionId())) {
                 throw new BusinessException(ResultCode.BAD_REQUEST,
                         "提交了会话外题目：questionId=" + item.getQuestionId());
             }
+            // I4：同一题只能作答一次。否则同一道编程题可在一次提交里被判分 N 次（放大沙箱开销、绕过「每卷每题一次」）
+            if (!seen.add(item.getQuestionId())) {
+                throw new BusinessException(ResultCode.BAD_REQUEST,
+                        "同一题目重复作答：questionId=" + item.getQuestionId());
+            }
         }
+        // 由此：本次判分的编程题数 ≤ 冻结卷中的编程题数（每题至多一次）
 
         // ── 4. 事务外预判编程题（F3）：按作答下标对齐；CAS 若输则整体丢弃 ───────
         Map<Long, Question> typeProbe = loadQuestions(answers.stream()
@@ -413,13 +424,14 @@ public class PracticeServiceImpl implements PracticeService {
                 codeItem.setCodeResult(CodeJudgeVO.from(jr));
                 codeItem.setMessage(jr.message());
                 if (jr.verdict() == Verdict.UNAVAILABLE || jr.verdict() == Verdict.RATE_LIMITED) {
-                    // 未判分：不写 answer_record、不进 EWMA；占位保持 gradeResults 与 questionIds 下标对齐
+                    // 未判分：不写 answer_record、不进 EWMA；占位保持 gradeResults 与 questionIds 下标对齐。
+                    // M6：会话随本次提交关闭，不能再叫学生「稍后重试」本题——引导重新开始一次练习。
+                    String msg = jr.verdict() == Verdict.RATE_LIMITED ? MSG_CODE_RATE_LIMITED : MSG_CODE_UNAVAILABLE;
                     gradeResults.add(AnswerGrader.GradeResult.skipped());
                     codeItem.setCorrect(null);
                     codeItem.setUngraded(true);
-                    if (codeItem.getMessage() == null) {
-                        codeItem.setMessage("编程题判题服务暂不可用，本题未判分，请稍后重试");
-                    }
+                    codeItem.setMessage(msg);
+                    codeItem.getCodeResult().setMessage(msg);
                     graded.add(codeItem);
                     continue;
                 }
@@ -533,8 +545,7 @@ public class PracticeServiceImpl implements PracticeService {
     }
 
     private static CodeJudgeResult unavailable() {
-        return new CodeJudgeResult(Verdict.UNAVAILABLE, 0, 0, null, List.of(), 0L,
-                "编程题判题服务暂不可用，本题未判分，请稍后重试");
+        return new CodeJudgeResult(Verdict.UNAVAILABLE, 0, 0, null, List.of(), 0L, MSG_CODE_UNAVAILABLE);
     }
 
     private String truncateSource(String source) {

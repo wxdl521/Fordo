@@ -1,6 +1,8 @@
 package com.wenjin.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wenjin.common.BusinessException;
+import com.wenjin.common.ResultCode;
 import com.wenjin.dto.GradedAnswer;
 import com.wenjin.dto.PracticeStartVO;
 import com.wenjin.dto.PracticeSubmitRequest;
@@ -45,6 +47,7 @@ import java.util.List;
 import static com.wenjin.service.CodeTestSupport.noCodeService;
 import static com.wenjin.service.CodeTestSupport.providerOf;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -206,7 +209,10 @@ class PracticeCodeQuestionTest {
             PracticeSubmitVO.GradeItemVO g = vo.getGraded().get(0);
             assertThat(g.isUngraded()).as(v.name()).isTrue();
             assertThat(g.getCorrect()).isNull();
-            assertThat(g.getMessage()).isEqualTo("稍后再试");
+            // M6：会话已关闭，提示不能叫学生「稍后重试」本题，而是重新开始一次练习
+            assertThat(g.getMessage()).contains("本题未计分").contains("重新开始一次练习")
+                    .doesNotContain("稍后再试").doesNotContain("稍后重试");
+            assertThat(g.getCodeResult().getMessage()).isEqualTo(g.getMessage());
             assertThat(g.getCodeResult().getVerdict()).isEqualTo(v.name());
             verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
             verify(masteryService).applyAnswers(eq(STUDENT_ID), eq(COURSE_ID), eq(List.of()));
@@ -219,7 +225,27 @@ class PracticeCodeQuestionTest {
         PracticeSubmitVO vo = impl(null).submit(SESSION_ID, req("class Main{}"));
 
         assertThat(vo.getGraded().get(0).isUngraded()).isTrue();
-        assertThat(vo.getGraded().get(0).getMessage()).isNotBlank();
+        assertThat(vo.getGraded().get(0).getMessage())
+                .isEqualTo("判题服务暂不可用，本题未计分，可重新开始一次练习");
+        verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
+    }
+
+    @Test
+    @DisplayName("I4：answers 里同一 questionId 出现两次 → 400，判分之前就拒绝（不调用沙箱、不写任何东西）")
+    void duplicateQuestionIdsRejectedBeforeJudging() {
+        PracticeSubmitRequest r = req("class Main{}");
+        PracticeSubmitRequest.AnswerItem again = new PracticeSubmitRequest.AnswerItem();
+        again.setQuestionId(CODE_Q);
+        again.setStudentAnswer("class Main{ /* 2 */ }");
+        r.setAnswers(List.of(r.getAnswers().get(0), again));
+
+        assertThatThrownBy(() -> impl(codeService).submit(SESSION_ID, r))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode())
+                        .isEqualTo(ResultCode.BAD_REQUEST.getCode()));
+
+        verify(codeService, never()).judge(anyLong(), anyLong(), any());
+        verify(practiceSessionMapper, never()).update(any(), any());
         verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
     }
 
