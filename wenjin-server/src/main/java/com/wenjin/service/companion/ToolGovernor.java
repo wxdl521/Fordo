@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.wenjin.ai.CompanionAiClient;
+import com.wenjin.config.CodeToolProperties;
 import com.wenjin.config.CompanionToolProperties;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.service.trace.ToolCacheEntry;
@@ -70,6 +71,7 @@ public class ToolGovernor {
     private final ObjectMapper objectMapper;
     private final CompanionToolProperties properties;
     private final LimitsProperties limits;
+    private CodeToolProperties codeToolProperties;
 
     public ToolGovernor(List<CompanionTool> tools,
                         ObjectMapper objectMapper,
@@ -94,6 +96,11 @@ public class ToolGovernor {
             }
         }
         this.registry = Map.copyOf(map);
+    }
+
+    @Autowired(required = false)
+    void setCodeToolProperties(CodeToolProperties codeToolProperties) {
+        this.codeToolProperties = codeToolProperties;
     }
 
     /** Backward-compatible entry: no per-run cache. */
@@ -181,6 +188,16 @@ public class ToolGovernor {
             return result;
         }
 
+        // run_code_check: independent per-run cap, rejected before the shared tool-call budget.
+        if (RunCodeCheckTool.NAME.equals(toolName)
+                && !state.tryConsumeToolCap(toolName, codeToolMaxPerRun())) {
+            result = failed(toolCallId, toolName,
+                    ToolErrorCodes.TOOL_BUDGET_EXCEEDED,
+                    "本轮代码检查次数已达上限，请基于已有结果讲解");
+            audit(ctx, toolName, argsJson, started, result);
+            return result;
+        }
+
         boolean sideEffecting = tool.sideEffecting();
         if (!state.tryConsume(sideEffecting)) {
             result = failed(toolCallId, toolName,
@@ -209,6 +226,10 @@ public class ToolGovernor {
 
     private static boolean isMemoryWrite(String toolName) {
         return toolName != null && MEMORY_WRITE_TOOLS.contains(toolName);
+    }
+
+    private int codeToolMaxPerRun() {
+        return codeToolProperties == null ? 1 : Math.max(0, codeToolProperties.getMaxPerRun());
     }
 
     private int memoryWritePerRun() {
@@ -457,7 +478,8 @@ public class ToolGovernor {
                 truncateSuccessfulContent(result.content()),
                 result.practiceCard(),
                 false,
-                false);
+                false,
+                result.codeCard());
     }
 
     private boolean looksLikeErrorEnvelope(String content) {

@@ -84,6 +84,10 @@ class CompanionControllerTest {
             sink.toolStart("query_mastery", "正在查询你的掌握情况…");
             sink.toolResult("query_mastery", true);
             sink.practiceCard(card);
+            sink.toolStart("run_code_check", "正在运行你的代码…");
+            sink.toolResult("run_code_check", true);
+            sink.codeResult(new com.wenjin.dto.CodeResultVO("RUN", "COMPILE_ERROR", null, null,
+                    "Main.java:3: error", "", "", java.util.List.of(), 12L, null));
             sink.token("hello");
             sink.token(" world");
             return null;
@@ -114,6 +118,11 @@ class CompanionControllerTest {
         assertThat(eventIndex(stream, "tool_start")).isLessThan(eventIndex(stream, "tool_result"));
         assertThat(eventIndex(stream, "tool_result")).isLessThan(eventIndex(stream, "practice_card"));
         assertThat(eventIndex(stream, "practice_card")).isLessThan(eventIndex(stream, "token"));
+        assertThat(Math.max(stream.lastIndexOf("event:tool_result"), stream.lastIndexOf("event: tool_result")))
+                .isLessThan(eventIndex(stream, "code_result"));
+        assertThat(eventIndex(stream, "code_result")).isLessThan(eventIndex(stream, "token"));
+        assertThat(stream).contains("\"mode\":\"RUN\"").contains("\"verdict\":\"COMPILE_ERROR\"")
+                .contains("\"compileError\":\"Main.java:3: error\"").contains("\"durationMs\":12");
         assertThat(eventIndex(stream, "token")).isLessThan(eventIndex(stream, "done"));
         assertThat(stream).contains("\"conversationId\":321");
         assertThat(stream).contains("\"name\":\"query_mastery\"");

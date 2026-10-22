@@ -15,6 +15,7 @@ public final class ToolExecutionState {
     private int used;
     private int nonSideUsed;
     private int memoryWrites;
+    private final java.util.Map<String, Integer> perToolUsed = new java.util.HashMap<>();
 
     public ToolExecutionState(int maxToolCalls) {
         this.maxToolCalls = Math.max(0, maxToolCalls);
@@ -54,6 +55,25 @@ public final class ToolExecutionState {
         }
         memoryWrites++;
         return true;
+    }
+
+    /**
+     * 单个工具每 run 的独立次数上限（如 run_code_check）；失败时不消耗总工具预算。
+     *
+     * @param maxPerRun 上限（≤0 表示禁止调用）
+     */
+    public synchronized boolean tryConsumeToolCap(String toolName, int maxPerRun) {
+        int cap = Math.max(0, maxPerRun);
+        int used = perToolUsed.getOrDefault(toolName, 0);
+        if (used >= cap) {
+            return false;
+        }
+        perToolUsed.put(toolName, used + 1);
+        return true;
+    }
+
+    public synchronized int toolCapUsed(String toolName) {
+        return perToolUsed.getOrDefault(toolName, 0);
     }
 
     /** @deprecated 兼容旧调用，按非副作用计费 */

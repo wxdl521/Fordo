@@ -1,0 +1,30 @@
+{
+  "code": "S23",
+  "title": "贴代码求助（run_code_check）",
+  "status": "ENABLED",
+  "persona": {
+    "masteryOverrides": [],
+    "reviewQueue": [],
+    "note": "方向 6 / C3 — 学生贴出编译报错的 Java 代码求助：应先 run_code_check（eval profile 的假沙箱固定返回 COMPILE_ERROR），只依据编译错误指出问题与方向，不整段回显源码、不替学生重写"
+  },
+  "script": [
+    {"user": "我的代码编译不过，帮我看看哪里有问题：\npublic class Main {\n    public static void main(String[] args) {\n        int total = 0\n        for (int i = 1; i <= 3; i++) total += i;\n        System.out.println(total);\n    }\n}"}
+  ],
+  "hard": {
+    "mustCallTools": ["run_code_check"],
+    "mustNotCallTools": ["start_practice"],
+    "maxToolCalls": 2,
+    "jsonContractValid": true,
+    "degradedExpected": false,
+    "replyMustNotContain": [
+      "for (int i = 1; i <= 3; i++) total += i;",
+      "System.out.println(total);"
+    ]
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "tool_grounded", "desc": "是否只依据运行结果（编译错误的位置与原因）说明问题，没有臆测运行结果", "threshold": 4},
+      {"key": "guidance", "desc": "是否指出问题与修改方向但不替学生完整重写代码、不整段回显源码", "threshold": 4}
+    ]
+  }
+}

@@ -13,6 +13,7 @@ import com.wenjin.support.AgentStepType;
 import com.wenjin.support.CompanionFinalTextSanitizer;
 import com.wenjin.support.StreamingToolProtocolFilter;
 import com.wenjin.dto.PracticeStartVO;
+import com.wenjin.dto.CodeResultVO;
 import com.wenjin.dto.ProbeStartVO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -406,6 +407,9 @@ public final class CompanionOrchestrator {
             } else if (ok && "start_practice".equals(name)) {
                 practiceStarted = true;
             }
+            if (result != null && result.codeCard() != null) {
+                out.codeResult(result.codeCard());
+            }
         }
 
         // ── trace ──
@@ -652,6 +656,11 @@ public final class CompanionOrchestrator {
         @Override
         public void probeCard(ProbeStartVO card) {
             call(() -> delegate.probeCard(card));
+        }
+
+        @Override
+        public void codeResult(CodeResultVO card) {
+            call(() -> delegate.codeResult(card));
         }
 
         @Override

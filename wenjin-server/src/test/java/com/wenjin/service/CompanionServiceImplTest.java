@@ -718,6 +718,81 @@ class CompanionServiceImplTest {
     }
 
     @Test
+    void streamReplyEmitsCodeResultRightAfterToolResultAndOfferedOnlyWhenAvailable() {
+        Long conversationId = 311L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("帮我看看这段代码为什么报错")));
+        configureTools(true, 2, 3, List.of(codeTool(true)));
+        scriptTurns(
+                tools(new CompanionAiClient.ToolCall("call-1", "run_code_check", "{\"code\":\"class Main{}\"}")),
+                text("编译器说缺少分号"));
+        com.wenjin.dto.CodeResultVO card = new com.wenjin.dto.CodeResultVO("RUN", "COMPILE_ERROR", null, null,
+                "Main.java:3: error", "", "", List.of(), 12L, null);
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
+                new ToolExecutionResult("call-1", "run_code_check", true, "{\"ok\":true}",
+                        null, false, false, card));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        RecordingSink sink = new RecordingSink();
+        service.streamReply(conversationId, sink);
+
+        assertThat(sink.events).containsExactly(
+                "tool_start|run_code_check|正在运行你的代码…",
+                "tool_result|run_code_check|true",
+                "code_result|COMPILE_ERROR",
+                "token|编译器说缺少分号");
+        assertThat(turnSchemas.get(0)).anyMatch(t -> t.toString().contains("run_code_check"));
+        String prompt = String.valueOf(turnMessages.get(0).get(0).get("content"));
+        assertThat(prompt).contains("run_code_check").contains("## 代码求助").contains("不要替学生完整重写作业");
+    }
+
+    @Test
+    void unavailableCodeToolIsDroppedFromSchemaAndPrompt() {
+        Long conversationId = 312L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("帮我看看这段代码")));
+        configureTools(true, 2, 3, List.of(codeTool(false), fakeTool(
+                "query_mastery", "查询", Map.of("type", "object", "properties", Map.of()))));
+        scriptTurns(text("好的"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, new RecordingSink());
+
+        assertThat(turnSchemas.get(0)).noneMatch(t -> t.toString().contains("run_code_check"));
+        assertThat(turnSchemas.get(0)).anyMatch(t -> t.toString().contains("query_mastery"));
+        String prompt = String.valueOf(turnMessages.get(0).get(0).get("content"));
+        assertThat(prompt).doesNotContain("run_code_check").doesNotContain("## 代码求助");
+    }
+
+    private CompanionTool codeTool(boolean available) {
+        CompanionTool base = fakeTool("run_code_check", "运行代码", Map.of("type", "object", "properties", Map.of()));
+        return new CompanionTool() {
+            @Override
+            public String name() {
+                return base.name();
+            }
+
+            @Override
+            public Map<String, Object> schema() {
+                return base.schema();
+            }
+
+            @Override
+            public String label() {
+                return "正在运行你的代码…";
+            }
+
+            @Override
+            public boolean available() {
+                return available;
+            }
+
+            @Override
+            public String execute(ToolContext ctx, com.fasterxml.jackson.databind.JsonNode args) {
+                throw new UnsupportedOperationException();
+            }
+        };
+    }
+
+    @Test
     void streamReplyStripsDsmlFinalTokensAndPersistsCleanText() {
         Long conversationId = 401L;
         // Practice phrasing + focus node → intent routing forces start_practice.
@@ -2016,6 +2091,11 @@ class CompanionServiceImplTest {
         public void toolResult(String name, boolean ok) {
             toolResults.add(name + "|" + ok);
             events.add("tool_result|" + name + "|" + ok);
+        }
+
+        @Override
+        public void codeResult(com.wenjin.dto.CodeResultVO card) {
+            events.add("code_result|" + card.verdict());
         }
 
         @Override

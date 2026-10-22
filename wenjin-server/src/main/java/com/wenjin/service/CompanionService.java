@@ -1,5 +1,6 @@
 package com.wenjin.service;
 
+import com.wenjin.dto.CodeResultVO;
 import com.wenjin.dto.CompanionChatRequest;
 import com.wenjin.dto.CompanionConversationVO;
 import com.wenjin.dto.CompanionMessageVO;
@@ -29,6 +30,10 @@ public interface CompanionService {
 
         /** M9 understanding probe card (optional). */
         public void probeCard(ProbeStartVO card) {
+        }
+
+        /** run_code_check result card (direction 6); carries no source code. Sent right after tool_result. */
+        public void codeResult(CodeResultVO card) {
         }
 
         /**
