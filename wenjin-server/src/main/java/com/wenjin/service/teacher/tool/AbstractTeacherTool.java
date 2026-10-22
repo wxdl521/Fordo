@@ -56,6 +56,12 @@ abstract class AbstractTeacherTool implements CompanionTool {
         return false;
     }
 
+    /** 只读学情查询：同一 run 内可缓存，同一轮多个调用可并行。 */
+    @Override
+    public boolean readCacheable() {
+        return true;
+    }
+
     @Override
     public Map<String, Object> schema() {
         Map<String, Object> parameters = new LinkedHashMap<>();

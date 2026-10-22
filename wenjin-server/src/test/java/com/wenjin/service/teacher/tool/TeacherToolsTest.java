@@ -197,4 +197,15 @@ class TeacherToolsTest {
         assertThat(r.insightCard().note()).contains("最近 20 天");
         assertThat(om.readTree(r.content()).path("daily")).hasSize(30);
     }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("教师工具：只读、可缓存、受众为 TEACHER")
+    void teacherTools_areReadOnlyCacheableTeacherAudience() {
+        for (com.wenjin.service.companion.CompanionTool t : tools) {
+            org.assertj.core.api.Assertions.assertThat(t.sideEffecting()).as(t.name()).isFalse();
+            org.assertj.core.api.Assertions.assertThat(t.readCacheable()).as(t.name()).isTrue();
+            org.assertj.core.api.Assertions.assertThat(t.audience())
+                    .as(t.name()).isEqualTo(com.wenjin.service.companion.ToolAudience.TEACHER);
+        }
+    }
 }

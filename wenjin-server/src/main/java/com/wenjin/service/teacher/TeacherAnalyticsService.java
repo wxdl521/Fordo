@@ -91,6 +91,22 @@ public class TeacherAnalyticsService {
     private final PlanService planService;
     private final Clock clock;
 
+    /** 可选：wenjin.limits.teacher-assistant.list-max-rows（≤ {@link #LIST_MAX_ROWS} 硬上限）。 */
+    private com.wenjin.config.LimitsProperties limits;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setLimits(com.wenjin.config.LimitsProperties limits) {
+        this.limits = limits;
+    }
+
+    /** 名单行数上限：配置值与硬上限取小，配置缺省时用硬上限。 */
+    int rowCap() {
+        if (limits == null || limits.getTeacherAssistant() == null) {
+            return LIST_MAX_ROWS;
+        }
+        return Math.max(1, Math.min(LIST_MAX_ROWS, limits.getTeacherAssistant().getListMaxRows()));
+    }
+
     public TeacherAnalyticsService(TeacherAnalyticsMapper analyticsMapper,
                                    TeacherDashboardMapper dashboardMapper,
                                    KgNodeMapper nodeMapper,
@@ -173,7 +189,7 @@ public class TeacherAnalyticsService {
     // ───────────────────────── 2. 需要关注的学生 ─────────────────────────
 
     public AttentionList studentsNeedingAttention(long courseId, int limit, String reason) {
-        int lim = Math.max(1, Math.min(LIST_MAX_ROWS, limit));
+        int lim = Math.max(1, Math.min(rowCap(), limit));
         String reasonFilter = StringUtils.hasText(reason) ? reason.trim().toUpperCase(Locale.ROOT) : null;
         if (reasonFilter != null && !Reason.ALL.contains(reasonFilter)) {
             throw new IllegalArgumentException("unknown reason: " + reason);
@@ -361,7 +377,7 @@ public class TeacherAnalyticsService {
                 .thenComparing(v -> v.effective() == null ? 0 : v.effective())
                 .thenComparingLong(NodeStudentView::studentId));
         int diagnosed = mastered + weak + notLearned;
-        List<NodeStudentView> shown = notMastered.stream().limit(LIST_MAX_ROWS).toList();
+        List<NodeStudentView> shown = notMastered.stream().limit(rowCap()).toList();
         return new NodeMasteryResult(STATUS_OK, new NodeRef(node.getNodeCode(), node.getName()), node.getChapter(),
                 roster.size(), new StudentDistribution(mastered, weak, notLearned, undiagnosed),
                 diagnosed == 0 ? null : round1(sum / diagnosed), notMastered.size(), shown,

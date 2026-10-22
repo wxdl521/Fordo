@@ -419,4 +419,16 @@ class TeacherAnalyticsServiceTest {
         assertThat(TeacherAnalyticsService.maskUsername("ab")).isEqualTo("a*");
         assertThat(TeacherAnalyticsService.maskUsername("abcdef")).isEqualTo("a***f");
     }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("名单行数上限：配置值生效，且不超过硬上限 20")
+    void rowCap_honoursConfiguredLimitWithinHardCap() {
+        org.assertj.core.api.Assertions.assertThat(service.rowCap()).isEqualTo(TeacherAnalyticsService.LIST_MAX_ROWS);
+        com.wenjin.config.LimitsProperties limits = new com.wenjin.config.LimitsProperties();
+        limits.getTeacherAssistant().setListMaxRows(5);
+        service.setLimits(limits);
+        org.assertj.core.api.Assertions.assertThat(service.rowCap()).isEqualTo(5);
+        limits.getTeacherAssistant().setListMaxRows(500);
+        org.assertj.core.api.Assertions.assertThat(service.rowCap()).isEqualTo(TeacherAnalyticsService.LIST_MAX_ROWS);
+    }
 }
