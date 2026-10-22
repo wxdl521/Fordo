@@ -339,7 +339,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
         // baseline@2 后执行 V3…V23
-        assertThat(first.migrationsExecuted).isEqualTo(20);
+        assertThat(first.migrationsExecuted).isEqualTo(21);
 
         Map<String, Integer> history = successChecksums();
         // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3–V23
