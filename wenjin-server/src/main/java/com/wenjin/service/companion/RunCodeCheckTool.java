@@ -5,11 +5,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.dto.CodeResultVO;
+import com.wenjin.entity.Question;
+import com.wenjin.mapper.QuestionMapper;
 import com.wenjin.service.code.CodeExecutionService;
 import com.wenjin.service.code.CodeExecutionService.CaseResult;
 import com.wenjin.service.code.CodeExecutionService.CodeJudgeResult;
 import com.wenjin.service.code.CodeExecutionService.CodeRunResult;
+import com.wenjin.support.QuestionStatus;
+import com.wenjin.support.QuestionType;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -27,6 +32,10 @@ import java.util.function.IntFunction;
  * question's test cases, otherwise a free run). The model only ever receives a small structured summary;
  * the source is never echoed back (neither to the model nor in the SSE card).
  *
+ * <p>{@code questionId} is only honoured for an APPROVED CODE question of the conversation's course
+ * ({@link ToolContext#courseId()}); anything else is {@code TOOL_BAD_ARGS} and nothing is judged, so the
+ * model cannot be steered into judging (and leaking visible cases of) another course's questions.
+ *
  * <p>Availability follows {@link CodeExecutionService#available()} (which already includes the
  * {@code code-check-enabled} flag); when it is absent or unavailable the tool is dropped from the schema.
  */
@@ -41,13 +50,25 @@ public class RunCodeCheckTool implements CompanionTool {
     private final ObjectProvider<CodeExecutionService> codeServiceProvider;
     private final ObjectMapper objectMapper;
     private final LimitsProperties.Code props;
+    /** null → judge mode is refused (fail closed). */
+    private final QuestionMapper questionMapper;
 
+    /** Without a question lookup: free runs only, {@code questionId} is always rejected. */
     public RunCodeCheckTool(ObjectProvider<CodeExecutionService> codeServiceProvider,
                             ObjectMapper objectMapper,
                             LimitsProperties limits) {
+        this(codeServiceProvider, objectMapper, limits, null);
+    }
+
+    @Autowired
+    public RunCodeCheckTool(ObjectProvider<CodeExecutionService> codeServiceProvider,
+                            ObjectMapper objectMapper,
+                            LimitsProperties limits,
+                            QuestionMapper questionMapper) {
         this.codeServiceProvider = codeServiceProvider;
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.props = (limits == null ? new LimitsProperties() : limits).getCode();
+        this.questionMapper = questionMapper;
     }
 
     @Override
@@ -173,7 +194,11 @@ public class RunCodeCheckTool implements CompanionTool {
         Map<String, Object> body;
         CodeResultVO card;
         if (args.hasNonNull("questionId")) {
-            CodeJudgeResult judged = service.judge(studentId, args.get("questionId").asLong(), code);
+            long questionId = args.get("questionId").asLong();
+            if (!judgeableInCourse(questionId, ctx.courseId())) {
+                return badArgs(toolCallId, "questionId 不是当前课程中可判分的编程题");
+            }
+            CodeJudgeResult judged = service.judge(studentId, questionId, code);
             card = CodeResultVO.ofJudge(judged);
             body = judgeSummary(judged);
         } else {
@@ -308,6 +333,33 @@ public class RunCodeCheckTool implements CompanionTool {
 
     private CodeExecutionService service() {
         return codeServiceProvider == null ? null : codeServiceProvider.getIfAvailable();
+    }
+
+    /** APPROVED CODE question whose course is the conversation's course. */
+    private boolean judgeableInCourse(long questionId, Long courseId) {
+        if (questionMapper == null || courseId == null || questionId <= 0) {
+            return false;
+        }
+        Question q = questionMapper.selectById(questionId);
+        return q != null
+                && Objects.equals(q.getCourseId(), courseId)
+                && q.getType() != null && q.getType() == QuestionType.CODE
+                && q.getStatus() != null && q.getStatus() == QuestionStatus.APPROVED;
+    }
+
+    private ToolExecutionResult badArgs(String toolCallId, String message) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", false);
+        body.put("code", ToolErrorCodes.TOOL_BAD_ARGS);
+        body.put("message", message);
+        body.put("retryable", false);
+        String content;
+        try {
+            content = objectMapper.writeValueAsString(body);
+        } catch (JsonProcessingException e) {
+            content = "{\"ok\":false,\"code\":\"TOOL_BAD_ARGS\",\"message\":\"bad questionId\",\"retryable\":false}";
+        }
+        return new ToolExecutionResult(toolCallId, NAME, false, content, null, false, false);
     }
 
     private ToolExecutionResult notAllowed(String toolCallId) {

@@ -3,9 +3,12 @@ package com.wenjin.service.companion;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.ai.CompanionAiClient;
-import com.wenjin.config.LimitsProperties;
 import com.wenjin.config.CompanionToolProperties;
 import com.wenjin.config.LimitsProperties;
+import com.wenjin.entity.Question;
+import com.wenjin.mapper.QuestionMapper;
+import com.wenjin.support.QuestionStatus;
+import com.wenjin.support.QuestionType;
 import com.wenjin.service.code.CodeExecutionService;
 import com.wenjin.service.code.CodeExecutionService.CaseResult;
 import com.wenjin.service.code.CodeExecutionService.CodeJudgeResult;
@@ -35,12 +38,25 @@ class RunCodeCheckToolTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private final CodeExecutionService service = Mockito.mock(CodeExecutionService.class);
     private final LimitsProperties props = new LimitsProperties();
+    private final QuestionMapper questionMapper = Mockito.mock(QuestionMapper.class);
     private RunCodeCheckTool tool;
 
     @BeforeEach
     void setUp() {
         when(service.available()).thenReturn(true);
-        tool = new RunCodeCheckTool(providerOf(service), mapper, props);
+        // 默认：任何题号都是课程 1 下已通过的编程题
+        when(questionMapper.selectById(anyLong())).thenAnswer(inv -> question(inv.getArgument(0), 1L,
+                QuestionType.CODE, QuestionStatus.APPROVED));
+        tool = new RunCodeCheckTool(providerOf(service), mapper, props, questionMapper);
+    }
+
+    private static Question question(Long id, Long courseId, int type, int status) {
+        Question q = new Question();
+        q.setId(id);
+        q.setCourseId(courseId);
+        q.setType(type);
+        q.setStatus(status);
+        return q;
     }
 
     @SuppressWarnings("unchecked")
@@ -187,6 +203,53 @@ class RunCodeCheckToolTest {
         assertThat(r.codeCard().cases().get(2).expectedPreview()).isNull();
     }
 
+    // ── M1: questionId must belong to the conversation's course and be an APPROVED CODE question ──
+
+    @Test
+    void judgeRejectsQuestionsOutsideTheCourseOrNotGradable() throws Exception {
+        when(questionMapper.selectById(100L)).thenReturn(question(100L, 2L, QuestionType.CODE, QuestionStatus.APPROVED));
+        when(questionMapper.selectById(101L)).thenReturn(null);
+        when(questionMapper.selectById(102L)).thenReturn(question(102L, 1L, QuestionType.CODE, QuestionStatus.PENDING));
+        when(questionMapper.selectById(103L)).thenReturn(question(103L, 1L, QuestionType.SINGLE, QuestionStatus.APPROVED));
+
+        for (long qid : new long[]{100L, 101L, 102L, 103L}) {
+            ToolExecutionResult r = tool.executeForGovernor("c1", new ToolContext(7L, 1L),
+                    argsWithCode("{\"questionId\":" + qid + "}"));
+            assertThat(r.ok()).as("questionId " + qid).isFalse();
+            JsonNode body = mapper.readTree(r.content());
+            assertThat(body.path("code").asText()).isEqualTo(ToolErrorCodes.TOOL_BAD_ARGS);
+            assertThat(body.path("retryable").asBoolean()).isFalse();
+            assertThat(r.codeCard()).isNull();
+        }
+        // 没有课程上下文：带 questionId 一律拒绝
+        ToolExecutionResult noCourse = tool.executeForGovernor("c1", new ToolContext(7L, null),
+                argsWithCode("{\"questionId\":42}"));
+        assertThat(mapper.readTree(noCourse.content()).path("code").asText()).isEqualTo(ToolErrorCodes.TOOL_BAD_ARGS);
+        verify(service, never()).judge(anyLong(), anyLong(), anyString());
+    }
+
+    @Test
+    void crossCourseQuestionThroughGovernorIsBadArgsAndNeverJudged() throws Exception {
+        when(questionMapper.selectById(100L)).thenReturn(question(100L, 2L, QuestionType.CODE, QuestionStatus.APPROVED));
+        ToolGovernor governor = new ToolGovernor(List.of(tool), mapper, new CompanionToolProperties(),
+                new LimitsProperties());
+        ToolExecutionResult r = governor.execute(new ToolContext(7L, 1L),
+                new CompanionAiClient.ToolCall("c1", "run_code_check", "{\"code\":\"class Main{}\",\"questionId\":100}"),
+                new ToolExecutionState(4));
+        assertThat(r.ok()).isFalse();
+        assertThat(mapper.readTree(r.content()).path("code").asText()).isEqualTo(ToolErrorCodes.TOOL_BAD_ARGS);
+        verify(service, never()).judge(anyLong(), anyLong(), anyString());
+    }
+
+    @Test
+    void withoutQuestionLookupJudgeModeFailsClosed() throws Exception {
+        RunCodeCheckTool noLookup = new RunCodeCheckTool(providerOf(service), mapper, props);
+        ToolExecutionResult r = noLookup.executeForGovernor("c1", new ToolContext(7L, 1L),
+                argsWithCode("{\"questionId\":42}"));
+        assertThat(r.ok()).isFalse();
+        verify(service, never()).judge(anyLong(), anyLong(), anyString());
+    }
+
     @Test
     void rejectedAndRateLimitedStillReturnAMessageAndCard() throws Exception {
         when(service.run(anyLong(), anyString(), anyString())).thenReturn(
@@ -280,7 +343,7 @@ class RunCodeCheckToolTest {
     void codeParamLimitReusesSharedSourceMaxChars() throws Exception {
         LimitsProperties custom = new LimitsProperties();
         custom.getCode().setSourceMaxChars(50);
-        RunCodeCheckTool small = new RunCodeCheckTool(providerOf(service), mapper, custom);
+        RunCodeCheckTool small = new RunCodeCheckTool(providerOf(service), mapper, custom, questionMapper);
         var specs = small.params();
         assertThat(ToolParamValidator.validate(specs, args("{\"code\":\"" + "a".repeat(51) + "\"}"))).contains("code");
         assertThat(ToolParamValidator.validate(specs, args("{\"code\":\"" + "a".repeat(50) + "\"}"))).isNull();
