@@ -68,7 +68,7 @@ class DockerSandboxIT {
         props.getDocker().setImage(IMAGE);
         limits = new LimitsProperties();
         limits.getCode().setPerStudentPerHour(0);
-        DockerCodeSandbox sandbox = new DockerCodeSandbox(props.getDocker(), runner, Clock.systemUTC());
+        DockerCodeSandbox sandbox = new DockerCodeSandbox(props.getDocker(), runner);
         assertThat(sandbox.available()).as("docker version + image inspect").isTrue();
 
         CASES.put(SUM_QUESTION, List.of(

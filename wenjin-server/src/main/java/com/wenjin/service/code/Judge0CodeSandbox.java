@@ -8,8 +8,6 @@ import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
 
 import java.nio.charset.StandardCharsets;
-import java.time.Clock;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -31,17 +29,10 @@ public class Judge0CodeSandbox implements CodeSandbox {
 
     private final CodeCheckProperties.Judge0 cfg;
     private final RestClient client;
-    private final Clock clock;
 
-    private volatile Cached cached;
-
-    private record Cached(String key, boolean value, Instant expiresAt) {
-    }
-
-    public Judge0CodeSandbox(CodeCheckProperties.Judge0 cfg, RestClient client, Clock clock) {
+    public Judge0CodeSandbox(CodeCheckProperties.Judge0 cfg, RestClient client) {
         this.cfg = cfg;
         this.client = client;
-        this.clock = clock;
     }
 
     @Override
@@ -49,28 +40,23 @@ public class Judge0CodeSandbox implements CodeSandbox {
         return "judge0";
     }
 
+    /**
+     * <b>阻塞</b>健康检查 {@code GET /about}（读超时见 request-timeout-seconds）。生产中只由
+     * {@link AsyncAvailabilitySandbox} 的后台线程调用；管理后台热改基址/令牌后，下一次后台刷新即生效。
+     */
     @Override
     public boolean available() {
         String base = base();
         if (base == null) {
             return false;
         }
-        String key = base + "|" + (cfg.getApiKey() == null ? 0 : cfg.getApiKey().hashCode());
-        Instant now = clock.instant();
-        Cached c = cached;
-        if (c != null && c.key().equals(key) && now.isBefore(c.expiresAt())) {
-            return c.value();
-        }
-        boolean ok;
         try {
-            client.get().uri(base + "/about").headers(h -> auth(h)).retrieve().toBodilessEntity();
-            ok = true;
+            client.get().uri(base + "/about").headers(this::auth).retrieve().toBodilessEntity();
+            return true;
         } catch (RuntimeException e) {
             log.warn("Judge0 不可用：{}", e.getClass().getSimpleName());
-            ok = false;
+            return false;
         }
-        cached = new Cached(key, ok, now.plusSeconds(Math.max(1, cfg.getAvailabilityCacheSeconds())));
-        return ok;
     }
 
     @Override
@@ -110,9 +96,13 @@ public class Judge0CodeSandbox implements CodeSandbox {
                     exit = 124;
                 }
                 long ms = Math.round(r.path("time").asDouble(0) * 1000);
-                cases.add(new SandboxResult.CaseRun(i, exit, status == 5, ms,
+                SandboxResult.CaseRun run = new SandboxResult.CaseRun(i, exit, status == 5, ms,
                         utf8(so, l.outputMaxBytes()), status == 8 || so.length > l.outputMaxBytes(),
-                        utf8(se, l.outputMaxBytes()), se.length > l.outputMaxBytes()));
+                        utf8(se, l.outputMaxBytes()), se.length > l.outputMaxBytes());
+                cases.add(run);
+                if (DefaultCodeExecutionService.stopsJudging(run)) {
+                    break; // fail-fast：同 docker 后端
+                }
             }
             return new SandboxResult(SandboxResult.Status.COMPLETED, "", cases, null);
         } catch (RuntimeException e) {

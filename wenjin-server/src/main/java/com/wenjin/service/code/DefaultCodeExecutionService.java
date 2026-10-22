@@ -265,6 +265,12 @@ public class DefaultCodeExecutionService implements CodeExecutionService {
         return new CodeJudgeResult(overall, passed, total, null, results, elapsed(t0), message(overall));
     }
 
+    /** 沙箱 fail-fast 判据：该用例已超时或超资源，剩余用例不再运行（上层按同一 verdict 计为未通过）。 */
+    static boolean stopsJudging(SandboxResult.CaseRun run) {
+        Verdict v = caseVerdict(run);
+        return v == Verdict.TIMEOUT || v == Verdict.RESOURCE_LIMIT;
+    }
+
     static Verdict missingCaseVerdict(SandboxResult r) {
         if (r.status() == SandboxResult.Status.TIMEOUT) {
             return Verdict.TIMEOUT;

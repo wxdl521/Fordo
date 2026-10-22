@@ -10,8 +10,6 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
 
@@ -32,7 +30,6 @@ class Judge0CodeSandboxTest {
 
     private CodeCheckProperties.Judge0 cfg;
     private MockRestServiceServer server;
-    private MutableClock clock;
     private Judge0CodeSandbox sandbox;
 
     @BeforeEach
@@ -42,8 +39,7 @@ class Judge0CodeSandboxTest {
         cfg.setApiKey("judge0-token-123");
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
-        clock = new MutableClock(Instant.parse("2026-10-22T08:00:00Z"));
-        sandbox = new Judge0CodeSandbox(cfg, builder.build(), clock);
+        sandbox = new Judge0CodeSandbox(cfg, builder.build());
     }
 
     private static String b64(String s) {
@@ -113,11 +109,25 @@ class Judge0CodeSandboxTest {
                 .andRespond(withSuccess(resp(8, "xx", null, null, null), MediaType.APPLICATION_JSON));
         server.expect(once(), requestTo(SUBMIT))
                 .andRespond(withSuccess(resp(3, "y".repeat(70_000), null, null, 0), MediaType.APPLICATION_JSON));
-        SandboxResult r = exec(List.of("a", "b", "c"));
-        assertThat(r.cases().get(0).timedOut()).isTrue();
-        assertThat(r.cases().get(1).stdoutExceeded()).isTrue();
-        assertThat(r.cases().get(2).stdoutExceeded()).isTrue();
-        assertThat(r.cases().get(2).stdout()).hasSize(65_536);
+        assertThat(exec(List.of("a")).cases().get(0).timedOut()).isTrue();
+        assertThat(exec(List.of("b")).cases().get(0).stdoutExceeded()).isTrue();
+        SandboxResult big = exec(List.of("c"));
+        assertThat(big.cases().get(0).stdoutExceeded()).isTrue();
+        assertThat(big.cases().get(0).stdout()).hasSize(65_536);
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("fail-fast：首个 TLE / 输出超限用例之后不再提交剩余用例")
+    void failFast() {
+        server.expect(once(), requestTo(SUBMIT))
+                .andRespond(withSuccess(resp(3, "1\n", null, null, 0), MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(SUBMIT))
+                .andRespond(withSuccess(resp(5, "", null, null, null), MediaType.APPLICATION_JSON));
+        SandboxResult r = exec(List.of("a", "b", "c", "d"));
+        assertThat(r.status()).isEqualTo(SandboxResult.Status.COMPLETED);
+        assertThat(r.cases()).hasSize(2);
+        server.verify(); // 只发了两次请求
     }
 
     @Test
@@ -135,7 +145,7 @@ class Judge0CodeSandboxTest {
     }
 
     @Test
-    @DisplayName("available：未配置基址即 false；GET /about 成功才 true，并缓存")
+    @DisplayName("available（阻塞健康检查，由后台刷新线程调用）：未配置基址即 false；GET /about 成功才 true；热改基址立即用新地址")
     void available() {
         cfg.setBaseUrl("");
         assertThat(sandbox.available()).isFalse();
@@ -145,12 +155,11 @@ class Judge0CodeSandboxTest {
                 .andExpect(header("X-Auth-Token", "judge0-token-123"))
                 .andRespond(withSuccess("{\"version\":\"1.13.1\"}", MediaType.APPLICATION_JSON));
         assertThat(sandbox.available()).isTrue();
-        assertThat(sandbox.available()).isTrue(); // 缓存，不再请求
         server.verify();
 
-        clock.advance(Duration.ofSeconds(31));
         server.reset();
         server.expect(once(), requestTo(BASE + "/about")).andRespond(withServerError());
         assertThat(sandbox.available()).isFalse();
+        server.verify();
     }
 }

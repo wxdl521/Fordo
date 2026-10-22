@@ -15,7 +15,6 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -33,7 +32,6 @@ class DockerCodeSandboxTest {
 
     private CodeCheckProperties.Docker cfg;
     private FakeRunner runner;
-    private MutableClock clock;
     private AtomicLong nanos;
     private DockerCodeSandbox sandbox;
 
@@ -42,9 +40,8 @@ class DockerCodeSandboxTest {
         cfg = new CodeCheckProperties.Docker();
         cfg.setWorkDir(tmp.toString());
         runner = new FakeRunner();
-        clock = new MutableClock(Instant.parse("2026-10-22T08:00:00Z"));
         nanos = new AtomicLong();
-        sandbox = new DockerCodeSandbox(cfg, runner, clock, nanos::get);
+        sandbox = new DockerCodeSandbox(cfg, runner, nanos::get);
     }
 
     private SandboxResult exec(List<String> stdins) {
@@ -418,8 +415,8 @@ class DockerCodeSandboxTest {
     // ───────────────────────── available ─────────────────────────
 
     @Test
-    @DisplayName("available：docker version 与 image inspect 都成功才可用；结果缓存，过期后重查")
-    void available_cached() {
+    @DisplayName("available（阻塞探测，由后台刷新线程调用）：docker version 与 image inspect 都成功才可用；每次调用都真查")
+    void available_probes() {
         runner.respond(0, "27.3.1\n".getBytes(StandardCharsets.UTF_8));
         runner.respond(0, "sha256:abc\n".getBytes(StandardCharsets.UTF_8));
         assertThat(sandbox.available()).isTrue();
@@ -427,10 +424,6 @@ class DockerCodeSandboxTest {
         assertThat(runner.calls.get(1)).containsExactly("docker", "image", "inspect", "--format", "{{.Id}}",
                 "eclipse-temurin:21-jdk");
 
-        assertThat(sandbox.available()).isTrue();
-        assertThat(runner.calls).hasSize(2);
-
-        clock.advance(Duration.ofSeconds(31));
         runner.respond(1, new byte[0]); // 守护进程挂了
         assertThat(sandbox.available()).isFalse();
         assertThat(runner.calls).hasSize(3);
@@ -443,11 +436,9 @@ class DockerCodeSandboxTest {
         runner.respond(1, new byte[0]);
         assertThat(sandbox.available()).isFalse();
 
-        clock.advance(Duration.ofMinutes(5));
         runner.fail = new IOException("CreateProcess error=2");
         assertThat(sandbox.available()).isFalse();
 
-        clock.advance(Duration.ofMinutes(5));
         runner.fail = null;
         runner.respondTimeout(10_000);
         assertThat(sandbox.available()).isFalse();

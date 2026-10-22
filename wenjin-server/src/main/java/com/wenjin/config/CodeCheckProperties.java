@@ -31,7 +31,7 @@ public class CodeCheckProperties {
         private String image = "eclipse-temurin:21-jdk";
         /** 宿主侧临时目录的父目录；空 = java.io.tmpdir。须能被 docker 守护进程绑定挂载 */
         private String workDir = "";
-        /** available() 结果缓存秒数（docker version + image inspect） */
+        /** 可用性后台刷新间隔秒数（docker version + image inspect；请求路径只读最近一次结果） */
         private int availabilityCacheSeconds = 30;
     }
 
@@ -45,7 +45,7 @@ public class CodeCheckProperties {
         private int languageId = 62;
         /** 单次 HTTP 读超时秒数（wait=true 同步等待判题） */
         private int requestTimeoutSeconds = 30;
-        /** available() 健康检查结果缓存秒数 */
+        /** 可用性后台刷新间隔秒数（GET /about；请求路径只读最近一次结果） */
         private int availabilityCacheSeconds = 30;
     }
 }

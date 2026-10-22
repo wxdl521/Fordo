@@ -16,9 +16,7 @@ import java.nio.file.attribute.PosixFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.nio.file.attribute.UserPrincipal;
-import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -75,14 +73,9 @@ public class DockerCodeSandbox implements CodeSandbox {
 
     private final CodeCheckProperties.Docker cfg;
     private final ProcessRunner runner;
-    private final Clock clock;
     private final LongSupplier nanoTime;
 
-    private volatile CachedAvailability cached;
     private volatile UserPrincipal appUser;
-
-    private record CachedAvailability(boolean value, Instant expiresAt) {
-    }
 
     /** 本次执行的宿主目录布局。 */
     record RunDirs(Path root, Path src, Path classes, Path scripts, Path inputs) {
@@ -91,14 +84,13 @@ public class DockerCodeSandbox implements CodeSandbox {
         }
     }
 
-    public DockerCodeSandbox(CodeCheckProperties.Docker cfg, ProcessRunner runner, Clock clock) {
-        this(cfg, runner, clock, System::nanoTime);
+    public DockerCodeSandbox(CodeCheckProperties.Docker cfg, ProcessRunner runner) {
+        this(cfg, runner, System::nanoTime);
     }
 
-    DockerCodeSandbox(CodeCheckProperties.Docker cfg, ProcessRunner runner, Clock clock, LongSupplier nanoTime) {
+    DockerCodeSandbox(CodeCheckProperties.Docker cfg, ProcessRunner runner, LongSupplier nanoTime) {
         this.cfg = cfg;
         this.runner = runner;
-        this.clock = clock;
         this.nanoTime = nanoTime;
     }
 
@@ -109,20 +101,12 @@ public class DockerCodeSandbox implements CodeSandbox {
 
     // ───────────────────────── available ─────────────────────────
 
+    /**
+     * <b>阻塞</b>探测：{@code docker version} + {@code docker image inspect}（各 ≤10s）。生产中只由
+     * {@link AsyncAvailabilitySandbox} 的后台线程调用，请求路径读的是它缓存的结果。
+     */
     @Override
     public boolean available() {
-        Instant now = clock.instant();
-        CachedAvailability c = cached;
-        if (c != null && now.isBefore(c.expiresAt())) {
-            return c.value();
-        }
-        boolean value = probe();
-        cached = new CachedAvailability(value,
-                now.plusSeconds(Math.max(1, cfg.getAvailabilityCacheSeconds())));
-        return value;
-    }
-
-    private boolean probe() {
         try {
             ProcessRunner.Result version = runner.run(
                     List.of(cfg.getBinary(), "version", "--format", "{{.Server.Version}}"), PROBE_TIMEOUT, 256);
@@ -207,7 +191,7 @@ public class DockerCodeSandbox implements CodeSandbox {
                 }
                 SandboxResult.CaseRun run = toCaseRun(i, r, limits);
                 cases.add(run);
-                if (stopsJudging(run)) {
+                if (DefaultCodeExecutionService.stopsJudging(run)) {
                     break;
                 }
             }
@@ -234,12 +218,6 @@ public class DockerCodeSandbox implements CodeSandbox {
                 utf8(so, max), r.stdoutTruncated() || so.length > max,
                 r.stderr().length() > max ? r.stderr().substring(0, max) : r.stderr(),
                 r.stderrTruncated() || se.length > max);
-    }
-
-    /** fail-fast：该用例已超时或超资源，剩余用例不再运行（上层按同一 verdict 计为未通过）。 */
-    static boolean stopsJudging(SandboxResult.CaseRun run) {
-        CodeExecutionService.Verdict v = DefaultCodeExecutionService.caseVerdict(run);
-        return v == CodeExecutionService.Verdict.TIMEOUT || v == CodeExecutionService.Verdict.RESOURCE_LIMIT;
     }
 
     /** 整次执行的宿主预算秒数：编译 + 每用例（运行 + 1s 容器开销）。 */
