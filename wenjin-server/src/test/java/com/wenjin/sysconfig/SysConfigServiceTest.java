@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
 import com.wenjin.config.AiProperties;
+import com.wenjin.config.CodeCheckProperties;
 import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.dto.AdminConfigGroupVO;
@@ -64,7 +65,8 @@ class SysConfigServiceTest {
         features = new FeatureFlagsProperties();
         limits = new LimitsProperties();
         crypto = new ConfigCrypto("", "dev-secret-change-me-in-prod", new String[]{"test"});
-        service = new SysConfigService(mapper, new ConfigRegistry(), crypto, ai, features, limits);
+        service = new SysConfigService(mapper, new ConfigRegistry(), crypto, ai, features, limits,
+                new CodeCheckProperties());
     }
 
     // ───────────────────────── list ─────────────────────────
@@ -80,7 +82,7 @@ class SysConfigServiceTest {
         List<AdminConfigGroupVO> groups = service.list();
 
         assertThat(groups).extracting(AdminConfigGroupVO::getGroup)
-                .containsExactly("AI 文本", "AI 视觉", "AI 嵌入", "功能开关", "限额");
+                .containsExactly("AI 文本", "AI 视觉", "AI 嵌入", "功能开关", "限额", "代码沙箱");
         AdminConfigItemVO model = item(groups, "wenjin.ai.model");
         assertThat(model.getType()).isEqualTo("string");
         assertThat(model.getValue()).isEqualTo("deepseek-v4-pro");

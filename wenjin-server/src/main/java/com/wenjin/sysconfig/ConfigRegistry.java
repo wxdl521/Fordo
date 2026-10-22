@@ -1,6 +1,7 @@
 package com.wenjin.sysconfig;
 
 import com.wenjin.config.AiProperties;
+import com.wenjin.config.CodeCheckProperties;
 import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.config.LimitsProperties;
 import org.springframework.stereotype.Component;
@@ -21,7 +22,7 @@ import java.util.function.Function;
  * 核实结论（2026-10-21）：</p>
  * <ul>
  *   <li>AI 文本 / 视觉：OpenAiCompatible*Client 每次调用读 {@code getBaseUrl/getApiKey/getModel/getTemperature/isEnabled}。</li>
- *   <li>功能开关：10 个开关的调用点都是每次 {@code featureFlags.isXxx()}；
+ *   <li>功能开关：13 个开关的调用点都是每次 {@code featureFlags.isXxx()}；
  *       <b>不含</b> {@code eval-enabled}（{@code EvalConfiguration} 的 {@code @ConditionalOnProperty} 启动时决定）。</li>
  *   <li>限额：{@code wenjin.limits.companion.*} 四项在 CompanionServiceImpl / ConversationContextBuilder /
  *       PromptAssembler 每次请求现读。{@code max-input-chars} 另受 {@code CompanionChatRequest} 的
@@ -38,6 +39,7 @@ public class ConfigRegistry {
     public static final String GROUP_AI_EMBEDDING = "AI 嵌入";
     public static final String GROUP_FEATURES = "功能开关";
     public static final String GROUP_LIMITS = "限额";
+    public static final String GROUP_CODE_CHECK = "代码沙箱";
 
     /** 与 OpenAiCompatible*Client 的 trimTrailingSlash 拼接一致：base-url 不宜过长 */
     private static final int URL_MAX = 255;
@@ -126,6 +128,9 @@ public class ConfigRegistry {
                 FeatureFlagsProperties::isMultiAgentEnabled, FeatureFlagsProperties::setMultiAgentEnabled);
         feature(list, "proactive-enabled", "主动陪伴", "关闭时伴侣 opener / 提示条 / 小红点接口返回 404，前端回退固定话术",
                 FeatureFlagsProperties::isProactiveEnabled, FeatureFlagsProperties::setProactiveEnabled);
+        feature(list, "code-check-enabled", "编程题判分沙箱",
+                "关闭或沙箱后端不可用时编程题不判分（不写作答记录）、伴侣 run_code_check 下架",
+                FeatureFlagsProperties::isCodeCheckEnabled, FeatureFlagsProperties::setCodeCheckEnabled);
 
         // ── 限额（wenjin.limits.companion.*）──
         list.add(ConfigKeyDef.integer("wenjin.limits.companion.max-input-chars", GROUP_LIMITS, "单条输入上限（字）",
@@ -140,6 +145,14 @@ public class ConfigRegistry {
         list.add(ConfigKeyDef.integer("wenjin.limits.companion.max-recent-messages", GROUP_LIMITS, "近窗消息条数",
                 "摘要之外原样保留的最新消息条数", 1, 100,
                 b -> companion(b).getMaxRecentMessages(), (b, v) -> companion(b).setMaxRecentMessages(v)));
+
+        // ── 代码沙箱（wenjin.code-check.judge0.*；Judge0CodeSandbox 每次调用现读；仅 backend=judge0 时生效）──
+        list.add(ConfigKeyDef.text("wenjin.code-check.judge0.base-url", GROUP_CODE_CHECK, "Judge0 基址",
+                "仅 wenjin.code-check.backend=judge0 时使用，如 http://judge0.internal:2358", URL_MAX, true,
+                b -> judge0(b).getBaseUrl(), (b, v) -> judge0(b).setBaseUrl(v)));
+        list.add(ConfigKeyDef.secret("wenjin.code-check.judge0.api-key", GROUP_CODE_CHECK, "Judge0 Auth Token",
+                "Judge0 的 AUTHN_TOKEN（请求头 X-Auth-Token）；加密存储，界面只显示末 4 位", SECRET_MAX,
+                b -> judge0(b).getApiKey(), (b, v) -> judge0(b).setApiKey(v)));
 
         Map<String, ConfigKeyDef> map = new LinkedHashMap<>();
         for (ConfigKeyDef def : list) {
@@ -172,6 +185,10 @@ public class ConfigRegistry {
 
     private static AiProperties.Embedding embedding(ConfigBeans b) {
         return b.ai().getEmbedding();
+    }
+
+    private static CodeCheckProperties.Judge0 judge0(ConfigBeans b) {
+        return b.codeCheck().getJudge0();
     }
 
     private static LimitsProperties.Companion companion(ConfigBeans b) {

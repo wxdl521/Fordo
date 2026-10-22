@@ -1,6 +1,7 @@
 package com.wenjin.sysconfig;
 
 import com.wenjin.config.AiProperties;
+import com.wenjin.config.CodeCheckProperties;
 import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.config.LimitsProperties;
 import org.junit.jupiter.api.DisplayName;
@@ -45,10 +46,13 @@ class ConfigRegistryTest {
             "wenjin.features.plan-enabled",
             "wenjin.features.multi-agent-enabled",
             "wenjin.features.proactive-enabled",
+            "wenjin.features.code-check-enabled",
             "wenjin.limits.companion.max-input-chars",
             "wenjin.limits.companion.max-ai-output-chars",
             "wenjin.limits.companion.max-context-chars",
-            "wenjin.limits.companion.max-recent-messages");
+            "wenjin.limits.companion.max-recent-messages",
+            "wenjin.code-check.judge0.base-url",
+            "wenjin.code-check.judge0.api-key");
 
     private final ConfigRegistry registry = new ConfigRegistry();
 
@@ -62,13 +66,15 @@ class ConfigRegistryTest {
     }
 
     @Test
-    @DisplayName("分组顺序：AI 文本 → AI 视觉 → AI 嵌入 → 功能开关 → 限额；只有三个 apiKey 是 secret")
+    @DisplayName("分组顺序：AI 文本 → AI 视觉 → AI 嵌入 → 功能开关 → 限额 → 代码沙箱；只有四个 apiKey 是 secret")
     void groupsAndSecrets() {
         assertThat(registry.all()).extracting(ConfigKeyDef::group).containsSubsequence(
                 ConfigRegistry.GROUP_AI_TEXT, ConfigRegistry.GROUP_AI_VISION,
-                ConfigRegistry.GROUP_AI_EMBEDDING, ConfigRegistry.GROUP_FEATURES, ConfigRegistry.GROUP_LIMITS);
+                ConfigRegistry.GROUP_AI_EMBEDDING, ConfigRegistry.GROUP_FEATURES, ConfigRegistry.GROUP_LIMITS,
+                ConfigRegistry.GROUP_CODE_CHECK);
         assertThat(registry.all()).filteredOn(ConfigKeyDef::isSecret).extracting(ConfigKeyDef::key)
-                .containsExactly("wenjin.ai.api-key", "wenjin.ai.vision.api-key", "wenjin.ai.embedding.api-key");
+                .containsExactly("wenjin.ai.api-key", "wenjin.ai.vision.api-key", "wenjin.ai.embedding.api-key",
+                        "wenjin.code-check.judge0.api-key");
         assertThat(registry.all()).allSatisfy(d -> {
             assertThat(d.label()).isNotBlank();
             assertThat(d.description()).isNotBlank();
@@ -89,7 +95,8 @@ class ConfigRegistryTest {
     @Test
     @DisplayName("每个 key 的 reader / applier 指向同一个 bean 字段：写入合法值后读回相同")
     void readerApplier_roundTrip() {
-        ConfigBeans beans = new ConfigBeans(new AiProperties(), new FeatureFlagsProperties(), new LimitsProperties());
+        ConfigBeans beans = new ConfigBeans(new AiProperties(), new FeatureFlagsProperties(), new LimitsProperties(),
+                new CodeCheckProperties());
         for (ConfigKeyDef def : registry.all()) {
             Object sample = sample(def);
             def.apply(beans, sample);
@@ -99,6 +106,8 @@ class ConfigRegistryTest {
         assertThat(beans.ai().getVision().getModel()).isEqualTo("sample-wenjin.ai.vision.model");
         assertThat(beans.features().isCompanionLlmEnabled()).isFalse();
         assertThat(beans.limits().getCompanion().getMaxRecentMessages()).isEqualTo(1);
+        assertThat(beans.features().isCodeCheckEnabled()).isFalse();
+        assertThat(beans.codeCheck().getJudge0().getApiKey()).isEqualTo("sk-sample-wenjin.code-check.judge0.api-key");
     }
 
     @Test
@@ -109,7 +118,8 @@ class ConfigRegistryTest {
         assertVolatile(AiProperties.Embedding.class, "enabled", "baseUrl", "apiKey", "model", "dimension", "batchSize");
         assertVolatile(FeatureFlagsProperties.class, "fixedDiagnosticEnabled", "graphReconcileEnabled",
                 "aiJobDispatchEnabled", "agentTraceEnabled", "memoryEnabled", "ragEnabled", "reflectionEnabled",
-                "companionLlmEnabled", "planEnabled", "multiAgentEnabled");
+                "companionLlmEnabled", "planEnabled", "multiAgentEnabled", "proactiveEnabled", "codeCheckEnabled");
+        assertVolatile(CodeCheckProperties.Judge0.class, "baseUrl", "apiKey");
         assertVolatile(LimitsProperties.Companion.class, "maxInputChars", "maxAiOutputChars",
                 "maxContextChars", "maxRecentMessages");
     }

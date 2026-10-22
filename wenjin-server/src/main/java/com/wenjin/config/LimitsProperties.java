@@ -22,6 +22,7 @@ public class LimitsProperties {
     private final Plan plan = new Plan();
     private final Supervisor supervisor = new Supervisor();
     private final Proactive proactive = new Proactive();
+    private final Code code = new Code();
 
     /**
      * 伴侣会话预算（wenjin.limits.companion.*）。前四项每次请求现读，可由管理后台「系统配置」运行时改写，
@@ -202,5 +203,43 @@ public class LimitsProperties {
         private int errorBurstThreshold = 2;
         /** 错题爆发的回看窗口（小时） */
         private int errorBurstWindowHours = 24;
+    }
+
+    /**
+     * 代码执行沙箱限额（wenjin.limits.code.*，方向 6）。每次执行现读（{@link #maxConcurrent} 除外：
+     * 信号量在启动时按它创建）。
+     */
+    @Data
+    public static class Code {
+        /** 源码最大字符数 */
+        private int sourceMaxChars = 10_000;
+        /** 单题测试用例数上限（超出拒绝判分，不做部分判分） */
+        private int maxCases = 20;
+        /** 容器内 javac 墙钟上限（秒） */
+        private int compileTimeoutSeconds = 15;
+        /** 每个用例的运行墙钟上限（秒，含 JVM 启动） */
+        private int runTimeoutSeconds = 3;
+        /** 容器内存上限（MB；swap 同值即禁用 swap；/tmp tmpfs 也计入） */
+        private int memoryMb = 256;
+        /** javac / java 的 -Xmx（MB） */
+        private int jvmHeapMb = 128;
+        /** 容器 CPU 配额（核） */
+        private double cpus = 1.0;
+        /** 容器进程/线程数上限（防 fork / 线程炸弹） */
+        private int pids = 64;
+        /** 每个用例 stdout / stderr 及编译输出在容器内截断的字节数；超出判 RESOURCE_LIMIT */
+        private int outputMaxBytes = 65_536;
+        /** 结果里 stdout / stderr / 用例预览的字符数 */
+        private int outputPreviewChars = 500;
+        /** 结果里编译错误的字符数 */
+        private int compileErrorChars = 2000;
+        /** 全局并发执行数（信号量，启动时决定） */
+        private int maxConcurrent = 2;
+        /** 每学生每小时（滑动窗口）执行次数上限；≤0 不限 */
+        private int perStudentPerHour = 30;
+        /** 等待并发许可的秒数；超时返回 UNAVAILABLE（请稍后再试） */
+        private int queueWaitSeconds = 10;
+        /** 自由运行的标准输入字符上限 */
+        private int stdinMaxChars = 65_536;
     }
 }

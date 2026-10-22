@@ -1,6 +1,7 @@
 package com.wenjin;
 
 import com.wenjin.config.AiProperties;
+import com.wenjin.config.CodeCheckProperties;
 import com.wenjin.config.CompanionToolProperties;
 import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.config.LimitsProperties;
@@ -17,6 +18,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @MapperScan("com.wenjin.mapper")
 @EnableConfigurationProperties({
         AiProperties.class,
+        CodeCheckProperties.class,
         CompanionToolProperties.class,
         FeatureFlagsProperties.class,
         LimitsProperties.class
