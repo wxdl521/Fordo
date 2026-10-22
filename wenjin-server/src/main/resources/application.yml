@@ -154,6 +154,12 @@ wenjin:
       hint-cooldown-hours: 20                    # 同类型提示冷却小时数
       error-burst-threshold: 2                   # 单次练习错题数 >= 此值触发复盘动作/提示
       error-burst-window-hours: 24               # 错题爆发回看窗口
+    teacher-assistant:                           # 方向 7 教师 AI 助教限额（见 DEPLOYMENT.md「教师 AI 助教」）
+      max-rounds: 4                              # 可调用工具的轮数（其后至多一轮总结）
+      max-tool-calls: 8                          # 每次回答最多工具调用次数
+      max-output-chars: 8000                     # 单轮回复字符上限
+      max-input-chars: 2000                      # 老师单条消息字符上限
+      list-max-rows: 20                          # 工具名单 / 表格卡片最大行数
     code:                                        # 方向 6 代码执行沙箱限额（见 DEPLOYMENT.md「代码执行沙箱」）
       source-max-chars: 10000                    # 源码字符上限
       max-cases: 20                              # 单题用例数上限（超出拒绝判分）
@@ -189,6 +195,7 @@ wenjin:
     multi-agent-enabled: false                   # M11 多智能体周报/抽查（默认关；关则零调度、报告 API 404）
     proactive-enabled: true                      # 方向 4 主动陪伴（opener/提示条/小红点；关则接口 404）
     code-check-enabled: true                     # 方向 6 编程题判分沙箱（关或沙箱不可用 → UNAVAILABLE）
+    teacher-assistant-enabled: true              # 方向 7 教师 AI 助教（关则 /api/teacher/assistant/** 404）
   code-check:                                    # 方向 6 沙箱后端（启动时选择，不可热切换）
     backend: ${WENJIN_CODE_CHECK_BACKEND:docker} # docker | judge0 | none
     docker:

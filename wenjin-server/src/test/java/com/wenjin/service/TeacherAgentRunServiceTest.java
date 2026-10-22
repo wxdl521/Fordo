@@ -85,11 +85,10 @@ class TeacherAgentRunServiceTest {
         service.listRuns(1L, 55L, 1, 10);
 
         verify(courseAccessService).assertManageCourse(1L);
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<LambdaQueryWrapper<AgentRun>> captor =
-                ArgumentCaptor.forClass(LambdaQueryWrapper.class);
-        verify(agentRunMapper).selectCount(captor.capture());
-        // wrapper 已构建；无法直接读内部条件，至少确认未拉 list（total=0）
+        var w = capturedCountWrapper();
+        assertThat(w.getSqlSegment()).contains("student_id =");
+        assertThat(w.getParamNameValuePairs().values()).contains(55L);
+        // total=0 时不拉 list
         verify(agentRunMapper, never()).selectList(any());
         verify(agentStepMapper, never()).countStepsByRunIds(any());
     }
@@ -227,5 +226,75 @@ class TeacherAgentRunServiceTest {
         step.setTokensOut(2);
         step.setCreatedAt(LocalDateTime.of(2026, 7, 17, 12, 0, seq));
         return step;
+    }
+
+    // ── 方向 7：kind 过滤，默认排除 TEACHER_CHAT ──
+
+    @SuppressWarnings("unchecked")
+    private com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<AgentRun> capturedCountWrapper() {
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<AgentRun>> captor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.query.QueryWrapper.class);
+        verify(agentRunMapper).selectCount(captor.capture());
+        captor.getValue().getSqlSegment(); // 参数表在生成 SQL 片段时填充
+        return captor.getValue();
+    }
+
+    @Test
+    @DisplayName("默认（不传 kind）排除 TEACHER_CHAT")
+    void listRuns_defaultExcludesTeacherChat() {
+        when(agentRunMapper.selectCount(any())).thenReturn(0L);
+
+        service.listRuns(1L, null, null, 1, 20);
+
+        var w = capturedCountWrapper();
+        assertThat(w.getSqlSegment()).contains("kind <>");
+        assertThat(w.getParamNameValuePairs().values()).contains("TEACHER_CHAT");
+    }
+
+    @Test
+    @DisplayName("kind=COMPANION_CHAT：精确过滤")
+    void listRuns_kindFilter() {
+        when(agentRunMapper.selectCount(any())).thenReturn(0L);
+
+        service.listRuns(1L, null, "COMPANION_CHAT", 1, 20);
+
+        var w = capturedCountWrapper();
+        assertThat(w.getSqlSegment()).contains("kind =").doesNotContain("kind <>");
+        assertThat(w.getParamNameValuePairs().values()).contains("COMPANION_CHAT");
+    }
+
+    @Test
+    @DisplayName("kind=TEACHER_CHAT：只看自己的助教轨迹（student_id 列 = 当前老师）")
+    void listRuns_teacherChatOnlyOwn() {
+        when(agentRunMapper.selectCount(any())).thenReturn(0L);
+        com.wenjin.config.CurrentUser.set(new com.wenjin.security.CurrentPrincipal(9L, com.wenjin.security.UserRole.TEACHER));
+        try {
+            service.listRuns(1L, 55L, "TEACHER_CHAT", 1, 20);
+        } finally {
+            com.wenjin.config.CurrentUser.clear();
+        }
+
+        var w = capturedCountWrapper();
+        assertThat(w.getParamNameValuePairs().values()).contains("TEACHER_CHAT", 9L).doesNotContain(55L);
+    }
+
+    @Test
+    @DisplayName("listSteps：他人的 TEACHER_CHAT run → 404（即便课程可管理）")
+    void listSteps_foreignTeacherChat404() {
+        AgentRun run = sampleRun(11L, 1L, 100L);
+        run.setKind("TEACHER_CHAT");
+        when(agentRunMapper.selectById(11L)).thenReturn(run);
+        com.wenjin.config.CurrentUser.set(new com.wenjin.security.CurrentPrincipal(9L, com.wenjin.security.UserRole.TEACHER));
+        try {
+            assertThatThrownBy(() -> service.listSteps(11L))
+                    .isInstanceOf(BusinessException.class)
+                    .extracting("code")
+                    .isEqualTo(ResultCode.NOT_FOUND.getCode());
+            run.setStudentId(9L);
+            when(agentStepMapper.selectList(any())).thenReturn(List.of());
+            assertThat(service.listSteps(11L)).isEmpty();
+        } finally {
+            com.wenjin.config.CurrentUser.clear();
+        }
     }
 }

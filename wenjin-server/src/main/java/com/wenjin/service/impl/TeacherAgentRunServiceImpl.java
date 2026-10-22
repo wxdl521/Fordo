@@ -1,8 +1,10 @@
 package com.wenjin.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.wenjin.common.BusinessException;
 import com.wenjin.common.ResultCode;
+import com.wenjin.config.CurrentUser;
 import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.dto.AgentRunPageVO;
 import com.wenjin.dto.AgentRunVO;
@@ -47,8 +49,16 @@ public class TeacherAgentRunServiceImpl implements TeacherAgentRunService {
         this.featureFlags = featureFlags;
     }
 
+    /** 教师 AI 助教轨迹 kind；agent_run.student_id 列存发起会话的老师 id。 */
+    public static final String KIND_TEACHER_CHAT = "TEACHER_CHAT";
+
     @Override
     public AgentRunPageVO listRuns(Long courseId, Long studentId, int page, int size) {
+        return listRuns(courseId, studentId, null, page, size);
+    }
+
+    @Override
+    public AgentRunPageVO listRuns(Long courseId, Long studentId, String kind, int page, int size) {
         assertTraceEnabled();
         if (courseId == null || courseId <= 0) {
             throw new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage());
@@ -59,16 +69,19 @@ public class TeacherAgentRunServiceImpl implements TeacherAgentRunService {
         int safeSize = clampSize(size);
         int offset = (safePage - 1) * safeSize;
 
-        LambdaQueryWrapper<AgentRun> countQ = baseListWrapper(courseId, studentId);
+        String kindFilter = kind == null || kind.isBlank() ? null : kind.trim();
+        Long ownerId = KIND_TEACHER_CHAT.equals(kindFilter) ? CurrentUser.require().userId() : null;
+
+        QueryWrapper<AgentRun> countQ = baseListWrapper(courseId, studentId, kindFilter, ownerId);
         long total = agentRunMapper.selectCount(countQ);
 
         List<AgentRun> runs;
         if (total == 0 || offset >= total) {
             runs = Collections.emptyList();
         } else {
-            LambdaQueryWrapper<AgentRun> listQ = baseListWrapper(courseId, studentId)
-                    .orderByDesc(AgentRun::getCreatedAt)
-                    .orderByDesc(AgentRun::getId)
+            QueryWrapper<AgentRun> listQ = baseListWrapper(courseId, studentId, kindFilter, ownerId)
+                    .orderByDesc("created_at")
+                    .orderByDesc("id")
                     .last("LIMIT " + offset + ", " + safeSize);
             runs = agentRunMapper.selectList(listQ);
         }
@@ -99,6 +112,11 @@ public class TeacherAgentRunServiceImpl implements TeacherAgentRunService {
         }
         // 归属：run 所属课程须可管理；跨课程统一 404
         courseAccessService.assertManageCourse(run.getCourseId());
+        // 助教轨迹只给发起的老师本人看（ADMIN 同样只看自己的）
+        if (KIND_TEACHER_CHAT.equals(run.getKind())
+                && !java.util.Objects.equals(run.getStudentId(), CurrentUser.require().userId())) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "轨迹不存在");
+        }
 
         List<AgentStep> steps = agentStepMapper.selectList(new LambdaQueryWrapper<AgentStep>()
                 .eq(AgentStep::getRunId, runId)
@@ -123,11 +141,21 @@ public class TeacherAgentRunServiceImpl implements TeacherAgentRunService {
         return Math.min(size, MAX_PAGE_SIZE);
     }
 
-    private static LambdaQueryWrapper<AgentRun> baseListWrapper(Long courseId, Long studentId) {
-        LambdaQueryWrapper<AgentRun> q = new LambdaQueryWrapper<AgentRun>()
-                .eq(AgentRun::getCourseId, courseId);
-        if (studentId != null && studentId > 0) {
-            q.eq(AgentRun::getStudentId, studentId);
+    /**
+     * @param kind    null = 排除 TEACHER_CHAT；否则精确匹配
+     * @param ownerId kind=TEACHER_CHAT 时的当前用户 id（覆盖 studentId 过滤）
+     */
+    private static QueryWrapper<AgentRun> baseListWrapper(Long courseId, Long studentId, String kind, Long ownerId) {
+        QueryWrapper<AgentRun> q = new QueryWrapper<AgentRun>().eq("course_id", courseId);
+        if (kind == null) {
+            q.ne("kind", KIND_TEACHER_CHAT);
+        } else {
+            q.eq("kind", kind);
+        }
+        if (ownerId != null) {
+            q.eq("student_id", ownerId);
+        } else if (studentId != null && studentId > 0) {
+            q.eq("student_id", studentId);
         }
         return q;
     }

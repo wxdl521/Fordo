@@ -138,6 +138,9 @@ public class ConfigRegistry {
         feature(list, "code-check-enabled", "编程题判分沙箱",
                 "关闭或沙箱后端不可用时编程题不判分（不写作答记录）、伴侣 run_code_check 下架",
                 FeatureFlagsProperties::isCodeCheckEnabled, FeatureFlagsProperties::setCodeCheckEnabled);
+        feature(list, "teacher-assistant-enabled", "教师 AI 助教",
+                "关闭时教师端「AI 助教」接口返回 404（只读学情问答，不影响学生伴侣）",
+                FeatureFlagsProperties::isTeacherAssistantEnabled, FeatureFlagsProperties::setTeacherAssistantEnabled);
 
         // ── 限额（wenjin.limits.companion.*）──
         list.add(ConfigKeyDef.integer("wenjin.limits.companion.max-input-chars", GROUP_LIMITS, "单条输入上限（字）",

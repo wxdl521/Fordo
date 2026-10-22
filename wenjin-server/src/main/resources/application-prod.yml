@@ -34,6 +34,7 @@ wenjin:
     proactive-enabled: ${WENJIN_FEATURE_PROACTIVE:false}
     # 方向 6：开启前须按 DEPLOYMENT.md「代码执行沙箱」准备 docker / Judge0（docker 组 ≈ root）
     code-check-enabled: ${WENJIN_FEATURE_CODE_CHECK:false}
+    teacher-assistant-enabled: ${WENJIN_FEATURE_TEACHER_ASSISTANT:false}
   limits:
     rag:
       # 生产禁止离线哈希嵌入：向量检索只用真实嵌入模型（wenjin.ai.embedding.*），否则退回纯全文
