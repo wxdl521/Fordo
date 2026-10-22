@@ -57,6 +57,9 @@ describe('NodePractice CODE question', () => {
     await ta.setValue(STARTER + '\n// edited')
     await w.find('.qa-btn-next').trigger('click')
     await flushPromises()
+    // 编程题同步判分：提交请求的超时按编程题数放宽（1 道 = 15s + 60s），不再用默认 15s
+    expect(mocks.submitPractice.mock.calls[0][2].timeout).toBe(75000)
+    expect(mocks.submitPractice.mock.calls[0][2].signal).toBeTruthy()
     const payload = JSON.stringify(mocks.submitPractice.mock.calls[0][1])
     expect(payload).toContain('// edited')
     expect(payload).toContain('"questionId":77')

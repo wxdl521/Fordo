@@ -319,7 +319,7 @@ import { fetchStudentChunk } from '../api/student.js'
 import { useStudentCourse } from '../composables/useStudentCourse.js'
 import { useAutoReview } from '../composables/useAutoReview.js'
 import { buildCompanionChatPayload, readCompanionNodeCode } from '../utils/companionContext.js'
-import { isCodeType } from '../utils/codeResult.js'
+import { codeAnswerCount, isCodeType, practiceSubmitTimeoutMs } from '../utils/codeResult.js'
 import { createDebouncedPersist } from '../utils/companionPersistence.js'
 import { createLatestRequest } from '../utils/latestRequest.js'
 import {
@@ -657,6 +657,9 @@ async function submitPracticeMessage(message) {
   try {
     const result = await submitPractice(message.card.sessionId, {
       answers
+    }, {
+      // 编程题在提交时同步判分：按编程题数放宽超时（默认 15s 不够）
+      timeout: practiceSubmitTimeoutMs(codeAnswerCount(message.card.questions, answers))
     })
     message.submitResult = result
     message.phase = 'result'

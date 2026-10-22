@@ -198,7 +198,7 @@ import { useSessionStore } from '../store/session.js'
 import { createLatestRequest } from '../utils/latestRequest.js'
 import QuestionAnswerCard from '../components/QuestionAnswerCard.vue'
 import CodeResultView from '../components/CodeResultView.vue'
-import { codeQuestionFields, isCodeType } from '../utils/codeResult.js'
+import { codeAnswerCount, codeQuestionFields, isCodeType, practiceSubmitTimeoutMs } from '../utils/codeResult.js'
 
 // ─── 路由 & 用户 ─────────────────────────────────────────────────────────────
 const route = useRoute()
@@ -592,7 +592,11 @@ async function doSubmit(answers) {
   try {
     const vo = await submitPractice(context.sessionId, {
       answers: list
-    }, { signal: request.signal })
+    }, {
+      signal: request.signal,
+      // 编程题在提交时同步判分：按编程题数放宽超时（默认 15s 不够）
+      timeout: practiceSubmitTimeoutMs(codeAnswerCount(questions.value, list))
+    })
     if (!isCurrentSubmit(request, context)) return
     submitResult.value = vo
     itemCompleted.value = !!vo.itemCompleted
