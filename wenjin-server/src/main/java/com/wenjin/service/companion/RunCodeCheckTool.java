@@ -160,6 +160,42 @@ public class RunCodeCheckTool implements CompanionTool {
         }
     }
 
+    /** Fields of a result that are safe to log: no stdout/stderr/compile output/case contents/message. */
+    private static final List<String> LOG_SAFE_FIELDS = List.of(
+            "ok", "code", "retryable", "mode", "verdict", "passed", "total", "exitCode", "outputTruncated",
+            "hiddenFailed", "durationMs");
+
+    /**
+     * The audit log gets only structural fields of the result (verdict, counts, exit code, timing);
+     * student output, compile output, test-case previews and messages are dropped, failures are counted.
+     */
+    @Override
+    public String redactResultForLog(String resultContent) {
+        if (resultContent == null || resultContent.isBlank()) {
+            return resultContent;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(resultContent);
+            if (!(node instanceof com.fasterxml.jackson.databind.node.ObjectNode obj)) {
+                return redactedBlob(resultContent);
+            }
+            com.fasterxml.jackson.databind.node.ObjectNode out = objectMapper.createObjectNode();
+            for (String key : LOG_SAFE_FIELDS) {
+                JsonNode v = obj.get(key);
+                if (v != null && v.isValueNode()) {
+                    out.set(key, v);
+                }
+            }
+            JsonNode failures = obj.get("failures");
+            if (failures != null && failures.isArray()) {
+                out.put("failures", failures.size());
+            }
+            return objectMapper.writeValueAsString(out);
+        } catch (JsonProcessingException e) {
+            return redactedBlob(resultContent);
+        }
+    }
+
     private static String redactedBlob(String raw) {
         return "{\"redacted\":\"" + redactedMarker(raw).replace("\"", "") + "\"}";
     }

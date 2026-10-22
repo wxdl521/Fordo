@@ -408,6 +408,51 @@ class RunCodeCheckToolTest {
     }
 
     @Test
+    void governorAuditLogNeverPrintsStudentOutputOrCaseContents() throws Exception {
+        List<CaseResult> cases = List.of(
+                new CaseResult(1, false, false, Verdict.WRONG_ANSWER, "STDIN_MARK", "EXPECTED_MARK", "ACTUAL_MARK", 5));
+        when(service.judge(anyLong(), anyLong(), anyString())).thenReturn(
+                new CodeJudgeResult(Verdict.WRONG_ANSWER, 0, 1, "COMPILE_MARK", cases, 20L, "MESSAGE_MARK"));
+        when(service.run(anyLong(), anyString(), anyString())).thenReturn(
+                run(Verdict.RUNTIME_ERROR, "STDOUT_MARK", "STDERR_MARK", null));
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(ToolGovernor.class);
+        var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            ToolGovernor governor = new ToolGovernor(List.of(tool), mapper, new CompanionToolProperties(),
+                    new LimitsProperties());
+            governor.execute(new ToolContext(7L, 1L), new CompanionAiClient.ToolCall("c1", "run_code_check",
+                    "{\"code\":\"class Main{}\",\"questionId\":5}"), new ToolExecutionState(6));
+            governor.execute(new ToolContext(7L, 1L), new CompanionAiClient.ToolCall("c2", "run_code_check",
+                    "{\"code\":\"class Main{}\"}"), new ToolExecutionState(6));
+        } finally {
+            logger.detachAppender(appender);
+        }
+        String all = appender.list.stream().map(e -> e.getFormattedMessage()).reduce("", String::concat);
+        assertThat(all).contains("WRONG_ANSWER").contains("RUNTIME_ERROR").contains("\"passed\":0");
+        assertThat(all).doesNotContain("STDIN_MARK", "EXPECTED_MARK", "ACTUAL_MARK", "COMPILE_MARK", "MESSAGE_MARK",
+                "STDOUT_MARK", "STDERR_MARK");
+    }
+
+    @Test
+    void redactResultForLogKeepsOnlyStructuralFields() throws Exception {
+        String content = "{\"ok\":true,\"mode\":\"RUN\",\"verdict\":\"ACCEPTED\",\"stdout\":\"secret\","
+                + "\"exitCode\":0,\"durationMs\":12,\"note\":\"x\"}";
+        JsonNode r = mapper.readTree(tool.redactResultForLog(content));
+        assertThat(r.path("verdict").asText()).isEqualTo("ACCEPTED");
+        assertThat(r.path("exitCode").asInt()).isZero();
+        assertThat(r.has("stdout")).isFalse();
+        assertThat(r.has("note")).isFalse();
+        // 失败信封原样保留（只有错误码与固定文案）；无法解析的内容整体替换
+        String envelope = "{\"ok\":false,\"code\":\"TOOL_BAD_ARGS\",\"message\":\"m\",\"retryable\":false}";
+        assertThat(mapper.readTree(tool.redactResultForLog(envelope)).path("code").asText()).isEqualTo("TOOL_BAD_ARGS");
+        assertThat(tool.redactResultForLog("not json STDOUT")).doesNotContain("STDOUT");
+        assertThat(tool.redactResultForLog(null)).isNull();
+    }
+
+    @Test
     void governorRedactDelegatesAndPassesUnknownToolsThrough() {
         ToolGovernor governor = new ToolGovernor(List.of(tool), mapper, new CompanionToolProperties(),
                 new LimitsProperties());

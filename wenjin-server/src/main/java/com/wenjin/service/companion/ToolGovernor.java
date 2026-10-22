@@ -561,6 +561,22 @@ public class ToolGovernor {
         }
     }
 
+    /**
+     * Result content as it may be printed in the audit log: the tool's own
+     * {@link CompanionTool#redactResultForLog} applied; unknown tools pass through unchanged.
+     */
+    public String redactResultForLog(String toolName, String content) {
+        CompanionTool tool = toolName == null ? null : registry.get(toolName);
+        if (tool == null) {
+            return content;
+        }
+        try {
+            return tool.redactResultForLog(content);
+        } catch (RuntimeException e) {
+            return "{\"redacted\":true}";
+        }
+    }
+
     private void audit(ToolContext ctx,
                        String toolName,
                        String argsJson,
@@ -577,7 +593,7 @@ public class ToolGovernor {
                 elapsedMs,
                 result.ok(),
                 result.cached(),
-                summarize(result.content(), 160));
+                summarize(redactResultForLog(toolName, result.content()), 160));
     }
 
     private String summarize(String value, int maxLength) {

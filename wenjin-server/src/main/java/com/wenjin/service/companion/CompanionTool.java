@@ -64,6 +64,15 @@ public interface CompanionTool {
         return argumentsJson;
     }
 
+    /**
+     * Privacy hook for the governor audit log: returns the tool <b>result</b> in a form safe to print.
+     * Default is the identity; tools whose results carry student-authored output (e.g. program stdout,
+     * test-case contents) override it. The model and the agent trace still receive the full result.
+     */
+    default String redactResultForLog(String resultContent) {
+        return resultContent;
+    }
+
     String execute(ToolContext ctx, JsonNode args) throws ToolException;
 
     default ToolExecutionResult executeForGovernor(String toolCallId,
