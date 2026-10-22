@@ -7,7 +7,7 @@
       :disabled="disabled"
       :aria-label="ariaLabelledby ? undefined : ariaLabel"
       :aria-labelledby="ariaLabelledby || undefined"
-      aria-describedby="cae-hint"
+      :aria-describedby="hintId"
       spellcheck="false"
       autocapitalize="off"
       autocomplete="off"
@@ -16,13 +16,21 @@
       @input="$emit('update:modelValue', $event.target.value)"
       @keydown="onKeydown"
     ></textarea>
-    <div id="cae-hint" class="cae-hint">Tab 插入缩进；按 Esc 后再按 Tab 可离开编辑框。</div>
+    <div :id="hintId" class="cae-hint">Tab 插入缩进；按 Esc 后再按 Tab 可离开编辑框。</div>
   </div>
 </template>
+
+<script>
+// 每个实例一个唯一的提示 id（同页可能有多个编辑器：练习卷多道编程题、伴侣对话里多张卡）。
+// Vue 3.4 没有 useId，用模块级计数器。
+let instanceSeq = 0
+</script>
 
 <script setup>
 import { ref } from 'vue'
 import { insertAtSelection, newlineWithIndent } from '../utils/codeResult.js'
+
+const hintId = `cae-hint-${++instanceSeq}`
 
 const props = defineProps({
   modelValue: { type: String, default: '' },

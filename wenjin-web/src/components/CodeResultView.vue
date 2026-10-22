@@ -1,7 +1,7 @@
 <template>
   <div class="crv" data-testid="code-result">
     <div v-if="ungraded" class="crv-ungraded" role="status" data-testid="code-ungraded">
-      未判分：{{ message || '判题服务暂不可用，本题不计入成绩，请稍后再试。' }}
+      未判分：{{ message || '判题服务暂不可用，本题未计分，可重新开始一次练习。' }}
     </div>
     <template v-else-if="result">
       <div class="crv-head">

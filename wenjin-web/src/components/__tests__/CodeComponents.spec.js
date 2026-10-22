@@ -22,6 +22,17 @@ describe('codeResult utils', () => {
 })
 
 describe('CodeAnswerEditor', () => {
+  it('gives every instance its own hint id and points aria-describedby at it', () => {
+    const a = mount(CodeAnswerEditor, { props: { modelValue: '' } })
+    const b = mount(CodeAnswerEditor, { props: { modelValue: '' } })
+    const idA = a.find('.cae-hint').attributes('id')
+    const idB = b.find('.cae-hint').attributes('id')
+    expect(idA).toBeTruthy()
+    expect(idB).toBeTruthy()
+    expect(idA).not.toBe(idB)
+    expect(a.find('textarea').attributes('aria-describedby')).toBe(idA)
+    expect(b.find('textarea').attributes('aria-describedby')).toBe(idB)
+  })
   it('has an accessible label and Tab inserts four spaces', async () => {
     const w = mount(CodeAnswerEditor, { props: { modelValue: 'x' } })
     const ta = w.find('textarea')
@@ -114,5 +125,15 @@ describe('TeacherCodeEditor', () => {
     await w.get('[data-testid="tce-edit"]').trigger('click')
     await w.get('form').trigger('submit')
     expect(w.get('[role="alert"]').text()).toContain('至少')
+  })
+})
+
+describe('CodeResultView ungraded fallback', () => {
+  it('does not tell the student to retry later (the session is closed)', () => {
+    const w = mount(CodeResultView, { props: { ungraded: true } })
+    const text = w.find('[data-testid="code-ungraded"]').text()
+    expect(text).toContain('本题未计分')
+    expect(text).toContain('重新开始一次练习')
+    expect(text).not.toContain('稍后再试')
   })
 })
