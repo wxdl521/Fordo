@@ -111,6 +111,7 @@ describe('API endpoint contracts', () => {
         'fetchHintsCount',
         'dismissHint',
         'dispatchChatStreamEvent',
+        'streamSse',
         'chatStream'
       ]],
       [student, [

@@ -94,7 +94,7 @@ export function submitProbe(sessionId, payload, config) {
 
 /**
  * Dispatch a parsed companion SSE event to optional callbacks.
- * Supported events: `meta`, `tool_start`, `tool_result`, `practice_card`, `probe_card`, `code_result`, `token`, `citations`
+ * Supported events: `meta`, `insight_card` (teacher assistant), `tool_start`, `tool_result`, `practice_card`, `probe_card`, `code_result`, `token`, `citations`
  * ({ valid: number[], invalid: number[] }, sent once before `done` when the reply cites 资料 #N), `done`, `error`.
  *
  * @param {string} eventType
@@ -133,6 +133,9 @@ export function dispatchChatStreamEvent(eventType, payload, callbacks = {}) {
     case 'code_result':
       callbacks.onCodeResult?.(payload)
       return { handled: true, done: false }
+    case 'insight_card':
+      callbacks.onInsightCard?.(payload)
+      return { handled: true, done: false }
     case 'citations':
       callbacks.onCitations?.(payload)
       return { handled: true, done: false }
@@ -151,24 +154,14 @@ export function dispatchChatStreamEvent(eventType, payload, callbacks = {}) {
 }
 
 /**
- * 流式对话接口（SSE）
- * @param {{ courseId: number, conversationId?: number, nodeCode?: string, message: string }} payload
- * @param {{
- *   onMeta?: (event: any) => void,
- *   onToken?: (token: string) => void,
- *   onDone?: (event?: any) => void,
- *   onError?: (message: string) => void,
- *   onToolStart?: (event: any) => void,
- *   onToolResult?: (event: any) => void,
- *   onPracticeCard?: (event: any) => void,
- *   onProbeCard?: (event: any) => void,
- *   onCodeResult?: (event: any) => void,
- *   onCitations?: (event: { valid: number[], invalid: number[] }) => void
- * }} callbacks
+ * 通用 SSE-over-fetch 流式请求（学生伴侣与教师助教共用）。
+ * @param {string} url 完整请求路径，如 `/api/companion/chat`
+ * @param {Record<string, any>} payload JSON 请求体
+ * @param {object} callbacks 见 dispatchChatStreamEvent
  * @param {{ signal?: AbortSignal }} [options]
  * @returns {Promise<void>}
  */
-export async function chatStream(payload, callbacks = {}, options = {}) {
+export async function streamSse(url, payload, callbacks = {}, options = {}) {
   const { signal } = options
   try {
     // SSE 使用原生 fetch，绕过 http.js 的 axios 拦截器，需要手动补 Authorization。
@@ -179,13 +172,10 @@ export async function chatStream(payload, callbacks = {}, options = {}) {
     const token = localStorage.getItem('wj_token')
     if (token) headers.Authorization = `Bearer ${token}`
 
-    const body = { ...payload }
-    delete body.studentId
-
-    const response = await fetch('/api/companion/chat', {
+    const response = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
       signal
     })
 
@@ -193,7 +183,9 @@ export async function chatStream(payload, callbacks = {}, options = {}) {
       clearSessionAndRedirect(token)
     }
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
+      const httpErr = new Error(`HTTP ${response.status}`)
+      httpErr.httpStatus = response.status
+      throw httpErr
     }
 
     const reader = response.body.getReader()
@@ -254,4 +246,17 @@ export async function chatStream(payload, callbacks = {}, options = {}) {
     callbacks.onError?.(error.message || '网络错误')
     throw error
   }
+}
+
+/**
+ * 学生伴侣流式对话接口（SSE）
+ * @param {{ courseId: number, conversationId?: number, nodeCode?: string, message: string }} payload
+ * @param {object} callbacks 见 dispatchChatStreamEvent
+ * @param {{ signal?: AbortSignal }} [options]
+ * @returns {Promise<void>}
+ */
+export function chatStream(payload, callbacks = {}, options = {}) {
+  const body = { ...payload }
+  delete body.studentId
+  return streamSse('/api/companion/chat', body, callbacks, options)
 }
