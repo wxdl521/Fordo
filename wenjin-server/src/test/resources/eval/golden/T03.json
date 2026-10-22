@@ -1,0 +1,51 @@
+{
+  "scenario": "T03",
+  "format": 2,
+  "recordedAt": "2026-10-22T00:00:00Z",
+  "model": "synthetic",
+  "synthetic": true,
+  "turns": [
+    {
+      "rounds": [
+        {
+          "content": "",
+          "toolCalls": [
+            {
+              "name": "get_student_profile",
+              "arguments": {
+                "student": "王"
+              }
+            }
+          ],
+          "finishReason": "tool_calls"
+        },
+        {
+          "content": "班里有两位姓王的同学：王磊和王芳。请问您想了解的是哪一位？确认后我再查询 TA 的学习情况。",
+          "toolCalls": [],
+          "finishReason": "stop"
+        }
+      ]
+    },
+    {
+      "rounds": [
+        {
+          "content": "",
+          "toolCalls": [
+            {
+              "name": "get_student_profile",
+              "arguments": {
+                "student": "王磊"
+              }
+            }
+          ],
+          "finishReason": "tool_calls"
+        },
+        {
+          "content": "王磊最近的学习情况：平均有效掌握度约 48 分（已评估 3 个知识点），其中「数据流图」（35 分）和「用例图」（40 分）偏弱，「软件工程概述」（70 分）相对较好。近 14 天他做了 4 次练习，答对 3 次，正确率 75%；最近一次错题在「用例图」上，错因指向「需求获取」的概念混淆。建议针对用例图与需求获取的关系做一次针对性辅导。",
+          "toolCalls": [],
+          "finishReason": "stop"
+        }
+      ]
+    }
+  ]
+}

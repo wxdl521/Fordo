@@ -9,6 +9,7 @@ import com.wenjin.eval.fixture.DbEvalMasteryPort;
 import com.wenjin.eval.fixture.EvalFixture;
 import com.wenjin.eval.fixture.EvalWorldBuilder;
 import com.wenjin.eval.fixture.JdbcEvalMistakePort;
+import com.wenjin.eval.fixture.JdbcEvalRosterPort;
 import com.wenjin.eval.fixture.JdbcEvalSessionPort;
 import com.wenjin.eval.fixture.MapperEvalNodeLookup;
 import com.wenjin.eval.fixture.StoreEvalReviewQueuePort;
@@ -18,6 +19,7 @@ import com.wenjin.mapper.KgNodeMapper;
 import com.wenjin.mapper.MasterySnapshotMapper;
 import com.wenjin.mapper.StudentMasteryMapper;
 import com.wenjin.service.CompanionService;
+import com.wenjin.service.assistant.TeacherAssistantService;
 import com.wenjin.service.MasteryDecayCalculator;
 import com.wenjin.service.MasteryService;
 import com.wenjin.service.companion.ReviewScheduleStore;
@@ -69,7 +71,8 @@ public class EvalRuntimeConfiguration {
                 new StoreEvalReviewQueuePort(scheduleStore),
                 new JdbcEvalSessionPort(jdbc),
                 new MapperEvalNodeLookup(nodeMapper),
-                new JdbcEvalMistakePort(jdbc));
+                new JdbcEvalMistakePort(jdbc),
+                new JdbcEvalRosterPort(jdbc));
     }
 
     @Bean
@@ -82,15 +85,24 @@ public class EvalRuntimeConfiguration {
 
     @Bean
     @Lazy
+    public TeacherAssistantTurnRunner teacherAssistantTurnRunner(TeacherAssistantService assistantService,
+                                                                 JdbcTemplate jdbc,
+                                                                 EvalCompanionAiClient aiClient) {
+        return new TeacherAssistantTurnRunner(assistantService, new AgentTraceReader(jdbc), aiClient);
+    }
+
+    @Bean
+    @Lazy
     public EvalHarness evalHarness(ObjectProvider<EvalFixture> fixture,
-                                   ServiceCompanionTurnRunner turnRunner,
+                                   ServiceCompanionTurnRunner studentRunner,
+                                   TeacherAssistantTurnRunner teacherRunner,
                                    EvalCompanionAiClient aiClient,
                                    ObjectProvider<CompanionToolProperties> toolProperties,
                                    ObjectProvider<FeatureFlagsProperties> featureFlags,
                                    ObjectProvider<AiProperties> aiProperties,
                                    ObjectProvider<EvalProperties> evalProperties,
                                    ObjectProvider<JudgeAiClient> judgeAiClient) {
-        return new EvalHarness(fixture::getObject, turnRunner, aiClient,
+        return new EvalHarness(fixture::getObject, new ActorRoutingTurnRunner(studentRunner, teacherRunner), aiClient,
                 toolProperties.getIfAvailable(), featureFlags.getIfAvailable(), aiProperties.getIfAvailable(),
                 evalProperties.getIfAvailable(), judgeAiClient.getIfAvailable());
     }

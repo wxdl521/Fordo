@@ -3,6 +3,7 @@ package com.wenjin.eval.scenario;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 评测场景 JSON 文档（classpath {@code eval/scenarios/*.json} 为唯一事实源）。
@@ -21,12 +22,33 @@ public record EvalScenarioDocument(
         /** status=PENDING 时的原因，如 M9-reflection */
         String pendingReason,
         /** 可选：LIVE/REPLAY 故障注入（真模型下无法自然复现的场景，如降级、预算耗尽） */
-        LiveFaults liveFaults
+        LiveFaults liveFaults,
+        /** 可选：对话发起方，{@code student}（缺省，学习伴侣）或 {@code teacher}（教师 AI 助教） */
+        String actor
 ) {
-    /** 兼容旧调用方（无 liveFaults）。 */
+    public static final String ACTOR_STUDENT = "student";
+    public static final String ACTOR_TEACHER = "teacher";
+
+    /** 兼容旧调用方（无 liveFaults / actor）。 */
     public EvalScenarioDocument(String code, String title, Persona persona, List<ScriptTurn> script,
                                 HardAssertions hard, JudgeSpec judge, String status, String pendingReason) {
-        this(code, title, persona, script, hard, judge, status, pendingReason, null);
+        this(code, title, persona, script, hard, judge, status, pendingReason, null, null);
+    }
+
+    /** 兼容旧调用方（无 actor）。 */
+    public EvalScenarioDocument(String code, String title, Persona persona, List<ScriptTurn> script,
+                                HardAssertions hard, JudgeSpec judge, String status, String pendingReason,
+                                LiveFaults liveFaults) {
+        this(code, title, persona, script, hard, judge, status, pendingReason, liveFaults, null);
+    }
+
+    /** 对话发起方；缺省 student。 */
+    public String resolvedActor() {
+        return actor == null || actor.isBlank() ? ACTOR_STUDENT : actor.trim().toLowerCase(Locale.ROOT);
+    }
+
+    public boolean forTeacher() {
+        return ACTOR_TEACHER.equals(resolvedActor());
     }
 
     /**
@@ -41,18 +63,58 @@ public record EvalScenarioDocument(
     /**
      * @param mistakes 可选：近期错题（错因辅导场景）；夹具为每条在 {@code nodeCode} 的一道评测题上写入一次
      *                 错误作答，所选错误选项标注 {@code misconceptionNodeCode} 为误区节点。
+     * @param roster   可选，仅 {@code actor=teacher}：选课花名册（1–5 名）。教师场景下评测学生本身被移出选课，
+     *                 名册即全班。
      */
     public record Persona(
             List<MasteryOverride> masteryOverrides,
             List<String> reviewQueue,
             String note,
-            List<MistakeSeed> mistakes
+            List<MistakeSeed> mistakes,
+            List<RosterStudent> roster
     ) {
-        /** 兼容旧调用方（无 mistakes）。 */
+        /** 兼容旧调用方（无 roster）。 */
+        public Persona(List<MasteryOverride> masteryOverrides, List<String> reviewQueue, String note,
+                       List<MistakeSeed> mistakes) {
+            this(masteryOverrides, reviewQueue, note, mistakes, null);
+        }
+
+        /** 兼容旧调用方（无 mistakes / roster）。 */
         public Persona(List<MasteryOverride> masteryOverrides, List<String> reviewQueue, String note) {
-            this(masteryOverrides, reviewQueue, note, null);
+            this(masteryOverrides, reviewQueue, note, null, null);
         }
     }
+
+    /**
+     * 教师场景的花名册学生（确定性学情画像）。该生所有作答记录落在 {@code lastPracticeDaysAgo} 天前
+     * （缺省 1；0 = 刚刚），因此 &ge;14 天触发「久未练习」，&lt;7 天的错题计入「近期错题」。
+     *
+     * @param name                姓名（sys_user.real_name），名册内唯一
+     * @param masteryOverrides    各知识点掌握度（只用 {@code raw}；updated_at=现在，故有效分=raw；不允许 effective）
+     * @param mistakes            错题种子（语义同 {@link Persona#mistakes()}）；缺省无
+     * @param correctAnswers      额外的正确作答条数（落在第一个掌握度知识点的题上），缺省 0
+     * @param lastPracticeDaysAgo 作答发生在多少天前；缺省 1
+     * @param snapshots           历史掌握度快照（用于「近 7 天下降」）；缺省无
+     * @param otherCourse         true = 该学生只选了另一门课程（不属于本课程，不得出现在本课程的回答里）
+     * @param privateChat         该学生与学习伴侣的私密对话原文（教师不得读取），写入 companion_message 作隐私诱饵
+     */
+    public record RosterStudent(
+            String name,
+            List<MasteryOverride> masteryOverrides,
+            List<MistakeSeed> mistakes,
+            Integer correctAnswers,
+            Integer lastPracticeDaysAgo,
+            List<SnapshotSeed> snapshots,
+            Boolean otherCourse,
+            String privateChat
+    ) {}
+
+    /** 一条历史掌握度快照：{@code daysAgo} 天前该知识点分值为 {@code score}（0–1）。 */
+    public record SnapshotSeed(
+            String nodeCode,
+            Integer daysAgo,
+            Double score
+    ) {}
 
     /** 一道错题种子：在 nodeCode 的题上选错，所选干扰项指向 misconceptionNodeCode。 */
     public record MistakeSeed(
@@ -78,13 +140,25 @@ public record EvalScenarioDocument(
             /** true：trace 的 citation_check 步 invalid 必须为空（回复里的 资料 #N ⊆ 本 turn 可引用集合） */
             Boolean citationsValid,
             /** 最终回复不得包含的子串（如学生源码的整行：不回显源码）；逐项精确子串匹配 */
-            List<String> replyMustNotContain
+            List<String> replyMustNotContain,
+            /** 最终回复必须包含的子串（如教师场景里被点名的高风险学生）；逐项精确子串匹配 */
+            List<String> replyMustContain,
+            /** GUARD 步必须出现的拦截码（如 TOOL_NOT_ALLOWED），逐项各至少一个 */
+            List<String> guardCodesExpected
     ) {
+        /** 兼容旧调用方（无 replyMustContain / guardCodesExpected）。 */
+        public HardAssertions(List<String> mustCallTools, List<String> mustNotCallTools, Integer maxToolCalls,
+                              Boolean jsonContractValid, Boolean nodeCodesInWhitelist, Boolean degradedExpected,
+                              Boolean citationsValid, List<String> replyMustNotContain) {
+            this(mustCallTools, mustNotCallTools, maxToolCalls, jsonContractValid, nodeCodesInWhitelist,
+                    degradedExpected, citationsValid, replyMustNotContain, null, null);
+        }
+
         /** 兼容旧调用方（无 citationsValid / replyMustNotContain）。 */
         public HardAssertions(List<String> mustCallTools, List<String> mustNotCallTools, Integer maxToolCalls,
                               Boolean jsonContractValid, Boolean nodeCodesInWhitelist, Boolean degradedExpected) {
             this(mustCallTools, mustNotCallTools, maxToolCalls, jsonContractValid, nodeCodesInWhitelist,
-                    degradedExpected, null, null);
+                    degradedExpected, null, null, null, null);
         }
 
         /** 兼容旧调用方（无 replyMustNotContain）。 */
@@ -92,7 +166,7 @@ public record EvalScenarioDocument(
                               Boolean jsonContractValid, Boolean nodeCodesInWhitelist, Boolean degradedExpected,
                               Boolean citationsValid) {
             this(mustCallTools, mustNotCallTools, maxToolCalls, jsonContractValid, nodeCodesInWhitelist,
-                    degradedExpected, citationsValid, null);
+                    degradedExpected, citationsValid, null, null, null);
         }
     }
 

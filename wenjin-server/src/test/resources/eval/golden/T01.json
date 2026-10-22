@@ -1,0 +1,30 @@
+{
+  "scenario": "T01",
+  "format": 2,
+  "recordedAt": "2026-10-22T00:00:00Z",
+  "model": "synthetic",
+  "synthetic": true,
+  "turns": [
+    {
+      "rounds": [
+        {
+          "content": "",
+          "toolCalls": [
+            {
+              "name": "list_students_needing_attention",
+              "arguments": {
+                "limit": 10
+              }
+            }
+          ],
+          "finishReason": "tool_calls"
+        },
+        {
+          "content": "本周建议重点关注 3 位学生（全班 5 人，按关注分从高到低）：\n\n1. 赵强（关注分 55）：平均掌握度只有 25 分，低于薄弱线，而且已经两周多没有作答。建议优先联系他，先从前置的基础知识点补起。\n2. 周婷（关注分 50）：还没有任何诊断记录，也从未作答，需要确认她是否已经开始学习，并引导她完成入门诊断。\n3. 孙悦（关注分 28）：近 7 天「用例图」掌握度下降约 31 分，但整体掌握还可以（平均 65 分），可以看看是不是最近的练习出了问题，带她回顾一下用例图。\n\n李明、陈静目前没有触发关注条件。以上名单和原因都来自班级学情数据。",
+          "toolCalls": [],
+          "finishReason": "stop"
+        }
+      ]
+    }
+  ]
+}

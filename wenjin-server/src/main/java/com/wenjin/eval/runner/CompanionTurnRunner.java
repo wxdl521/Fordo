@@ -12,12 +12,39 @@ public interface CompanionTurnRunner {
 
     TurnResult runTurn(TurnRequest request);
 
+    /**
+     * @param studentId the acting user: the student for {@code actor=student}, the teacher for
+     *                  {@code actor=teacher} (see {@link #userId()})
+     * @param actor     {@code student} (learning companion) or {@code teacher} (teacher AI assistant)
+     */
     record TurnRequest(
             long studentId,
             long courseId,
             Long conversationId,
-            String message
-    ) {}
+            String message,
+            String actor
+    ) {
+        public static final String STUDENT = "student";
+        public static final String TEACHER = "teacher";
+
+        public TurnRequest {
+            actor = actor == null || actor.isBlank() ? STUDENT : actor;
+        }
+
+        /** Student turn (the default actor). */
+        public TurnRequest(long studentId, long courseId, Long conversationId, String message) {
+            this(studentId, courseId, conversationId, message, STUDENT);
+        }
+
+        /** The acting user id (student id or teacher id depending on {@link #actor()}). */
+        public long userId() {
+            return studentId;
+        }
+
+        public boolean isTeacher() {
+            return TEACHER.equals(actor);
+        }
+    }
 
     /**
      * @param ttftMs  time to first streamed token of this turn, null when unknown / nothing streamed

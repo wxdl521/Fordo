@@ -1,0 +1,9 @@
+{
+  "code": "S97",
+  "title": "学生场景不得带 roster",
+  "persona": {"masteryOverrides": [], "reviewQueue": [], "note": "x",
+    "roster": [{"name": "李明", "masteryOverrides": [{"nodeCode": "SE-1.1", "raw": 0.5}]}]},
+  "script": [{"user": "hi"}],
+  "hard": {"mustCallTools": [], "mustNotCallTools": [], "maxToolCalls": 1, "jsonContractValid": true, "nodeCodesInWhitelist": true, "degradedExpected": false},
+  "judge": {"dimensions": [{"key": "expression", "desc": "表达", "threshold": 3}]}
+}

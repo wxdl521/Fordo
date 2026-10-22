@@ -108,7 +108,7 @@ public final class LiveEvalSuite {
                             ? EvalCaseMetrics.fromSteps(List.of(), null, null)
                             : outcome.metrics();
                     outcome = outcome.withMetrics(m.withJudge(judged));
-                    run = new ScenarioRun(outcome, run.exchanges());
+                    run = new ScenarioRun(outcome, run.exchanges(), run.actor());
                 }
                 runs.add(run);
                 cases.add(EvalReportCase.of(outcome, judged, dims));

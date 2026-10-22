@@ -36,6 +36,24 @@ public final class AgentTraceReader {
                 Long.class, conversationId, afterRunId);
     }
 
+    /**
+     * Like {@link #maxRunId(long)} restricted to one run kind (e.g. {@code TEACHER_CHAT}): teacher and student
+     * conversations have independent id sequences, so a conversation id alone is ambiguous across kinds.
+     */
+    public long maxRunId(long conversationId, String kind) {
+        Long max = jdbc.queryForObject(
+                "SELECT COALESCE(MAX(id), 0) FROM agent_run WHERE conversation_id = ? AND kind = ?",
+                Long.class, conversationId, kind);
+        return max == null ? 0L : max;
+    }
+
+    /** Like {@link #runIdsAfter(long, long)} restricted to one run kind. */
+    public List<Long> runIdsAfter(long conversationId, long afterRunId, String kind) {
+        return jdbc.queryForList(
+                "SELECT id FROM agent_run WHERE conversation_id = ? AND id > ? AND kind = ? ORDER BY id",
+                Long.class, conversationId, afterRunId, kind);
+    }
+
     /** Steps of the given runs, ordered by run then seq. */
     public List<EvalStepView> steps(List<Long> runIds) {
         List<EvalStepView> out = new ArrayList<>();

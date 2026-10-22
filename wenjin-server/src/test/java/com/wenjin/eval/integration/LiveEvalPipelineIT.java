@@ -66,7 +66,7 @@ class LiveEvalPipelineIT extends EvalDbSupport {
                     List.of(), 1, new JudgeService(LiveEvalPipelineIT::fakeJudge), tempDir.resolve("eval-live")));
 
             EvalSuiteSummary summary = result.summary();
-            assertThat(result.cases()).hasSize(20);
+            assertThat(result.cases()).hasSize(24);
             assertThat(summary.overall().hardPassRate())
                     .as("failures: %s", result.cases().stream()
                             .filter(c -> !c.outcome().hardPass())
@@ -74,7 +74,7 @@ class LiveEvalPipelineIT extends EvalDbSupport {
                             .toList())
                     .isEqualTo(1.0);
             assertThat(summary.overall().toolSelectionAccuracy()).isEqualTo(1.0);
-            assertThat(summary.overall().judgeRuns()).isEqualTo(20);
+            assertThat(summary.overall().judgeRuns()).isEqualTo(24);
             assertThat(summary.overall().judgeThresholdPassRate()).isEqualTo(1.0);
             assertThat(summary.overall().ttftP50()).isNotNull();
             assertThat(summary.overall().avgTokensIn()).isNotNull();
@@ -88,7 +88,7 @@ class LiveEvalPipelineIT extends EvalDbSupport {
             assertThat(out.resolve("report.md")).exists();
             assertThat(out.resolve("calibration.csv")).exists();
             EvalSuiteSummary reread = EvalSuiteReportWriter.readJson(out.resolve("report.json"));
-            assertThat(reread.scenarios()).hasSize(20);
+            assertThat(reread.scenarios()).hasSize(24);
             assertThat(Files.readString(out.resolve("report.md"))).contains("S01", "S19");
 
             // RECORD: recorded goldens equal the scripted ones (S07: faults intercept both calls → 0 rounds)

@@ -1,0 +1,10 @@
+{
+  "code": "T97",
+  "title": "roster 姓名重复",
+  "actor": "teacher",
+  "persona": {"masteryOverrides": [], "reviewQueue": [], "note": "x",
+    "roster": [{"name": "李明"}, {"name": "李明"}]},
+  "script": [{"user": "hi"}],
+  "hard": {"mustCallTools": [], "mustNotCallTools": [], "maxToolCalls": 1, "jsonContractValid": true, "nodeCodesInWhitelist": true, "degradedExpected": false},
+  "judge": {"dimensions": [{"key": "expression", "desc": "表达", "threshold": 3}]}
+}

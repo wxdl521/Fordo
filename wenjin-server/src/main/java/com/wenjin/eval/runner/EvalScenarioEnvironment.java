@@ -1,5 +1,6 @@
 package com.wenjin.eval.runner;
 
+import com.wenjin.config.AiProperties;
 import com.wenjin.config.CompanionToolProperties;
 import com.wenjin.eval.golden.GoldenFile;
 import com.wenjin.eval.golden.GoldenRecorder;
@@ -55,6 +56,8 @@ public final class EvalScenarioEnvironment implements ScenarioLifecycle {
 
     private ReplayCompanionAiClient replay;
     private Integer savedMaxToolCalls;
+    private AiProperties aiProperties; // nullable
+    private Boolean savedAiEnabled;
 
     private EvalScenarioEnvironment(EvalMode mode,
                                     EvalCompanionAiClient client,
@@ -81,6 +84,17 @@ public final class EvalScenarioEnvironment implements ScenarioLifecycle {
         return new EvalScenarioEnvironment(EvalMode.LIVE, client, toolProperties, null, record);
     }
 
+    /**
+     * The teacher assistant additionally degrades when {@code wenjin.ai.enabled=false} (the student companion only
+     * honours the kill switch), and the eval ITs keep that flag off unless a real model is configured. During a
+     * {@code actor=teacher} scenario the flag is therefore switched on (and restored afterwards) so the replayed /
+     * stubbed model is actually consulted; the {@link EvalCompanionAiClient} never reaches the network in REPLAY.
+     */
+    public EvalScenarioEnvironment withAiProperties(AiProperties aiProperties) {
+        this.aiProperties = aiProperties;
+        return this;
+    }
+
     /** Golden files written by RECORD so far. */
     public synchronized List<Path> recordedFiles() {
         return List.copyOf(recordedFiles);
@@ -90,6 +104,10 @@ public final class EvalScenarioEnvironment implements ScenarioLifecycle {
     public synchronized void beforeScenario(EvalScenarioDocument scenario) {
         LiveFaults faults = scenario.liveFaults();
         replay = null;
+        if (scenario.forTeacher() && aiProperties != null && !aiProperties.isEnabled()) {
+            savedAiEnabled = aiProperties.isEnabled();
+            aiProperties.setEnabled(true);
+        }
         if (toolProperties != null && faults != null && faults.maxToolCalls() != null) {
             savedMaxToolCalls = toolProperties.getMaxToolCalls();
             toolProperties.setMaxToolCalls(faults.maxToolCalls());
@@ -121,6 +139,10 @@ public final class EvalScenarioEnvironment implements ScenarioLifecycle {
                 toolProperties.setMaxToolCalls(savedMaxToolCalls);
             }
             savedMaxToolCalls = null;
+            if (savedAiEnabled != null && aiProperties != null) {
+                aiProperties.setEnabled(savedAiEnabled);
+            }
+            savedAiEnabled = null;
             replay = null;
             client.clearScenario();
         }

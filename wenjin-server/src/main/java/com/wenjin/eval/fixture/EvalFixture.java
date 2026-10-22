@@ -4,6 +4,8 @@ import com.wenjin.eval.scenario.EvalScenarioDocument;
 import com.wenjin.eval.scenario.EvalScenarioDocument.MasteryOverride;
 import com.wenjin.eval.scenario.EvalScenarioDocument.MistakeSeed;
 import com.wenjin.eval.scenario.EvalScenarioDocument.Persona;
+import com.wenjin.eval.scenario.EvalScenarioDocument.RosterStudent;
+import com.wenjin.eval.scenario.EvalScenarioDocument.SnapshotSeed;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -25,6 +27,7 @@ public final class EvalFixture {
     private final EvalSessionPort sessionPort;
     private final EvalNodeLookup nodeLookup;
     private final EvalMistakePort mistakePort;
+    private final EvalRosterPort rosterPort;
 
     public EvalFixture(EvalWorld world,
                        EvalMasteryPort masteryPort,
@@ -40,6 +43,17 @@ public final class EvalFixture {
                        EvalSessionPort sessionPort,
                        EvalNodeLookup nodeLookup,
                        EvalMistakePort mistakePort) {
+        this(world, masteryPort, reviewQueuePort, sessionPort, nodeLookup, mistakePort, EvalRosterPort.NONE);
+    }
+
+    public EvalFixture(EvalWorld world,
+                       EvalMasteryPort masteryPort,
+                       EvalReviewQueuePort reviewQueuePort,
+                       EvalSessionPort sessionPort,
+                       EvalNodeLookup nodeLookup,
+                       EvalMistakePort mistakePort,
+                       EvalRosterPort rosterPort) {
+        this.rosterPort = Objects.requireNonNull(rosterPort, "rosterPort");
         this.mistakePort = Objects.requireNonNull(mistakePort, "mistakePort");
         this.world = Objects.requireNonNull(world, "world");
         this.masteryPort = Objects.requireNonNull(masteryPort, "masteryPort");
@@ -166,11 +180,102 @@ public final class EvalFixture {
 
     /**
      * Convenience: reset then apply scenario persona.
+     * <p>The class roster is scenario-scoped: any roster left by a previous scenario is removed first. Teacher
+     * scenarios then run on the roster alone (the primary eval student is withdrawn from the course so it cannot
+     * show up as an undiagnosed student) and start with clean assistant conversations/trace; student scenarios get
+     * the primary student back in the course.
      */
     public PersonaInjectionResult prepareScenario(EvalScenarioDocument scenario) {
         Objects.requireNonNull(scenario, "scenario");
         resetStudentState();
+        rosterPort.clearRoster();
+        if (scenario.forTeacher()) {
+            rosterPort.setPrimaryStudentEnrolled(world.studentId(), world.courseId(), false);
+            rosterPort.clearTeacherState(world.teacherId(), world.courseId());
+            List<RosterStudent> students = scenario.persona() == null || scenario.persona().roster() == null
+                    ? List.of() : scenario.persona().roster();
+            applyRoster(students);
+        } else {
+            rosterPort.setPrimaryStudentEnrolled(world.studentId(), world.courseId(), true);
+        }
         return applyPersona(scenario.persona());
+    }
+
+    /**
+     * Seed the class roster (teacher scenarios): one slot-addressed user per entry, enrolled in the eval course
+     * (or only in the other eval course when {@code otherCourse}), with mastery, snapshot history, wrong/correct
+     * answers and an optional private companion chat. All answers sit {@code lastPracticeDaysAgo} days back.
+     */
+    public RosterInjectionResult applyRoster(List<RosterStudent> students) {
+        Map<String, Long> idsByName = new LinkedHashMap<>();
+        List<String> missingNodes = new ArrayList<>();
+        int slot = 0;
+        for (RosterStudent s : students == null ? List.<RosterStudent>of() : students) {
+            if (s == null || s.name() == null || s.name().isBlank()) {
+                continue;
+            }
+            slot++;
+            long studentId = rosterPort.ensureRosterUser(slot, s.name().trim());
+            idsByName.put(s.name().trim(), studentId);
+            if (Boolean.TRUE.equals(s.otherCourse())) {
+                rosterPort.enrollInOtherCourse(studentId, world.teacherId());
+                if (s.privateChat() != null && !s.privateChat().isBlank()) {
+                    rosterPort.recordPrivateChat(studentId, world.courseId(), s.privateChat());
+                }
+                continue;
+            }
+            rosterPort.enroll(studentId, world.courseId());
+
+            Long firstNode = null;
+            for (MasteryOverride o : s.masteryOverrides() == null ? List.<MasteryOverride>of() : s.masteryOverrides()) {
+                Optional<Long> nodeId = nodeLookup.nodeIdByCode(world.courseId(), o.nodeCode().trim());
+                if (nodeId.isEmpty()) {
+                    missingNodes.add(o.nodeCode().trim());
+                    continue;
+                }
+                rosterPort.writeMastery(studentId, world.courseId(), nodeId.get(), o.raw());
+                if (firstNode == null) {
+                    firstNode = nodeId.get();
+                }
+            }
+            for (SnapshotSeed snap : s.snapshots() == null ? List.<SnapshotSeed>of() : s.snapshots()) {
+                Optional<Long> nodeId = nodeLookup.nodeIdByCode(world.courseId(), snap.nodeCode().trim());
+                if (nodeId.isEmpty()) {
+                    missingNodes.add(snap.nodeCode().trim());
+                    continue;
+                }
+                rosterPort.writeSnapshot(studentId, world.courseId(), nodeId.get(), snap.score(), snap.daysAgo());
+            }
+
+            int baseMinutes = (s.lastPracticeDaysAgo() == null ? 1 : s.lastPracticeDaysAgo()) * 24 * 60;
+            List<MistakeSeed> wrong = s.mistakes() == null ? List.of() : s.mistakes();
+            for (int i = 0; i < wrong.size(); i++) {
+                MistakeSeed m = wrong.get(i);
+                Optional<Long> nodeId = nodeLookup.nodeIdByCode(world.courseId(), m.nodeCode().trim());
+                Optional<Long> misconception = nodeLookup.nodeIdByCode(world.courseId(), m.misconceptionNodeCode().trim());
+                if (nodeId.isEmpty() || misconception.isEmpty()) {
+                    missingNodes.add(nodeId.isEmpty() ? m.nodeCode().trim() : m.misconceptionNodeCode().trim());
+                    continue;
+                }
+                if (firstNode == null) {
+                    firstNode = nodeId.get();
+                }
+                mistakePort.recordMistake(studentId, world.courseId(), nodeId.get(), m.misconceptionNodeCode().trim(),
+                        baseMinutes + i + 1);
+            }
+            int correct = s.correctAnswers() == null ? 0 : s.correctAnswers();
+            for (int j = 0; j < correct && firstNode != null; j++) {
+                rosterPort.recordAnswer(studentId, world.courseId(), firstNode, true, baseMinutes + wrong.size() + j + 1);
+            }
+            if (s.privateChat() != null && !s.privateChat().isBlank()) {
+                rosterPort.recordPrivateChat(studentId, world.courseId(), s.privateChat());
+            }
+        }
+        return new RosterInjectionResult(Map.copyOf(idsByName), List.copyOf(missingNodes));
+    }
+
+    /** Result of {@link #applyRoster}: seeded user ids by real name and unknown node codes encountered. */
+    public record RosterInjectionResult(Map<String, Long> studentIdsByName, List<String> missingNodeCodes) {
     }
 
     /**
