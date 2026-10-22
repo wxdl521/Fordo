@@ -74,7 +74,8 @@ class DockerSandboxIT {
         CASES.put(SUM_QUESTION, List.of(
                 new CodeTestCase(1, "1 2\n", "3\n", false),
                 new CodeTestCase(2, "-5 5\n", "0", false),
-                new CodeTestCase(3, "1000000000 1000000000\n", "2000000000\n", true)));
+                // 2e9+2e9 = 4e9 > Integer.MAX_VALUE：int 求和溢出，long 正确
+                new CodeTestCase(3, "2000000000 2000000000\n", "4000000000\n", true)));
         CASES.put(SECRET_QUESTION, List.of(
                 new CodeTestCase(1, "VISIBLE_INPUT\n", "unused", false),
                 new CodeTestCase(2, HIDDEN_SECRET + "\n", "unused", true)));
