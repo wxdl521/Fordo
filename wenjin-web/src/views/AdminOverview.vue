@@ -85,7 +85,7 @@
       <section aria-labelledby="admin-overview-h-ai" :style="sectionStyle">
         <h2 id="admin-overview-h-ai" :style="h2Style">AI 用量<span :style="h2SubStyle">近 {{ shownDays }} 天</span></h2>
         <div class="wj-ov-cards">
-          <AdminStatCard testid="admin-overview-card-ai-runs" label="AI 调用次数" :value="formatCount(ai.runs)" />
+          <AdminStatCard testid="admin-overview-card-ai-runs" label="AI 运行次数（伴侣+教师助教等）" :value="formatCount(ai.runs)" />
           <AdminStatCard testid="admin-overview-card-ai-failed" label="失败次数" :value="formatCount(ai.failedRuns)" :tone="num(ai.failedRuns) > 0 ? 'acc' : ''" />
           <AdminStatCard testid="admin-overview-card-ai-tokens" label="总 tokens" :value="formatCount(aiTokensTotal)" :hint="`输入 ${formatCount(ai.tokensIn)} · 输出 ${formatCount(ai.tokensOut)}`" />
           <AdminStatCard testid="admin-overview-card-ai-avg" label="平均耗时" :value="avgDurationText" />

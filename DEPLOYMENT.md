@@ -370,6 +370,8 @@ mybatis-plus:
     log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
 ```
 
+**隐私提示（教师助教）**：治理层在 INFO 级别会记录工具调用的简短参数/结果片段，教师助教（`TEACHER_CHAT`）的工具日志因此**可能含学生姓名与学情摘要**。日志按个人信息对待：限制读取权限、缩短保留期、不要转发到第三方日志平台；需要完全不落日志时把 `com.wenjin.service.companion` 日志级别调到 `warn`。
+
 ### 2.5 AI Key
 
 出题 / 标注 / 课程标准抽取依赖大模型（OpenAI 兼容）。不配 Key 时这些功能不可用（其余功能正常）：
