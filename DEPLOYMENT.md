@@ -425,6 +425,7 @@ npm run build        # 产出 dist/
 | 已配置 | `wenjin.features.plan-enabled` | M10 学习计划 / daily-brief / re-plan | 小 |
 | 已配置 | `wenjin.features.multi-agent-enabled` | M11 多智能体周报 / Supervisor 抽查（默认关） | 小 |
 | 已配置 | `wenjin.features.proactive-enabled` / `wenjin.limits.proactive` | 方向 4 主动陪伴（opener / 提示条 / 小红点）开关与限额 | 小 |
+| 已配置 | `wenjin.features.code-check-enabled` / `wenjin.code-check.*` / `wenjin.limits.code` | 方向 6 编程题判分沙箱（docker / Judge0 后端、资源上限、限流）；见 §4.3 | 中 |
 | 已配置 | `wenjin.eval.judge-model` | M6 LLM-as-judge 模型名（可选） | 极小 |
 | 已配置 | `wenjin.limits.trace` / `wenjin.limits.tools` | step I/O 与工具结果截断 | 小 |
 | 已配置 | `wenjin.limits.prompt` / `wenjin.limits.memory` | M7 分槽预算与记忆强度/注入 | 小 |
@@ -664,6 +665,65 @@ management:
 
 上述加固已经落地；发布时只需注入生产环境变量并按本文验证。
 
+### 4.3 代码执行沙箱（方向 6：编程题判分 / 伴侣 run_code_check）
+
+学生提交的 Java 代码是**不可信代码**：只在一次性隔离容器里编译与运行，应用 JVM 内绝不加载或执行；期望输出不进容器，
+比对在应用侧完成。生产默认关闭（`WENJIN_FEATURE_CODE_CHECK=false`）；关闭或后端不可用时编程题一律 `UNAVAILABLE`
+（练习不写作答证据、伴侣工具下架），其余功能不受影响。**无新迁移**（题型与用例表归 V24，见编程题题型）。
+
+**后端二选一**（`WENJIN_CODE_CHECK_BACKEND`，启动时决定，不可热切换）：
+
+| 后端 | 适用 | 要求 |
+|------|------|------|
+| `judge0`（**生产推荐**） | 应用与执行隔离在不同主机 | 独立主机自托管 Judge0（参考 [ops/judge0/](ops/judge0/README.md)）；`WENJIN_CODE_CHECK_JUDGE0_URL` + `WENJIN_CODE_CHECK_JUDGE0_TOKEN`；2358 端口只对应用主机开放 |
+| `docker` | 单机 / 小规模 / 开发 | 应用主机装 Docker ≥ 20.10（cgroup v2），**预拉镜像** `docker pull eclipse-temurin:21-jdk`（执行时 `--pull never`，缺镜像即不可用）；应用账户能执行 `docker` |
+| `none` | 明确禁用 | 恒不可用 |
+
+**docker 权限风险（必读）**：能调用 docker 守护进程 ≈ 宿主 root（可挂载任意宿主目录、起特权容器）。应用一旦被攻破，
+攻击者即获得宿主 root。缓解按优先级：①用 `judge0` 后端放到独立主机；②**rootless Docker**（应用账户自己的守护进程，
+`DOCKER_HOST=unix:///run/user/<uid>/docker.sock`），被攻破也只到该用户；③若只能用 docker 组，应用主机不得承载其它
+敏感服务，且严格限制该账户。绝不要把 `/var/run/docker.sock` 挂进对公网的容器。
+
+**每次执行的隔离参数**（`DockerCodeSandbox.runCommand`，单测逐项断言，`DockerSandboxIT` 在 CI 真机验证）：
+
+```
+docker run --rm --name wj-code-<uuid> --pull never --network none --cpus 1.0 --memory 256m --memory-swap 256m   --pids-limit 64 --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 --cap-drop ALL   --security-opt no-new-privileges --user 65534:65534 --ulimit core=0:0 --ulimit nofile=1024:1024   --workdir /tmp --env HOME=/tmp --mount type=bind,source=<宿主临时目录>,target=/work,readonly   --entrypoint timeout eclipse-temurin:21-jdk -s KILL <编译+用例×(运行+1)+10> /bin/sh /work/run.sh
+```
+
+容器内 runner 先 `timeout` 编译、再逐用例 `timeout` 运行（`-Xmx`、`-XX:+ExitOnOutOfMemoryError`），输出在容器内
+`head -c` 截断后 base64 回传；容器 PID 1 是 `timeout -s KILL`，即使应用崩溃容器也会自行到期结束；应用侧再加整体墙钟
+（编译 + 用例×(运行+1) + 20s），超时 `docker rm -f`。
+宿主临时目录放在 `WENJIN_CODE_CHECK_WORK_DIR`（默认 `java.io.tmpdir`），须可被 docker 守护进程绑定挂载，
+路径不能含逗号；Linux 上目录/文件放宽为 0755/0644 供容器内 uid 65534 只读访问；SELinux 宿主可能需为该目录设
+`container_file_t` 标签。应用本身跑在容器里并通过 socket 调宿主 docker 时，该目录必须是**宿主**路径（同路径挂载）。
+
+**配置键**（dev 基线 = `application.yml`；prod 只覆盖开关）：
+
+| 键 | 默认 | 说明 |
+|----|------|------|
+| `wenjin.features.code-check-enabled` | dev `true` / prod `${WENJIN_FEATURE_CODE_CHECK:false}` / e2e `true` | 总开关；管理后台可热改 |
+| `wenjin.code-check.backend` | `${WENJIN_CODE_CHECK_BACKEND:docker}` | `docker` / `judge0` / `none` |
+| `wenjin.code-check.docker.binary` / `.image` / `.work-dir` | `docker` / `eclipse-temurin:21-jdk` / 空 | `WENJIN_CODE_CHECK_DOCKER_BINARY` / `_IMAGE` / `WENJIN_CODE_CHECK_WORK_DIR` |
+| `wenjin.code-check.docker.availability-cache-seconds` | 30 | `docker version` + `image inspect` 结果缓存 |
+| `wenjin.code-check.judge0.base-url` / `.api-key` | 空 / 空 | `WENJIN_CODE_CHECK_JUDGE0_URL` / `_TOKEN`；管理后台「代码沙箱」可热改，token 加密存储 |
+| `wenjin.code-check.judge0.language-id` / `.request-timeout-seconds` | 62 / 30 | Judge0 CE 1.13 的 Java |
+| `wenjin.limits.code.source-max-chars` / `max-cases` | 10000 / 20 | 超出拒绝（用例超上限不做部分判分） |
+| `wenjin.limits.code.compile-timeout-seconds` / `run-timeout-seconds` | 15 / 3 | 编译墙钟 / 每用例墙钟（含 JVM 启动） |
+| `wenjin.limits.code.memory-mb` / `jvm-heap-mb` / `cpus` / `pids` | 256 / 128 / 1.0 / 64 | 容器内存（禁 swap，含 tmpfs）/ -Xmx / CPU / 进程线程数 |
+| `wenjin.limits.code.output-max-bytes` / `output-preview-chars` / `compile-error-chars` | 65536 / 500 / 2000 | 容器内截断（超出判 RESOURCE_LIMIT）/ 结果预览 |
+| `wenjin.limits.code.max-concurrent` / `queue-wait-seconds` | 2 / 10 | 全局并发信号量（启动时决定）；等不到许可 → UNAVAILABLE |
+| `wenjin.limits.code.per-student-per-hour` / `stdin-max-chars` | 30 / 65536 | 每学生滑动一小时次数（≤0 不限）/ 自由运行 stdin 上限 |
+
+**容量估算**：每个并发执行最多占 1 CPU + 256MB；`max-concurrent` 按「应用主机空闲核数」设置。单次判分耗时约
+容器启动 0.5–1s + 编译 1–2s + 每用例 0.3–1s（JVM 启动）。
+
+**单实例约束**：每学生限流计数与并发信号量都是**进程内**的；多实例部署时每台各自计数（实际上限 ≈ 实例数 × 配额），
+与 RAG 向量缓存等的单副本约束一致。
+
+**上线检查**：`docker version`、`docker image inspect eclipse-temurin:21-jdk` 在应用账户下成功 → 开
+`WENJIN_FEATURE_CODE_CHECK=true` → 以学生身份在编程题上提交一次正确代码（ACCEPTED）与一次死循环（TIMEOUT）。
+日志只记 verdict / 耗时 / studentId，不记源码与输出。
+
 ---
 
 ## 5. 端到端部署步骤
@@ -838,6 +898,10 @@ process.
 | `WENJIN_FEATURE_REFLECTION` | M9 反思探针 | prod 默认 false | 关则无 probe / 自动探针 |
 | `WENJIN_FEATURE_COMPANION_LLM` | M9 伴侣 LLM | prod 默认 **true** | 紧急设 `false` → 零 LLM 降级 |
 | `WENJIN_FEATURE_PLAN` | M10 学习计划 | prod 默认 false | 关则计划工具/re-plan/brief 计划段关闭 |
+| `WENJIN_FEATURE_CODE_CHECK` | 方向 6 编程题判分沙箱 | prod 默认 false | 开启前按 §4.3 准备 Judge0（推荐）或 docker + 预拉镜像 |
+| `WENJIN_CODE_CHECK_BACKEND` | 沙箱后端 | `docker` | 生产推荐 `judge0`（独立主机） |
+| `WENJIN_CODE_CHECK_JUDGE0_URL` / `_TOKEN` | Judge0 基址 / AUTHN_TOKEN | 空 | 仅 backend=judge0 |
+| `WENJIN_CODE_CHECK_DOCKER_IMAGE` / `WENJIN_CODE_CHECK_WORK_DIR` | 沙箱镜像 / 宿主临时目录 | `eclipse-temurin:21-jdk` / tmpdir | 仅 backend=docker；镜像须预拉 |
 
 ---
 

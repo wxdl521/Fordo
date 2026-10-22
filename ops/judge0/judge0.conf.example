@@ -1,0 +1,33 @@
+# Reference Judge0 configuration for wenjin (copy to judge0.conf; never commit the real file).
+# Only the settings relevant to wenjin's threat model are listed; everything else keeps upstream defaults.
+
+# --- Authentication: wenjin sends this as X-Auth-Token (wenjin.code-check.judge0.api-key) ---
+AUTHN_HEADER=X-Auth-Token
+AUTHN_TOKEN=change-me-to-a-long-random-token
+
+# --- Isolation: no network for submissions, and clients may not turn it on ---
+ENABLE_NETWORK=false
+ALLOW_ENABLE_NETWORK=false
+ENABLE_PER_PROCESS_AND_THREAD_TIME_LIMIT=false
+ENABLE_PER_PROCESS_AND_THREAD_MEMORY_LIMIT=false
+
+# --- Hard ceilings (wenjin requests stay below these; see wenjin.limits.code.*) ---
+MAX_CPU_TIME_LIMIT=5
+MAX_WALL_TIME_LIMIT=10
+MAX_MEMORY_LIMIT=512000
+MAX_PROCESSES_AND_OR_THREADS=128
+MAX_FILE_SIZE=1024
+MAX_QUEUE_SIZE=100
+ENABLE_WAIT_RESULT=true
+ENABLE_BATCHED_SUBMISSIONS=true
+
+# --- Do not keep submissions longer than needed ---
+# (wenjin never reads submissions back; consider a periodic cleanup of the submissions table)
+
+# --- Backing services ---
+REDIS_HOST=redis
+REDIS_PASSWORD=change-me
+POSTGRES_HOST=db
+POSTGRES_DB=judge0
+POSTGRES_USER=judge0
+POSTGRES_PASSWORD=change-me
