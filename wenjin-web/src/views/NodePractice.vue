@@ -149,17 +149,24 @@
             v-for="g in submitResult.graded"
             :key="g.questionId"
             class="np-grade-row"
-            :class="g.correct === null ? 'short' : (g.correct ? 'correct' : 'wrong')"
+            :class="g.ungraded ? 'short' : (g.correct === null ? 'short' : (g.correct ? 'correct' : 'wrong'))"
           >
             <div class="np-grade-head">
               <span class="np-grade-num">第 {{ findQuestionIndex(g.questionId) + 1 }} 题</span>
               <span class="np-grade-mark">
-                {{ g.correct === null ? '简答（参考）' : (g.correct ? '✓ 正确' : '✗ 错误') }}
+                {{ g.ungraded ? '未判分' : (g.correct === null ? '简答（参考）' : (g.correct ? '✓ 正确' : '✗ 错误')) }}
               </span>
-              <span v-if="g.correct === false" class="np-grade-ans">
+              <span v-if="g.correct === false && !g.codeResult" class="np-grade-ans">
                 正确答案：{{ g.correctAnswer }}
               </span>
             </div>
+            <CodeResultView
+              v-if="g.codeResult || g.ungraded"
+              class="np-grade-code"
+              :result="g.codeResult"
+              :ungraded="!!g.ungraded"
+              :message="g.message || ''"
+            />
             <div v-if="g.analysis" class="np-grade-analysis">{{ g.analysis }}</div>
           </div>
         </div>
@@ -190,6 +197,8 @@ import { useStudentCourse } from '../composables/useStudentCourse.js'
 import { useSessionStore } from '../store/session.js'
 import { createLatestRequest } from '../utils/latestRequest.js'
 import QuestionAnswerCard from '../components/QuestionAnswerCard.vue'
+import CodeResultView from '../components/CodeResultView.vue'
+import { codeQuestionFields, isCodeType } from '../utils/codeResult.js'
 
 // ─── 路由 & 用户 ─────────────────────────────────────────────────────────────
 const route = useRoute()
@@ -390,17 +399,22 @@ const isLast = computed(() => idx.value === total.value - 1)
 
 const isCurrentMulti = computed(() => currentQ.value?.type === 2)
 const isCurrentShort = computed(() => currentQ.value?.type === 4)
+const isCurrentCode = computed(() => isCodeType(currentQ.value?.type))
 
 const currentSel = computed(() => {
-  if (isCurrentMulti.value || isCurrentShort.value) return undefined
+  if (isCurrentMulti.value || isCurrentShort.value || isCurrentCode.value) return undefined
   return singleAnswers.value[idx.value]
 })
 const currentMultiSel = computed(() => multiSelections.value[idx.value] || [])
-const currentText = computed(() => textAnswers.value[idx.value] || '')
+const currentText = computed(() => {
+  const v = textAnswers.value[idx.value]
+  if (v !== undefined) return v
+  return isCurrentCode.value ? (currentQ.value?.starterCode || '') : ''
+})
 
 const hasSelection = computed(() => {
   // SHORT_ANSWER：总是允许前进（有无文字均可提交）
-  if (isCurrentShort.value) return true
+  if (isCurrentShort.value || isCurrentCode.value) return true
   if (isCurrentMulti.value) return (multiSelections.value[idx.value] || []).length > 0
   return typeof singleAnswers.value[idx.value] === 'number'
 })
@@ -459,7 +473,8 @@ async function startSession() {
       q: pq.stem,
       o: (pq.options || []).map((opt) => opt.text),
       optionKeys: (pq.options || []).map((opt) => opt.key),
-      type: pq.type || 1
+      type: pq.type || 1,
+      ...codeQuestionFields(pq)
     }))
     activeSessionContext = {
       ...context,
@@ -496,7 +511,7 @@ function onTextInput(text) {
 
 function goNext() {
   // 对于单选/判断，必须先选择才能前进（对齐 Diagnostic 行为）
-  if (!isCurrentShort.value && !hasSelection.value) return
+  if (!isCurrentShort.value && !isCurrentCode.value && !hasSelection.value) return
   if (isLast.value) {
     buildAndSubmit()
   } else {
@@ -528,6 +543,9 @@ function buildAnswerList() {
       if (sel.length > 0) {
         studentAnswer = sel.map((si) => q.optionKeys[si]).join(',')
       }
+    } else if (isCodeType(q.type)) {
+      // 编程题：源码字符串（未编辑则为 starterCode）
+      studentAnswer = textAnswers.value[i] ?? q.starterCode ?? ''
     } else if (q.type === 4) {
       // 简答：任意文本（可为空）
       studentAnswer = textAnswers.value[i] !== undefined ? textAnswers.value[i] : ''

@@ -125,6 +125,9 @@
             {{ (importJobLoading || importLoading) ? `导入中… ${importJobProgress || 0}%` : '导入' }}
           </button>
         </div>
+        <div :style="{ fontSize: '12px', color: 'var(--text-mut)', marginTop: '6px' }">
+          JSON 导入支持编程题：type 为 CODE，附 starterCode 与 cases（stdin、expectedStdout、hidden）；编程题不参与 AI 出题与诊断组卷。
+        </div>
         <div v-if="importResult" :style="toolResultStyle">
           导入 <strong>{{ importResult.imported }}</strong> 题 · 跳过 <strong>{{ importResult.skipped }}</strong> 题
           <span v-if="importResult.aiCleaned" :style="{ marginLeft: '8px', color: 'var(--accent)' }">（AI 清洗）</span>
@@ -201,8 +204,16 @@
           <!-- 题干 -->
           <div :style="stemStyle">{{ q.stem }}</div>
 
+          <!-- 编程题：起始代码 + 用例 -->
+          <TeacherCodeEditor
+            v-if="isCodeQ(q)"
+            :question="q"
+            :save-fn="(payload) => saveCode(q, payload)"
+            @saved="(payload) => applyCodeSaved(q, payload)"
+          />
+
           <!-- 选项 -->
-          <div :style="optionsGridStyle">
+          <div v-else :style="optionsGridStyle">
             <div v-for="(opt, i) in q.options" :key="i" :style="optionStyle(opt.correct)">
               <span :style="optionKeyStyle(opt.correct)">{{ optionKeys[i] }}.</span>
               <span :style="optionTextStyle">{{ opt.text }}</span>
@@ -249,7 +260,8 @@
 
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
-import { fetchQuestions, reviewQuestions, fetchTeacherGraph, reviewAllQuestions } from '../api/teacher.js'
+import TeacherCodeEditor from '../components/TeacherCodeEditor.vue'
+import { fetchQuestions, updateQuestionCode, reviewQuestions, fetchTeacherGraph, reviewAllQuestions } from '../api/teacher.js'
 import { generateQuestions, annotateQuestions, importQuestionJson, importQuestionExcel } from '../api/admin.js'
 import { useTeacherCourse } from '../composables/useTeacherCourse.js'
 import { useJob } from '../composables/useJob.js'
@@ -901,7 +913,21 @@ function nextPage() {
 
 // ── 工具 ──
 function typeText(type) {
+  if (type === 5 || type === 'CODE') return '编程'
   return type === 'SINGLE_CHOICE' ? '单选' : '多选'
+}
+
+function isCodeQ(q) {
+  return q?.type === 5 || q?.type === 'CODE'
+}
+
+async function saveCode(q, payload) {
+  await updateQuestionCode(courseId.value, q.id, payload)
+}
+
+function applyCodeSaved(q, payload) {
+  q.starterCode = payload.starterCode
+  q.cases = payload.cases
 }
 
 function diffText(diff) {
