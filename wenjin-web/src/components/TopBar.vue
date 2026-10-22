@@ -142,6 +142,7 @@ function teacherTourId(path) {
     '/teacher/agent-runs': 'nav-agent',
     '/teacher/rag': 'nav-rag',
     '/teacher/reports': 'nav-reports',
+    '/teacher/assistant': 'nav-assistant',
   }
   return map[path] || undefined
 }
@@ -152,7 +153,8 @@ const teacherLinks = [
   { to: '/teacher/dashboard', label: '学情看板' },
   { to: '/teacher/agent-runs', label: 'Agent 轨迹' },
   { to: '/teacher/rag', label: '语料审核' },
-  { to: '/teacher/reports', label: '周报' }
+  { to: '/teacher/reports', label: '周报' },
+  { to: '/teacher/assistant', label: 'AI 助教' }
 ]
 
 // 导航链接样式
