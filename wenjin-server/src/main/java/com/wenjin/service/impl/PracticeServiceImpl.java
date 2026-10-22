@@ -44,9 +44,13 @@ import com.wenjin.support.QuestionType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -132,6 +136,9 @@ public class PracticeServiceImpl implements PracticeService {
     /** 组卷抽取共享组件（M2 T4 抽出；Practice 传恒真谓词，行为与 M1 零变化）。 */
     private final QuestionPicker questionPicker;
 
+    /** F3：提交写事务边界；单测直接 new 时为 null（内联执行）。 */
+    private TransactionOperations transactionOperations;
+
     /** 每会话默认题数（配置项 wenjin.practice.size）。 */
     @Value("${wenjin.practice.size:5}")
     private int defaultSize;
@@ -192,6 +199,11 @@ public class PracticeServiceImpl implements PracticeService {
         this.codeCaseMapper = codeCaseMapper;
         this.codeExecutionProvider = codeExecutionProvider;
         this.questionPicker = new QuestionPicker(questionNodeMapper, questionMapper);
+    }
+
+    @Autowired(required = false)
+    public void setTransactionManager(PlatformTransactionManager transactionManager) {
+        this.transactionOperations = transactionManager == null ? null : new TransactionTemplate(transactionManager);
     }
 
     @Override
@@ -283,8 +295,12 @@ public class PracticeServiceImpl implements PracticeService {
         return vo;
     }
 
+    /**
+     * 提交练习。F3：本方法<b>不</b>开事务——先做只读校验并在事务外对编程题判分（沙箱可能跑数秒，
+     * 不能持有 practice_session 行锁），再把预先算好的判分结果交给事务段 {@link #commitSubmit}。
+     * 事务边界用 {@link TransactionOperations}（同类自调用 @Transactional 不生效）。
+     */
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public PracticeSubmitVO submit(Long sessionId, PracticeSubmitRequest req) {
         // ── 1. 校验会话存在 ───────────────────────────────────────────────────
         PracticeSession session = practiceSessionMapper.selectById(sessionId);
@@ -300,21 +316,8 @@ public class PracticeServiceImpl implements PracticeService {
                     "会话归属校验失败：不能提交非本人的练习会话");
         }
 
-        // ── 2. 快速幂等检查：in-memory status=1 直接重放（无需再做 CAS）──────
+        // ── 2. 快速幂等检查：status=1 直接重放（不判分、不开写事务）─────────────
         if (session.getStatus() != null && session.getStatus() == SESSION_SUBMITTED) {
-            return rebuildSubmittedResult(session);
-        }
-
-        // ── 2b. 抢占式 CAS：防并发重复提交（I2 修复）──────────────────────────
-        //    UPDATE practice_session SET status=1 WHERE id=? AND status=0
-        //    影响行数 = 0：另一线程已抢先提交（status 已被别的线程改为 1）→ 重放分支
-        //    影响行数 = 1：本线程赢得锁，继续完整判分流程
-        int affected = practiceSessionMapper.update(null, new UpdateWrapper<PracticeSession>()
-                .eq("id", session.getId())
-                .eq("status", SESSION_IN_PROGRESS)
-                .set("status", SESSION_SUBMITTED));
-        if (affected == 0) {
-            // 幂等：另一并发线程已抢先提交 → 重建上次结果（不写库、不调 applyAnswers）
             return rebuildSubmittedResult(session);
         }
 
@@ -330,6 +333,47 @@ public class PracticeServiceImpl implements PracticeService {
                         "提交了会话外题目：questionId=" + item.getQuestionId());
             }
         }
+
+        // ── 4. 事务外预判编程题（F3）：按作答下标对齐；CAS 若输则整体丢弃 ───────
+        Map<Long, Question> typeProbe = loadQuestions(answers.stream()
+                .map(PracticeSubmitRequest.AnswerItem::getQuestionId)
+                .collect(Collectors.toList()));
+        List<CodeJudgeResult> preJudged = new ArrayList<>(answers.size());
+        for (PracticeSubmitRequest.AnswerItem item : answers) {
+            preJudged.add(typeOf(typeProbe.get(item.getQuestionId())) == QuestionType.CODE
+                    ? judgeCode(session.getStudentId(), item.getQuestionId(), item.getStudentAnswer())
+                    : null);
+        }
+
+        // ── 5. 事务段：CAS + 写答题记录 + 掌握度 + 路径 ─────────────────────────
+        TransactionOperations ops = this.transactionOperations;
+        if (ops == null) {
+            return commitSubmit(session, req, preJudged);
+        }
+        return ops.execute(status -> commitSubmit(session, req, preJudged));
+    }
+
+    /**
+     * 事务段（由 {@link #submit} 经 TransactionOperations 调用）。{@code preJudged} 与
+     * {@code req.answers} 下标对齐，非 CODE 题为 null。
+     */
+    private PracticeSubmitVO commitSubmit(PracticeSession session,
+                                          PracticeSubmitRequest req,
+                                          List<CodeJudgeResult> preJudged) {
+        // ── 2b. 抢占式 CAS：防并发重复提交（I2 修复）──────────────────────────
+        //    UPDATE practice_session SET status=1 WHERE id=? AND status=0
+        //    影响行数 = 0：另一线程已抢先提交（status 已被别的线程改为 1）→ 重放分支
+        //    影响行数 = 1：本线程赢得锁，继续完整判分流程
+        int affected = practiceSessionMapper.update(null, new UpdateWrapper<PracticeSession>()
+                .eq("id", session.getId())
+                .eq("status", SESSION_IN_PROGRESS)
+                .set("status", SESSION_SUBMITTED));
+        if (affected == 0) {
+            // 幂等：另一并发线程已抢先提交 → 重建上次结果（不写库、不调 applyAnswers；预判结果丢弃）
+            return rebuildSubmittedResult(session);
+        }
+
+        List<PracticeSubmitRequest.AnswerItem> answers = req.getAnswers();
 
         // ── 4. 读目标节点提交前掌握度（applyAnswers 之前） ────────────────────
         StudentMastery before = queryMastery(
@@ -351,7 +395,8 @@ public class PracticeServiceImpl implements PracticeService {
         List<AnswerGrader.GradeResult> gradeResults = new ArrayList<>(answers.size());
         LocalDateTime now = LocalDateTime.now();
 
-        for (PracticeSubmitRequest.AnswerItem item : answers) {
+        for (int idx = 0; idx < answers.size(); idx++) {
+            PracticeSubmitRequest.AnswerItem item = answers.get(idx);
             Long questionId = item.getQuestionId();
             String studentAnswer = item.getStudentAnswer();
             Question question = questionById.get(questionId);
@@ -359,7 +404,10 @@ public class PracticeServiceImpl implements PracticeService {
             Set<String> correctKeys = correctKeysByQuestion.getOrDefault(questionId, Set.of());
 
             if (type == QuestionType.CODE) {
-                CodeJudgeResult jr = judgeCode(session.getStudentId(), questionId, studentAnswer);
+                CodeJudgeResult jr = preJudged.get(idx);
+                if (jr == null) { // 防御：题型在预判与事务间被改成 CODE（极少）
+                    jr = unavailable();
+                }
                 PracticeSubmitVO.GradeItemVO codeItem = buildGradeItem(questionId, type,
                         AnswerGrader.GradeResult.skipped(), correctKeys, analysisOf(question));
                 codeItem.setCodeResult(CodeJudgeVO.from(jr));

@@ -405,6 +405,85 @@ class PracticeCodeQuestionTest {
                 .containsExactlyInAnyOrder(QuestionType.SINGLE, QuestionType.CODE);
     }
 
+    // ── F3：判分在事务外 ──
+
+    /** 最小事务管理器：只维护 TransactionSynchronizationManager 的“事务活动”标志。 */
+    static final class FakeTxManager extends org.springframework.transaction.support.AbstractPlatformTransactionManager {
+        int begun;
+        int committed;
+        int rolledBack;
+
+        @Override protected Object doGetTransaction() { return new Object(); }
+        @Override protected void doBegin(Object tx, org.springframework.transaction.TransactionDefinition d) { begun++; }
+        @Override protected void doCommit(org.springframework.transaction.support.DefaultTransactionStatus st) { committed++; }
+        @Override protected void doRollback(org.springframework.transaction.support.DefaultTransactionStatus st) { rolledBack++; }
+    }
+
+    @Test
+    @DisplayName("F3：judge 在事务外执行，写答题记录/掌握度在事务内")
+    void judgeRunsOutsideTransaction() {
+        FakeTxManager tm = new FakeTxManager();
+        java.util.concurrent.atomic.AtomicReference<Boolean> txDuringJudge = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<Boolean> txDuringInsert = new java.util.concurrent.atomic.AtomicReference<>();
+        when(codeService.judge(eq(STUDENT_ID), eq(CODE_Q), any())).thenAnswer(inv -> {
+            txDuringJudge.set(org.springframework.transaction.support.TransactionSynchronizationManager
+                    .isActualTransactionActive());
+            return result(Verdict.ACCEPTED, 2, 2, null);
+        });
+        when(answerRecordMapper.insert(any(AnswerRecord.class))).thenAnswer(inv -> {
+            txDuringInsert.set(org.springframework.transaction.support.TransactionSynchronizationManager
+                    .isActualTransactionActive());
+            return 1;
+        });
+        PracticeServiceImpl svc = impl(codeService);
+        svc.setTransactionManager(tm);
+
+        PracticeSubmitVO vo = svc.submit(SESSION_ID, req("class Main{}"));
+
+        assertThat(vo.getGraded().get(0).getCorrect()).isTrue();
+        assertThat(txDuringJudge.get()).isFalse();
+        assertThat(txDuringInsert.get()).isTrue();
+        assertThat(tm.begun).isEqualTo(1);
+        assertThat(tm.committed).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("F3：CAS 输掉 → 丢弃预判结果走重放，不写记录、不调 applyAnswers")
+    void casLostDiscardsPrecomputedJudge() {
+        FakeTxManager tm = new FakeTxManager();
+        when(codeService.judge(eq(STUDENT_ID), eq(CODE_Q), any())).thenReturn(result(Verdict.ACCEPTED, 2, 2, null));
+        when(practiceSessionMapper.update(any(), any())).thenReturn(0);
+        AnswerRecord stored = new AnswerRecord();
+        stored.setSessionId(SESSION_ID);
+        stored.setQuestionId(CODE_Q);
+        stored.setStudentAnswer("class Main{}");
+        stored.setIsCorrect(0);
+        when(answerRecordMapper.selectList(any())).thenReturn(List.of(stored));
+        PracticeServiceImpl svc = impl(codeService);
+        svc.setTransactionManager(tm);
+
+        PracticeSubmitVO vo = svc.submit(SESSION_ID, req("class Main{}"));
+
+        // 结果来自先提交者落库的记录（错），而非本线程的预判（对）
+        assertThat(vo.getGraded().get(0).getCorrect()).isFalse();
+        verify(answerRecordMapper, never()).insert(any(AnswerRecord.class));
+        verify(masteryService, never()).applyAnswers(anyLong(), anyLong(), anyList());
+    }
+
+    @Test
+    @DisplayName("F3：事务段抛异常 → 回滚")
+    void failureInTransactionRollsBack() {
+        FakeTxManager tm = new FakeTxManager();
+        when(codeService.judge(eq(STUDENT_ID), eq(CODE_Q), any())).thenReturn(result(Verdict.ACCEPTED, 2, 2, null));
+        org.mockito.Mockito.doThrow(new IllegalStateException("db")).when(masteryService).applyAnswers(anyLong(), anyLong(), anyList());
+        PracticeServiceImpl svc = impl(codeService);
+        svc.setTransactionManager(tm);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> svc.submit(SESSION_ID, req("class Main{}")))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(tm.rolledBack).isEqualTo(1);
+    }
+
     private QuestionCodeCase codeCase(int seq, String in, String out, int hidden) {
         QuestionCodeCase c = new QuestionCodeCase();
         c.setQuestionId(CODE_Q);
