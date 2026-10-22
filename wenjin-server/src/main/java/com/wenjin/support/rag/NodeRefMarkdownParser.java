@@ -60,6 +60,16 @@ public final class NodeRefMarkdownParser {
         return new ParsedNodeRef(nodeCode, title, sourceRef, Map.copyOf(meta), sections);
     }
 
+    /** 文档是否带 NODE_REF frontmatter（含 node_code 键）；用于上传文件时分流。 */
+    public static boolean hasNodeRefFrontmatter(String markdown) {
+        if (!StringUtils.hasText(markdown)) {
+            return false;
+        }
+        String normalized = markdown.replace("\r\n", "\n").replace('\r', '\n').trim();
+        Matcher fm = FRONTMATTER.matcher(normalized);
+        return fm.matches() && parseFrontmatterBody(fm.group(1)).containsKey("node_code");
+    }
+
     private static String require(Map<String, String> meta, String key, List<String> errors) {
         String value = meta.get(key);
         if (!StringUtils.hasText(value)) {

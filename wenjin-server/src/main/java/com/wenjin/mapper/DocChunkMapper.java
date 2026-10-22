@@ -16,6 +16,15 @@ import java.util.Map;
 @Mapper
 public interface DocChunkMapper extends BaseMapper<DocChunk> {
 
+    /** 未关联块数：该 source 下没有 PENDING/APPROVED 映射的 chunk（不可检索）。 */
+    @Select("""
+            SELECT COUNT(*) FROM doc_chunk c
+            WHERE c.source_id = #{sourceId}
+              AND NOT EXISTS (SELECT 1 FROM chunk_node_map m
+                              WHERE m.chunk_id = c.id AND m.review_status IN (0, 1))
+            """)
+    long countUnlinkedBySource(@Param("sourceId") Long sourceId);
+
     /** 半成品清障：删除某 source 下全部 chunk（映射需先删）。 */
     @Delete("DELETE FROM doc_chunk WHERE source_id = #{sourceId}")
     int deleteBySourceId(@Param("sourceId") Long sourceId);

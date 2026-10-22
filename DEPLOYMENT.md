@@ -433,7 +433,7 @@ npm run build        # 产出 dist/
 | 已迁移 | Flyway `V10__agent_trace.sql` | `agent_run` / `agent_step` 表 | 中 |
 | 已迁移 | Flyway `V11__eval.sql` | 评测场景/运行元数据表（M6） | 中 |
 | 已迁移 | Flyway `V12__student_memory.sql` | `student_memory` + 会话蒸馏列（M7） | 中 |
-| 已迁移 | Flyway `V13__rag.sql` | `doc_source` / `doc_chunk` / `chunk_node_map`（M8） | 中 |
+| 已迁移 | Flyway `V13__rag.sql` | `doc_source` / `doc_chunk` / `chunk_node_map`（M8）；教师端文件上传入库（`/api/teacher/rag/sources/upload`）依赖 `ai-job-dispatch-enabled=true` 且 worker 与 `wenjin.jobs.payload-dir` 同机（见 §6.1），无需新迁移 | 中 |
 | 已迁移 | Flyway `V14__agent_plan.sql` | `agent_plan` / `agent_plan_task` / `tool_effect_key`（M10） | 中 |
 | 已迁移 | Flyway `V15__agent_report.sql` | `agent_report`（M11 多智能体产出，可选） | 中 |
 | 已迁移 | Flyway `V21__answer_record_time_index.sql` | `answer_record.idx_student_course_time`（错因辅导按时间取最近错题；仅加索引，大表建议低峰执行） | 小 |

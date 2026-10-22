@@ -139,7 +139,27 @@ public class DocumentTextExtractor {
         }
     }
 
-    static String extension(String filename) {
+    /** md/txt：UTF-8 解码（去 BOM），空文本与超长文本同样受限。 */
+    public String decodePlainText(byte[] bytes) {
+        if (bytes == null || bytes.length == 0) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "上传文件不能为空");
+        }
+        String text = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        if (text.startsWith("﻿")) {
+            text = text.substring(1);
+        }
+        if (!StringUtils.hasText(text)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "文件内容为空");
+        }
+        int maxChars = limits.getDocument().getMaxTextChars();
+        if (text.length() > maxChars) {
+            throw new BusinessException(ResultCode.PAYLOAD_TOO_LARGE,
+                    "文档文本超限：" + text.length() + " > " + maxChars);
+        }
+        return text;
+    }
+
+    public static String extension(String filename) {
         if (filename == null) {
             return "";
         }

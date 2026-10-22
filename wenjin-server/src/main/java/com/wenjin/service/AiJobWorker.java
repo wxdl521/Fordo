@@ -233,13 +233,25 @@ public class AiJobWorker {
         markProgressOrLose(job.getId(), leaseToken, 15, heartbeat);
         heartbeat.requireOwned();
         String hash = stringVal(request.get("fileHash"));
-        byte[] bytes = payloadStore.load(hash);
-        markProgressOrLose(job.getId(), leaseToken, 40, heartbeat);
-        heartbeat.requireOwned();
-        // M8 core: NODE_REF path only；COURSEWARE/TEXTBOOK PDF·PPT 初标后续里程碑
-        Object result = docIngestService.ingestNodeRefBytes(sourceId, bytes);
-        markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
-        return result;
+        String fileName = stringVal(request.get("fileName"));
+        try {
+            byte[] bytes = payloadStore.load(hash);
+            markProgressOrLose(job.getId(), leaseToken, 40, heartbeat);
+            heartbeat.requireOwned();
+            // 按 source.kind 分派：NODE_REF → 原路径；COURSEWARE/TEXTBOOK → 文件入库 + 自动初标
+            Object result = docIngestService.ingestSource(sourceId, bytes, fileName);
+            markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
+            return result;
+        } catch (LeaseLostException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            try {
+                docIngestService.markFailed(sourceId);
+            } catch (RuntimeException markErr) {
+                log.warn("DOC_INGEST markFailed sourceId={} failed: {}", sourceId, markErr.getMessage());
+            }
+            throw e;
+        }
     }
 
     private Object runMemoryDistill(AiJob job,

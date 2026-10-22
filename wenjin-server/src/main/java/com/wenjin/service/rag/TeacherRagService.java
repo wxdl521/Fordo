@@ -9,6 +9,15 @@ import com.wenjin.dto.BatchApproveMapsRequest;
 import com.wenjin.dto.ChunkNodeMapPageVO;
 import com.wenjin.dto.ChunkNodeMapVO;
 import com.wenjin.dto.DocSourceVO;
+import com.wenjin.dto.DocUploadVO;
+import com.wenjin.dto.AiJobVO;
+import com.wenjin.service.AiJobPayloadSubmissionService;
+import com.wenjin.support.AiJobKind;
+import org.springframework.web.multipart.MultipartFile;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.Locale;
 import com.wenjin.dto.NodeRefIngestRequest;
 import com.wenjin.entity.ChunkNodeMap;
 import com.wenjin.entity.DocChunk;
@@ -51,19 +60,24 @@ public class TeacherRagService {
     private final DocIngestService docIngestService;
     private final CourseAccessService courseAccessService;
     private final FeatureFlagsProperties featureFlags;
+    private final AiJobPayloadSubmissionService payloadSubmissionService;
+
+    private static final Set<String> UPLOAD_EXTS = Set.of("md", "txt", "pdf", "docx");
 
     public TeacherRagService(DocSourceMapper sourceMapper,
                              DocChunkMapper chunkMapper,
                              ChunkNodeMapMapper mapMapper,
                              DocIngestService docIngestService,
                              CourseAccessService courseAccessService,
-                             FeatureFlagsProperties featureFlags) {
+                             FeatureFlagsProperties featureFlags,
+                             AiJobPayloadSubmissionService payloadSubmissionService) {
         this.sourceMapper = Objects.requireNonNull(sourceMapper);
         this.chunkMapper = Objects.requireNonNull(chunkMapper);
         this.mapMapper = Objects.requireNonNull(mapMapper);
         this.docIngestService = Objects.requireNonNull(docIngestService);
         this.courseAccessService = Objects.requireNonNull(courseAccessService);
         this.featureFlags = featureFlags;
+        this.payloadSubmissionService = payloadSubmissionService;
     }
 
     public List<DocSourceVO> listSources(Long courseId) {
@@ -95,6 +109,9 @@ public class TeacherRagService {
             vo.setCreatedAt(s.getCreatedAt());
             vo.setChunkCount(chunkCounts.getOrDefault(s.getId(), 0L));
             vo.setPendingMapCount(pendingCounts.getOrDefault(s.getId(), 0L));
+            Long unlinked = s.getStatus() != null && s.getStatus() == DocSourceStatus.READY
+                    ? chunkMapper.countUnlinkedBySource(s.getId()) : 0L;
+            vo.setUnlinkedChunkCount(unlinked == null ? 0L : unlinked);
             out.add(vo);
         }
         return out;
@@ -254,6 +271,91 @@ public class TeacherRagService {
         long pending = countPendingMapsBySource(List.of(refreshed.getId()))
                 .getOrDefault(refreshed.getId(), 0L);
         return toSourceVo(refreshed, chunks, pending);
+    }
+
+    /**
+     * 上传 md/txt/pdf/docx：去重 → 建 INGESTING 来源 → 派发 DOC_INGEST 作业（异步入库 + 自动初标）。
+     */
+    @Transactional
+    public DocUploadVO uploadSource(Long courseId, MultipartFile file, String title, Integer kind) {
+        assertRagEnabled();
+        if (courseId == null || courseId <= 0) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "courseId required");
+        }
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "上传文件不能为空");
+        }
+        String filename = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().trim();
+        String ext = filename.lastIndexOf('.') >= 0
+                ? filename.substring(filename.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT) : "";
+        if (!UPLOAD_EXTS.contains(ext)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "仅支持 .md .txt .pdf .docx 文件");
+        }
+        int resolvedKind = kind == null ? DocSourceKind.COURSEWARE : kind;
+        if (resolvedKind != DocSourceKind.COURSEWARE && resolvedKind != DocSourceKind.TEXTBOOK) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "kind 仅支持 0(课件) / 1(教材)");
+        }
+        courseAccessService.assertManageCourse(courseId);
+        long teacherId = CurrentUser.requireTeacher().userId();
+
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (java.io.IOException e) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "读取上传文件失败");
+        }
+        String hash = sha256Hex(bytes);
+        Long dup = sourceMapper.selectCount(new QueryWrapper<DocSource>()
+                .eq("course_id", courseId)
+                .eq("file_hash", hash)
+                .notIn("status", DocSourceStatus.FAILED, DocSourceStatus.ARCHIVED));
+        if (dup != null && dup > 0) {
+            throw new BusinessException(ResultCode.CONFLICT, "该文件已上传过");
+        }
+
+        String resolvedTitle = StringUtils.hasText(title) ? title.trim() : stripExt(filename);
+        if (resolvedTitle.length() > 200) {
+            resolvedTitle = resolvedTitle.substring(0, 200);
+        }
+        DocSource source = new DocSource();
+        source.setCourseId(courseId);
+        source.setTitle(resolvedTitle);
+        source.setKind(resolvedKind);
+        source.setFileHash(hash);
+        source.setStatus(DocSourceStatus.INGESTING);
+        source.setCreatedBy(teacherId);
+        source.setCreatedAt(LocalDateTime.now());
+        sourceMapper.insert(source);
+
+        // request_key ≤ 64：含 sourceId，使 FAILED 后同文件重传得到新作业而非命中旧键
+        String key = ("src:" + courseId + ":" + source.getId() + ":" + hash);
+        if (key.length() > 64) {
+            key = key.substring(0, 64);
+        }
+        AiJobVO job = payloadSubmissionService.submitForCourse(
+                courseId, AiJobKind.DOC_INGEST, key, file, Map.of("sourceId", source.getId()));
+
+        DocUploadVO vo = new DocUploadVO();
+        vo.setSourceId(source.getId());
+        vo.setJobId(job == null ? null : job.getId());
+        vo.setTitle(resolvedTitle);
+        vo.setKind(resolvedKind);
+        vo.setStatus(DocSourceStatus.INGESTING);
+        return vo;
+    }
+
+    private static String stripExt(String filename) {
+        int dot = filename.lastIndexOf('.');
+        String base = dot > 0 ? filename.substring(0, dot) : filename;
+        return base.isBlank() ? "上传文档" : base;
+    }
+
+    private static String sha256Hex(byte[] bytes) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private void reviewOne(Long id, int targetStatus) {

@@ -74,7 +74,8 @@ class AuditedInventoryTest {
             // RAG 映射审核
             "TeacherRagController#approve=RAG_MAPPING_APPROVE:RAG",
             "TeacherRagController#reject=RAG_MAPPING_REJECT:RAG",
-            "TeacherRagController#batchApprove=RAG_MAPPING_BATCH_APPROVE:RAG");
+            "TeacherRagController#batchApprove=RAG_MAPPING_BATCH_APPROVE:RAG",
+            "TeacherRagController#upload=RAG_SOURCE_UPLOAD:RAG");
 
     @Test
     @DisplayName("被 @Audited 标注的控制器方法恰好是约定清单")

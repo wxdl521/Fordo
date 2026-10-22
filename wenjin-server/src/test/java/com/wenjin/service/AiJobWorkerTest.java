@@ -370,6 +370,46 @@ class AiJobWorkerTest {
         return user;
     }
 
+    private AiJob docIngestJob() {
+        AiJob job = claimedJob("claimed-lease");
+        job.setKind(AiJobKind.DOC_INGEST);
+        job.setRequestJson("{\"sourceId\":5,\"fileHash\":\"h\",\"fileName\":\"a.pdf\"}");
+        allowCurrentLease(job);
+        when(aiJobService.markProgress(eq(job.getId()), eq("claimed-lease"), anyInt())).thenReturn(true);
+        when(aiJobService.markEffectStarted(job.getId(), "claimed-lease")).thenReturn(true);
+        when(aiJobService.parseRequestMap(job.getRequestJson()))
+                .thenReturn(Map.of("sourceId", 5, "fileHash", "h", "fileName", "a.pdf"));
+        return job;
+    }
+
+    @Test
+    void docIngest_dispatchesBySourceWithFileName() {
+        AiJob job = docIngestJob();
+        byte[] bytes = {1, 2};
+        when(payloadStore.load("h")).thenReturn(bytes);
+        when(docIngestService.ingestSource(5L, bytes, "a.pdf")).thenReturn(Map.of("status", "READY"));
+        when(aiJobService.markSucceeded(eq(job.getId()), eq("claimed-lease"), any())).thenReturn(true);
+
+        worker.execute(job);
+
+        verify(docIngestService).ingestSource(5L, bytes, "a.pdf");
+        verify(docIngestService, never()).markFailed(5L);
+        verify(aiJobService).markSucceeded(eq(job.getId()), eq("claimed-lease"), any());
+    }
+
+    @Test
+    void docIngest_exceptionMarksSourceFailedAndJobFailed() {
+        AiJob job = docIngestJob();
+        when(payloadStore.load("h")).thenReturn(new byte[]{1});
+        when(docIngestService.ingestSource(eq(5L), any(), eq("a.pdf")))
+                .thenThrow(new IllegalStateException("boom"));
+
+        worker.execute(job);
+
+        verify(docIngestService).markFailed(5L);
+        verify(aiJobService).markFailed(job.getId(), "claimed-lease", AiJobErrorCodes.INTERNAL_ERROR);
+    }
+
     private static AiJob claimedJob(String leaseToken) {
         AiJob job = new AiJob();
         job.setId(41L);

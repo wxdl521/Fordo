@@ -20,6 +20,8 @@ public class DocSourceVO {
     private Integer status;
     private long chunkCount;
     private long pendingMapCount;
+    /** 无 PENDING/APPROVED 映射的块数（不可检索，需老师手动关联）。 */
+    private long unlinkedChunkCount;
 
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime createdAt;
