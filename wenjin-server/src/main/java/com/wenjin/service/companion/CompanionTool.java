@@ -24,6 +24,11 @@ public interface CompanionTool {
         return List.of();
     }
 
+    /** 工具受众（方向 7）；默认学生伴侣工具。教师助教工具覆盖为 {@link ToolAudience#TEACHER}。 */
+    default ToolAudience audience() {
+        return ToolAudience.STUDENT;
+    }
+
     default String label() {
         Map<String, Object> toolSchema = schema();
         if (toolSchema == null) {

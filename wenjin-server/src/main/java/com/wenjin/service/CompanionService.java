@@ -36,6 +36,10 @@ public interface CompanionService {
         public void codeResult(CodeResultVO card) {
         }
 
+        /** 教师助教表格卡片（方向 7）；在对应 tool_result 之后发送。 */
+        public void insightCard(com.wenjin.dto.InsightCard card) {
+        }
+
         /**
          * 引用校验结论（RAG）：仅当最终回复含 {@code 资料 #N} 时在 done 之前发一次。
          * valid ⊆ 本 turn 可引用集合；invalid 为越界编号（持久化文本中已被替换）。
