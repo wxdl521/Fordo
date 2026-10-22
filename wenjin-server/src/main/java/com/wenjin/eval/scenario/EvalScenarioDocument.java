@@ -74,8 +74,17 @@ public record EvalScenarioDocument(
             Integer maxToolCalls,
             Boolean jsonContractValid,
             Boolean nodeCodesInWhitelist,
-            Boolean degradedExpected
-    ) {}
+            Boolean degradedExpected,
+            /** true：trace 的 citation_check 步 invalid 必须为空（回复里的 资料 #N ⊆ 本 turn 可引用集合） */
+            Boolean citationsValid
+    ) {
+        /** 兼容旧调用方（无 citationsValid）。 */
+        public HardAssertions(List<String> mustCallTools, List<String> mustNotCallTools, Integer maxToolCalls,
+                              Boolean jsonContractValid, Boolean nodeCodesInWhitelist, Boolean degradedExpected) {
+            this(mustCallTools, mustNotCallTools, maxToolCalls, jsonContractValid, nodeCodesInWhitelist,
+                    degradedExpected, null);
+        }
+    }
 
     public record JudgeSpec(List<JudgeDimension> dimensions) {}
 

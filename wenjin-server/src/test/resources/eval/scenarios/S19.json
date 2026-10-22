@@ -16,11 +16,13 @@
     "maxToolCalls": 4,
     "jsonContractValid": true,
     "nodeCodesInWhitelist": true,
-    "degradedExpected": false
+    "degradedExpected": false,
+    "citationsValid": true
   },
   "judge": {
     "dimensions": [
       {"key": "graph_truth", "desc": "是否编造图谱外节点/关系", "threshold": 3},
+      {"key": "citation_faithfulness", "desc": "回复里的「资料 #编号」是否忠实于「检索到的资料」所写的内容、没有编造出处；资料未覆盖时是否明确说明", "threshold": 3},
       {"key": "expression", "desc": "表达质量与语气", "threshold": 3}
     ]
   }

@@ -30,6 +30,13 @@ public interface CompanionService {
         /** M9 understanding probe card (optional). */
         public void probeCard(ProbeStartVO card) {
         }
+
+        /**
+         * 引用校验结论（RAG）：仅当最终回复含 {@code 资料 #N} 时在 done 之前发一次。
+         * valid ⊆ 本 turn 可引用集合；invalid 为越界编号（持久化文本中已被替换）。
+         */
+        public void citations(java.util.List<Long> valid, java.util.List<Long> invalid) {
+        }
     }
 
     /**

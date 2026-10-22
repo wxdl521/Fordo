@@ -133,6 +133,14 @@ public class CompanionController {
                     public void probeCard(ProbeStartVO card) {
                         sendEvent(emitter, "probe_card", card, "probe_card");
                     }
+
+                    @Override
+                    public void citations(List<Long> valid, List<Long> invalid) {
+                        sendEvent(emitter, "citations",
+                                Map.of("valid", valid == null ? List.of() : valid,
+                                        "invalid", invalid == null ? List.of() : invalid),
+                                "citations");
+                    }
                 };
                 if (reviewPracticeSessionId != null) {
                     companionService.streamReply(conversationId, reviewPracticeSessionId, sink);

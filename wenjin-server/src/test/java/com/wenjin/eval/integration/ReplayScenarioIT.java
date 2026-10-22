@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -133,6 +134,46 @@ class ReplayScenarioIT extends EvalDbSupport {
         assertThat(run.outcome().hardResult().failures())
                 .anyMatch(f -> "mustCallTools".equals(f.check()))
                 .anyMatch(f -> "replay".equals(f.check()) && f.message().contains("need re-record"));
+    }
+
+    @ParameterizedTest(name = "{0} cites search_materials chunks")
+    @ValueSource(strings = {"S13", "S19"})
+    @DisplayName("R4: the golden's {{cite}} placeholders resolve to real chunks - citation_check has valid ids, no invalid")
+    void citationScenarios_haveValidCitationStep(String code) {
+        EvalScenarioDocument scenario = harness.scenarioLoader().loadByCode(code).orElseThrow();
+        ScenarioRun run = harness.replayExecutor().runDetailed(scenario);
+        assertThat(run.outcome().hardPass()).as("%s %s", code, run.outcome().hardResult().failures()).isTrue();
+
+        List<String> outputs = jdbc.queryForList(
+                "SELECT output_json FROM agent_step WHERE run_id = ? AND step_type = 'CITATION' AND name = 'citation_check'",
+                String.class, run.outcome().runId());
+        assertThat(outputs).as("exactly one citation_check step").hasSize(1);
+        assertThat(outputs.get(0)).contains("\"invalid\":[]").doesNotContain("\"valid\":[]");
+        assertThat(run.transcript()).as("judge evidence lists the retrieved chunks").contains("检索到的资料");
+    }
+
+    @Test
+    @DisplayName("R4: a reply citing a chunk that was never returned fails citationsValid and the persisted text is neutralised")
+    void fabricatedCitation_failsHardAssertAndIsRewritten() {
+        EvalScenarioDocument s19 = harness.scenarioLoader().loadByCode("S19").orElseThrow();
+        GoldenFile original = harness.goldenLoader().loadFromClasspath("S19");
+        GoldenFile.GoldenRound search = original.turns().get(0).rounds().get(0);
+        GoldenFile.GoldenRound fabricated = new GoldenFile.GoldenRound(
+                "用例图强调参与者 资料 #999999999，数据流图强调数据流动。", List.of(), null);
+        GoldenFile broken = new GoldenFile("S19", 2, "", "", true,
+                List.of(new GoldenFile.GoldenTurn(List.of(search, fabricated))));
+
+        ScenarioRun run = harness.replayExecutor(code -> broken).runDetailed(s19);
+
+        assertThat(run.outcome().hardPass()).isFalse();
+        assertThat(run.outcome().hardResult().failures())
+                .anyMatch(f -> "citationsValid".equals(f.check()) && f.message().contains("999999999"));
+        Long conversationId = run.outcome().conversationId();
+        List<String> replies = jdbc.queryForList(
+                "SELECT content FROM companion_message WHERE conversation_id = ? AND role = 2 ORDER BY id",
+                String.class, conversationId);
+        assertThat(replies).hasSize(1);
+        assertThat(replies.get(0)).contains("（引用无效）").doesNotContain("999999999");
     }
 
     @Test

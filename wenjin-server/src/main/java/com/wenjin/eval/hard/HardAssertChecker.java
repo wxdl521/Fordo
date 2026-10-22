@@ -47,6 +47,7 @@ public final class HardAssertChecker {
         checkJsonContract(hard, steps, failures);
         checkNodeCodesWhitelist(hard, steps, response, input.nodeCodeWhitelist(), failures);
         checkDegraded(hard, steps, failures);
+        checkCitationsValid(hard, steps, failures);
 
         return HardAssertResult.fail(failures);
     }
@@ -182,6 +183,36 @@ public final class HardAssertChecker {
             // only fail when explicitly false
             failures.add(new HardAssertFailure("degradedExpected",
                     "DEGRADE step present but degradedExpected=false"));
+        }
+    }
+
+    /**
+     * {@code citationsValid=true}：每个 citation_check 步的 {@code invalid} 必须为空。没有该步 = 回复未引用任何资料，
+     * 视为通过（"引用是否被正确使用"由 judge 的 citation_faithfulness 维度与 golden 回放测试把关）。
+     */
+    private static void checkCitationsValid(HardAssertions hard,
+                                            List<EvalStepView> steps,
+                                            List<HardAssertFailure> failures) {
+        if (!Boolean.TRUE.equals(hard.citationsValid())) {
+            return;
+        }
+        for (EvalStepView step : steps) {
+            if (!step.isCitation()) {
+                continue;
+            }
+            try {
+                JsonNode invalid = MAPPER.readTree(step.outputJson() == null ? "" : step.outputJson()).path("invalid");
+                if (!invalid.isArray()) {
+                    failures.add(new HardAssertFailure("citationsValid",
+                            "citation_check output has no 'invalid' array: " + step.outputJson()));
+                } else if (!invalid.isEmpty()) {
+                    failures.add(new HardAssertFailure("citationsValid",
+                            "reply cites chunk ids outside the turn's citable set: " + invalid));
+                }
+            } catch (Exception e) {
+                failures.add(new HardAssertFailure("citationsValid",
+                        "citation_check output is not valid JSON: " + step.outputJson()));
+            }
         }
     }
 

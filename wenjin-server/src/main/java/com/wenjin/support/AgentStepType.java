@@ -12,6 +12,8 @@ public final class AgentStepType {
     public static final String REFLECT = "REFLECT";
     public static final String MEMORY = "MEMORY";
     public static final String RETRIEVE = "RETRIEVE";
+    /** 回复引用校验（name=citation_check）；不计入工具预算。 */
+    public static final String CITATION = "CITATION";
 
     private AgentStepType() {}
 }

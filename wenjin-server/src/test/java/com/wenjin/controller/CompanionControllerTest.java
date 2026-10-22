@@ -140,6 +140,60 @@ class CompanionControllerTest {
     }
 
     @Test
+    @DisplayName("chat: citations event carries {valid, invalid}, comes after tokens and before done")
+    void chat_citationsEventPrecedesDone() throws Exception {
+        when(companionService.startTurn(any(CompanionChatRequest.class))).thenReturn(322L);
+        doAnswer(invocation -> {
+            CompanionService.CompanionStreamSink sink = invocation.getArgument(1);
+            sink.token("见资料 #501，也见资料 #999");
+            sink.citations(java.util.List.of(501L), java.util.List.of(999L));
+            return null;
+        }).when(companionService).streamReply(anyLong(), any(CompanionService.CompanionStreamSink.class));
+
+        MvcResult result = mvc.perform(post("/api/companion/chat")
+                        .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.TEXT_EVENT_STREAM)
+                        .content("""
+                                {"studentId": 2, "courseId": 5, "message": "讲讲用例图"}
+                                """))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+        result.getAsyncResult();
+
+        String stream = result.getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(eventIndex(stream, "token")).isLessThan(eventIndex(stream, "citations"));
+        assertThat(eventIndex(stream, "citations")).isLessThan(eventIndex(stream, "done"));
+        assertThat(stream).contains("\"valid\":[501]").contains("\"invalid\":[999]");
+    }
+
+    @Test
+    @DisplayName("chat: no citations callback -> no citations event (kill switch / no references)")
+    void chat_withoutCitations_emitsNoCitationsEvent() throws Exception {
+        when(companionService.startTurn(any(CompanionChatRequest.class))).thenReturn(323L);
+        doAnswer(invocation -> {
+            CompanionService.CompanionStreamSink sink = invocation.getArgument(1);
+            sink.token("hello");
+            return null;
+        }).when(companionService).streamReply(anyLong(), any(CompanionService.CompanionStreamSink.class));
+
+        MvcResult result = mvc.perform(post("/api/companion/chat")
+                        .header("Authorization", "Bearer " + tokenService.issue(2L, 2))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.TEXT_EVENT_STREAM)
+                        .content("""
+                                {"studentId": 2, "courseId": 5, "message": "hi"}
+                                """))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+        result.getAsyncResult();
+
+        String stream = result.getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(stream).doesNotContain("event:citations");
+        assertThat(stream).contains("event:done");
+    }
+
+    @Test
     @DisplayName("chat: reviewPracticeSessionId not owned by student/course → 404 before async work")
     void chat_reviewSessionNotOwned_returns404WithoutStartingTurn() throws Exception {
         org.mockito.Mockito.doThrow(new com.wenjin.common.BusinessException(ResultCode.NOT_FOUND, "练习会话不存在"))
