@@ -19,7 +19,11 @@ vi.mock('../src/api/companion.js', async () => {
     listConversations: (...args) => listConversations(...args),
     fetchConversation: (...args) => fetchConversation(...args),
     deleteConversation: (...args) => deleteConversation(...args),
-    chatStream: (...args) => chatStream(...args)
+    chatStream: (...args) => chatStream(...args),
+    // 主动陪伴接口：不发真实网络请求（否则 happy-dom 打到 :3000，偶发 unhandled rejection 让整轮 vitest 失败）
+    fetchOpener: () => Promise.resolve({ greeting: '', actions: [], hints: [] }),
+    fetchHintsCount: () => Promise.resolve({ count: 0 }),
+    dismissHint: () => Promise.resolve(null)
   }
 })
 

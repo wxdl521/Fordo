@@ -351,6 +351,9 @@ function invalidateSession() {
  *   - 进度条：0% → masteryAfter%（CSS transition 0.7s）
  *   - 数字计数器：masteryBefore → masteryAfter（rAF 700ms，Δ=0 时跳过）
  */
+/** 掌握度动画的延时句柄：卸载时清除，避免页面销毁后再调度 rAF */
+let masteryAnimTimer = null
+
 watch(phase, async (p) => {
   if (p !== 'result' || !submitResult.value) return
   const before = submitResult.value.masteryBefore ?? 0
@@ -362,7 +365,11 @@ watch(phase, async (p) => {
 
   // 等 DOM 渲染完初始状态后再启动动画
   await nextTick()
-  setTimeout(() => {
+  if (disposed) return
+  clearTimeout(masteryAnimTimer)
+  masteryAnimTimer = setTimeout(() => {
+    masteryAnimTimer = null
+    if (disposed) return
     // CSS transition 驱动进度条填充
     barWidth.value = Math.max(0, Math.min(100, after)) + '%'
 
@@ -380,7 +387,7 @@ watch(phase, async (p) => {
       const t = Math.min(elapsed / duration, 1)
       const eased = 1 - Math.pow(1 - t, 3) // ease-out cubic
       displayedMastery.value = Math.round(before + (after - before) * eased)
-      if (t < 1) requestAnimationFrame(tick)
+      if (t < 1 && !disposed) requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)
   }, 50)
@@ -673,6 +680,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   disposed = true
+  clearTimeout(masteryAnimTimer)
+  masteryAnimTimer = null
   startRequest.cancel()
   submitRequest.cancel()
   activeSessionContext = null
