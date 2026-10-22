@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   uploadRagSource: vi.fn(),
   reembedRagCourse: vi.fn()
 }))
+const course = vi.hoisted(() => ({ ref: null }))
 
 vi.mock('../../api/teacher.js', () => ({
   fetchRagSources: (...a) => mocks.fetchRagSources(...a),
@@ -23,9 +24,11 @@ vi.mock('../../api/teacher.js', () => ({
   reembedRagCourse: (...a) => mocks.reembedRagCourse(...a)
 }))
 
-vi.mock('../../composables/useTeacherCourse.js', () => ({
-  useTeacherCourse: () => ({ courseId: { __v_isRef: true, value: 7 }, currentCourse: null })
-}))
+vi.mock('../../composables/useTeacherCourse.js', async () => {
+  const { ref } = await import('vue')
+  course.ref = ref(7)
+  return { useTeacherCourse: () => ({ courseId: course.ref, currentCourse: null }) }
+})
 
 import TeacherRag from '../TeacherRag.vue'
 
@@ -233,6 +236,62 @@ describe('TeacherRag 向量覆盖与重建（R2）', () => {
     expect(mocks.fetchRagSources).toHaveBeenCalledTimes(3)
     await vi.advanceTimersByTimeAsync(9000)
     expect(mocks.fetchRagSources).toHaveBeenCalledTimes(3)
+    w.unmount()
+  })
+})
+
+describe('TeacherRag 轮询健壮性（复核 M10）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    course.ref.value = 7
+    mocks.fetchRagMappings.mockResolvedValue({ items: [], total: 0, page: 1, size: 20 })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('切换课程重置轮询预算：上一课程已耗尽 200 次后，新课程的入库轮询仍会继续', async () => {
+    vi.useFakeTimers()
+    mocks.fetchRagSources.mockImplementation(async () => [source({ status: 0, chunkCount: 0 })]) // 永远 INGESTING（每次新数组）
+    const w = await mountPage()
+    await vi.advanceTimersByTimeAsync(3000 * 205)
+    const exhausted = mocks.fetchRagSources.mock.calls.length
+    expect(exhausted).toBe(201) // 1 次初载 + 200 次轮询
+    await vi.advanceTimersByTimeAsync(9000)
+    expect(mocks.fetchRagSources).toHaveBeenCalledTimes(exhausted) // 预算耗尽后停止
+
+    course.ref.value = 8
+    await flushPromises()
+    const afterSwitch = mocks.fetchRagSources.mock.calls.length
+    expect(afterSwitch).toBe(exhausted + 1)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(mocks.fetchRagSources.mock.calls.length).toBe(afterSwitch + 1) // 新课程轮询继续
+    w.unmount()
+  })
+
+  it('轮询出错：显示非阻塞提示并停止自动轮询，保留列表；点「刷新」恢复', async () => {
+    vi.useFakeTimers()
+    mocks.fetchRagSources
+      .mockResolvedValueOnce([source({ status: 0, chunkCount: 0 })])
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValue([source({ status: 1 })])
+    const w = await mountPage()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(mocks.fetchRagSources).toHaveBeenCalledTimes(2)
+    const notice = w.get('[data-testid="poll-error"]')
+    expect(notice.text()).toContain('自动刷新失败')
+    expect(w.text()).toContain('讲义') // 列表未被清空
+    expect(w.find('.empty.err').exists()).toBe(false) // 非阻塞：不替换整页
+
+    await vi.advanceTimersByTimeAsync(9000)
+    expect(mocks.fetchRagSources).toHaveBeenCalledTimes(2) // 不再自动重试
+
+    await w.findAll('button').find((b) => b.text() === '刷新').trigger('click')
+    await flushPromises()
+    expect(mocks.fetchRagSources).toHaveBeenCalledTimes(3)
+    expect(w.find('[data-testid="poll-error"]').exists()).toBe(false)
+    expect(w.text()).toContain('就绪')
     w.unmount()
   })
 })

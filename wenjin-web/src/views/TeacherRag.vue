@@ -29,6 +29,7 @@
           {{ reembedding ? '提交中…' : '重建向量' }}
         </button>
         <span v-if="hasIngesting" class="muted" data-testid="ingesting-hint">有来源入库中，列表自动刷新…</span>
+        <span v-if="pollError" class="muted" data-testid="poll-error" role="status">{{ pollError }}</span>
         <span v-if="reembedNotice" class="muted" data-testid="reembed-notice" role="status">{{ reembedNotice }}</span>
       </div>
       <table class="data-table">
@@ -237,6 +238,8 @@ const vectorOn = computed(() => sources.value.some((s) => s.embeddedChunks != nu
 const hasUncovered = computed(() => sources.value.some((s) => isUncovered(s)))
 const reembedding = ref(false)
 const reembedNotice = ref('')
+// 静默轮询失败的非阻塞提示（不替换整页）；出现后停止自动轮询，点「刷新」恢复
+const pollError = ref('')
 // 「重建向量」后向量作业异步执行：在覆盖完整前静默轮询
 let embedWatch = false
 const canSubmit = computed(() =>
@@ -283,6 +286,8 @@ function formatConf(c) {
 
 async function reload() {
   if (!courseId.value) return
+  pollCount = 0
+  pollError.value = ''
   if (tab.value === 'sources') await loadSources()
   else await loadMappings()
 }
@@ -299,7 +304,7 @@ function schedulePoll() {
   stopPolling()
   const pending = hasIngesting.value || (embedWatch && hasUncovered.value)
   if (!pending) embedWatch = false
-  if (disposed || tab.value !== 'sources' || !pending || pollCount >= POLL_MAX) return
+  if (disposed || tab.value !== 'sources' || !pending || pollCount >= POLL_MAX || pollError.value) return
   pollTimer = setTimeout(async () => {
     pollTimer = null
     pollCount += 1
@@ -320,9 +325,13 @@ async function loadSources({ silent = false } = {}) {
     const data = await fetchRagSources(courseId.value, { signal: request.signal })
     if (!request.isCurrent() || disposed) return
     sources.value = Array.isArray(data) ? data : []
+    pollError.value = ''
   } catch (e) {
     if (isAbortError(e) || !request.isCurrent() || disposed) return
-    if (silent) return
+    if (silent) {
+      pollError.value = '自动刷新失败，请点击「刷新」重试'
+      return
+    }
     if (isNotFound(e)) {
       flagOff.value = true
       error.value = ''
