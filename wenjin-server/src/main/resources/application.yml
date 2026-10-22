@@ -86,11 +86,6 @@ wenjin:
       timeout-ms: 5000
       max-result-chars: 2000
       intent-routing-enabled: true  # 练习意图路由：自然语言要题时强制 start_practice
-    code-tool:                      # run_code_check（方向 6 / C3）
-      max-per-run: 1
-      source-max-chars: 10000
-      stdin-max-chars: 2000
-      stdout-preview-chars: 300
   limits:                                        # 资源预算（会话上下文 / 草稿 / 图片 / 文档）
     companion:
       max-input-chars: 4000                      # 单条用户输入上限
@@ -175,6 +170,9 @@ wenjin:
       per-student-per-hour: 30                   # 每学生每小时执行次数（滑动窗口，内存态，单实例）
       queue-wait-seconds: 10                     # 等并发许可超时 → UNAVAILABLE
       stdin-max-chars: 65536                     # 自由运行 stdin 上限
+      tool-max-per-run: 1                        # 伴侣 run_code_check 每 run 最多调用次数
+      tool-stdin-max-chars: 2000                 # 伴侣工具 stdin 参数上限（code 参数复用 source-max-chars）
+      tool-stdout-preview-chars: 300             # 回给模型的 stdout 预览（其余 tool-* 预览项见 LimitsProperties.Code）
 
   features:                                      # 功能开关（开发/测试默认开；生产见 application-prod.yml）
     fixed-diagnostic-enabled: true

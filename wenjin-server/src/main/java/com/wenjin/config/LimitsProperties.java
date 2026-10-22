@@ -241,5 +241,21 @@ public class LimitsProperties {
         private int queueWaitSeconds = 10;
         /** 自由运行的标准输入字符上限 */
         private int stdinMaxChars = 65_536;
+
+        // ---- 伴侣工具 run_code_check 层（源码上限复用上面的 sourceMaxChars） ----
+        /** 每个 agent run 最多调用 run_code_check 的次数（含失败/被拒的调用） */
+        private int toolMaxPerRun = 1;
+        /** 工具 {@code stdin} 参数最大字符数 */
+        private int toolStdinMaxChars = 2000;
+        /** 回给模型的 stdout 预览字符数 */
+        private int toolStdoutPreviewChars = 300;
+        /** 回给模型的 stderr 预览字符数 */
+        private int toolStderrPreviewChars = 200;
+        /** 回给模型的编译错误行数 / 字符数上限（取先到者） */
+        private int toolCompileErrorLines = 8;
+        private int toolCompileErrorChars = 600;
+        /** 回给模型的失败用例条数，以及每条用例每个字段的预览字符数 */
+        private int toolMaxFailureCases = 3;
+        private int toolCaseFieldChars = 100;
     }
 }

@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.wenjin.ai.CompanionAiClient;
-import com.wenjin.config.CodeToolProperties;
 import com.wenjin.config.CompanionToolProperties;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.service.trace.ToolCacheEntry;
@@ -71,7 +70,6 @@ public class ToolGovernor {
     private final ObjectMapper objectMapper;
     private final CompanionToolProperties properties;
     private final LimitsProperties limits;
-    private CodeToolProperties codeToolProperties;
 
     public ToolGovernor(List<CompanionTool> tools,
                         ObjectMapper objectMapper,
@@ -96,11 +94,6 @@ public class ToolGovernor {
             }
         }
         this.registry = Map.copyOf(map);
-    }
-
-    @Autowired(required = false)
-    void setCodeToolProperties(CodeToolProperties codeToolProperties) {
-        this.codeToolProperties = codeToolProperties;
     }
 
     /** Backward-compatible entry: no per-run cache. */
@@ -229,7 +222,10 @@ public class ToolGovernor {
     }
 
     private int codeToolMaxPerRun() {
-        return codeToolProperties == null ? 1 : Math.max(0, codeToolProperties.getMaxPerRun());
+        if (limits != null && limits.getCode() != null) {
+            return Math.max(0, limits.getCode().getToolMaxPerRun());
+        }
+        return 1;
     }
 
     private int memoryWritePerRun() {

@@ -3,14 +3,13 @@ package com.wenjin.service.companion;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.wenjin.config.CodeToolProperties;
+import com.wenjin.config.LimitsProperties;
 import com.wenjin.dto.CodeResultVO;
 import com.wenjin.service.code.CodeExecutionService;
 import com.wenjin.service.code.CodeExecutionService.CaseResult;
 import com.wenjin.service.code.CodeExecutionService.CodeJudgeResult;
 import com.wenjin.service.code.CodeExecutionService.CodeRunResult;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -32,7 +31,6 @@ import java.util.function.IntFunction;
  * {@code code-check-enabled} flag); when it is absent or unavailable the tool is dropped from the schema.
  */
 @Component
-@EnableConfigurationProperties(CodeToolProperties.class)
 public class RunCodeCheckTool implements CompanionTool {
 
     public static final String NAME = "run_code_check";
@@ -42,14 +40,14 @@ public class RunCodeCheckTool implements CompanionTool {
 
     private final ObjectProvider<CodeExecutionService> codeServiceProvider;
     private final ObjectMapper objectMapper;
-    private final CodeToolProperties props;
+    private final LimitsProperties.Code props;
 
     public RunCodeCheckTool(ObjectProvider<CodeExecutionService> codeServiceProvider,
                             ObjectMapper objectMapper,
-                            CodeToolProperties props) {
+                            LimitsProperties limits) {
         this.codeServiceProvider = codeServiceProvider;
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
-        this.props = props == null ? new CodeToolProperties() : props;
+        this.props = (limits == null ? new LimitsProperties() : limits).getCode();
     }
 
     @Override
@@ -77,7 +75,7 @@ public class RunCodeCheckTool implements CompanionTool {
     public List<ToolParamSpec> params() {
         return List.of(
                 ToolParamSpec.string("code", true, props.getSourceMaxChars(), null),
-                ToolParamSpec.string("stdin", false, props.getStdinMaxChars(), null),
+                ToolParamSpec.string("stdin", false, props.getToolStdinMaxChars(), null),
                 ToolParamSpec.integer("questionId", false, 1.0, null));
     }
 
@@ -89,7 +87,7 @@ public class RunCodeCheckTool implements CompanionTool {
                 "description", "学生贴出的完整 Java 源码（入口为 public class Main，含 main 方法）"));
         properties.put("stdin", Map.of(
                 "type", "string",
-                "description", "可选：程序的标准输入，最多 " + props.getStdinMaxChars() + " 字符"));
+                "description", "可选：程序的标准输入，最多 " + props.getToolStdinMaxChars() + " 字符"));
         properties.put("questionId", Map.of(
                 "type", "integer",
                 "description", "可选：编程题 ID。提供时按该题测试用例判分，否则只运行一次"));
@@ -104,7 +102,7 @@ public class RunCodeCheckTool implements CompanionTool {
         function.put("name", NAME);
         function.put("description",
                 "在沙箱中编译并运行学生贴出的 Java 代码（可按编程题用例判分），返回结构化结果摘要："
-                        + "verdict、编译错误、输出、失败用例对比。每轮最多调用 " + props.getMaxPerRun() + " 次；"
+                        + "verdict、编译错误、输出、失败用例对比。每轮最多调用 " + props.getToolMaxPerRun() + " 次；"
                         + "不会返回源码，也不会改变掌握度。");
         function.put("parameters", parameters);
 
@@ -165,8 +163,8 @@ public class RunCodeCheckTool implements CompanionTool {
             if (r.exitCode() != null) {
                 body.put("exitCode", r.exitCode());
             }
-            putIfPresent(body, "stdout", clip(r.stdout(), props.getStdoutPreviewChars() / scale));
-            putIfPresent(body, "stderr", clip(r.stderr(), props.getStderrPreviewChars() / scale));
+            putIfPresent(body, "stdout", clip(r.stdout(), props.getToolStdoutPreviewChars() / scale));
+            putIfPresent(body, "stderr", clip(r.stderr(), props.getToolStderrPreviewChars() / scale));
             if (r.outputTruncated()) {
                 body.put("outputTruncated", true);
             }
@@ -197,10 +195,10 @@ public class RunCodeCheckTool implements CompanionTool {
                     hiddenFailed++;
                     continue;
                 }
-                if (failures.size() >= Math.max(1, props.getMaxFailureCases() / scale)) {
+                if (failures.size() >= Math.max(1, props.getToolMaxFailureCases() / scale)) {
                     continue;
                 }
-                int field = Math.max(20, props.getCaseFieldChars() / scale);
+                int field = Math.max(20, props.getToolCaseFieldChars() / scale);
                 Map<String, Object> f = new LinkedHashMap<>();
                 f.put("case", c.index());
                 f.put("verdict", c.verdict() == null ? null : c.verdict().name());
@@ -241,7 +239,7 @@ public class RunCodeCheckTool implements CompanionTool {
             return null;
         }
         String[] lines = compileError.strip().split("\\R");
-        int maxLines = Math.max(1, props.getCompileErrorLines() / scale);
+        int maxLines = Math.max(1, props.getToolCompileErrorLines() / scale);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < lines.length && i < maxLines; i++) {
             if (i > 0) {
@@ -249,7 +247,7 @@ public class RunCodeCheckTool implements CompanionTool {
             }
             sb.append(lines[i]);
         }
-        return clip(sb.toString(), Math.max(60, props.getCompileErrorChars() / scale));
+        return clip(sb.toString(), Math.max(60, props.getToolCompileErrorChars() / scale));
     }
 
     private static String clip(String text, int max) {

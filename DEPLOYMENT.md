@@ -714,6 +714,7 @@ docker run --rm --name wj-code-<uuid> --pull never --network none --cpus 1.0 --m
 | `wenjin.limits.code.output-max-bytes` / `output-preview-chars` / `compile-error-chars` | 65536 / 500 / 2000 | 容器内截断（超出判 RESOURCE_LIMIT）/ 结果预览 |
 | `wenjin.limits.code.max-concurrent` / `queue-wait-seconds` | 2 / 10 | 全局并发信号量（启动时决定）；等不到许可 → UNAVAILABLE |
 | `wenjin.limits.code.per-student-per-hour` / `stdin-max-chars` | 30 / 65536 | 每学生滑动一小时次数（≤0 不限）/ 自由运行 stdin 上限 |
+| `wenjin.limits.code.tool-max-per-run` / `tool-stdin-max-chars` / `tool-stdout-preview-chars` | 1 / 2000 / 300 | 伴侣 `run_code_check` 工具：每 run 次数 / stdin 参数上限 / 回模型 stdout 预览（code 参数复用 `source-max-chars`；另有 `tool-stderr-preview-chars` 等预览项） |
 
 **容量估算**：每个并发执行最多占 1 CPU + 256MB；`max-concurrent` 按「应用主机空闲核数」设置。单次判分耗时约
 容器启动 0.5–1s + 编译 1–2s + 每用例 0.3–1s（JVM 启动）。

@@ -3,7 +3,7 @@ package com.wenjin.service.companion;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.ai.CompanionAiClient;
-import com.wenjin.config.CodeToolProperties;
+import com.wenjin.config.LimitsProperties;
 import com.wenjin.config.CompanionToolProperties;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.service.code.CodeExecutionService;
@@ -34,7 +34,7 @@ class RunCodeCheckToolTest {
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final CodeExecutionService service = Mockito.mock(CodeExecutionService.class);
-    private final CodeToolProperties props = new CodeToolProperties();
+    private final LimitsProperties props = new LimitsProperties();
     private RunCodeCheckTool tool;
 
     @BeforeEach
@@ -265,16 +265,24 @@ class RunCodeCheckToolTest {
     @Test
     void governorHonoursConfiguredCap() {
         when(service.run(anyLong(), anyString(), anyString())).thenReturn(run(Verdict.ACCEPTED, "ok", "", null));
-        ToolGovernor governor = new ToolGovernor(List.of(tool), mapper, new CompanionToolProperties(),
-                new LimitsProperties());
-        CodeToolProperties two = new CodeToolProperties();
-        two.setMaxPerRun(2);
-        governor.setCodeToolProperties(two);
+        LimitsProperties two = new LimitsProperties();
+        two.getCode().setToolMaxPerRun(2);
+        ToolGovernor governor = new ToolGovernor(List.of(tool), mapper, new CompanionToolProperties(), two);
         ToolExecutionState state = new ToolExecutionState(6);
         var call = new CompanionAiClient.ToolCall("c1", "run_code_check", "{\"code\":\"class Main{}\"}");
 
         assertThat(governor.execute(new ToolContext(7L, 1L), call, state).ok()).isTrue();
         assertThat(governor.execute(new ToolContext(7L, 1L), call, state).ok()).isTrue();
         assertThat(governor.execute(new ToolContext(7L, 1L), call, state).ok()).isFalse();
+    }
+
+    @Test
+    void codeParamLimitReusesSharedSourceMaxChars() throws Exception {
+        LimitsProperties custom = new LimitsProperties();
+        custom.getCode().setSourceMaxChars(50);
+        RunCodeCheckTool small = new RunCodeCheckTool(providerOf(service), mapper, custom);
+        var specs = small.params();
+        assertThat(ToolParamValidator.validate(specs, args("{\"code\":\"" + "a".repeat(51) + "\"}"))).contains("code");
+        assertThat(ToolParamValidator.validate(specs, args("{\"code\":\"" + "a".repeat(50) + "\"}"))).isNull();
     }
 }
