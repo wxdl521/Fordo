@@ -18,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -80,6 +81,8 @@ public final class CompanionOrchestrator {
 
     /**
      * @param forcedCall 意图路由合成的工具调用（如 start_practice）；非空时先执行它，再一轮 NONE 总结
+     * @param injectedChunkIds 本 turn RETRIEVAL 槽注入的 chunkId；<b>null = 引用校验关闭</b>（rag-enabled=false），
+     *                         非 null（含空集）= 开启，可引用集合 = 此集合 ∪ search_materials 返回的 chunkId
      */
     public record Request(List<Map<String, Object>> messages,
                           List<CompanionTool> tools,
@@ -89,7 +92,8 @@ public final class CompanionOrchestrator {
                           int maxToolCalls,
                           int maxOutputChars,
                           String truncationNotice,
-                          TraceContext traceCtx) {
+                          TraceContext traceCtx,
+                          Collection<Long> injectedChunkIds) {
     }
 
     /**
@@ -148,9 +152,12 @@ public final class CompanionOrchestrator {
         private final Map<String, String> signals = new LinkedHashMap<>();
         private List<Map<String, Object>> messages;
         private boolean practiceStarted;
+        /** 引用守卫；null = 校验关闭（rag-enabled=false）。 */
+        private final CitationGuard citations;
 
         Turn(Request req, GuardedSink out) {
             this.req = req;
+            this.citations = req.injectedChunkIds() == null ? null : new CitationGuard(req.injectedChunkIds());
             this.out = out;
             this.text = new TextAccumulator(out, Math.max(0, req.maxOutputChars()), req.truncationNotice());
             this.state = new ToolExecutionState(req.maxToolCalls());
@@ -240,10 +247,23 @@ public final class CompanionOrchestrator {
                 persisted = practiceStarted ? FALLBACK_AFTER_PRACTICE : FALLBACK_AFTER_TOOLS;
                 emitFallback = !text.emittedVisible();
             }
+            // 引用校验：无效 `资料 #N` 在持久化文本中替换为「（引用无效）」；流式已下发的原文由 citations 事件通知前端划掉
+            CitationGuard.Verdict verdict = null;
+            if (citations != null) {
+                long checkStarted = System.currentTimeMillis();
+                verdict = citations.check(persisted);
+                persisted = verdict.text();
+                if (verdict.hasCitations()) {
+                    step(citations.toStep(verdict, elapsedMs(checkStarted)));
+                }
+            }
             // 先落库再推送：推送失败（断开）走 run() 的 disconnected，其 persistable() 为空不会重复落库
             shell.persist(persisted);
             if (emitFallback) {
                 out.token(persisted);
+            }
+            if (verdict != null && verdict.hasCitations()) {
+                out.citations(verdict.valid(), verdict.invalid());
             }
             return new Outcome(AgentRunStatus.SUCCEEDED, null, toolsCalled, signals);
         }
@@ -266,7 +286,7 @@ public final class CompanionOrchestrator {
                 // 客户端也已断开：仍按 LLM 中断记 FAILED 并持久化已生成文本
             }
             String generated = text.persistable();
-            shell.persist(generated + INTERRUPTED_NOTICE);
+            shell.persist(neutralizeCitations(generated) + INTERRUPTED_NOTICE);
             return new Outcome(AgentRunStatus.FAILED, ERROR_LLM_INTERRUPTED, toolsCalled, signals);
         }
 
@@ -291,8 +311,13 @@ public final class CompanionOrchestrator {
 
         private void persistIfAny(String content) {
             if (content != null && !content.isEmpty()) {
-                shell.persist(content);
+                shell.persist(neutralizeCitations(content));
             }
+        }
+
+        /** 中断 / 取消 / 断开路径同样不留无效引用（仅改写，不发事件、不记 step）。 */
+        private String neutralizeCitations(String content) {
+            return citations == null ? content : citations.neutralize(content);
         }
 
         /** @return false 表示中途被取消 */
@@ -365,6 +390,9 @@ public final class CompanionOrchestrator {
             recordToolStep(call, result, elapsedMs);
             messages.add(toolMessage(call, result));
             boolean ok = result != null && result.ok();
+            if (citations != null && ok) {
+                citations.addToolResult(name, result.content());
+            }
             if (ok && GetRecentMistakesTool.NAME.equals(name)) {
                 String code = topMisconceptionNode(result.content());
                 if (code != null) {
@@ -624,6 +652,11 @@ public final class CompanionOrchestrator {
         @Override
         public void probeCard(ProbeStartVO card) {
             call(() -> delegate.probeCard(card));
+        }
+
+        @Override
+        public void citations(List<Long> valid, List<Long> invalid) {
+            call(() -> delegate.citations(valid, invalid));
         }
     }
 

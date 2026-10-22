@@ -40,6 +40,7 @@ class TeacherRagServiceTest {
     @Mock private ChunkNodeMapMapper mapMapper;
     @Mock private DocIngestService docIngestService;
     @Mock private CourseAccessService courseAccessService;
+    @Mock private com.wenjin.service.AiJobPayloadSubmissionService payloadSubmissionService;
 
     private FeatureFlagsProperties featureFlags;
     private TeacherRagService service;
@@ -49,7 +50,8 @@ class TeacherRagServiceTest {
         featureFlags = new FeatureFlagsProperties();
         featureFlags.setRagEnabled(true);
         service = new TeacherRagService(
-                sourceMapper, chunkMapper, mapMapper, docIngestService, courseAccessService, featureFlags);
+                sourceMapper, chunkMapper, mapMapper, docIngestService, courseAccessService, featureFlags,
+                payloadSubmissionService);
         CurrentUser.set(new CurrentPrincipal(42L, UserRole.TEACHER));
     }
 

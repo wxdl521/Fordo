@@ -38,8 +38,21 @@ public class AiJobPayloadSubmissionService {
                                    String kind,
                                    String requestKey,
                                    MultipartFile file) {
-        return submitPayload(file,
-                metadata -> aiJobService.dispatch(courseId, kind, requestKey, metadata));
+        return submitForCourse(courseId, kind, requestKey, file, Map.of());
+    }
+
+    /** 同上，并把 {@code extra}（如 sourceId）并入作业请求元数据。 */
+    public AiJobVO submitForCourse(Long courseId,
+                                   String kind,
+                                   String requestKey,
+                                   MultipartFile file,
+                                   Map<String, Object> extra) {
+        return submitPayload(file, metadata -> {
+            if (extra != null) {
+                metadata.putAll(extra);
+            }
+            return aiJobService.dispatch(courseId, kind, requestKey, metadata);
+        });
     }
 
     public AiJobVO submitForCourseCode(String courseCode,

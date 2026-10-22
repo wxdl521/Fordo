@@ -136,6 +136,57 @@ export function parseCitationSegments(text) {
   return segments
 }
 
+/** Same marker the server writes into persisted text for an out-of-set citation (CitationGuard.INVALID_MARK). */
+export const INVALID_CITATION_MARK = '（引用无效）'
+
+/**
+ * How a citation segment is rendered once the turn's `citations` event is known.
+ * - no event (history messages / rag off): legacy behaviour, every id is a chip;
+ * - with event: only ids the server validated stay clickable, everything else is struck through.
+ * @param {number} chunkId
+ * @param {{ valid?: number[], invalid?: number[] } | undefined} citations
+ * @returns {'chip' | 'invalid'}
+ */
+export function citationRenderKind(chunkId, citations) {
+  if (!citations) return 'chip'
+  return (citations.valid || []).includes(chunkId) ? 'chip' : 'invalid'
+}
+
+/**
+ * Replace `资料 #N` for the given invalid ids with the server's marker (mirrors CitationGuard.neutralize).
+ * @param {string} text
+ * @param {number[]} invalid
+ */
+export function neutralizeInvalidCitations(text, invalid) {
+  const source = text == null ? '' : String(text)
+  if (!source || !invalid?.length) return source
+  return source.replace(/资料\s*#(\d+)/g, (match, id) => (
+    invalid.includes(Number(id)) ? INVALID_CITATION_MARK : match
+  ))
+}
+
+/**
+ * Attach the `citations` event to every assistant bubble of the current turn (a turn may render several
+ * assistant bubbles: text before / after tool capsules). Walks back from the end and stops at the user
+ * message, so earlier turns are untouched.
+ * @param {Array<object>} messages
+ * @param {{ valid?: number[], invalid?: number[] }} event
+ */
+export function applyCitations(messages, event) {
+  const next = Array.isArray(messages) ? messages.slice() : []
+  const citations = {
+    valid: Array.isArray(event?.valid) ? [...event.valid] : [],
+    invalid: Array.isArray(event?.invalid) ? [...event.invalid] : []
+  }
+  for (let i = next.length - 1; i >= 0; i--) {
+    if (next[i]?.role === 'user') break
+    if (next[i]?.role === 'assistant') {
+      next[i] = { ...next[i], citations }
+    }
+  }
+  return next
+}
+
 export function createToolMessage(event, ok = null) {
   return {
     role: 'tool',
@@ -223,7 +274,9 @@ export function buildPlainTranscript(messages) {
     .filter((message) => message?.role === 'user' || message?.role === 'assistant')
     .map((message) => ({
       role: message.role,
-      content: message.content || ''
+      // The server persists invalid citations as a marker; mirror that so a live turn's transcript
+      // still equals the reloaded one and the typed snapshot (practice cards...) keeps restoring.
+      content: neutralizeInvalidCitations(message.content || '', message.citations?.invalid)
     }))
 }
 

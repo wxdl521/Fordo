@@ -38,6 +38,11 @@ public record EvalStepView(
         return "DEGRADE".equals(stepType);
     }
 
+    /** 回复引用校验步（step_type=CITATION，name=citation_check）；不计入工具预算。 */
+    public boolean isCitation() {
+        return "CITATION".equals(stepType);
+    }
+
     public boolean isLlmCall() {
         return "LLM_CALL".equals(stepType);
     }

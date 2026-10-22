@@ -23,7 +23,7 @@ public class AgentStep {
     /** run 内序号（从 1 起） */
     private Integer seq;
 
-    /** LLM_CALL / TOOL_CALL / GUARD / DEGRADE / REFLECT / MEMORY / RETRIEVE */
+    /** LLM_CALL / TOOL_CALL / GUARD / DEGRADE / REFLECT / MEMORY / RETRIEVE / CITATION */
     private String stepType;
 
     /** 工具名或 phase1/phase2/... */

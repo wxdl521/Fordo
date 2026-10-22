@@ -44,6 +44,8 @@ class AiConnectionTesterTest {
         props.getVision().setBaseUrl("https://open.bigmodel.cn/api/paas/v4");
         props.getVision().setModel("glm-5v-turbo");
         props.getVision().setApiKey(VISION_KEY);
+        props.getEmbedding().setEnabled(true);
+        props.getEmbedding().setApiKey("zhipu.embed-key-1122334455");
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
         tester = new AiConnectionTester(props, builder);
@@ -67,6 +69,33 @@ class AiConnectionTesterTest {
         assertThat(r.getModel()).isEqualTo("deepseek-v4-pro");
         assertThat(r.getLatencyMs()).isGreaterThanOrEqualTo(0);
         assertThat(r.getError()).isNull();
+    }
+
+    @Test
+    @DisplayName("嵌入：POST {embedding.base}/embeddings，body 含 input 与 dimensions；200+data → ok")
+    void embedding_ok() {
+        server.expect(requestTo("https://open.bigmodel.cn/api/paas/v4/embeddings"))
+                .andExpect(header("Authorization", "Bearer zhipu.embed-key-1122334455"))
+                .andExpect(jsonPath("$.model").value("embedding-3"))
+                .andExpect(jsonPath("$.input[0]").value("ping"))
+                .andExpect(jsonPath("$.dimensions").value(1024))
+                .andRespond(withSuccess("{\"data\":[{\"index\":0,\"embedding\":[0.1]}]}", MediaType.APPLICATION_JSON));
+
+        AdminAiTestVO r = tester.test("embedding");
+
+        server.verify();
+        assertThat(r.isOk()).isTrue();
+        assertThat(r.getModel()).isEqualTo("embedding-3");
+    }
+
+    @Test
+    @DisplayName("嵌入：关闭 / 无 key 时不发请求直接给出原因")
+    void embedding_disabledOrNoKey() {
+        props.getEmbedding().setEnabled(false);
+        assertThat(tester.test("embedding").getError()).contains("嵌入模型已关闭");
+        props.getEmbedding().setEnabled(true);
+        props.getEmbedding().setApiKey(" ");
+        assertThat(tester.test("embedding").getError()).contains("API Key");
     }
 
     @Test

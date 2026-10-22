@@ -64,6 +64,7 @@ class AiJobWorkerTest {
     @Mock private MemoryDistillService memoryDistillService;
     @Mock private SummaryRefreshService summaryRefreshService;
     @Mock private com.wenjin.service.rag.DocIngestService docIngestService;
+    @Mock private com.wenjin.service.rag.RagEmbedService ragEmbedService;
     @Mock private TeacherWeeklyReportService teacherWeeklyReportService;
     @Mock private SupervisorSampleReportService supervisorSampleReportService;
     @Mock private SysUserMapper sysUserMapper;
@@ -90,6 +91,7 @@ class AiJobWorkerTest {
                 memoryDistillService,
                 summaryRefreshService,
                 docIngestService,
+                ragEmbedService,
                 teacherWeeklyReportService,
                 supervisorSampleReportService,
                 new PrincipalLoader(sysUserMapper),
@@ -111,6 +113,27 @@ class AiJobWorkerTest {
 
         verify(aiJobService, never()).recoverStale();
         verify(aiJobService, never()).claimNext();
+    }
+
+    @Test
+    void tick_sweepsOrphanedIngestingSourcesAfterRecovery() {
+        when(aiJobService.claimNext()).thenReturn(null);
+
+        worker.tick();
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(aiJobService, docIngestService);
+        order.verify(aiJobService).recoverStale();
+        order.verify(docIngestService).failOrphanedIngestingSources();
+    }
+
+    @Test
+    void tick_orphanSweepFailureDoesNotBlockClaiming() {
+        when(docIngestService.failOrphanedIngestingSources()).thenThrow(new RuntimeException("db down"));
+        when(aiJobService.claimNext()).thenReturn(null);
+
+        worker.tick();
+
+        verify(aiJobService).claimNext();
     }
 
     @Test
@@ -272,6 +295,7 @@ class AiJobWorkerTest {
                     memoryDistillService,
                     summaryRefreshService,
                     docIngestService,
+                    ragEmbedService,
                     teacherWeeklyReportService,
                     supervisorSampleReportService,
                     new PrincipalLoader(sysUserMapper),
@@ -368,6 +392,100 @@ class AiJobWorkerTest {
         user.setStatus(status);
         user.setRole(role);
         return user;
+    }
+
+    private AiJob docIngestJob() {
+        AiJob job = claimedJob("claimed-lease");
+        job.setKind(AiJobKind.DOC_INGEST);
+        job.setRequestJson("{\"sourceId\":5,\"fileHash\":\"h\",\"fileName\":\"a.pdf\"}");
+        allowCurrentLease(job);
+        when(aiJobService.markProgress(eq(job.getId()), eq("claimed-lease"), anyInt())).thenReturn(true);
+        when(aiJobService.markEffectStarted(job.getId(), "claimed-lease")).thenReturn(true);
+        when(aiJobService.parseRequestMap(job.getRequestJson()))
+                .thenReturn(Map.of("sourceId", 5, "fileHash", "h", "fileName", "a.pdf"));
+        return job;
+    }
+
+    @Test
+    void docIngest_dispatchesBySourceWithFileName() {
+        AiJob job = docIngestJob();
+        byte[] bytes = {1, 2};
+        when(payloadStore.load("h")).thenReturn(bytes);
+        when(docIngestService.ingestSource(5L, bytes, "a.pdf")).thenReturn(Map.of("status", "READY"));
+        when(aiJobService.markSucceeded(eq(job.getId()), eq("claimed-lease"), any())).thenReturn(true);
+
+        worker.execute(job);
+
+        verify(docIngestService).ingestSource(5L, bytes, "a.pdf");
+        verify(docIngestService, never()).markFailed(5L);
+        verify(aiJobService).markSucceeded(eq(job.getId()), eq("claimed-lease"), any());
+    }
+
+    @Test
+    void docIngest_exceptionMarksSourceFailedAndJobFailed() {
+        AiJob job = docIngestJob();
+        when(payloadStore.load("h")).thenReturn(new byte[]{1});
+        when(docIngestService.ingestSource(eq(5L), any(), eq("a.pdf")))
+                .thenThrow(new IllegalStateException("boom"));
+
+        worker.execute(job);
+
+        verify(docIngestService).markFailed(5L);
+        verify(aiJobService).markFailed(job.getId(), "claimed-lease", AiJobErrorCodes.INTERNAL_ERROR);
+    }
+
+    private AiJob ragEmbedJob() {
+        AiJob job = claimedJob("claimed-lease");
+        job.setKind(AiJobKind.RAG_EMBED);
+        job.setRequestJson("{\"sourceId\":5,\"model\":\"hash-ngram@1024\"}");
+        when(sysUserMapper.selectById(10L)).thenReturn(user(1, 1));
+        allowCurrentLease(job);
+        when(aiJobService.markProgress(eq(job.getId()), eq("claimed-lease"), anyInt())).thenReturn(true);
+        when(aiJobService.markEffectStarted(job.getId(), "claimed-lease")).thenReturn(true);
+        when(aiJobService.parseRequestMap(job.getRequestJson()))
+                .thenReturn(Map.of("sourceId", 5, "model", "hash-ngram@1024"));
+        return job;
+    }
+
+    @Test
+    void ragEmbed_runsEmbedSourceForJobCourse_andProgressCallbackRenewsLease() {
+        AiJob job = ragEmbedJob();
+        when(ragEmbedService.embedSource(eq(5L), eq(7L), any())).thenAnswer(inv -> {
+            java.util.function.IntConsumer progress = inv.getArgument(2);
+            progress.accept(50);
+            return Map.of("status", "DONE");
+        });
+        when(aiJobService.markSucceeded(eq(job.getId()), eq("claimed-lease"), any())).thenReturn(true);
+
+        worker.execute(job);
+
+        verify(ragEmbedService).embedSource(eq(5L), eq(7L), any());
+        verify(aiJobService).markProgress(job.getId(), "claimed-lease", 50);
+        verify(aiJobService).markSucceeded(eq(job.getId()), eq("claimed-lease"), eq(Map.of("status", "DONE")));
+    }
+
+    @Test
+    void ragEmbed_aiErrorMarksJobFailedWithAiErrorCode() {
+        AiJob job = ragEmbedJob();
+        when(ragEmbedService.embedSource(eq(5L), eq(7L), any()))
+                .thenThrow(new com.wenjin.common.BusinessException(com.wenjin.common.ResultCode.AI_ERROR, "down"));
+
+        worker.execute(job);
+
+        verify(aiJobService).markFailed(job.getId(), "claimed-lease", AiJobErrorCodes.AI_ERROR);
+        verify(aiJobService, never()).markSucceeded(any(), anyString(), any());
+    }
+
+    @Test
+    void ragEmbed_studentOwnerIsRevoked() {
+        AiJob job = claimedJob("claimed-lease");
+        job.setKind(AiJobKind.RAG_EMBED);
+        when(sysUserMapper.selectById(10L)).thenReturn(user(1, 2));
+
+        worker.execute(job);
+
+        verify(aiJobService).markFailed(41L, "claimed-lease", AiJobErrorCodes.JOB_ACTOR_REVOKED);
+        verify(ragEmbedService, never()).embedSource(anyLong(), any(), any());
     }
 
     private static AiJob claimedJob(String leaseToken) {

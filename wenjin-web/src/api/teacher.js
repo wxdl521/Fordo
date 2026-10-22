@@ -106,6 +106,32 @@ export function batchApproveRagMappings(courseId, body = {}) {
 export function createNodeRefSource(body) {
   return http.post('/teacher/rag/sources/node-ref', body)
 }
+/**
+ * 上传 md/txt/pdf/docx，异步入库 + 自动初标（HTTP 202）。
+ * @param {number} courseId
+ * @param {File} file
+ * @param {{ title?: string, kind?: number }} [opts] kind: 0 课件(默认) / 1 教材
+ * @returns {Promise<{ sourceId: number, jobId: number, title: string, kind: number, status: number }>}
+ */
+export function uploadRagSource(courseId, file, opts = {}) {
+  const form = new FormData()
+  form.append('courseId', String(courseId))
+  form.append('file', file)
+  if (opts.title) form.append('title', opts.title)
+  if (opts.kind != null) form.append('kind', String(opts.kind))
+  return http.post('/teacher/rag/sources/upload', form, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+
+/**
+ * 「重建向量」：全课程按 READY 来源派发 RAG_EMBED（R2）。rag / rag-vector 关 → 404，无嵌入模型 → 503。
+ * @param {number} courseId
+ * @returns {Promise<{ model: string, sourceCount: number, jobIds: number[] }>}
+ */
+export function reembedRagCourse(courseId) {
+  return http.post(`/teacher/rag/courses/${courseId}/reembed`)
+}
 
 // ── 多智能体报告（教师端）──
 export function fetchTeacherReports(courseId, kind, config = {}) {

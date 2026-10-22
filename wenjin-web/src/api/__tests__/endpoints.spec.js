@@ -96,6 +96,8 @@ describe('API endpoint contracts', () => {
         'rejectRagMapping',
         'batchApproveRagMappings',
         'createNodeRefSource',
+        'uploadRagSource',
+        'reembedRagCourse',
         'fetchTeacherReports'
       ]],
       [companion, [
@@ -123,7 +125,9 @@ describe('API endpoint contracts', () => {
     }
     // 61 baseline + 8 teacher RAG/reports + 1 companion submitProbe + 2 student + 1 sendEmailCode + 3 companion proactive
     // - 3 removed unused (importQuestionExcelLegacy / fetchPracticeHistory / fetchTeacherReport) = 70
-    expect(exportCount).toBe(73)
+    // + 1 uploadRagSource (R3 file ingest) -> 74 total with the three above counted in 73
+    // + 1 reembedRagCourse (R2 hybrid retrieval) -> 75
+    expect(exportCount).toBe(75)
   })
 
   it('maps user and course operations without forwarding privilege fields', () => {
@@ -634,5 +638,24 @@ describe('API endpoint contracts', () => {
     })
     expect(onToken).toHaveBeenCalledWith('')
     expect(onError).toHaveBeenCalledWith('网络错误')
+  })
+
+  it('uploads a RAG source as multipart with optional title and kind', () => {
+    const file = new File(['x'], 'lecture.pdf', { type: 'application/pdf' })
+    teacher.uploadRagSource(9, file, { title: '讲义', kind: 1 })
+    teacher.uploadRagSource(9, file)
+
+    const [p, form, config] = http.post.mock.calls[0]
+    expect(p).toBe('/teacher/rag/sources/upload')
+    expect(Array.from(form.entries())).toEqual([
+      ['courseId', '9'], ['file', file], ['title', '讲义'], ['kind', '1']
+    ])
+    expect(config).toEqual({ headers: { 'Content-Type': 'multipart/form-data' } })
+    expect(Array.from(http.post.mock.calls[1][1].keys())).toEqual(['courseId', 'file'])
+  })
+
+  it('posts a course-wide RAG re-embed without a body', () => {
+    teacher.reembedRagCourse(9)
+    expect(http.post).toHaveBeenCalledWith('/teacher/rag/courses/9/reembed')
   })
 })

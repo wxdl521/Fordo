@@ -419,6 +419,7 @@ npm run build        # 产出 dist/
 | 已配置 | `wenjin.features.eval-enabled` | M6 伴侣评测套件 / runner | 小 |
 | 已配置 | `wenjin.features.memory-enabled` | M7 伴侣长期记忆（注入 / 蒸馏 / 工具） | 小 |
 | 已配置 | `wenjin.features.rag-enabled` | M8 RAG 语料检索 / RETRIEVAL / search_materials | 小 |
+| 已配置 | `wenjin.features.rag-vector-enabled` | RAG R2 混合检索（全文 + 向量 RRF）与 `RAG_EMBED` 嵌入作业；关则纯全文 | 小 |
 | 已配置 | `wenjin.features.reflection-enabled` | M9 反思探针 / 换策略重讲 | 小 |
 | 已配置 | `wenjin.features.companion-llm-enabled` | M9 伴侣 LLM 紧急 kill switch | 小 |
 | 已配置 | `wenjin.features.plan-enabled` | M10 学习计划 / daily-brief / re-plan | 小 |
@@ -427,17 +428,18 @@ npm run build        # 产出 dist/
 | 已配置 | `wenjin.eval.judge-model` | M6 LLM-as-judge 模型名（可选） | 极小 |
 | 已配置 | `wenjin.limits.trace` / `wenjin.limits.tools` | step I/O 与工具结果截断 | 小 |
 | 已配置 | `wenjin.limits.prompt` / `wenjin.limits.memory` | M7 分槽预算与记忆强度/注入 | 小 |
-| 已配置 | `wenjin.limits.rag` | M8 检索 top-k / snippet | 小 |
+| 已配置 | `wenjin.limits.rag` | M8 检索 top-k / snippet；R2 融合 / 候选倍数 / 向量阈值 / 哈希嵌入许可 / 查询缓存 / 前置扩展 | 小 |
 | 已配置 | `wenjin.limits.plan` / `wenjin.plan.replan-cron` | M10 算法 cap / weak / re-plan 调度 | 小 |
 | 已配置 | `wenjin.limits.supervisor` / `wenjin.multi-agent.report-cron` | M11 抽查 sample-size / 周报入队 cron | 小 |
 | 已迁移 | Flyway `V10__agent_trace.sql` | `agent_run` / `agent_step` 表 | 中 |
 | 已迁移 | Flyway `V11__eval.sql` | 评测场景/运行元数据表（M6） | 中 |
 | 已迁移 | Flyway `V12__student_memory.sql` | `student_memory` + 会话蒸馏列（M7） | 中 |
-| 已迁移 | Flyway `V13__rag.sql` | `doc_source` / `doc_chunk` / `chunk_node_map`（M8） | 中 |
+| 已迁移 | Flyway `V13__rag.sql` | `doc_source` / `doc_chunk` / `chunk_node_map`（M8）；教师端文件上传入库（`/api/teacher/rag/sources/upload`）依赖 `ai-job-dispatch-enabled=true` 且 worker 与 `wenjin.jobs.payload-dir` 同机（见 §6.1），无需新迁移 | 中 |
 | 已迁移 | Flyway `V14__agent_plan.sql` | `agent_plan` / `agent_plan_task` / `tool_effect_key`（M10） | 中 |
 | 已迁移 | Flyway `V15__agent_report.sql` | `agent_report`（M11 多智能体产出，可选） | 中 |
 | 已迁移 | Flyway `V21__answer_record_time_index.sql` | `answer_record.idx_student_course_time`（错因辅导按时间取最近错题；仅加索引，大表建议低峰执行） | 小 |
 | 已迁移 | Flyway `V22__companion_hint_log.sql` | `companion_hint_log`（主动陪伴提示条展示/关闭日志） | 小 |
+| 已迁移 | Flyway `V23__doc_chunk_embedding.sql` | `doc_chunk_embedding`（RAG 切块向量，float32 LE MEDIUMBLOB；仅建新表，向量由后续嵌入作业回填，无 key 时不受影响） | 小 |
 
 ### 4.1 配置清单（调度与基线）
 
@@ -465,6 +467,7 @@ spring:
 | `wenjin.features.eval-enabled` | `true` | `${WENJIN_FEATURE_EVAL:false}` | M6 评测套件总开关；关闭时 LIVE/REPLAY executor 整体 skip |
 | `wenjin.features.memory-enabled` | `true` | `${WENJIN_FEATURE_MEMORY:false}` | M7 长期记忆；关则 MEMORY 空、不 distill、记忆工具下架 |
 | `wenjin.features.rag-enabled` | `true` | `${WENJIN_FEATURE_RAG:false}` | M8 RAG；关则 RETRIEVAL 空、`search_materials` 下架 |
+| `wenjin.features.rag-vector-enabled` | `true`（e2e 同） | `${WENJIN_FEATURE_RAG_VECTOR:false}` | RAG R2 混合检索；需 `rag-enabled` 同开。关或无可用嵌入客户端 → 纯全文（与 M8 逐字节一致）、入库后不派发 `RAG_EMBED`、`POST /api/teacher/rag/courses/{id}/reembed` 返回 404；管理后台可热改；评测 profile 固定 `false` |
 | `wenjin.features.reflection-enabled` | `true` | `${WENJIN_FEATURE_REFLECTION:false}` | M9 反思；关则不下发 `probe_understanding`、不自动探针 |
 | `wenjin.features.companion-llm-enabled` | `true` | `${WENJIN_FEATURE_COMPANION_LLM:true}` | M9 紧急关 LLM；关则零 LLM 模板 + 练习卡，run=`DEGRADED` |
 | `wenjin.features.plan-enabled` | `true` | `${WENJIN_FEATURE_PLAN:false}` | M10 学习计划；关则工具下架、scheduler 不跑、ACTIVE 冻结不删、brief 隐藏计划段 |
@@ -500,6 +503,16 @@ spring:
 | `wenjin.limits.rag.inject-top-k` | `4` | 继承基线 | RETRIEVAL 注入 top-k |
 | `wenjin.limits.rag.search-default-top-k` | `3` | 继承基线 | `search_materials` 默认 topK |
 | `wenjin.limits.rag.snippet-chars` | `200` | 继承基线 | 工具返回 snippet 上限 |
+| `wenjin.limits.rag.fusion-k` | `60` | 继承基线 | R2 RRF 常数：`score = Σ 1/(k + rank)` |
+| `wenjin.limits.rag.candidate-multiplier` | `3` | 继承基线 | R2 全文 / 向量各取 `topK × 倍数` 候选再融合 |
+| `wenjin.limits.rag.vector-min-score` | `0.2` | 继承基线 | R2 向量命中最低余弦 |
+| `wenjin.limits.rag.vector-only-min-score` | `0.5` | 继承基线 | R2 复核：仅向量命中（不在全文候选里）的块须达到的余弦下限；同时被全文命中的块沿用 `vector-min-score`。**随模型而异，启用前须标定**（见下） |
+| `wenjin.limits.rag.query-embed-timeout-ms` | `2500` | 继承基线 | R2 复核：在线查询嵌入读超时；批量 `RAG_EMBED` 仍 60s |
+| `wenjin.limits.rag.vector-cooldown-seconds` | `60` | 继承基线 | R2 复核：向量侧失败（超时 / 报错）后跳过向量检索、纯全文的冷却秒数；0 关闭 |
+| `wenjin.limits.rag.ingest-stale-minutes` | `60` | 继承基线 | R2 复核：INGESTING 来源超过此分钟数视为卡死，不再计入上传去重（须大于租约 15 分钟 × 最大领取 3 次 = 45） |
+| `wenjin.limits.rag.allow-hashing-embedding` | Java 默认 `false`；`application.yml` / e2e 显式 `true` | **`false`**（`application-prod.yml`） | R2 无真实嵌入 key 时是否用离线 `HashingEmbeddingClient`（`hash-ngram@1024`）；生产禁止，只用真实嵌入模型 |
+| `wenjin.limits.rag.query-cache-size` | `512` | 继承基线 | R2 查询向量 LRU 条数（键含 modelId；0 关闭） |
+| `wenjin.limits.rag.expand-prerequisites` | `true` | 继承基线 | R2 伴侣 RETRIEVAL 注入节点范围 = 焦点 + 直接前置 |
 
 ```yaml
 wenjin:
@@ -508,6 +521,7 @@ wenjin:
     eval-enabled: true          # prod: ${WENJIN_FEATURE_EVAL:false}
     memory-enabled: true        # prod: ${WENJIN_FEATURE_MEMORY:false}
     rag-enabled: true           # prod: ${WENJIN_FEATURE_RAG:false}
+    rag-vector-enabled: true    # prod: ${WENJIN_FEATURE_RAG_VECTOR:false}
     reflection-enabled: true    # prod: ${WENJIN_FEATURE_REFLECTION:false}
     companion-llm-enabled: true # prod: ${WENJIN_FEATURE_COMPANION_LLM:true}
     plan-enabled: true          # prod: ${WENJIN_FEATURE_PLAN:false}
@@ -537,6 +551,15 @@ wenjin:
       inject-top-k: 4
       search-default-top-k: 3
       snippet-chars: 200
+      fusion-k: 60
+      candidate-multiplier: 3
+      vector-min-score: 0.2
+      vector-only-min-score: 0.5      # 须按模型标定
+      query-embed-timeout-ms: 2500
+      vector-cooldown-seconds: 60
+      allow-hashing-embedding: true   # prod: false
+      query-cache-size: 512
+      expand-prerequisites: true
 ```
 
 **决策笔记**：
@@ -553,6 +576,7 @@ wenjin:
     | 参数 | 默认 | 说明 |
     | --- | --- | --- |
     | `WENJIN_EVAL_IT=true` | 未设 = 跳过 | 启用 `ReplayScenarioIT` / `LiveEvalPipelineIT` / `EvalFixtureIT` |
+    | `-Dwenjin.eval.rag.live=true` | 未设 = 不跑 | `RetrievalRecallIT` 额外用真实嵌入（需 `WENJIN_AI_EMBEDDING_API_KEY`）跑 HYBRID(live)，报告 `target/eval-rag/report.md` |
     | `WENJIN_EVAL_LIVE=true` + `WENJIN_AI_API_KEY` | 未设 = 跳过 | 启用 `LiveEvalSuiteIT`（真实模型，按 `wenjin.ai.base-url/model`） |
     | `-Dwenjin.eval.jdbc-url` / `WENJIN_EVAL_JDBC_URL` | Testcontainers `mysql:8.4` | 指向本机评测库，如 `jdbc:mysql://127.0.0.1:3306/wenjin_eval`；账号 `-Dwenjin.eval.jdbc-user` / `-password`（默认 root/root） |
     | `-Dwenjin.eval.repeat` | `3` | LIVE 每场景重复次数 |
@@ -566,6 +590,17 @@ wenjin:
   - 本地 LIVE 一条命令（PowerShell，`wenjin-server` 目录）：`$env:WENJIN_AUTH_SECRET="ci-test-secret-not-for-prod-at-least-32-bytes"; $env:WENJIN_EVAL_LIVE="true"; $env:WENJIN_AI_API_KEY="<key>"; .\mvnw.cmd test "-Dtest=LiveEvalSuiteIT" "-Dwenjin.eval.jdbc-url=jdbc:mysql://127.0.0.1:3306/wenjin_eval" "-Dwenjin.eval.judge=true"`。完整说明见 README「M6 伴侣评测」。
 - **M7 记忆**：生产默认 `memory-enabled=false`；开启前须完成 V12 migrate。关闭时行为回到 M6 基线（空 MEMORY 槽、无 distill 入队、记忆工具不可用）。`record_observation` 超 `write-per-run` 返回 `TOOL_BUDGET_EXCEEDED` + GUARD，且不占用总工具次数。
 - **M8 RAG**：生产默认 `rag-enabled=false`；开启前须完成 **V13 migrate** 与 **`ops/sql/preflight-ngram.sql`**（`ngram_token_size=2`）。关闭时回到 M7 基线（空 RETRIEVAL、`search_materials` 不可用）。**版权**：整本出版教材勿部署到公网 `fordo.thingxue.com`；校内演示环境不受限。NODE_REF 参考文档可入库。
+- **RAG 混合检索（R2）**：生产默认 `rag-vector-enabled=false` 且 `allow-hashing-embedding=false` → 纯全文。启用真实向量检索：
+  1. 确认 **V23 migrate**（`doc_chunk_embedding`）、`ai-job-dispatch-enabled=true`（嵌入走 `RAG_EMBED` 异步作业）、`rag-enabled=true`；
+  2. 配置嵌入模型：`WENJIN_AI_EMBEDDING_ENABLED=true` + `WENJIN_AI_EMBEDDING_API_KEY`（默认智谱 `embedding-3`、1024 维；也可在管理后台「系统配置 → AI 嵌入」热改并「测试连接」）；
+  3. 开 `WENJIN_FEATURE_RAG_VECTOR=true`（或后台热改）；
+  4. 回填存量语料：教师端「语料审核 → 重建向量」（或 `POST /api/teacher/rag/courses/{courseId}/reembed`，教师令牌），来源列表的「向量」列显示 `已嵌入/总块数`。之后新入库语料在入库事务提交后自动派发嵌入作业。
+  - 向量按 `modelId`（如 `embedding-3@1024`）隔离：**更换模型或维度后须再次「重建向量」**，期间该课程因「当前模型无向量」自动回退纯全文，不会混用旧向量。
+  - 嵌入失败只让 `RAG_EMBED` 作业 FAILED（`AI_ERROR`），不影响入库与检索；查询嵌入失败时单次检索回退纯全文并打 warn。
+  - **启用前必须按模型标定阈值**（`WENJIN_FEATURE_RAG_VECTOR=true` 之前）：余弦分布随嵌入模型差异很大，仓库默认值（`vector-min-score=0.2`、`vector-only-min-score=0.5`）只在离线哈希嵌入上实测过。标定步骤：配好嵌入 key 后在 `wenjin-server` 跑 `RetrievalRecallIT`（`-Dwenjin.eval.rag.live=true`，命令见 README「召回评测」），读 `target/eval-rag/report.md` 的「余弦分布」表——相关对（relevant）与无关对（irrelevant）的 min / median / max。`vector-min-score` 取略低于 relevant 的低分位、高于 irrelevant 的 median；`vector-only-min-score` 取略高于 irrelevant 的 max（让纯向量命中几乎不引入无关块），并用 recall@k 表确认没有因门槛过高退化为纯全文。每换一次嵌入模型须重新标定。
+  - **超时与冷却**：在线查询嵌入读超时 `query-embed-timeout-ms`（默认 2.5s，批量嵌入作业不受影响）；向量侧一旦失败，`vector-cooldown-seconds`（默认 60s）内检索直接走纯全文，不再每次等超时，到期后下一次检索自动探测恢复。冷却状态是进程内的。
+  - **已知限制（有意不修）**：①`VectorIndexCache` 是进程内缓存 → 与现有单副本部署约束一致，多副本下其他实例要等各自的失效事件 / 重启才会感知语料变化；换过模型后旧 `modelId` 的索引会留在内存里直到该课程发生失效事件（有界于课程数 × 用过的模型数）。②`doc_chunk_embedding` 每块只有一行向量（主键 chunk_id）：切换模型会覆盖旧模型向量，回切旧模型须再「重建向量」。③上传去重没有唯一约束：同一教师/多个教师并发上传相同文件，可能两份都通过去重而产生重复来源（可在语料审核里归档多余的一份）。
+  - 内存：每课程每模型一份暴力检索索引（1024 维 ≈ 4KB/块），在入库 / 嵌入完成 / 映射审核后失效重载；大语料（数万块）需评估堆内存。
 - **M9 竞赛交付 / 紧急 kill switch**：见下表；**无新 Flyway**（探针会话为进程内 `ProbeSessionStore`，避免占用 M10 的 V14）。
 - **M10 计划**：生产默认 `plan-enabled=false`；开启前须完成 **V14 migrate**。关闭时：计划工具下架、re-plan 不跑、daily-brief 隐藏计划段、已有 ACTIVE 冻结不删。DRAFT 永不进 brief / re-plan。
 - **主动陪伴**：生产默认 `proactive-enabled=false`（`WENJIN_FEATURE_PROACTIVE`）；开启前须 **V22 migrate**（`companion_hint_log`）。零 LLM、读时聚合，关闭时三个接口 404、前端回退固定话术；管理后台「系统配置」可热改开关。
@@ -792,6 +827,8 @@ process.
 | `WENJIN_AI_VISION_API_KEY` | 视觉模型 Key | 空 | 真实 Key（用图片抽取时） |
 | `WENJIN_AI_BASE_URL` / `WENJIN_AI_MODEL` | 文本模型地址/型号 | DeepSeek / deepseek-v4-pro | 按所用服务 |
 | `WENJIN_AI_VISION_BASE_URL` / `WENJIN_AI_VISION_MODEL` | 视觉模型地址/型号 | GLM / glm-5v-turbo | 按所用服务 |
+| `WENJIN_AI_EMBEDDING_ENABLED` / `WENJIN_AI_EMBEDDING_API_KEY` | RAG 嵌入模型开关 / Key（`wenjin.ai.embedding.*`；默认关，无 Key 时检索保持纯全文；开启前须 **V23 migrate**） | false / 空 | 真实 Key（启用向量检索时） |
+| `WENJIN_AI_EMBEDDING_BASE_URL` / `_MODEL` / `_DIMENSION` / `_BATCH_SIZE` | 嵌入模型地址/型号/维度/批大小 | 智谱 v4 / embedding-3 / 1024 / 16 | 按所用服务；换模型或维度后需重建向量 |
 | `wenjin.auth.ttl-seconds` | 令牌有效期(秒) | 604800（7天） | 按需 |
 | `wenjin.seed.enabled` | 演示数据播种 | false | **保持 false** |
 | `wenjin.bootstrap.admin.enabled` | 一次性首个 ADMIN 引导 | false（未设则组件不加载） | **仅建号启动一次为 true，随后立即 false** |

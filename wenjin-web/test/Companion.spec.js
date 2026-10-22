@@ -522,4 +522,53 @@ describe('Companion race hardening', () => {
     expect(c2.msgs.value.some((message) => message.content === 'after-unmount')).toBe(false)
     third.wrapper.unmount()
   })
+
+  it('citations event: valid ids stay chips, invalid ids are struck through on every bubble of the turn', async () => {
+    let capturedCallbacks = null
+    chatStream.mockImplementation((_payload, callbacks) => {
+      capturedCallbacks = callbacks
+      return new Promise(() => {})
+    })
+
+    const { wrapper } = await mountCompanion({ courseId: '5' })
+    const c = api()
+    c.input.value = '讲讲用例图'
+    c.sendText()
+    await flushPromises()
+
+    capturedCallbacks.onToken('先看资料 #7，')
+    capturedCallbacks.onToolStart({ name: 'search_materials', label: '检索' })
+    capturedCallbacks.onToolResult({ name: 'search_materials', ok: true })
+    capturedCallbacks.onToken('再看资料 #9。')
+    await nextTick()
+    // before the event every reference renders as a chip (legacy behaviour)
+    expect(wrapper.findAll('.cp-cite-chip')).toHaveLength(2)
+    expect(wrapper.findAll('.cp-cite-invalid')).toHaveLength(0)
+
+    capturedCallbacks.onCitations({ valid: [7], invalid: [9] })
+    await nextTick()
+
+    const chips = wrapper.findAll('.cp-cite-chip')
+    expect(chips).toHaveLength(1)
+    expect(chips[0].text()).toBe('资料 #7')
+    const struck = wrapper.findAll('.cp-cite-invalid')
+    expect(struck).toHaveLength(1)
+    expect(struck[0].text()).toBe('资料 #9')
+    expect(struck[0].element.tagName).toBe('SPAN')
+    wrapper.unmount()
+  })
+
+  it('history messages without a citations event keep rendering every reference as a chip', async () => {
+    fetchConversation.mockResolvedValue({ messages: [] })
+    const { wrapper } = await mountCompanion({ courseId: '5' })
+    const c = api()
+    c.msgs.value = [
+      { role: 'user', content: 'q' },
+      { role: 'assistant', content: '见资料 #3 与 资料 #4' }
+    ]
+    await nextTick()
+    expect(wrapper.findAll('.cp-cite-chip')).toHaveLength(2)
+    expect(wrapper.findAll('.cp-cite-invalid')).toHaveLength(0)
+    wrapper.unmount()
+  })
 })

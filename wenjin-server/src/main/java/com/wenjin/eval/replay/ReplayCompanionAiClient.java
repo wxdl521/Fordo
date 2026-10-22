@@ -9,10 +9,13 @@ import com.wenjin.eval.golden.GoldenFile.GoldenToolCall;
 import com.wenjin.eval.runner.TurnAware;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * REPLAY {@link CompanionAiClient} over a golden v2 file: every LLM call consumes the next recorded
@@ -21,7 +24,9 @@ import java.util.function.Consumer;
  *   <li>{@link #streamTurn}: content is delivered through {@code onContentDelta} in a few chunks (exercising
  *       the orchestrator's streaming path), tool calls are returned as recorded;</li>
  *   <li>legacy {@link #stream}/{@link #streamMessages} fallbacks consume one round and stream its content;</li>
- *   <li>{@link #beginTurn()} moves to the next scenario turn (called by the eval turn runner).</li>
+ *   <li>{@link #beginTurn()} moves to the next scenario turn (called by the eval turn runner);</li>
+ *   <li>golden text may use {@code {{cite:<source title>}}} / {@code {{cite:N}}} to cite a chunk returned by {@code search_materials}
+ *       (see {@link #resolveCitePlaceholders}).</li>
  * </ul>
  * Running out of rounds throws {@link IllegalStateException} mentioning {@value #NEED_RE_RECORD}; rounds left
  * unconsumed when a turn ends are reported by {@link #problems()} / {@link #verifyFullyConsumed()} — both
@@ -35,6 +40,7 @@ public final class ReplayCompanionAiClient implements CompanionAiClient, TurnAwa
     static final int MAX_CHUNKS = 3;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final Pattern CITE_PLACEHOLDER = Pattern.compile("\\{\\{cite:([^}]+)\\}\\}");
 
     private final String scenario;
     private final List<GoldenFile.GoldenTurn> turns;
@@ -103,8 +109,9 @@ public final class ReplayCompanionAiClient implements CompanionAiClient, TurnAwa
                                        ToolChoice toolChoice,
                                        Consumer<String> onContentDelta) {
         Next next = next("streamTurn");
-        emit(next.round().content(), onContentDelta);
-        return new StreamTurnResult(next.round().content(), toToolCalls(next), null, next.round().finishReason());
+        String content = resolveCitePlaceholders(next.round().content(), messages);
+        emit(content, onContentDelta);
+        return new StreamTurnResult(content, toToolCalls(next), null, next.round().finishReason());
     }
 
     @Override
@@ -115,7 +122,7 @@ public final class ReplayCompanionAiClient implements CompanionAiClient, TurnAwa
 
     @Override
     public void streamMessages(List<Map<String, Object>> messages, Consumer<String> onToken) {
-        emit(next("streamMessages").round().content(), onToken);
+        emit(resolveCitePlaceholders(next("streamMessages").round().content(), messages), onToken);
     }
 
     @Override
@@ -124,6 +131,71 @@ public final class ReplayCompanionAiClient implements CompanionAiClient, TurnAwa
         Next next = next("completeWithTools");
         List<ToolCall> calls = toToolCalls(next);
         return calls.isEmpty() ? new FinalText(next.round().content()) : new ToolCalls(calls);
+    }
+
+    /**
+     * Golden text may reference a chunk id the recorded run cannot know (ids are DB-assigned):
+     * <ul>
+     *   <li>{@code {{cite:<title>}}} - the chunk whose {@code sourceTitle} equals {@code <title>} among the
+     *       {@code search_materials} results already present in {@code messages} (ranking-independent);</li>
+     *   <li>{@code {{cite:N}}} - the N-th (1-based) distinct chunk of those results.</li>
+     * </ul>
+     * An unresolvable placeholder becomes {@code 0} (never a real chunk id), so the reply then fails the
+     * {@code citationsValid} hard assert instead of passing silently.
+     */
+    static String resolveCitePlaceholders(String content, List<Map<String, Object>> messages) {
+        if (content == null || !content.contains("{{cite:")) {
+            return content;
+        }
+        List<ToolChunk> chunks = toolResultChunks(messages);
+        Matcher m = CITE_PLACEHOLDER.matcher(content);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) {
+            String key = m.group(1).trim();
+            String id = "0";
+            if (key.matches("\\d+")) {
+                int n = key.length() > 6 ? 0 : Integer.parseInt(key);
+                if (n >= 1 && n <= chunks.size()) {
+                    id = String.valueOf(chunks.get(n - 1).id());
+                }
+            } else {
+                for (ToolChunk chunk : chunks) {
+                    if (key.equals(chunk.title())) {
+                        id = String.valueOf(chunk.id());
+                        break;
+                    }
+                }
+            }
+            m.appendReplacement(sb, Matcher.quoteReplacement(id));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    private record ToolChunk(long id, String title) {
+    }
+
+    private static List<ToolChunk> toolResultChunks(List<Map<String, Object>> messages) {
+        Map<Long, ToolChunk> chunks = new LinkedHashMap<>();
+        if (messages != null) {
+            for (Map<String, Object> message : messages) {
+                if (message == null || !"tool".equals(message.get("role"))
+                        || !(message.get("content") instanceof String body)) {
+                    continue;
+                }
+                try {
+                    for (JsonNode item : MAPPER.readTree(body).path("items")) {
+                        if (item.path("chunkId").isIntegralNumber()) {
+                            long id = item.path("chunkId").asLong();
+                            chunks.putIfAbsent(id, new ToolChunk(id, item.path("sourceTitle").asText("")));
+                        }
+                    }
+                } catch (Exception ignored) {
+                    // not a JSON tool result
+                }
+            }
+        }
+        return new ArrayList<>(chunks.values());
     }
 
     private record Next(int turnIndex, int roundIndex, GoldenRound round) {

@@ -88,7 +88,8 @@ final class ScenarioDriver {
                 }
                 toolsCalled.addAll(turnTools);
                 exchanges.add(new ScenarioRun.Exchange(turn.user(),
-                        result.reply() == null ? "" : result.reply().text(), List.copyOf(turnTools)));
+                        result.reply() == null ? "" : result.reply().text(), List.copyOf(turnTools),
+                        CitationEvidence.from(result.steps())));
                 if (ttftMs == null && result.ttftMs() != null) {
                     ttftMs = result.ttftMs();
                 }

@@ -117,6 +117,34 @@ public class LimitsProperties {
         private int searchDefaultTopK = 3;
         /** 检索 snippet 最大字符 */
         private int snippetChars = 200;
+        /** RRF 融合常数 k：score = Σ 1/(k + rank)（R2） */
+        private int fusionK = 60;
+        /** 混合检索时全文 / 向量各取 topK × 此倍数作为候选（R2） */
+        private int candidateMultiplier = 3;
+        /** 向量命中的最低余弦相似度；低于此值不进入候选（R2） */
+        private double vectorMinScore = 0.2;
+        /**
+         * 仅向量命中（不在全文候选里）的块须达到的更高余弦下限（R2 复核）。同时被全文命中的块沿用
+         * {@link #vectorMinScore}。余弦分布随模型而异，启用向量前须按模型标定（见 DEPLOYMENT.md）。
+         */
+        private double vectorOnlyMinScore = 0.5;
+        /** 在线查询嵌入的读超时（毫秒）；批量 RAG_EMBED 仍用 60s（R2 复核）。 */
+        private int queryEmbedTimeoutMs = 2500;
+        /** 向量侧失败（超时 / 报错）后跳过向量检索、纯全文的冷却秒数；0 关闭（R2 复核）。 */
+        private int vectorCooldownSeconds = 60;
+        /**
+         * 无真实嵌入模型时是否允许离线 HashingEmbeddingClient 作为向量后端（R2）。
+         * Java 默认 false；开发（application.yml）/ e2e 显式置 true（可无 key 演示混合检索），生产保持 false。
+         */
+        private boolean allowHashingEmbedding = false;
+        /**
+         * INGESTING 来源超过此分钟数仍未结束视为卡死，不再计入上传去重（须大于租约 × 最大领取次数 = 45 分钟）。
+         */
+        private int ingestStaleMinutes = 60;
+        /** 查询向量 LRU 缓存条数（按 modelId+查询串）；0 关闭（R2） */
+        private int queryCacheSize = 512;
+        /** 伴侣 RETRIEVAL 注入的节点范围是否扩展到焦点节点的直接前置（R2） */
+        private boolean expandPrerequisites = true;
     }
 
     @Data

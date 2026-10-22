@@ -35,6 +35,7 @@ public class ConfigRegistry {
 
     public static final String GROUP_AI_TEXT = "AI 文本";
     public static final String GROUP_AI_VISION = "AI 视觉";
+    public static final String GROUP_AI_EMBEDDING = "AI 嵌入";
     public static final String GROUP_FEATURES = "功能开关";
     public static final String GROUP_LIMITS = "限额";
 
@@ -79,6 +80,26 @@ public class ConfigRegistry {
                 "加密存储，界面只显示末 4 位", SECRET_MAX,
                 b -> vision(b).getApiKey(), (b, v) -> vision(b).setApiKey(v)));
 
+        // ── AI 嵌入（wenjin.ai.embedding.*；OpenAiCompatibleEmbeddingClient 每次调用现读）──
+        list.add(ConfigKeyDef.bool("wenjin.ai.embedding.enabled", GROUP_AI_EMBEDDING, "启用嵌入模型",
+                "RAG 向量检索的文本嵌入；关闭或无 Key 时检索回退纯全文",
+                b -> embedding(b).isEnabled(), (b, v) -> embedding(b).setEnabled(v)));
+        list.add(ConfigKeyDef.text("wenjin.ai.embedding.base-url", GROUP_AI_EMBEDDING, "服务基址",
+                "到 /embeddings 之前的完整前缀，如 https://open.bigmodel.cn/api/paas/v4", URL_MAX, true,
+                b -> embedding(b).getBaseUrl(), (b, v) -> embedding(b).setBaseUrl(v)));
+        list.add(ConfigKeyDef.text("wenjin.ai.embedding.model", GROUP_AI_EMBEDDING, "模型名",
+                "如 embedding-3；更换模型或维度后需在教师端「重建向量」", MODEL_MAX, false,
+                b -> embedding(b).getModel(), (b, v) -> embedding(b).setModel(v)));
+        list.add(ConfigKeyDef.secret("wenjin.ai.embedding.api-key", GROUP_AI_EMBEDDING, "API Key",
+                "加密存储，界面只显示末 4 位", SECRET_MAX,
+                b -> embedding(b).getApiKey(), (b, v) -> embedding(b).setApiKey(v)));
+        list.add(ConfigKeyDef.integer("wenjin.ai.embedding.dimension", GROUP_AI_EMBEDDING, "向量维度",
+                "请求 dimensions 并校验返回长度；embedding-3 支持 256/512/1024/2048", 64, 4096,
+                b -> embedding(b).getDimension(), (b, v) -> embedding(b).setDimension(v)));
+        list.add(ConfigKeyDef.integer("wenjin.ai.embedding.batch-size", GROUP_AI_EMBEDDING, "批大小",
+                "单次嵌入请求最多条数", 1, 64,
+                b -> embedding(b).getBatchSize(), (b, v) -> embedding(b).setBatchSize(v)));
+
         // ── 功能开关（wenjin.features.*，不含 eval-enabled）──
         feature(list, "fixed-diagnostic-enabled", "固定卷诊断", "组卷冻结 + 精确交卷",
                 FeatureFlagsProperties::isFixedDiagnosticEnabled, FeatureFlagsProperties::setFixedDiagnosticEnabled);
@@ -92,6 +113,9 @@ public class ConfigRegistry {
                 FeatureFlagsProperties::isMemoryEnabled, FeatureFlagsProperties::setMemoryEnabled);
         feature(list, "rag-enabled", "RAG 语料检索", "关闭时不注入检索片段、search_materials 下架",
                 FeatureFlagsProperties::isRagEnabled, FeatureFlagsProperties::setRagEnabled);
+        feature(list, "rag-vector-enabled", "RAG 混合检索（向量）",
+                "需 RAG 语料检索同时开启；关闭或无可用嵌入模型时检索退回纯全文，入库后不再派发向量作业",
+                FeatureFlagsProperties::isRagVectorEnabled, FeatureFlagsProperties::setRagVectorEnabled);
         feature(list, "reflection-enabled", "反思探针", "关闭时不下发理解探针、不换策略重讲",
                 FeatureFlagsProperties::isReflectionEnabled, FeatureFlagsProperties::setReflectionEnabled);
         feature(list, "companion-llm-enabled", "伴侣 LLM", "紧急开关：关闭后伴侣立即走零 LLM 降级模板",
@@ -144,6 +168,10 @@ public class ConfigRegistry {
 
     private static AiProperties.Vision vision(ConfigBeans b) {
         return b.ai().getVision();
+    }
+
+    private static AiProperties.Embedding embedding(ConfigBeans b) {
+        return b.ai().getEmbedding();
     }
 
     private static LimitsProperties.Companion companion(ConfigBeans b) {

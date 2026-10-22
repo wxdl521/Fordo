@@ -20,3 +20,6 @@ wenjin:
     fixed-diagnostic-enabled: true
     graph-reconcile-enabled: true
     ai-job-dispatch-enabled: false
+    # R2：回放 / LIVE 评测固定纯全文检索（与 golden 基线一致、不依赖库里是否残留向量）；
+    # 混合检索 / 召回评测 IT 在用例内显式开启并恢复
+    rag-vector-enabled: false

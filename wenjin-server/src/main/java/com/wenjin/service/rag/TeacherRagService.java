@@ -9,6 +9,15 @@ import com.wenjin.dto.BatchApproveMapsRequest;
 import com.wenjin.dto.ChunkNodeMapPageVO;
 import com.wenjin.dto.ChunkNodeMapVO;
 import com.wenjin.dto.DocSourceVO;
+import com.wenjin.dto.DocUploadVO;
+import com.wenjin.dto.AiJobVO;
+import com.wenjin.service.AiJobPayloadSubmissionService;
+import com.wenjin.support.AiJobKind;
+import org.springframework.web.multipart.MultipartFile;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.Locale;
 import com.wenjin.dto.NodeRefIngestRequest;
 import com.wenjin.entity.ChunkNodeMap;
 import com.wenjin.entity.DocChunk;
@@ -20,6 +29,8 @@ import com.wenjin.security.CourseAccessService;
 import com.wenjin.support.ChunkMapReviewStatus;
 import com.wenjin.support.DocSourceKind;
 import com.wenjin.support.DocSourceStatus;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -51,19 +62,48 @@ public class TeacherRagService {
     private final DocIngestService docIngestService;
     private final CourseAccessService courseAccessService;
     private final FeatureFlagsProperties featureFlags;
+    private final AiJobPayloadSubmissionService payloadSubmissionService;
+
+    /** R2：映射审核后发 {@link RagCorpusChangedEvent}（提交后失效向量索引）；缺省时跳过。 */
+    private ApplicationEventPublisher events;
+
+    /** R2：嵌入覆盖率与「重建向量」；缺省时覆盖率为 null、重建 404。 */
+    private RagEmbedService ragEmbedService;
+
+    private static final Set<String> UPLOAD_EXTS = Set.of("md", "txt", "pdf", "docx");
 
     public TeacherRagService(DocSourceMapper sourceMapper,
                              DocChunkMapper chunkMapper,
                              ChunkNodeMapMapper mapMapper,
                              DocIngestService docIngestService,
                              CourseAccessService courseAccessService,
-                             FeatureFlagsProperties featureFlags) {
+                             FeatureFlagsProperties featureFlags,
+                             AiJobPayloadSubmissionService payloadSubmissionService) {
         this.sourceMapper = Objects.requireNonNull(sourceMapper);
         this.chunkMapper = Objects.requireNonNull(chunkMapper);
         this.mapMapper = Objects.requireNonNull(mapMapper);
         this.docIngestService = Objects.requireNonNull(docIngestService);
         this.courseAccessService = Objects.requireNonNull(courseAccessService);
         this.featureFlags = featureFlags;
+        this.payloadSubmissionService = payloadSubmissionService;
+    }
+
+    /** 去重的卡死 INGESTING 判定阈值；缺省 60 分钟。 */
+    private com.wenjin.config.LimitsProperties limits;
+
+    @Autowired(required = false)
+    public void setLimits(com.wenjin.config.LimitsProperties limits) {
+        this.limits = limits;
+    }
+
+    @Autowired(required = false)
+    public void setEventPublisher(ApplicationEventPublisher events) {
+        this.events = events;
+    }
+
+    @Autowired(required = false)
+    public void setRagEmbedService(RagEmbedService ragEmbedService) {
+        this.ragEmbedService = ragEmbedService;
     }
 
     public List<DocSourceVO> listSources(Long courseId) {
@@ -83,6 +123,8 @@ public class TeacherRagService {
         List<Long> sourceIds = rows.stream().map(DocSource::getId).filter(Objects::nonNull).toList();
         Map<Long, Long> chunkCounts = countChunksBySource(sourceIds);
         Map<Long, Long> pendingCounts = countPendingMapsBySource(sourceIds);
+        // 向量模式开时给出当前模型的嵌入覆盖率；关时 embeddedChunks 为 null（前端隐藏该列与「重建向量」）
+        String activeModel = ragEmbedService == null ? null : ragEmbedService.activeModelId().orElse(null);
 
         List<DocSourceVO> out = new ArrayList<>(rows.size());
         for (DocSource s : rows) {
@@ -95,6 +137,14 @@ public class TeacherRagService {
             vo.setCreatedAt(s.getCreatedAt());
             vo.setChunkCount(chunkCounts.getOrDefault(s.getId(), 0L));
             vo.setPendingMapCount(pendingCounts.getOrDefault(s.getId(), 0L));
+            Long unlinked = s.getStatus() != null && s.getStatus() == DocSourceStatus.READY
+                    ? chunkMapper.countUnlinkedBySource(s.getId()) : 0L;
+            vo.setUnlinkedChunkCount(unlinked == null ? 0L : unlinked);
+            vo.setTotalChunks(vo.getChunkCount());
+            if (activeModel != null) {
+                vo.setEmbeddedChunks(ragEmbedService.embeddedCount(s.getId(), activeModel));
+                vo.setEmbeddingModel(activeModel);
+            }
             out.add(vo);
         }
         return out;
@@ -207,6 +257,7 @@ public class TeacherRagService {
             mapMapper.updateById(m);
             n++;
         }
+        publishCorpusChanged(courseId, "MAP_BATCH_APPROVE");
         return n;
     }
 
@@ -256,6 +307,105 @@ public class TeacherRagService {
         return toSourceVo(refreshed, chunks, pending);
     }
 
+    /**
+     * 上传 md/txt/pdf/docx：去重 → 建 INGESTING 来源 → 派发 DOC_INGEST 作业（异步入库 + 自动初标）。
+     */
+    @Transactional
+    public DocUploadVO uploadSource(Long courseId, MultipartFile file, String title, Integer kind) {
+        assertRagEnabled();
+        if (courseId == null || courseId <= 0) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "courseId required");
+        }
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "上传文件不能为空");
+        }
+        String filename = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().trim();
+        String ext = filename.lastIndexOf('.') >= 0
+                ? filename.substring(filename.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT) : "";
+        if (!UPLOAD_EXTS.contains(ext)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "仅支持 .md .txt .pdf .docx 文件");
+        }
+        int resolvedKind = kind == null ? DocSourceKind.COURSEWARE : kind;
+        if (resolvedKind != DocSourceKind.COURSEWARE && resolvedKind != DocSourceKind.TEXTBOOK) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "kind 仅支持 0(课件) / 1(教材)");
+        }
+        courseAccessService.assertManageCourse(courseId);
+        long teacherId = CurrentUser.requireTeacher().userId();
+
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (java.io.IOException e) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "读取上传文件失败");
+        }
+        String hash = sha256Hex(bytes);
+        // 超过阈值仍 INGESTING 的来源视为卡死（作业丢租约 / worker 死亡），不算重复
+        LocalDateTime staleBefore = LocalDateTime.now().minusMinutes(ingestStaleMinutes());
+        Long dup = sourceMapper.selectCount(new QueryWrapper<DocSource>()
+                .eq("course_id", courseId)
+                .eq("file_hash", hash)
+                .notIn("status", DocSourceStatus.FAILED, DocSourceStatus.ARCHIVED)
+                .and(w -> w.ne("status", DocSourceStatus.INGESTING).or().ge("created_at", staleBefore)));
+        if (dup != null && dup > 0) {
+            throw new BusinessException(ResultCode.CONFLICT, "该文件已上传过");
+        }
+        // 顺手把卡死的同文件 INGESTING 来源置 FAILED，避免列表里永远转圈
+        sourceMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<DocSource>()
+                .set("status", DocSourceStatus.FAILED)
+                .eq("course_id", courseId)
+                .eq("file_hash", hash)
+                .eq("status", DocSourceStatus.INGESTING)
+                .lt("created_at", staleBefore));
+
+        String resolvedTitle = StringUtils.hasText(title) ? title.trim() : stripExt(filename);
+        if (resolvedTitle.length() > 200) {
+            resolvedTitle = resolvedTitle.substring(0, 200);
+        }
+        DocSource source = new DocSource();
+        source.setCourseId(courseId);
+        source.setTitle(resolvedTitle);
+        source.setKind(resolvedKind);
+        source.setFileHash(hash);
+        source.setStatus(DocSourceStatus.INGESTING);
+        source.setCreatedBy(teacherId);
+        source.setCreatedAt(LocalDateTime.now());
+        sourceMapper.insert(source);
+
+        // request_key ≤ 64：含 sourceId，使 FAILED 后同文件重传得到新作业而非命中旧键
+        String key = ("src:" + courseId + ":" + source.getId() + ":" + hash);
+        if (key.length() > 64) {
+            key = key.substring(0, 64);
+        }
+        AiJobVO job = payloadSubmissionService.submitForCourse(
+                courseId, AiJobKind.DOC_INGEST, key, file, Map.of("sourceId", source.getId()));
+
+        DocUploadVO vo = new DocUploadVO();
+        vo.setSourceId(source.getId());
+        vo.setJobId(job == null ? null : job.getId());
+        vo.setTitle(resolvedTitle);
+        vo.setKind(resolvedKind);
+        vo.setStatus(DocSourceStatus.INGESTING);
+        return vo;
+    }
+
+    private int ingestStaleMinutes() {
+        return limits == null || limits.getRag() == null ? 60 : Math.max(1, limits.getRag().getIngestStaleMinutes());
+    }
+
+    private static String stripExt(String filename) {
+        int dot = filename.lastIndexOf('.');
+        String base = dot > 0 ? filename.substring(0, dot) : filename;
+        return base.isBlank() ? "上传文档" : base;
+    }
+
+    private static String sha256Hex(byte[] bytes) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     private void reviewOne(Long id, int targetStatus) {
         assertRagEnabled();
         if (id == null || id <= 0) {
@@ -271,6 +421,32 @@ public class TeacherRagService {
         row.setReviewedBy(teacherId);
         row.setReviewedAt(LocalDateTime.now());
         mapMapper.updateById(row);
+        publishCorpusChanged(row.getCourseId(),
+                targetStatus == ChunkMapReviewStatus.APPROVED ? "MAP_APPROVE" : "MAP_REJECT");
+    }
+
+    /**
+     * R2：教师「重建向量」——课程全部 READY 来源按 source 派发 RAG_EMBED。
+     * rag-enabled / rag-vector-enabled 关 → 404；无可用嵌入模型 → 503。
+     */
+    public Map<String, Object> reembedCourse(Long courseId) {
+        assertRagEnabled();
+        if (ragEmbedService == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, ResultCode.NOT_FOUND.getMessage());
+        }
+        return ragEmbedService.reembedCourse(courseId);
+    }
+
+    private void publishCorpusChanged(Long courseId, String reason) {
+        if (events == null || courseId == null) {
+            return;
+        }
+        try {
+            events.publishEvent(new RagCorpusChangedEvent(courseId, reason));
+        } catch (RuntimeException e) {
+            org.slf4j.LoggerFactory.getLogger(TeacherRagService.class)
+                    .warn("publish RagCorpusChangedEvent failed courseId={}: {}", courseId, e.getMessage());
+        }
     }
 
     private void assertRagEnabled() {

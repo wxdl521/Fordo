@@ -12,6 +12,7 @@ import com.wenjin.service.memory.SummaryRefreshService;
 import com.wenjin.service.multiagent.SupervisorSampleReportService;
 import com.wenjin.service.multiagent.TeacherWeeklyReportService;
 import com.wenjin.service.rag.DocIngestService;
+import com.wenjin.service.rag.RagEmbedService;
 import com.wenjin.support.AiJobErrorCodes;
 import com.wenjin.support.AiJobHeartbeatScheduler;
 import com.wenjin.support.AiJobKind;
@@ -43,6 +44,7 @@ public class AiJobWorker {
     private final MemoryDistillService memoryDistillService;
     private final SummaryRefreshService summaryRefreshService;
     private final DocIngestService docIngestService;
+    private final RagEmbedService ragEmbedService;
     private final TeacherWeeklyReportService teacherWeeklyReportService;
     private final SupervisorSampleReportService supervisorSampleReportService;
     private final PrincipalLoader principalLoader;
@@ -59,6 +61,7 @@ public class AiJobWorker {
                        MemoryDistillService memoryDistillService,
                        SummaryRefreshService summaryRefreshService,
                        DocIngestService docIngestService,
+                       RagEmbedService ragEmbedService,
                        TeacherWeeklyReportService teacherWeeklyReportService,
                        SupervisorSampleReportService supervisorSampleReportService,
                        PrincipalLoader principalLoader,
@@ -74,6 +77,7 @@ public class AiJobWorker {
         this.memoryDistillService = memoryDistillService;
         this.summaryRefreshService = summaryRefreshService;
         this.docIngestService = docIngestService;
+        this.ragEmbedService = ragEmbedService;
         this.teacherWeeklyReportService = teacherWeeklyReportService;
         this.supervisorSampleReportService = supervisorSampleReportService;
         this.principalLoader = principalLoader;
@@ -91,6 +95,13 @@ public class AiJobWorker {
             aiJobService.recoverStale();
         } catch (Exception e) {
             log.warn("AI job recoverStale failed: {}", e.getMessage());
+        }
+        try {
+            if (docIngestService != null) {
+                docIngestService.failOrphanedIngestingSources();
+            }
+        } catch (Exception e) {
+            log.warn("DOC_INGEST orphan source sweep failed: {}", e.getMessage());
         }
         AiJob job;
         try {
@@ -168,6 +179,7 @@ public class AiJobWorker {
             case AiJobKind.MEMORY_DISTILL -> runMemoryDistill(job, leaseToken, request, heartbeat);
             case AiJobKind.SUMMARY_REFRESH -> runSummaryRefresh(job, leaseToken, request, heartbeat);
             case AiJobKind.DOC_INGEST -> runDocIngest(job, leaseToken, request, heartbeat);
+            case AiJobKind.RAG_EMBED -> runRagEmbed(job, leaseToken, request, heartbeat);
             case AiJobKind.TEACHER_WEEKLY_REPORT -> runTeacherWeeklyReport(job, leaseToken, request, heartbeat);
             case AiJobKind.SUPERVISOR_SAMPLE -> runSupervisorSample(job, leaseToken, request, heartbeat);
             default -> throw new BusinessException(ResultCode.BAD_REQUEST, "未知作业类型: " + kind);
@@ -233,12 +245,38 @@ public class AiJobWorker {
         markProgressOrLose(job.getId(), leaseToken, 15, heartbeat);
         heartbeat.requireOwned();
         String hash = stringVal(request.get("fileHash"));
-        byte[] bytes = payloadStore.load(hash);
-        markProgressOrLose(job.getId(), leaseToken, 40, heartbeat);
+        String fileName = stringVal(request.get("fileName"));
+        try {
+            byte[] bytes = payloadStore.load(hash);
+            markProgressOrLose(job.getId(), leaseToken, 40, heartbeat);
+            heartbeat.requireOwned();
+            // 按 source.kind 分派：NODE_REF → 原路径；COURSEWARE/TEXTBOOK → 文件入库 + 自动初标
+            Object result = docIngestService.ingestSource(sourceId, bytes, fileName);
+            markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
+            return result;
+        } catch (LeaseLostException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            try {
+                docIngestService.markFailed(sourceId);
+            } catch (RuntimeException markErr) {
+                log.warn("DOC_INGEST markFailed sourceId={} failed: {}", sourceId, markErr.getMessage());
+            }
+            throw e;
+        }
+    }
+
+    /** R2：来源切块向量化；批间上报进度（续租 + 租约丢失即停）；向量模式关时 SKIPPED 成功。 */
+    private Object runRagEmbed(AiJob job,
+                               String leaseToken,
+                               Map<String, Object> request,
+                               HeartbeatGuard heartbeat) {
+        long sourceId = MemoryDistillService.longVal(request, "sourceId", 0L);
+        markProgressOrLose(job.getId(), leaseToken, 10, heartbeat);
         heartbeat.requireOwned();
-        // M8 core: NODE_REF path only；COURSEWARE/TEXTBOOK PDF·PPT 初标后续里程碑
-        Object result = docIngestService.ingestNodeRefBytes(sourceId, bytes);
-        markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
+        Object result = ragEmbedService.embedSource(sourceId, job.getCourseId(),
+                p -> markProgressOrLose(job.getId(), leaseToken, Math.min(90, Math.max(10, p)), heartbeat));
+        markProgressOrLose(job.getId(), leaseToken, 95, heartbeat);
         return result;
     }
 
