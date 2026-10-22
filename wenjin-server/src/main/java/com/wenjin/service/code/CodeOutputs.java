@@ -53,7 +53,7 @@ final class CodeOutputs {
 
     /** 编译器输出里的容器内路径对学生无意义，去掉。 */
     static String cleanCompileOutput(String s) {
-        return s == null ? "" : s.replace("/work/Main.java", "Main.java");
+        return s == null ? "" : s.replace("/src/Main.java", "Main.java").replace("/work/Main.java", "Main.java");
     }
 
     static boolean looksLikeOutOfMemory(String stderr) {

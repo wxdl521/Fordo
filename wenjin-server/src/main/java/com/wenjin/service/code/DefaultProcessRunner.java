@@ -15,15 +15,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class DefaultProcessRunner implements ProcessRunner {
 
-    /** stderr 只用于日志，保留这么多字节足够 */
-    private static final int STDERR_CAP = 4096;
     private static final long READER_JOIN_MS = 2000;
 
     @Override
-    public Result run(List<String> command, Duration timeout, int maxStdoutBytes)
+    public Result run(List<String> command, Duration timeout, int maxStdoutBytes, int maxStderrBytes)
             throws IOException, InterruptedException {
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.redirectInput(ProcessBuilder.Redirect.PIPE);
+        long t0 = System.nanoTime();
         Process p = pb.start();
         try {
             p.getOutputStream().close();
@@ -31,7 +30,7 @@ public class DefaultProcessRunner implements ProcessRunner {
             // 子进程可能已退出
         }
         CappedReader out = new CappedReader(p.getInputStream(), Math.max(0, maxStdoutBytes));
-        CappedReader err = new CappedReader(p.getErrorStream(), STDERR_CAP);
+        CappedReader err = new CappedReader(p.getErrorStream(), Math.max(0, maxStderrBytes));
         Thread to = Thread.ofVirtual().name("wj-proc-out").start(out);
         Thread te = Thread.ofVirtual().name("wj-proc-err").start(err);
         boolean finished;
@@ -41,6 +40,7 @@ public class DefaultProcessRunner implements ProcessRunner {
             p.destroyForcibly();
             throw e;
         }
+        long elapsedMs = (System.nanoTime() - t0) / 1_000_000;
         if (!finished) {
             p.destroyForcibly();
             p.waitFor(5, TimeUnit.SECONDS);
@@ -48,7 +48,7 @@ public class DefaultProcessRunner implements ProcessRunner {
         to.join(READER_JOIN_MS);
         te.join(READER_JOIN_MS);
         return new Result(finished ? p.exitValue() : -1, out.bytes(), out.truncated(),
-                new String(err.bytes(), StandardCharsets.UTF_8), !finished);
+                new String(err.bytes(), StandardCharsets.UTF_8), !finished, err.truncated(), elapsedMs);
     }
 
     private static final class CappedReader implements Runnable {

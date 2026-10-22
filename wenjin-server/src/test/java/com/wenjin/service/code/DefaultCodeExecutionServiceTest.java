@@ -333,6 +333,37 @@ class DefaultCodeExecutionServiceTest {
     }
 
     @Test
+    @DisplayName("沙箱 fail-fast：首个超时/超资源用例之后未运行的用例按同一 verdict 计为未通过，绝不算通过")
+    void judge_failFastMissingCases() {
+        caseTable.put(9L, List.of(
+                new CodeTestCase(1, "a", "1", false),
+                new CodeTestCase(2, "b", "2", false),
+                new CodeTestCase(3, "c", "3", true),
+                new CodeTestCase(4, "d", "4", true)));
+        CaseRun to = new CaseRun(1, 124, true, 3000, "", false, "", false);
+        sandbox.next = req -> completed(ok(0, "1"), to);
+        CodeJudgeResult t = service.judge(1L, 9L, OK_SOURCE);
+        assertThat(t.verdict()).isEqualTo(Verdict.TIMEOUT);
+        assertThat(t.passedCases()).isEqualTo(1);
+        assertThat(t.cases()).extracting(CaseResult::verdict).containsExactly(
+                Verdict.ACCEPTED, Verdict.TIMEOUT, Verdict.TIMEOUT, Verdict.TIMEOUT);
+        assertThat(t.cases()).extracting(CaseResult::passed).containsExactly(true, false, false, false);
+
+        CaseRun flood = new CaseRun(0, 0, false, 50, "x", true, "", false);
+        sandbox.next = req -> completed(flood);
+        CodeJudgeResult rl = service.judge(1L, 9L, OK_SOURCE);
+        assertThat(rl.verdict()).isEqualTo(Verdict.RESOURCE_LIMIT);
+        assertThat(rl.passedCases()).isZero();
+        assertThat(rl.cases()).extracting(CaseResult::verdict).containsOnly(Verdict.RESOURCE_LIMIT);
+
+        // 最后一个已运行用例只是答案错：缺失用例仍按运行器被破坏处理
+        sandbox.next = req -> completed(ok(0, "wrong"));
+        assertThat(service.judge(1L, 9L, OK_SOURCE).cases()).extracting(CaseResult::verdict)
+                .containsExactly(Verdict.WRONG_ANSWER, Verdict.RUNTIME_ERROR, Verdict.RUNTIME_ERROR,
+                        Verdict.RUNTIME_ERROR);
+    }
+
+    @Test
     @DisplayName("judge：无用例 / 用例超上限 → REJECTED，不执行也不计次；无 CodeTestCaseSource → UNAVAILABLE")
     void judge_caseGuards() {
         assertThat(service.judge(1L, 404L, OK_SOURCE).verdict()).isEqualTo(Verdict.REJECTED);

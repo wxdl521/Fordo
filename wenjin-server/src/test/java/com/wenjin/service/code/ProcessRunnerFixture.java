@@ -2,7 +2,7 @@ package com.wenjin.service.code;
 
 /**
  * {@link DefaultProcessRunnerTest} 用的子进程入口（只在测试 classpath 上；不是学生代码）。
- * 用法：print &lt;bytes&gt; | sleep &lt;ms&gt; | exit &lt;code&gt; | stderr &lt;text&gt;
+ * 用法：print &lt;bytes&gt; | eprint &lt;bytes&gt; | sleep &lt;ms&gt; | exit &lt;code&gt; | stderr &lt;text&gt;
  */
 public final class ProcessRunnerFixture {
 
@@ -21,6 +21,13 @@ public final class ProcessRunnerFixture {
                     left -= k;
                 }
                 System.out.flush();
+            }
+            case "eprint" -> {
+                byte[] chunk = "e".repeat(1000).getBytes();
+                for (int left = Integer.parseInt(args[1]); left > 0; left -= chunk.length) {
+                    System.err.write(chunk, 0, Math.min(left, chunk.length));
+                }
+                System.err.flush();
             }
             case "sleep" -> Thread.sleep(Long.parseLong(args[1]));
             case "exit" -> System.exit(Integer.parseInt(args[1]));

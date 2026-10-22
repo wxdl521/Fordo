@@ -54,6 +54,8 @@ class CodeOutputsTest {
     void compileOutput_hidesContainerPath() {
         assertThat(CodeOutputs.cleanCompileOutput("/work/Main.java:3: error: ';' expected"))
                 .isEqualTo("Main.java:3: error: ';' expected");
+        assertThat(CodeOutputs.cleanCompileOutput("/src/Main.java:3: error: ';' expected"))
+                .isEqualTo("Main.java:3: error: ';' expected");
     }
 
     @Test

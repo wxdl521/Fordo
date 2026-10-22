@@ -219,8 +219,9 @@ public class DefaultCodeExecutionService implements CodeExecutionService {
                 // COMPLETED / TIMEOUT
             }
         }
-        // 缺失用例：整体超时 → TIMEOUT；运行器被破坏 → RUNTIME_ERROR。绝不当作通过。
-        Verdict missing = r.status() == SandboxResult.Status.TIMEOUT ? Verdict.TIMEOUT : Verdict.RUNTIME_ERROR;
+        // 缺失（未运行）用例绝不当作通过：整体超时 → TIMEOUT；沙箱 fail-fast（某用例超时/超资源后停止）→
+        // 与触发用例同一 verdict；其余（运行器被破坏）→ RUNTIME_ERROR。
+        Verdict missing = missingCaseVerdict(r);
         SandboxResult.CaseRun[] byIndex = new SandboxResult.CaseRun[total];
         for (SandboxResult.CaseRun c : r.cases()) {
             if (c.index() >= 0 && c.index() < total) {
@@ -262,6 +263,19 @@ public class DefaultCodeExecutionService implements CodeExecutionService {
         }
         Verdict overall = worst == null ? Verdict.ACCEPTED : worst;
         return new CodeJudgeResult(overall, passed, total, null, results, elapsed(t0), message(overall));
+    }
+
+    static Verdict missingCaseVerdict(SandboxResult r) {
+        if (r.status() == SandboxResult.Status.TIMEOUT) {
+            return Verdict.TIMEOUT;
+        }
+        if (!r.cases().isEmpty()) {
+            Verdict last = caseVerdict(r.cases().get(r.cases().size() - 1));
+            if (last == Verdict.TIMEOUT || last == Verdict.RESOURCE_LIMIT) {
+                return last;
+            }
+        }
+        return Verdict.RUNTIME_ERROR;
     }
 
     private CodeJudgeResult judgeRefusal(Verdict v, String message, int total, long t0) {

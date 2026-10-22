@@ -64,4 +64,28 @@ class DefaultProcessRunnerTest {
         assertThatThrownBy(() -> runner.run(List.of("definitely-not-a-binary-wj-" + System.nanoTime()),
                 Duration.ofSeconds(5), 10)).isInstanceOf(IOException.class);
     }
+
+    @Test
+    @DisplayName("stderr 上限可指定：超出读走丢弃并标记 stderrTruncated；默认 4096")
+    void stderrCap() throws Exception {
+        ProcessRunner.Result r = runner.run(fixture("eprint", "300000"), Duration.ofSeconds(30), 10, 2000);
+        assertThat(r.exitCode()).isZero();
+        assertThat(r.stderr()).hasSize(2000);
+        assertThat(r.stderrTruncated()).isTrue();
+
+        ProcessRunner.Result d = runner.run(fixture("eprint", "10000"), Duration.ofSeconds(30), 10);
+        assertThat(d.stderr()).hasSize(ProcessRunner.DEFAULT_STDERR_CAP);
+        ProcessRunner.Result small = runner.run(fixture("eprint", "100"), Duration.ofSeconds(30), 10, 2000);
+        assertThat(small.stderrTruncated()).isFalse();
+    }
+
+    @Test
+    @DisplayName("elapsedMs 是宿主测得的墙钟（含超时被杀的情况）")
+    void elapsedIsMeasured() throws Exception {
+        ProcessRunner.Result r = runner.run(fixture("sleep", "700"), Duration.ofSeconds(30), 10);
+        assertThat(r.elapsedMs()).isBetween(650L, 25_000L);
+        ProcessRunner.Result t = runner.run(fixture("sleep", "60000"), Duration.ofMillis(1200), 10);
+        assertThat(t.timedOut()).isTrue();
+        assertThat(t.elapsedMs()).isBetween(1150L, 25_000L);
+    }
 }
