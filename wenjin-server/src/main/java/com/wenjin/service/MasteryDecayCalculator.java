@@ -160,4 +160,11 @@ public class MasteryDecayCalculator {
     public double getMasteredThreshold() {
         return masteredThreshold;
     }
+
+    /**
+     * 薄弱分数阈值（有效分低于此值视为「未学/很低」），供教师侧统计对齐阈值使用。
+     */
+    public double getWeakThreshold() {
+        return weakThreshold;
+    }
 }
