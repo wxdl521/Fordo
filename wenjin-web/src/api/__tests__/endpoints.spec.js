@@ -129,7 +129,7 @@ describe('API endpoint contracts', () => {
     // - 3 removed unused (importQuestionExcelLegacy / fetchPracticeHistory / fetchTeacherReport) = 70
     // + 1 uploadRagSource (R3 file ingest) -> 74 total with the three above counted in 73
     // + 1 reembedRagCourse (R2 hybrid retrieval) -> 75
-    expect(exportCount).toBe(76)
+    expect(exportCount).toBe(77)
   })
 
   it('maps user and course operations without forwarding privilege fields', () => {
