@@ -18,7 +18,7 @@
 
   <!-- 选项（单选 / 多选 / 判断） -->
   <div
-    v-if="!isShortAnswer"
+    v-if="!isShortAnswer && !isCode"
     class="qa-options"
     :role="isMulti ? 'group' : 'radiogroup'"
     :aria-labelledby="isMulti ? 'qa-stem qa-multi-hint' : 'qa-stem'"
@@ -37,6 +37,24 @@
       <span class="qa-opt-letter" :class="{ selected: isOptSelected(i) }" aria-hidden="true">{{ letters[i] }}</span>
       <span class="qa-opt-text">{{ opt }}</span>
     </div>
+  </div>
+
+  <!-- 编程题：样例 + 代码编辑器 -->
+  <div v-else-if="isCode" class="qa-code-wrap" data-testid="qa-code">
+    <div v-if="sampleCases.length" class="qa-samples" role="group" aria-label="样例用例">
+      <div v-for="(c, i) in sampleCases" :key="c.seq ?? i" class="qa-sample" data-testid="qa-sample">
+        <div class="qa-sample-title">样例 {{ i + 1 }}</div>
+        <div class="qa-sample-cap">输入</div>
+        <pre class="qa-sample-pre">{{ c.stdin }}</pre>
+        <div class="qa-sample-cap">期望输出</div>
+        <pre class="qa-sample-pre">{{ c.expectedStdout }}</pre>
+      </div>
+    </div>
+    <CodeAnswerEditor
+      :model-value="textValue"
+      aria-labelledby="qa-stem"
+      @update:model-value="$emit('textInput', $event)"
+    />
   </div>
 
   <!-- 简答题输入框 -->
@@ -75,6 +93,8 @@
 
 <script setup>
 import { computed } from 'vue'
+import CodeAnswerEditor from './CodeAnswerEditor.vue'
+import { isCodeType } from '../utils/codeResult.js'
 
 const props = defineProps({
   /** 题目对象：{ questionId, c(chapter), q(stem), o(option texts[]), optionKeys[], type } */
@@ -107,6 +127,8 @@ const letters = ['A', 'B', 'C', 'D', 'E', 'F']
 const questionType = computed(() => props.question?.type || 1)
 const isMulti = computed(() => questionType.value === 2)
 const isShortAnswer = computed(() => questionType.value === 4)
+const isCode = computed(() => isCodeType(questionType.value))
+const sampleCases = computed(() => props.question?.sampleCases || [])
 
 const progressPct = computed(() => {
   if (!props.total) return '0%'
@@ -272,6 +294,14 @@ function onOptKeydown(e, i) {
   line-height: 1.55;
   color: var(--ink);
 }
+
+/* 编程题 */
+.qa-code-wrap { margin-bottom: 32px; }
+.qa-samples { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.qa-sample { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--card); }
+.qa-sample-title { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.qa-sample-cap { font-size: 12px; color: var(--mut); margin-top: 4px; }
+.qa-sample-pre { margin: 2px 0 0; padding: 6px 8px; background: var(--card2); border-radius: 6px; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
 
 /* 简答输入 */
 .qa-short-wrap {
