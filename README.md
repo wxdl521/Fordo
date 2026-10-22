@@ -48,7 +48,7 @@
 - 题目审核池：AI 出题、存量题标注、JSON/Excel 题库导入、批量审核。
 - 学情看板：按课程聚合学生掌握度和薄弱分布。
 - Agent 轨迹：按课程分页查看伴侣等 Agent run，展开 steps 查看工具/LLM 调用与截断后的 I/O。
-- 语料审核：上传课程资料（NODE_REF），审核 chunk↔知识点映射（M8）。
+- 语料审核：上传课件/教材文件（`.md .txt .pdf .docx`，≤10MB，异步入库 + 按知识点名称自动初标）或粘贴 NODE_REF Markdown，审核 chunk↔知识点映射，来源列表显示入库状态与「未关联 N 块」（M8 / RAG R3）。
 - 周报：确定性学情周报与质量抽查报告（M11，默认关闭）。
 
 ## 技术栈
@@ -401,6 +401,7 @@ M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `R
 
 - Flyway **`V13__rag.sql`**：`doc_source` / `doc_chunk`（FULLTEXT ngram）/ `chunk_node_map`。
 - **NODE_REF 入库**：`DOC_INGEST` 作业解析 Markdown frontmatter + `##` 切块，映射直写 `APPROVED`（样例见 `src/test/resources/rag/node-ref/`）。
+- **文件入库 + 自动初标（R3）**：`POST /api/teacher/rag/sources/upload`（multipart `courseId/file/title?/kind?`，202 返回 `{sourceId,jobId,...}`；同课程同 SHA-256 且非 FAILED/ARCHIVED → 409）→ `DOC_INGEST` 作业按 `source.kind` 分派：NODE_REF 走原路径，课件/教材抽取文本（pdf/docx 复用 `DocumentTextExtractor` 限额）→ 带标题路径切块 → `ChunkNodeLabeler`（确定性、零 LLM）取前 2 个得分 ≥4 的节点写 `PENDING` 映射（置信度=得分/16，上限 0.99），无命中块不可检索，可用 `batch-approve minConfidence` 一键通过。带 NODE_REF frontmatter 的 `.md` 自动转 NODE_REF。
 - **检索**：`RetrievalService` 两段式（节点圈定 → 可选全课程放宽）；`FulltextRetriever` 实现 `RetrieverPort`（向量实现预留）。
 - **注入**：`rag-enabled` 且有命中时填充 RETRIEVAL 不可信包裹块；`CitationValidator` 剔除越界 `citedChunkIds`。
 - **工具**：`search_materials`（读、可缓存；`query`≤50、`nodeCodes`≤5、`topK` 1..5）。

@@ -46,7 +46,8 @@ class DocIngestServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new DocIngestService(sourceMapper, chunkMapper, mapMapper, nodeMapper);
+        service = new DocIngestService(sourceMapper, chunkMapper, mapMapper, nodeMapper,
+                new com.wenjin.support.DocumentTextExtractor());
     }
 
     @Test

@@ -5,6 +5,10 @@ import com.wenjin.common.Result;
 import com.wenjin.dto.BatchApproveMapsRequest;
 import com.wenjin.dto.ChunkNodeMapPageVO;
 import com.wenjin.dto.DocSourceVO;
+import com.wenjin.dto.DocUploadVO;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.multipart.MultipartFile;
 import com.wenjin.dto.NodeRefIngestRequest;
 import com.wenjin.service.rag.TeacherRagService;
 import jakarta.validation.Valid;
@@ -90,5 +94,20 @@ public class TeacherRagController {
     @PostMapping("/sources/node-ref")
     public Result<DocSourceVO> createNodeRef(@Valid @RequestBody NodeRefIngestRequest req) {
         return Result.ok(teacherRagService.createNodeRef(req));
+    }
+
+    /**
+     * POST /api/teacher/rag/sources/upload（multipart：courseId、file、title?、kind?）
+     * 受理后异步入库，202 返回 {sourceId, jobId, title, kind, status}；同课程同内容重复 → 409。
+     */
+    @Audited(action = "RAG_SOURCE_UPLOAD", target = "RAG")
+    @PostMapping("/sources/upload")
+    public ResponseEntity<Result<DocUploadVO>> upload(
+            @RequestParam("courseId") @Positive Long courseId,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "title", required = false) String title,
+            @RequestParam(value = "kind", required = false) Integer kind) {
+        DocUploadVO vo = teacherRagService.uploadSource(courseId, file, title, kind);
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(Result.ok(vo));
     }
 }
