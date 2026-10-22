@@ -36,6 +36,12 @@ public class FeatureFlagsProperties {
     private volatile boolean ragEnabled = true;
 
     /**
+     * RAG 向量 / 混合检索（R2；需 rag-enabled 同时为真）。关闭或无可用嵌入客户端时检索退回纯全文（与 M8 行为一致），
+     * 入库后也不再派发 RAG_EMBED 作业。
+     */
+    private volatile boolean ragVectorEnabled = true;
+
+    /**
      * 反思探针 / 换策略重讲（M9；关闭时不下发 probe_understanding、不自动探针）。
      */
     private volatile boolean reflectionEnabled = true;

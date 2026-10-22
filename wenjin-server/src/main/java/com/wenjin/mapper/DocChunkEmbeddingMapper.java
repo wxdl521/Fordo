@@ -63,4 +63,12 @@ public interface DocChunkEmbeddingMapper extends BaseMapper<DocChunkEmbedding> {
             WHERE chunk_id IN (SELECT id FROM doc_chunk WHERE source_id = #{sourceId})
             """)
     int deleteBySourceId(@Param("sourceId") long sourceId);
+
+    /** 某来源下已有该模型向量的 chunk 数（教师端嵌入覆盖率）。 */
+    @Select("""
+            SELECT COUNT(*) FROM doc_chunk_embedding e
+            INNER JOIN doc_chunk c ON c.id = e.chunk_id
+            WHERE c.source_id = #{sourceId} AND e.model = #{model}
+            """)
+    long countBySourceAndModel(@Param("sourceId") long sourceId, @Param("model") String model);
 }

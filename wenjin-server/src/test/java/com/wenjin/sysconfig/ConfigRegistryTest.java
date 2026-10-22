@@ -39,6 +39,7 @@ class ConfigRegistryTest {
             "wenjin.features.agent-trace-enabled",
             "wenjin.features.memory-enabled",
             "wenjin.features.rag-enabled",
+            "wenjin.features.rag-vector-enabled",
             "wenjin.features.reflection-enabled",
             "wenjin.features.companion-llm-enabled",
             "wenjin.features.plan-enabled",

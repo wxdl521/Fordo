@@ -62,6 +62,11 @@ public class ChunkEmbeddingRepository {
         return (chunkIds == null || chunkIds.isEmpty()) ? 0 : mapper.deleteByChunkIds(chunkIds);
     }
 
+    /** 某来源下已有该模型向量的 chunk 数（教师端嵌入覆盖率）。 */
+    public long countBySourceAndModel(long sourceId, String model) {
+        return mapper.countBySourceAndModel(sourceId, model);
+    }
+
     public int deleteBySourceId(long sourceId) {
         return mapper.deleteBySourceId(sourceId);
     }

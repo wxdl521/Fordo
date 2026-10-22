@@ -111,6 +111,12 @@ wenjin:
       inject-top-k: 4                            # RETRIEVAL 注入 top-k
       search-default-top-k: 3                    # search_materials 默认 topK
       snippet-chars: 200                         # 工具返回 snippet 上限
+      fusion-k: 60                               # R2 RRF 常数：score = Σ 1/(k + rank)
+      candidate-multiplier: 3                    # R2 混合检索全文/向量各取 topK × 倍数候选
+      vector-min-score: 0.2                      # R2 向量命中最低余弦
+      allow-hashing-embedding: true              # R2 无真实嵌入时允许离线哈希嵌入（生产 false）
+      query-cache-size: 512                      # R2 查询向量 LRU 条数（0 关闭）
+      expand-prerequisites: true                 # R2 伴侣注入范围 = 焦点节点 + 直接前置
     draft:
       max-total: 100                             # 全局草稿上限
       max-per-user: 10                           # 单教师草稿上限
@@ -157,6 +163,7 @@ wenjin:
     eval-enabled: true                           # 评测套件（M6）
     memory-enabled: true                         # 伴侣长期记忆（M7；关则 MEMORY 槽为空）
     rag-enabled: true                            # RAG 语料检索（M8；关则 RETRIEVAL 空、工具下架）
+    rag-vector-enabled: true                     # R2 混合检索（全文+向量 RRF）；关或无嵌入客户端 → 纯全文
     reflection-enabled: true                     # M9 反思探针 / 换策略重讲
     companion-llm-enabled: true                  # M9 伴侣 LLM（关则零 LLM 降级模板）
     plan-enabled: true                           # M10 学习计划（关则工具下架、scheduler 不跑）

@@ -113,6 +113,9 @@ public class ConfigRegistry {
                 FeatureFlagsProperties::isMemoryEnabled, FeatureFlagsProperties::setMemoryEnabled);
         feature(list, "rag-enabled", "RAG 语料检索", "关闭时不注入检索片段、search_materials 下架",
                 FeatureFlagsProperties::isRagEnabled, FeatureFlagsProperties::setRagEnabled);
+        feature(list, "rag-vector-enabled", "RAG 混合检索（向量）",
+                "需 RAG 语料检索同时开启；关闭或无可用嵌入模型时检索退回纯全文，入库后不再派发向量作业",
+                FeatureFlagsProperties::isRagVectorEnabled, FeatureFlagsProperties::setRagVectorEnabled);
         feature(list, "reflection-enabled", "反思探针", "关闭时不下发理解探针、不换策略重讲",
                 FeatureFlagsProperties::isReflectionEnabled, FeatureFlagsProperties::setReflectionEnabled);
         feature(list, "companion-llm-enabled", "伴侣 LLM", "紧急开关：关闭后伴侣立即走零 LLM 降级模板",

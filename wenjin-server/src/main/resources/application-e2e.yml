@@ -11,11 +11,15 @@ wenjin:
     eval-enabled: true
     memory-enabled: true
     rag-enabled: true
+    rag-vector-enabled: true
     plan-enabled: true
     multi-agent-enabled: false
     proactive-enabled: true
     companion-llm-enabled: true
     reflection-enabled: true
+  limits:
+    rag:
+      allow-hashing-embedding: true   # e2e 无嵌入 key 时用离线哈希嵌入跑混合检索
   companion:
     tools:
       enabled: true

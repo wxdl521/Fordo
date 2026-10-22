@@ -117,6 +117,21 @@ public class LimitsProperties {
         private int searchDefaultTopK = 3;
         /** 检索 snippet 最大字符 */
         private int snippetChars = 200;
+        /** RRF 融合常数 k：score = Σ 1/(k + rank)（R2） */
+        private int fusionK = 60;
+        /** 混合检索时全文 / 向量各取 topK × 此倍数作为候选（R2） */
+        private int candidateMultiplier = 3;
+        /** 向量命中的最低余弦相似度；低于此值不进入候选（R2） */
+        private double vectorMinScore = 0.2;
+        /**
+         * 无真实嵌入模型时是否允许离线 HashingEmbeddingClient 作为向量后端（R2）。
+         * 开发 / e2e 为 true（可无 key 演示混合检索）；生产 application-prod.yml 置 false。
+         */
+        private boolean allowHashingEmbedding = true;
+        /** 查询向量 LRU 缓存条数（按 modelId+查询串）；0 关闭（R2） */
+        private int queryCacheSize = 512;
+        /** 伴侣 RETRIEVAL 注入的节点范围是否扩展到焦点节点的直接前置（R2） */
+        private boolean expandPrerequisites = true;
     }
 
     @Data
