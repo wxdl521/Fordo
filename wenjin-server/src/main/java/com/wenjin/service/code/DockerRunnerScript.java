@@ -75,7 +75,7 @@ final class DockerRunnerScript {
                 unset JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS CLASSPATH
                 export HOME=/tmp LANG=C.UTF-8
                 T=/tmp/wj
-                mkdir -p "$T" && mkfifo "$T/ef" || exit 125
+                mkdir -p "$T" && rm -f "$T/ef" "$T/rc" && mkfifo "$T/ef" || exit 125
                 head -c "$LIM" < "$T/ef" >&2 &
                 { java -Xmx${HEAP}m -Xss8m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -XX:-UsePerfData \\
                     -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 \\
