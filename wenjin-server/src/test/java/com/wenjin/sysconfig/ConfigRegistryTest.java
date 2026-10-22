@@ -27,6 +27,12 @@ class ConfigRegistryTest {
             "wenjin.ai.vision.base-url",
             "wenjin.ai.vision.model",
             "wenjin.ai.vision.api-key",
+            "wenjin.ai.embedding.enabled",
+            "wenjin.ai.embedding.base-url",
+            "wenjin.ai.embedding.model",
+            "wenjin.ai.embedding.api-key",
+            "wenjin.ai.embedding.dimension",
+            "wenjin.ai.embedding.batch-size",
             "wenjin.features.fixed-diagnostic-enabled",
             "wenjin.features.graph-reconcile-enabled",
             "wenjin.features.ai-job-dispatch-enabled",
@@ -55,13 +61,13 @@ class ConfigRegistryTest {
     }
 
     @Test
-    @DisplayName("分组顺序：AI 文本 → AI 视觉 → 功能开关 → 限额；只有两个 apiKey 是 secret")
+    @DisplayName("分组顺序：AI 文本 → AI 视觉 → AI 嵌入 → 功能开关 → 限额；只有三个 apiKey 是 secret")
     void groupsAndSecrets() {
         assertThat(registry.all()).extracting(ConfigKeyDef::group).containsSubsequence(
                 ConfigRegistry.GROUP_AI_TEXT, ConfigRegistry.GROUP_AI_VISION,
-                ConfigRegistry.GROUP_FEATURES, ConfigRegistry.GROUP_LIMITS);
+                ConfigRegistry.GROUP_AI_EMBEDDING, ConfigRegistry.GROUP_FEATURES, ConfigRegistry.GROUP_LIMITS);
         assertThat(registry.all()).filteredOn(ConfigKeyDef::isSecret).extracting(ConfigKeyDef::key)
-                .containsExactly("wenjin.ai.api-key", "wenjin.ai.vision.api-key");
+                .containsExactly("wenjin.ai.api-key", "wenjin.ai.vision.api-key", "wenjin.ai.embedding.api-key");
         assertThat(registry.all()).allSatisfy(d -> {
             assertThat(d.label()).isNotBlank();
             assertThat(d.description()).isNotBlank();
@@ -99,6 +105,7 @@ class ConfigRegistryTest {
     void hotFields_areVolatile() throws Exception {
         assertVolatile(AiProperties.class, "enabled", "baseUrl", "apiKey", "model", "temperature");
         assertVolatile(AiProperties.Vision.class, "enabled", "baseUrl", "apiKey", "model");
+        assertVolatile(AiProperties.Embedding.class, "enabled", "baseUrl", "apiKey", "model", "dimension", "batchSize");
         assertVolatile(FeatureFlagsProperties.class, "fixedDiagnosticEnabled", "graphReconcileEnabled",
                 "aiJobDispatchEnabled", "agentTraceEnabled", "memoryEnabled", "ragEnabled", "reflectionEnabled",
                 "companionLlmEnabled", "planEnabled", "multiAgentEnabled");

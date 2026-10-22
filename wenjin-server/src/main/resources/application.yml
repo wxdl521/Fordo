@@ -71,6 +71,13 @@ wenjin:
       base-url: ${WENJIN_AI_VISION_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
       api-key: ${WENJIN_AI_VISION_API_KEY:}
       model: ${WENJIN_AI_VISION_MODEL:glm-5v-turbo}
+    embedding:                                    # RAG 向量检索的文本嵌入;无 key 时 available()=false,检索回退纯全文
+      enabled: ${WENJIN_AI_EMBEDDING_ENABLED:false}
+      base-url: ${WENJIN_AI_EMBEDDING_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+      api-key: ${WENJIN_AI_EMBEDDING_API_KEY:}
+      model: ${WENJIN_AI_EMBEDDING_MODEL:embedding-3}
+      dimension: ${WENJIN_AI_EMBEDDING_DIMENSION:1024}
+      batch-size: ${WENJIN_AI_EMBEDDING_BATCH_SIZE:16}
   companion:
     tools:
       enabled: true

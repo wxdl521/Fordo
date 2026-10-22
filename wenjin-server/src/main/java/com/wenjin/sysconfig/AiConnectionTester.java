@@ -33,6 +33,7 @@ public class AiConnectionTester {
 
     public static final String TARGET_TEXT = "text";
     public static final String TARGET_VISION = "vision";
+    public static final String TARGET_EMBEDDING = "embedding";
 
     static final int MAX_TOKENS = 5;
     static final int MAX_ERROR_CHARS = 300;
@@ -62,11 +63,20 @@ public class AiConnectionTester {
      */
     public AdminAiTestVO test(String target) {
         boolean vision = TARGET_VISION.equals(target);
+        boolean embedding = TARGET_EMBEDDING.equals(target);
         boolean enabled;
         String baseUrl;
         String apiKey;
         String model;
-        if (vision) {
+        int dimension = 0;
+        if (embedding) {
+            AiProperties.Embedding e = properties.getEmbedding();
+            enabled = e != null && e.isEnabled();
+            baseUrl = e == null ? null : e.getBaseUrl();
+            apiKey = e == null ? null : e.getApiKey();
+            model = e == null ? null : e.getModel();
+            dimension = e == null ? 0 : e.getDimension();
+        } else if (vision) {
             AiProperties.Vision v = properties.getVision();
             enabled = v != null && v.isEnabled();
             baseUrl = v == null ? null : v.getBaseUrl();
@@ -80,7 +90,8 @@ public class AiConnectionTester {
         }
 
         if (!enabled) {
-            return new AdminAiTestVO(false, 0, model, vision ? "视觉模型已关闭（wenjin.ai.vision.enabled=false）"
+            return new AdminAiTestVO(false, 0, model, embedding ? "嵌入模型已关闭（wenjin.ai.embedding.enabled=false）"
+                    : vision ? "视觉模型已关闭（wenjin.ai.vision.enabled=false）"
                     : "文本模型已关闭（wenjin.ai.enabled=false）");
         }
         if (!StringUtils.hasText(apiKey)) {
@@ -90,13 +101,16 @@ public class AiConnectionTester {
             return new AdminAiTestVO(false, 0, model, "未配置服务基址或模型名");
         }
 
-        String url = trimTrailingSlash(baseUrl) + (vision ? "/chat/completions" : "/v1/chat/completions");
-        Map<String, Object> body = Map.of(
-                "model", model,
-                "messages", List.of(Map.of("role", "user", "content", PROBE_PROMPT)),
-                "max_tokens", MAX_TOKENS,
-                "temperature", 0,
-                "stream", false);
+        String url = trimTrailingSlash(baseUrl)
+                + (embedding ? "/embeddings" : vision ? "/chat/completions" : "/v1/chat/completions");
+        Map<String, Object> body = embedding
+                ? Map.of("model", model, "input", List.of(PROBE_PROMPT), "dimensions", dimension)
+                : Map.of(
+                        "model", model,
+                        "messages", List.of(Map.of("role", "user", "content", PROBE_PROMPT)),
+                        "max_tokens", MAX_TOKENS,
+                        "temperature", 0,
+                        "stream", false);
 
         long started = System.nanoTime();
         try {
@@ -108,8 +122,9 @@ public class AiConnectionTester {
                     .retrieve()
                     .body(JsonNode.class);
             long latency = elapsedMs(started);
-            if (root == null || !root.path("choices").isArray()) {
-                return new AdminAiTestVO(false, latency, model, "返回结构异常（缺少 choices）");
+            String field = embedding ? "data" : "choices";
+            if (root == null || !root.path(field).isArray()) {
+                return new AdminAiTestVO(false, latency, model, "返回结构异常（缺少 " + field + "）");
             }
             return new AdminAiTestVO(true, latency, model, null);
         } catch (RestClientResponseException e) {

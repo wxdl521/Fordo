@@ -438,6 +438,7 @@ npm run build        # 产出 dist/
 | 已迁移 | Flyway `V15__agent_report.sql` | `agent_report`（M11 多智能体产出，可选） | 中 |
 | 已迁移 | Flyway `V21__answer_record_time_index.sql` | `answer_record.idx_student_course_time`（错因辅导按时间取最近错题；仅加索引，大表建议低峰执行） | 小 |
 | 已迁移 | Flyway `V22__companion_hint_log.sql` | `companion_hint_log`（主动陪伴提示条展示/关闭日志） | 小 |
+| 已迁移 | Flyway `V23__doc_chunk_embedding.sql` | `doc_chunk_embedding`（RAG 切块向量，float32 LE MEDIUMBLOB；仅建新表，向量由后续嵌入作业回填，无 key 时不受影响） | 小 |
 
 ### 4.1 配置清单（调度与基线）
 
@@ -792,6 +793,8 @@ process.
 | `WENJIN_AI_VISION_API_KEY` | 视觉模型 Key | 空 | 真实 Key（用图片抽取时） |
 | `WENJIN_AI_BASE_URL` / `WENJIN_AI_MODEL` | 文本模型地址/型号 | DeepSeek / deepseek-v4-pro | 按所用服务 |
 | `WENJIN_AI_VISION_BASE_URL` / `WENJIN_AI_VISION_MODEL` | 视觉模型地址/型号 | GLM / glm-5v-turbo | 按所用服务 |
+| `WENJIN_AI_EMBEDDING_ENABLED` / `WENJIN_AI_EMBEDDING_API_KEY` | RAG 嵌入模型开关 / Key（`wenjin.ai.embedding.*`；默认关，无 Key 时检索保持纯全文；开启前须 **V23 migrate**） | false / 空 | 真实 Key（启用向量检索时） |
+| `WENJIN_AI_EMBEDDING_BASE_URL` / `_MODEL` / `_DIMENSION` / `_BATCH_SIZE` | 嵌入模型地址/型号/维度/批大小 | 智谱 v4 / embedding-3 / 1024 / 16 | 按所用服务；换模型或维度后需重建向量 |
 | `wenjin.auth.ttl-seconds` | 令牌有效期(秒) | 604800（7天） | 按需 |
 | `wenjin.seed.enabled` | 演示数据播种 | false | **保持 false** |
 | `wenjin.bootstrap.admin.enabled` | 一次性首个 ADMIN 引导 | false（未设则组件不加载） | **仅建号启动一次为 true，随后立即 false** |

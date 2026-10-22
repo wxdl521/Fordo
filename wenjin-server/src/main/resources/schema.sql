@@ -26,7 +26,8 @@
 --   14. V19 增 review_pin（今日复习置顶）；V20 增 sys_user.email（注册邮箱，可空唯一）。
 --   15. V21 增 answer_record.idx_student_course_time（错因辅导按时间取最近错题）。
 --   16. V22 增 companion_hint_log（主动陪伴提示条展示/关闭日志，无物理 FK）。
---   17. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--   17. V23 增 doc_chunk_embedding（RAG 切块向量，无物理 FK）。
+--   18. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -785,5 +786,20 @@ CREATE TABLE `companion_hint_log` (
     UNIQUE KEY `uk_companion_hint` (`student_id`, `course_id`, `hint_key`),
     KEY `idx_companion_hint_shown` (`student_id`, `course_id`, `shown_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='伴侣主动提示条展示/关闭日志【V22】';
+
+-- ───────────────────────────── 组：RAG 切块向量【V23】─────────────────────────────
+
+DROP TABLE IF EXISTS `doc_chunk_embedding`;
+
+CREATE TABLE `doc_chunk_embedding` (
+    `chunk_id`    BIGINT      NOT NULL COMMENT '切块（逻辑外键→doc_chunk.id）',
+    `model`       VARCHAR(64) NOT NULL COMMENT '嵌入模型标识，如 embedding-3@1024',
+    `dim`         INT         NOT NULL COMMENT '向量维度',
+    `vector`      MEDIUMBLOB  NOT NULL COMMENT 'float32 little-endian',
+    `content_sha` CHAR(64)    NOT NULL COMMENT '切块内容 SHA-256，内容未变则跳过重嵌',
+    `created_at`  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '嵌入时间',
+    PRIMARY KEY (`chunk_id`),
+    KEY `idx_chunk_emb_model` (`model`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='语料切块向量【V23】';
 
 SET FOREIGN_KEY_CHECKS = 1;
