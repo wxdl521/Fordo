@@ -1043,7 +1043,8 @@ useAutoReview({
   reviewQuery: () => route.query.review,
   ready: () => !!courseId.value && !typing.value && conversationLoadingTarget.value === null,
   clearQuery: () => {
-    const { review: _drop, ...rest } = route.query
+    const rest = { ...route.query }
+    delete rest.review
     router.replace({ path: route.path, query: rest })
   },
   send: (reviewId) => sendProactive({
