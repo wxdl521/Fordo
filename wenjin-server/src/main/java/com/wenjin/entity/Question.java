@@ -26,7 +26,7 @@ public class Question {
     /** 题干 SHA-256 十六进制指纹（trim 后；课程内唯一） */
     private String stemHash;
 
-    /** 题型：1=单选, 2=多选, 3=判断, 4=简答 */
+    /** 题型：1=单选, 2=多选, 3=判断, 4=简答, 5=编程 */
     private Integer type;
 
     /** 难度 1–5 */
@@ -37,6 +37,12 @@ public class Question {
 
     /** 解析 */
     private String analysis;
+
+    /** 编程题起始代码（可空；仅 type=5）【V24】 */
+    private String starterCode;
+
+    /** 编程题语言（v1 仅 java；可空）【V24】 */
+    private String codeLanguage;
 
     /** 来源：1=学校题库, 2=AI生成, 3=人工录入 */
     private Integer source;

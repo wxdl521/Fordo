@@ -1,0 +1,94 @@
+{
+  "courseCode": "JAVA-DEMO",
+  "description": "Java 编程题演示样例（3 题；含 hidden 用例）。不会自动导入：在教师端对 Java 课程使用「导入题库 JSON」手动导入。nodeCode 请替换为目标课程图谱中真实存在的节点编码，否则该题会被跳过。type=CODE 表示编程题，cases[].hidden=true 的用例对学生隐藏输入/期望/实际输出。",
+  "questions": [
+    {
+      "type": "CODE",
+      "stem": "【编程】两数之和：从标准输入读入两个整数 a 和 b（空格分隔），输出它们的和。",
+      "nodeCode": "KT01",
+      "chapter": "基础语法",
+      "difficulty": 1,
+      "analysis": "使用 Scanner 读取两个 int，输出 a + b。注意类名必须为 Main。",
+      "starterCode": "import java.util.Scanner;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        // 在此读入 a、b 并输出 a + b\n    }\n}\n",
+      "cases": [
+        {
+          "stdin": "1 2\n",
+          "expectedStdout": "3\n",
+          "hidden": false
+        },
+        {
+          "stdin": "-5 5\n",
+          "expectedStdout": "0\n",
+          "hidden": false
+        },
+        {
+          "stdin": "100000 200000\n",
+          "expectedStdout": "300000\n",
+          "hidden": true
+        },
+        {
+          "stdin": "0 0\n",
+          "expectedStdout": "0\n",
+          "hidden": true
+        }
+      ]
+    },
+    {
+      "type": "CODE",
+      "stem": "【编程】最大值：第一行输入整数 n，第二行输入 n 个整数，输出其中的最大值。",
+      "nodeCode": "KT01",
+      "chapter": "数组与循环",
+      "difficulty": 2,
+      "analysis": "遍历数组维护当前最大值；注意全为负数时初值不要设为 0。",
+      "starterCode": "import java.util.Scanner;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        int n = sc.nextInt();\n        // 读入 n 个整数并输出最大值\n    }\n}\n",
+      "cases": [
+        {
+          "stdin": "3\n1 9 4\n",
+          "expectedStdout": "9\n",
+          "hidden": false
+        },
+        {
+          "stdin": "1\n7\n",
+          "expectedStdout": "7\n",
+          "hidden": false
+        },
+        {
+          "stdin": "4\n-3 -1 -8 -2\n",
+          "expectedStdout": "-1\n",
+          "hidden": true
+        },
+        {
+          "stdin": "5\n2 2 2 2 2\n",
+          "expectedStdout": "2\n",
+          "hidden": true
+        }
+      ]
+    },
+    {
+      "type": "CODE",
+      "stem": "【编程】回文判断：输入一个字符串（不含空格），若它是回文串输出 YES，否则输出 NO。",
+      "nodeCode": "KT01",
+      "chapter": "字符串",
+      "difficulty": 3,
+      "analysis": "可用 StringBuilder.reverse() 比较，或双指针从两端向中间比较。",
+      "starterCode": "import java.util.Scanner;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        String s = sc.next();\n        // 判断是否回文并输出 YES / NO\n    }\n}\n",
+      "cases": [
+        {
+          "stdin": "level\n",
+          "expectedStdout": "YES\n",
+          "hidden": false
+        },
+        {
+          "stdin": "hello\n",
+          "expectedStdout": "NO\n",
+          "hidden": false
+        },
+        {
+          "stdin": "a\n",
+          "expectedStdout": "YES\n",
+          "hidden": true
+        }
+      ]
+    }
+  ]
+}

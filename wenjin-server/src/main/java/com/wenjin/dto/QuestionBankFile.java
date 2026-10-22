@@ -41,6 +41,15 @@ public class QuestionBankFile {
 
         /** 选项列表 */
         private List<BankOption> options;
+
+        /** 题型：缺省/SINGLE=单选（沿用旧行为）；CODE=编程题；其余取值按单选处理 */
+        private String type;
+
+        /** 编程题起始代码（仅 type=CODE） */
+        private String starterCode;
+
+        /** 编程题测试用例（仅 type=CODE，至少 1 个；可含 hidden） */
+        private List<CodeCaseItem> cases;
     }
 
     /** 单个选项：标识 / 文本 / 是否正确。 */

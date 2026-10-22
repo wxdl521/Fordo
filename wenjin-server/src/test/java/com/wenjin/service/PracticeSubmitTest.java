@@ -34,6 +34,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
+import static com.wenjin.service.CodeTestSupport.noCodeService;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -108,7 +109,9 @@ class PracticeSubmitTest {
                 questionNodeMapper, questionMapper, answerRecordMapper,
                 kgNodeMapper, questionOptionMapper, practiceSessionMapper,
                 masteryService, studentMasteryMapper, learningPathItemMapper,
-                pathService, learningPathMapper);
+                pathService, learningPathMapper,
+                org.mockito.Mockito.mock(com.wenjin.mapper.QuestionCodeCaseMapper.class),
+                noCodeService());
         ReflectionTestUtils.setField(impl, "defaultSize", 5);
         ReflectionTestUtils.setField(impl, "maxSize", 10);
         ReflectionTestUtils.setField(impl, "recencyDays", 7);

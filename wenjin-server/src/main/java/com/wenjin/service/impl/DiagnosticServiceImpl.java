@@ -137,6 +137,11 @@ public class DiagnosticServiceImpl implements DiagnosticService {
                         .eq(Question::getCourseId, courseId)
                         .eq(Question::getStatus, QuestionStatus.APPROVED));
 
+        // 编程题不进入固定诊断卷（需沙箱判分，且不适合 25 题限时诊断）
+        approved = approved.stream()
+                .filter(q -> q.getType() == null || q.getType() != QuestionType.CODE)
+                .collect(Collectors.toList());
+
         PaperVO paper = new PaperVO();
         paper.setCourseId(courseId);
 

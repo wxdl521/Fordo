@@ -48,7 +48,8 @@ public class AnswerGrader {
      * @return 判分结果（非 null）
      */
     public GradeResult grade(int questionType, String studentAnswer, Set<String> correctKeys) {
-        if (questionType == QuestionType.SHORT_ANSWER) {
+        // 编程题由 CodeExecutionService 判分，纯函数判分器一律跳过（防误按选项逻辑判错）
+        if (questionType == QuestionType.SHORT_ANSWER || questionType == QuestionType.CODE) {
             return GradeResult.skipped();
         }
         if (questionType == QuestionType.MULTI) {

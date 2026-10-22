@@ -70,7 +70,8 @@ class QuestionServiceImplTest {
         lenient().doNothing().when(courseAccessService).assertManageCourse(anyLong());
         QuestionWriteService writeService = new QuestionWriteService(
                 questionMapper, questionOptionMapper, questionNodeMapper,
-                courseMapper, graphQueryService);
+                courseMapper, graphQueryService,
+                org.mockito.Mockito.mock(com.wenjin.mapper.QuestionCodeCaseMapper.class));
         return new QuestionServiceImpl(
                 graphQueryService, questionAiClient, kgNodeMapper,
                 questionMapper, courseAccessService, writeService);

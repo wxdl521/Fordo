@@ -1,5 +1,6 @@
 package com.wenjin.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Data;
 
 import java.util.ArrayList;
@@ -75,6 +76,20 @@ public class PracticeSubmitVO {
          * 单选/判断 = 单字母；多选 = 逗号分隔已排序串；简答 = {@code null}。
          */
         private String correctAnswer;
+
+        /**
+         * 编程题未判分（判题服务不可用/被限流）：true 时 {@code correct} 为 null、
+         * 本题<b>不写 answer_record、不进掌握度</b>，前端应提示稍后重试；非编程题恒为 false。
+         */
+        private boolean ungraded;
+
+        /** 面向学生的说明（编程题未判分/拒绝执行等；其余情况省略）。 */
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private String message;
+
+        /** 编程题判分明细（仅编程题出现；hidden 用例不含输入/期望/实际输出）。 */
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private CodeJudgeVO codeResult;
     }
 
     /**

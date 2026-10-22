@@ -20,6 +20,9 @@ public class ImportBankResult {
     /** 因 nodeCode 不在课程图谱内被跳过的题目数（skipped 的子集，便于前端/答辩展示） */
     private int invalidNodeSkipped;
 
+    /** 因编程题校验失败（用例缺失/超限等）被跳过的题目数（skipped 的子集） */
+    private int invalidCodeSkipped;
+
     /** 是否使用了 AI 清洗 */
     private boolean aiCleaned;
 }

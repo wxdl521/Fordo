@@ -84,6 +84,7 @@ public class ProbeService {
                 q -> q != null
                         && q.getType() != null
                         && q.getType() != QuestionType.SHORT_ANSWER
+                        && q.getType() != QuestionType.CODE
                         && (q.getStatus() == null || q.getStatus() == QuestionStatus.APPROVED));
 
         ProbeSessionStore.ProbeSession session;

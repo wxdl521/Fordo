@@ -9,4 +9,7 @@ public interface TeacherQuestionService {
     int review(Long courseId, QuestionReviewRequest req);
     /** T6: 服务端全量审批，select+update 同一事务，避免前端分页漂移问题。*/
     int reviewAll(Long courseId, ReviewAllRequest req);
+    /** 编辑编程题起始代码与测试用例（全量替换用例）；题目须属本课程且 type=CODE。 */
+    com.wenjin.dto.TeacherQuestionVO updateCode(Long courseId, Long questionId,
+                                                com.wenjin.dto.CodeQuestionUpdateRequest req);
 }
