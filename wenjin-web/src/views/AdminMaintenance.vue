@@ -34,6 +34,7 @@
           <li>入口诊断、快速诊断与练习会话</li>
           <li>学习路径（含路径条目；学生当前路径指针置空）</li>
           <li>AI 学习伴侣的对话与学生记忆</li>
+          <li>教师 AI 助教的会话（其运行轨迹保留计数，但步骤明细被清空）</li>
         </ul>
         <div :style="infoTitleStyle">保留</div>
         <div :style="keepTextStyle">选课关系、班级、知识图谱、题库、账号。清空后学生在该课程上回到「未诊断」状态，可重新诊断。</div>
@@ -131,7 +132,11 @@ const TABLE_LABELS = {
   learning_path_item: '学习路径条目',
   companion_conversation: 'AI 伴侣对话',
   companion_message: 'AI 伴侣消息',
-  student_memory: '学生记忆'
+  student_memory: '学生记忆',
+  agent_plan: '学习计划',
+  agent_plan_task: '学习计划任务',
+  teacher_conversation: 'AI 助教会话',
+  teacher_message: 'AI 助教消息'
 }
 
 const courses = ref([])

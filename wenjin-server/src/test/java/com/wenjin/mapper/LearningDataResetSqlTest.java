@@ -71,6 +71,23 @@ class LearningDataResetSqlTest {
     }
 
     @Test
+    @DisplayName("教师助教：会话删除、消息经父表 JOIN；轨迹只清空 TEACHER_CHAT 的步骤 I/O 与 digest，不删 run")
+    void teacherAssistantData() {
+        assertThat(sql("com.wenjin.mapper.LearningDataResetMapper.deleteTeacherConversations"))
+                .isEqualTo("DELETE FROM teacher_conversation WHERE course_id = ?");
+        assertThat(sql("com.wenjin.mapper.LearningDataResetMapper.deleteTeacherMessages"))
+                .isEqualTo("DELETE m FROM teacher_message m JOIN teacher_conversation c "
+                        + "ON c.id = m.conversation_id WHERE c.course_id = ?");
+        String step = "com.wenjin.mapper.LearningDataResetMapper.clearTeacherChatStepIo";
+        assertThat(type(step)).isEqualTo(SqlCommandType.UPDATE);
+        assertThat(sql(step)).contains("SET s.input_json = NULL, s.output_json = NULL")
+                .contains("r.kind = 'TEACHER_CHAT'").doesNotContain("DELETE");
+        String run = "com.wenjin.mapper.LearningDataResetMapper.clearTeacherChatRunDigest";
+        assertThat(type(run)).isEqualTo(SqlCommandType.UPDATE);
+        assertThat(sql(run)).contains("kind = 'TEACHER_CHAT'");
+    }
+
+    @Test
     @DisplayName("选课保留：只 UPDATE student_course 置空 current_path_id，不是 DELETE")
     void studentCourseIsOnlyUpdated() {
         String id = "com.wenjin.mapper.LearningDataResetMapper.clearCurrentPaths";

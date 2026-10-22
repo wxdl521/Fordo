@@ -52,7 +52,7 @@ class AdminDataResetServiceImplTest {
     }
 
     @Test
-    @DisplayName("按 子表→父表 顺序清空 15 张表 + 断开选课的 current_path_id；返回每表删除行数（顺序即删除顺序）")
+    @DisplayName("按 子表→父表 顺序清空 16 张表（另清空教师助教留痕的步骤 I/O） + 断开选课的 current_path_id；返回每表删除行数（顺序即删除顺序）")
     void reset_deletesInDependencyOrder() {
         when(courseMapper.selectById(COURSE_ID)).thenReturn(course("软件工程"));
         when(courseAccessMapper.lockCourseIncludingArchived(COURSE_ID)).thenReturn(COURSE_ID);
@@ -71,6 +71,8 @@ class AdminDataResetServiceImplTest {
         when(resetMapper.deleteStudentMemory(COURSE_ID)).thenReturn(8);
         when(resetMapper.deleteAgentPlanTasks(COURSE_ID)).thenReturn(9);
         when(resetMapper.deleteAgentPlans(COURSE_ID)).thenReturn(1);
+        when(resetMapper.deleteTeacherMessages(COURSE_ID)).thenReturn(11);
+        when(resetMapper.deleteTeacherConversations(COURSE_ID)).thenReturn(2);
 
         AdminDataResetVO vo = service(false).resetCourse(COURSE_ID, " 软件工程 ");
 
@@ -91,6 +93,10 @@ class AdminDataResetServiceImplTest {
         order.verify(resetMapper).deleteStudentMemory(COURSE_ID);
         order.verify(resetMapper).deleteAgentPlanTasks(COURSE_ID);
         order.verify(resetMapper).deleteAgentPlans(COURSE_ID);
+        order.verify(resetMapper).deleteTeacherMessages(COURSE_ID);
+        order.verify(resetMapper).deleteTeacherConversations(COURSE_ID);
+        order.verify(resetMapper).clearTeacherChatStepIo(COURSE_ID);
+        order.verify(resetMapper).clearTeacherChatRunDigest(COURSE_ID);
         order.verifyNoMoreInteractions();
 
         assertThat(vo.getDeleted()).containsExactly(
@@ -107,7 +113,9 @@ class AdminDataResetServiceImplTest {
                 entry("companion_conversation", 5),
                 entry("student_memory", 8),
                 entry("agent_plan_task", 9),
-                entry("agent_plan", 1));
+                entry("agent_plan", 1),
+                entry("teacher_message", 11),
+                entry("teacher_conversation", 2));
         assertThat(vo.getDeleted()).doesNotContainKeys("student_course", "kg_node", "question", "sys_user");
         assertThat(vo.getCurrentPathCleared()).isEqualTo(6);
     }
@@ -151,7 +159,7 @@ class AdminDataResetServiceImplTest {
         when(courseMapper.selectById(COURSE_ID)).thenReturn(course("软件工程"));
         when(courseAccessMapper.lockCourseIncludingArchived(COURSE_ID)).thenReturn(COURSE_ID);
         AdminDataResetVO vo = service(true).resetCourse(COURSE_ID, "软件工程");
-        assertThat(vo.getDeleted()).hasSize(14);
+        assertThat(vo.getDeleted()).hasSize(16);
     }
 
     @Test

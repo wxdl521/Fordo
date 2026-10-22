@@ -79,4 +79,28 @@ public interface LearningDataResetMapper {
 
     @Delete("DELETE FROM agent_plan WHERE course_id = #{courseId}")
     int deleteAgentPlans(@Param("courseId") Long courseId);
+
+    @Delete("""
+            DELETE m FROM teacher_message m
+            JOIN teacher_conversation c ON c.id = m.conversation_id
+            WHERE c.course_id = #{courseId}
+            """)
+    int deleteTeacherMessages(@Param("courseId") Long courseId);
+
+    @Delete("DELETE FROM teacher_conversation WHERE course_id = #{courseId}")
+    int deleteTeacherConversations(@Param("courseId") Long courseId);
+
+    /** 教师助教 run 留作用量/监控，但步骤输入输出含学生姓名与学情，重置时清空（run 行与 token/耗时保留）。 */
+    @Update("""
+            UPDATE agent_step s JOIN agent_run r ON r.id = s.run_id
+            SET s.input_json = NULL, s.output_json = NULL
+            WHERE r.course_id = #{courseId} AND r.kind = 'TEACHER_CHAT'
+            """)
+    int clearTeacherChatStepIo(@Param("courseId") Long courseId);
+
+    @Update("""
+            UPDATE agent_run SET input_digest = NULL
+            WHERE course_id = #{courseId} AND kind = 'TEACHER_CHAT' AND input_digest IS NOT NULL
+            """)
+    int clearTeacherChatRunDigest(@Param("courseId") Long courseId);
 }
