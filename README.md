@@ -183,6 +183,10 @@ $env:WENJIN_AI_BASE_URL = "https://api.deepseek.com"
 $env:WENJIN_AI_MODEL = "deepseek-v4-pro"
 $env:WENJIN_AI_VISION_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 $env:WENJIN_AI_VISION_MODEL = "glm-5v-turbo"
+# RAG 嵌入（可选，默认关闭；需 V23 迁移；管理后台「系统配置 → AI 嵌入」可热改）
+$env:WENJIN_AI_EMBEDDING_ENABLED = "true"
+$env:WENJIN_AI_EMBEDDING_API_KEY = "your-embedding-key"   # 默认智谱 embedding-3，1024 维
+# 可选：WENJIN_AI_EMBEDDING_BASE_URL / _MODEL / _DIMENSION / _BATCH_SIZE
 ```
 
 ### 4. 启动后端

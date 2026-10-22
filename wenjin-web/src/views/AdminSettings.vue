@@ -192,7 +192,8 @@ const itemErrors = reactive({}) // key → 行内错误文案（校验或后端 
 const drafts = reactive({}) // key → 输入框草稿；secret 草稿永远不回填服务端值
 const aiTest = reactive({
   text: { loading: false, result: null },
-  vision: { loading: false, result: null }
+  vision: { loading: false, result: null },
+  embedding: { loading: false, result: null }
 })
 let disposed = false
 let noticeTimer = null
@@ -319,6 +320,7 @@ function rangeText(item) {
 function aiTargetOf(group) {
   const keys = (group.items || []).map((i) => i.key)
   if (keys.some((k) => k.startsWith('wenjin.ai.vision.'))) return 'vision'
+  if (keys.some((k) => k.startsWith('wenjin.ai.embedding.'))) return 'embedding'
   if (keys.some((k) => k.startsWith('wenjin.ai.'))) return 'text'
   return ''
 }
