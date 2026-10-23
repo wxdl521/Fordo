@@ -1,6 +1,6 @@
 {
   "code": "T01",
-  "title": "教师：本周需要关注的学生",
+  "title": "教师：本周需要关注的学生（maxToolCalls=6：先列名单再逐个下钻 3 份画像，共约 4-5 次，下钻是好行为）",
   "status": "ENABLED",
   "actor": "teacher",
   "persona": {
@@ -58,7 +58,7 @@
   "hard": {
     "mustCallTools": ["list_students_needing_attention"],
     "mustNotCallTools": ["query_mastery", "recall_student_context", "start_practice"],
-    "maxToolCalls": 3,
+    "maxToolCalls": 6,
     "jsonContractValid": true,
     "nodeCodesInWhitelist": true,
     "degradedExpected": false,
