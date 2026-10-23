@@ -488,6 +488,30 @@ class AiJobWorkerTest {
         verify(ragEmbedService, never()).embedSource(anyLong(), any(), any());
     }
 
+    @Test
+    void teacherWeeklyReport_usesDataBackedBuilderWithParsedPeriod() {
+        featureFlags.setMultiAgentEnabled(true);
+        AiJob job = claimedJob("claimed-lease");
+        job.setKind(AiJobKind.TEACHER_WEEKLY_REPORT);
+        job.setRequestJson("{\"periodStart\":\"2026-07-13\",\"periodEnd\":\"2026-07-19\"}");
+        when(sysUserMapper.selectById(10L)).thenReturn(user(1, 1));
+        allowCurrentLease(job);
+        when(aiJobService.markProgress(eq(job.getId()), eq("claimed-lease"), anyInt())).thenReturn(true);
+        when(aiJobService.markEffectStarted(job.getId(), "claimed-lease")).thenReturn(true);
+        when(aiJobService.parseRequestMap(job.getRequestJson()))
+                .thenReturn(Map.of("periodStart", "2026-07-13", "periodEnd", "2026-07-19"));
+        when(teacherWeeklyReportService.buildForCourse(7L, java.time.LocalDate.of(2026, 7, 13),
+                java.time.LocalDate.of(2026, 7, 19))).thenReturn(99L);
+        when(aiJobService.markSucceeded(eq(job.getId()), eq("claimed-lease"), any())).thenReturn(true);
+
+        worker.execute(job);
+
+        verify(teacherWeeklyReportService).buildForCourse(7L, java.time.LocalDate.of(2026, 7, 13),
+                java.time.LocalDate.of(2026, 7, 19));
+        verify(teacherWeeklyReportService, never()).buildEmptySkeleton(anyLong(), any(), any());
+        verify(aiJobService).markSucceeded(eq(job.getId()), eq("claimed-lease"), eq(Map.of("reportId", 99L)));
+    }
+
     private static AiJob claimedJob(String leaseToken) {
         AiJob job = new AiJob();
         job.setId(41L);

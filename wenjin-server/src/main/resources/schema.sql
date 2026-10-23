@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════
 --  问津 · 知识图谱驱动的个性化学习导航系统
---  本地空库重建快照（当前最终 DDL，含 V3–V22；共 43 张业务表）
+--  本地空库重建快照（当前最终 DDL，含 V3–V26；共 49 张业务表）
 --
 --  ⚠ 仅本地空库 / 会删数据 / 生产禁用
 --    · 本脚本含 DROP TABLE IF EXISTS，会清空目标库业务表数据。
---    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V22）。
+--    · 生产与 CI 一律走 Flyway：classpath:db/migration（V1 baseline + 增量至 V26）。
 --    · 新增版本化迁移（Vn）后，必须把最终 DDL 同步回本文件，保持本地快照一致。
 --    · 应用启动默认 spring.flyway.enabled=false（WENJIN_FLYWAY_ENABLED），
 --      普通应用账号只有 DML；发布流水线用 migrator 凭据单独跑迁移作业。
@@ -29,7 +29,8 @@
 --   17. V23 增 doc_chunk_embedding（RAG 切块向量，无物理 FK）。
 --   18. V24 增 question.starter_code / code_language 与 question_code_case（编程题题型，无物理 FK）。
 --   19. V25 增 teacher_conversation / teacher_message（教师 AI 助教会话，无物理 FK）。
---   20. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
+--   20. V26 增 probe_session / probe_outcome（理解探针会话与最近结果，无物理 FK；重启不丢）。
+--   21. 演示种子数据见 data.sql（本地：schema.sql + data.sql；生产勿跑 data.sql）。
 -- ════════════════════════════════════════════════════════════════════════
 
 CREATE DATABASE IF NOT EXISTS `wenjin`
@@ -849,5 +850,49 @@ CREATE TABLE `teacher_message` (
     PRIMARY KEY (`id`),
     KEY `idx_teacher_msg_conv` (`conversation_id`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='教师 AI 助教会话消息【V25】';
+
+-- ───────────────────────────── 组：理解探针状态落库【V26】─────────────────────────────
+
+DROP TABLE IF EXISTS `probe_outcome`;
+DROP TABLE IF EXISTS `probe_session`;
+
+CREATE TABLE `probe_session` (
+    `session_id`       VARCHAR(40)  NOT NULL COMMENT '探针会话ID（UUID 去横线，前端沿用的字符串）',
+    `student_id`       BIGINT       NOT NULL COMMENT '学生 sys_user.id',
+    `course_id`        BIGINT       NOT NULL COMMENT '课程 course.id',
+    `node_code`        VARCHAR(64)  NOT NULL COMMENT '被探测知识点 kg_node.node_code',
+    `node_id`          BIGINT       NULL COMMENT 'kg_node.id（逻辑引用）',
+    `stem`             TEXT         NOT NULL COMMENT '题干',
+    `type`             TINYINT      NOT NULL DEFAULT 1 COMMENT '题型（同 question.type）',
+    `options_json`     TEXT         NULL COMMENT '选项 JSON [{key,text}]（不含答案）',
+    `correct_key`      VARCHAR(255) NULL COMMENT '标准答案键；仅服务端判分用，不下发客户端',
+    `source`           VARCHAR(16)  NOT NULL COMMENT 'BANK=取自题库 / EPHEMERAL=临时模板题',
+    `bank_question_id` BIGINT       NULL COMMENT '题库题 question.id（仅 BANK）',
+    `created_at`       DATETIME(3)  NOT NULL COMMENT '创建时间（用于 TTL）',
+    `submitted_at`     DATETIME(3)  NULL COMMENT '首次提交时间；NULL=未提交',
+    `correct`          TINYINT(1)   NULL COMMENT '首次判分结果；未提交为 NULL',
+    PRIMARY KEY (`session_id`),
+    KEY `idx_probe_session_student` (`student_id`, `course_id`, `created_at`),
+    KEY `idx_probe_session_node` (`student_id`, `course_id`, `node_code`),
+    KEY `idx_probe_session_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='理解探针会话【V26】';
+
+CREATE TABLE `probe_outcome` (
+    `id`               BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `student_id`       BIGINT       NOT NULL COMMENT '学生 sys_user.id',
+    `course_id`        BIGINT       NOT NULL COMMENT '课程 course.id',
+    `node_code`        VARCHAR(64)  NOT NULL COMMENT '知识点 kg_node.node_code',
+    `correct`          TINYINT(1)   NOT NULL COMMENT '最近一次探针是否通过',
+    `strategy`         VARCHAR(32)  NULL COMMENT '该探针所检验的讲解策略（NULL=默认讲法）',
+    `active_strategy`  VARCHAR(32)  NULL COMMENT '当前生效（最近换上）的策略',
+    `tried_strategies` VARCHAR(255) NULL COMMENT '本轮反思已用策略，逗号分隔（通过后清空）',
+    `switch_consumed`  TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '这次未通过已触发过换策略',
+    `outcome_recorded` TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'strategy 的有效/无效已写入程序性记忆',
+    `updated_at`       DATETIME(3)  NOT NULL COMMENT '探针提交时间（30 分钟窗口基准；换策略/记录标记不刷新）',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_probe_outcome_node` (`student_id`, `course_id`, `node_code`),
+    KEY `idx_probe_outcome_recent` (`student_id`, `course_id`, `updated_at`),
+    KEY `idx_probe_outcome_updated` (`updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='理解探针最近一次结果与换策略状态【V26】';
 
 SET FOREIGN_KEY_CHECKS = 1;

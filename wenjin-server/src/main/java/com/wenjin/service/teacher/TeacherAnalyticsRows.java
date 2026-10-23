@@ -55,6 +55,12 @@ public final class TeacherAnalyticsRows {
     }
 
     @Data
+    public static class WindowAnswerRow {
+        private Integer answers;
+        private Integer activeStudents;
+    }
+
+    @Data
     public static class AnswerChoiceRow {
         private Long questionId;
         private String studentAnswer;

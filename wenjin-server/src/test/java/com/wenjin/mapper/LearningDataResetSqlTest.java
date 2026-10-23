@@ -71,6 +71,15 @@ class LearningDataResetSqlTest {
     }
 
     @Test
+    @DisplayName("理解探针（V26）：两张表均按 course_id 直删，不经父表")
+    void probeData() {
+        assertThat(sql("com.wenjin.mapper.LearningDataResetMapper.deleteProbeSessions"))
+                .isEqualTo("DELETE FROM probe_session WHERE course_id = ?");
+        assertThat(sql("com.wenjin.mapper.LearningDataResetMapper.deleteProbeOutcomes"))
+                .isEqualTo("DELETE FROM probe_outcome WHERE course_id = ?");
+    }
+
+    @Test
     @DisplayName("教师助教：会话删除、消息经父表 JOIN；轨迹只清空 TEACHER_CHAT 的步骤 I/O 与 digest，不删 run")
     void teacherAssistantData() {
         assertThat(sql("com.wenjin.mapper.LearningDataResetMapper.deleteTeacherConversations"))
