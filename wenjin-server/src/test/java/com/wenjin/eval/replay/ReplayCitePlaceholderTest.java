@@ -47,6 +47,19 @@ class ReplayCitePlaceholderTest {
     }
 
     @Test
+    void titleFallsBackToRetrievalInjectedBlocks() {
+        List<Map<String, Object>> withInjection = new java.util.ArrayList<>(MESSAGES);
+        withInjection.add(Map.of("role", "user", "content",
+                "【资料 #305 · 需求建模讲义·用例图】\n用例图由参与者、用例和关系组成。"));
+        // 注入块标题可解析；数字占位符仍只按 search_materials 结果编号（语义不变）
+        assertThat(ReplayCompanionAiClient.resolveCitePlaceholders(
+                "见资料 #{{cite:需求建模讲义·用例图}}，另见 资料 #{{cite:讲义A}}", withInjection))
+                .isEqualTo("见资料 #305，另见 资料 #41");
+        assertThat(ReplayCompanionAiClient.resolveCitePlaceholders("资料 #{{cite:4}}", withInjection))
+                .isEqualTo("资料 #0");
+    }
+
+    @Test
     void textWithoutPlaceholderIsReturnedAsIs() {
         String plain = "没有占位符 资料 #12";
         assertThat(ReplayCompanionAiClient.resolveCitePlaceholders(plain, MESSAGES)).isSameAs(plain);

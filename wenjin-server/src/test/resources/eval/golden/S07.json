@@ -1,12 +1,10 @@
 {
-  "scenario": "S07",
-  "format": 2,
-  "recordedAt": "2026-10-21T00:00:00Z",
-  "model": "synthetic",
-  "synthetic": true,
-  "turns": [
-    {
-      "rounds": []
-    }
-  ]
+  "scenario" : "S07",
+  "format" : 2,
+  "recordedAt" : "2026-10-23T03:41:30.503484200Z",
+  "model" : "deepseek-v4-pro",
+  "synthetic" : false,
+  "turns" : [ {
+    "rounds" : [ ]
+  } ]
 }

@@ -1,18 +1,14 @@
 {
-  "scenario": "S06",
-  "format": 2,
-  "recordedAt": "2026-10-23T00:00:00Z",
-  "model": "synthetic",
-  "synthetic": true,
-  "turns": [
-    {
-      "rounds": [
-        {
-          "content": "已为你开好一套「软件工程概述」（SE-1.1）的练习，就在上方卡片里，直接作答就行。一次先练一套：做完这套我们看看错在哪，再接着开下一套。",
-          "toolCalls": [],
-          "finishReason": "stop"
-        }
-      ]
-    }
-  ]
+  "scenario" : "S06",
+  "format" : 2,
+  "recordedAt" : "2026-10-23T03:41:15.432420600Z",
+  "model" : "deepseek-v4-pro",
+  "synthetic" : false,
+  "turns" : [ {
+    "rounds" : [ {
+      "content" : "练习已经准备好了，共 2 道题，你直接作答就行。做完告诉我结果，我再接着给你出下一套。",
+      "toolCalls" : [ ],
+      "finishReason" : "stop"
+    } ]
+  } ]
 }

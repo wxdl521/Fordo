@@ -1,30 +1,21 @@
 {
-  "scenario": "S12",
-  "format": 2,
-  "recordedAt": "2026-10-21T00:00:00Z",
-  "model": "synthetic",
-  "synthetic": true,
-  "turns": [
-    {
-      "rounds": [
-        {
-          "content": "",
-          "toolCalls": [
-            {
-              "name": "get_node_detail",
-              "arguments": {
-                "nodeCode": "SE-3.2"
-              }
-            }
-          ],
-          "finishReason": "tool_calls"
-        },
-        {
-          "content": "换个讲法：把用例图想成餐厅的菜单。顾客是参与者，菜单上的每道菜是一个用例，餐厅的围墙就是系统边界。现在你来试试：在「图书馆借书」系统里，谁是参与者？",
-          "toolCalls": [],
-          "finishReason": "stop"
-        }
-      ]
-    }
-  ]
+  "scenario" : "S12",
+  "format" : 2,
+  "recordedAt" : "2026-10-23T03:45:24.889209Z",
+  "model" : "deepseek-v4-pro",
+  "synthetic" : false,
+  "turns" : [ {
+    "rounds" : [ {
+      "content" : "",
+      "toolCalls" : [ {
+        "name" : "get_node_detail",
+        "arguments" : {"nodeCode": "SE-3.2"}
+      } ],
+      "finishReason" : "tool_calls"
+    }, {
+      "content" : "换个比喻来讲。把用例图想象成一家**餐厅**：\n\n- **系统边界**＝餐厅的大门。门里是系统能做的事，门外是外部世界，谁也不能越界。\n- **参与者**＝站在门外的\"人\"，比如顾客、外卖骑手。他们不进入系统内部，只是**触发**功能。\n- **用例**＝门里一个个椭圆形\"服务台\"，比如\"点餐\"\"结账\"，每个都是一个完整的功能。\n- **包含关系**＝必做的公共步骤：只要结账，就**一定**要\"打印小票\"，这是强制的。\n- **扩展关系**＝可选分支：只有顾客说\"开发票\"时，才多走一步，不触发就不发生。\n\n核心就一句话：**参与者触发用例，包含是必须做，扩展是可选的**。资料 #{{cite:需求建模讲义·用例图}}\n\n小考你一下：在\"点外卖\"系统里，\"支付\"这个用例一定包含\"校验余额\"，而\"加辣\"只在顾客勾选时才发生——那么\"校验余额\"和\"加辣\"分别属于哪种关系？",
+      "toolCalls" : [ ],
+      "finishReason" : "stop"
+    } ]
+  } ]
 }

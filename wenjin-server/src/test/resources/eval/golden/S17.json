@@ -1,18 +1,24 @@
 {
-  "scenario": "S17",
-  "format": 2,
-  "recordedAt": "2026-10-21T00:00:00Z",
-  "model": "synthetic",
-  "synthetic": true,
-  "turns": [
-    {
-      "rounds": [
-        {
-          "content": "当然可以聊聊学习节奏！一般建议每天固定一小段时间，学新内容和复习交替进行，比一次学很久效果更好。你现在每天大概能安排多少时间学习？",
-          "toolCalls": [],
-          "finishReason": "stop"
-        }
-      ]
-    }
-  ]
+  "scenario" : "S17",
+  "format" : 2,
+  "recordedAt" : "2026-10-23T03:48:27.543823700Z",
+  "model" : "deepseek-v4-pro",
+  "synthetic" : false,
+  "turns" : [ {
+    "rounds" : [ {
+      "content" : "",
+      "toolCalls" : [ {
+        "name" : "get_plan_progress",
+        "arguments" : {}
+      }, {
+        "name" : "get_review_queue",
+        "arguments" : {}
+      } ],
+      "finishReason" : "tool_calls"
+    }, {
+      "content" : "好呀，欢迎随时来找我聊～ 我看了下你目前的状态：还没有设置学习计划，今天的复习队列也是空的。学习节奏这块，其实第一步是给自己定一个清晰的节奏，比如每天固定攻克 1 个知识点 + 少量复习，比一次性刷很多更不容易忘。\n\n你最近是在准备考试，还是想按章节慢慢学？告诉我目标，我可以帮你排一个学习计划草稿。",
+      "toolCalls" : [ ],
+      "finishReason" : "stop"
+    } ]
+  } ]
 }
