@@ -30,7 +30,8 @@ class ScenarioLoaderTest {
         Optional<EvalScenarioDocument> s01 = loader.loadByCode("S01");
         assertThat(s01).isPresent();
         assertThat(s01.get().title()).contains("弱节点");
-        assertThat(s01.get().hard().mustCallTools()).contains("query_mastery");
+        assertThat(s01.get().hard().mustCallAnyOf())
+                .containsExactly(List.of("query_mastery", "trace_prerequisites"));
         assertThat(s01.get().judge().dimensions()).isNotEmpty();
         assertThat(s01.get().resolvedStatus()).isEqualTo(EvalScenarioStatus.ENABLED);
 

@@ -279,6 +279,22 @@ public final class ScenarioSchemaValidator {
                 }
             }
         }
+        if (hard.mustCallAnyOf() != null) {
+            if (hard.mustCallAnyOf().isEmpty()) {
+                throw new ScenarioSchemaException("hard.mustCallAnyOf must be non-empty when present");
+            }
+            for (int i = 0; i < hard.mustCallAnyOf().size(); i++) {
+                List<String> group = hard.mustCallAnyOf().get(i);
+                if (group == null || group.isEmpty()) {
+                    throw new ScenarioSchemaException("hard.mustCallAnyOf[" + i + "] must be a non-empty array");
+                }
+                for (int j = 0; j < group.size(); j++) {
+                    if (group.get(j) == null || group.get(j).isBlank()) {
+                        throw new ScenarioSchemaException("hard.mustCallAnyOf[" + i + "][" + j + "] must be non-blank");
+                    }
+                }
+            }
+        }
         if (hard.mustNotCallTools() != null) {
             for (int i = 0; i < hard.mustNotCallTools().size(); i++) {
                 if (hard.mustNotCallTools().get(i) == null
@@ -357,6 +373,7 @@ public final class ScenarioSchemaValidator {
             case "replyMustNotContain" -> hard.replyMustNotContain();
             case "replyMustContain" -> hard.replyMustContain();
             case "guardCodesExpected" -> hard.guardCodesExpected();
+            case "mustCallAnyOf" -> hard.mustCallAnyOf();
             default -> null;
         };
         return value instanceof List<?> list ? !list.isEmpty() : value != null;
