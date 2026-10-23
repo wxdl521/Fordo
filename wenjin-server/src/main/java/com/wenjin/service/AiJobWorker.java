@@ -198,8 +198,7 @@ public class AiJobWorker {
         LocalDate periodEnd = parseDate(request.get("periodEnd"));
         markProgressOrLose(job.getId(), leaseToken, 20, heartbeat);
         heartbeat.requireOwned();
-        // 骨架：空聚合仍 READY；后续可接掌握度/练习查询端口
-        long reportId = teacherWeeklyReportService.buildEmptySkeleton(courseId, periodStart, periodEnd);
+        long reportId = teacherWeeklyReportService.buildForCourse(courseId, periodStart, periodEnd);
         markProgressOrLose(job.getId(), leaseToken, 90, heartbeat);
         return Map.of("reportId", reportId);
     }

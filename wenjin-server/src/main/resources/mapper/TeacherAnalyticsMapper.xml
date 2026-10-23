@@ -144,4 +144,35 @@
         GROUP BY ar.question_id, ar.student_answer
     </select>
 
+    <!-- 窗口 [from, to) 内已判分作答数与去重活跃学生数（周报环比用） -->
+    <select id="selectWindowAnswers" resultType="com.wenjin.service.teacher.TeacherAnalyticsRows$WindowAnswerRow">
+        SELECT COUNT(ar.id) AS answers,
+               COUNT(DISTINCT ar.student_id) AS active_students
+        FROM student_course sc
+        JOIN answer_record ar
+          ON ar.student_id = sc.student_id
+         AND ar.course_id = sc.course_id
+         AND ar.is_correct IS NOT NULL
+        WHERE sc.course_id = #{courseId}
+        <include refid="activeStudentOnly"/>
+          AND ar.answered_at &gt;= #{from}
+          AND ar.answered_at &lt; #{to}
+    </select>
+
+    <!-- 窗口 [from, to) 内有学生发言的伴侣会话数（去重）；只计数，不选取 content -->
+    <select id="selectWindowCompanion" resultType="java.lang.Integer">
+        SELECT COUNT(DISTINCT m.conversation_id)
+        FROM student_course sc
+        JOIN companion_conversation c
+          ON c.student_id = sc.student_id
+         AND c.course_id = sc.course_id
+        JOIN companion_message m
+          ON m.conversation_id = c.id
+         AND m.role = 1
+         AND m.created_at &gt;= #{from}
+         AND m.created_at &lt; #{to}
+        WHERE sc.course_id = #{courseId}
+        <include refid="activeStudentOnly"/>
+    </select>
+
 </mapper>

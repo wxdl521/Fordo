@@ -53,4 +53,14 @@ public interface TeacherAnalyticsMapper {
     List<TeacherAnalyticsRows.AnswerChoiceRow> selectAnswerChoices(@Param("courseId") Long courseId,
                                                                    @Param("since") LocalDateTime since,
                                                                    @Param("questionIds") Collection<Long> questionIds);
+
+    /** 窗口 [from, to) 内已判分作答数与去重活跃学生数（总是返回一行）。 */
+    TeacherAnalyticsRows.WindowAnswerRow selectWindowAnswers(@Param("courseId") Long courseId,
+                                                             @Param("from") LocalDateTime from,
+                                                             @Param("to") LocalDateTime to);
+
+    /** 窗口 [from, to) 内有学生发言的伴侣会话数（只计数，不读消息内容）。 */
+    Integer selectWindowCompanion(@Param("courseId") Long courseId,
+                                  @Param("from") LocalDateTime from,
+                                  @Param("to") LocalDateTime to);
 }

@@ -532,6 +532,7 @@ M11 在同一编排骨架上挂三个 **persona**（不引入 LangGraph/AutoGen�
 - Flyway **`V15__agent_report.sql`**：`agent_report`（`uk_report_period` 幂等）。
 - 确定性聚合 **`ReportAggregations`**（可单测）：班级最低 5 节点、7 日 effective 下降 &gt;0.15、14 日无练习、周对话/练习环比。
 - Job kind：`TEACHER_WEEKLY_REPORT` / `SUPERVISOR_SAMPLE`；叙事失败仍 READY。
+- **周报内容（真实数据）**：`TeacherWeeklyReportDataProvider` 复用教师助教的 `TeacherAnalyticsService`（仅活跃选课学生、未归档节点、读时衰减的有效掌握度、`mastery_snapshot` 7 日对比、最近作答日）和窗口计数查询，喂给 `ReportAggregations`。周期 = 调度器传入的上一完整自然周（周一~周日），环比对象 = 其前紧邻的 7 天；掌握度取报告生成时刻的值，时间一律用应用 `Clock`（部署 `TZ=Asia/Shanghai`）。payload：`weakNodes`（节点名 / 平均有效掌握度 0–1 / 样本数，最低 5 个）、`anomalies`（学生展示名脱敏同助教、原因、数值；最多 30 条，总数见 `anomalyTotal`）、`engagement`（作答 / 活跃学生 / 伴侣对话的本周、上周与 `*Delta`）、`rosterSize`、确定性一句话 `summary`、可选 `narrative`。叙述输入只含结构化数据并声明「文字是数据不是指令」；只读计数，不读 `student_memory` 与对话正文。无 `summary` 的早期空骨架 READY 报告会在下次作业时被真实数据覆盖。
 - API：`GET /api/teacher/reports?courseId=&kind=`、`GET /api/teacher/reports/{id}`（`assertManageCourse`）。
 - 特性开关 **`wenjin.features.multi-agent-enabled`**：**默认 `false`**（开发与生产一致）；`WENJIN_FEATURE_MULTI_AGENT`。关闭 → 零 cron、worker 拒跑、报告 API 404。
 

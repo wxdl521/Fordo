@@ -48,28 +48,65 @@
               <td colspan="6">
                 <div class="payload">
                   <template v-if="row.payload">
+                    <p v-if="row.payload.summary" class="summary" data-testid="report-summary">
+                      {{ row.payload.summary }}
+                    </p>
+                    <div v-if="isEmptyWeekly(row.payload)" class="muted" data-testid="report-empty">
+                      本周期暂无学习数据（没有薄弱节点、异常或作答活动）
+                    </div>
                     <section v-if="weakNodes(row).length" class="block">
                       <h4>薄弱节点</h4>
-                      <ul>
-                        <li v-for="(n, i) in weakNodes(row)" :key="i">
-                          {{ n.nodeCode || n.code || '—' }}
-                          <span v-if="n.name" class="muted"> · {{ n.name }}</span>
-                          <span v-if="n.score != null" class="muted"> · {{ n.score }}</span>
-                        </li>
-                      </ul>
+                      <table class="mini-table" data-testid="weak-table">
+                        <thead>
+                          <tr><th>节点</th><th>平均掌握度</th><th>样本</th></tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="(n, i) in weakNodes(row)" :key="i">
+                            <td>
+                              {{ n.name || n.nodeCode || n.code || '—' }}
+                              <span v-if="n.name && (n.nodeCode || n.code)" class="muted"> · {{ n.nodeCode || n.code }}</span>
+                            </td>
+                            <td>{{ n.avgEffective != null ? pct(n.avgEffective) : (n.score ?? '—') }}</td>
+                            <td>{{ n.sampleSize != null ? n.sampleSize + ' 人' : '—' }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
                     </section>
                     <section v-if="anomalies(row).length" class="block">
-                      <h4>异常</h4>
-                      <ul>
-                        <li v-for="(a, i) in anomalies(row)" :key="i">
-                          {{ a.type || a.kind || 'anomaly' }}
-                          <span v-if="a.detail || a.message" class="muted"> — {{ a.detail || a.message }}</span>
-                        </li>
-                      </ul>
+                      <h4>
+                        异常
+                        <span v-if="row.payload.anomalyTotal > anomalies(row).length" class="muted">
+                          （共 {{ row.payload.anomalyTotal }} 项，仅显示前 {{ anomalies(row).length }} 项）
+                        </span>
+                      </h4>
+                      <table class="mini-table" data-testid="anomaly-table">
+                        <thead>
+                          <tr><th>学生</th><th>类型</th><th>说明</th></tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="(a, i) in anomalies(row)" :key="i">
+                            <td>{{ a.studentName || (a.studentId != null ? '#' + a.studentId : '—') }}</td>
+                            <td>{{ anomalyTypeLabel(a.type || a.kind) }}</td>
+                            <td>{{ a.reason || a.detail || a.message || '—' }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
                     </section>
-                    <section v-if="row.payload.engagement" class="block">
-                      <h4>参与度</h4>
-                      <pre>{{ pretty(row.payload.engagement) }}</pre>
+                    <section v-if="engagementRows(row.payload.engagement).length" class="block">
+                      <h4>参与度（本周 vs 上周）</h4>
+                      <table class="mini-table" data-testid="engagement-table">
+                        <thead>
+                          <tr><th>指标</th><th>本周</th><th>上周</th><th>变化</th></tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="r in engagementRows(row.payload.engagement)" :key="r.label">
+                            <td>{{ r.label }}</td>
+                            <td>{{ r.cur ?? '—' }}</td>
+                            <td>{{ r.prev ?? '—' }}</td>
+                            <td :class="['delta', trendClass(r.delta)]">{{ trend(r.delta) }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
                     </section>
                     <section v-if="flags(row).length" class="block">
                       <h4>Flags</h4>
@@ -86,7 +123,7 @@
                       </ul>
                     </section>
                     <section v-if="row.payload.narrative" class="block">
-                      <h4>摘要</h4>
+                      <h4>AI 叙述</h4>
                       <p class="narrative">{{ row.payload.narrative }}</p>
                     </section>
                     <section v-if="!hasKnownSections(row)" class="block">
@@ -113,6 +150,7 @@ import { ref, watch, onBeforeUnmount } from 'vue'
 import { fetchTeacherReports } from '../api/teacher.js'
 import { useTeacherCourse } from '../composables/useTeacherCourse.js'
 import { createLatestRequest } from '../utils/latestRequest.js'
+import { anomalyTypeLabel, engagementRows, isEmptyWeekly, pct, trend, trendClass } from '../utils/weeklyReport.js'
 
 const { courseId } = useTeacherCourse()
 
@@ -171,7 +209,8 @@ function flagLabel(f) {
 function hasKnownSections(row) {
   return weakNodes(row).length
     || anomalies(row).length
-    || !!row?.payload?.engagement
+    || engagementRows(row?.payload?.engagement).length > 0
+    || !!row?.payload?.summary
     || flags(row).length
     || !!row?.payload?.narrative
 }
@@ -328,6 +367,26 @@ onBeforeUnmount(() => {
   background: var(--bg);
   border-radius: 6px;
 }
+.summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.mini-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 320px;
+}
+.mini-table th, .mini-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 4px 12px 4px 0;
+  text-align: left;
+}
+.mini-table th { color: var(--mut); font-weight: 500; }
+.delta.up { color: #2f7d4f; }
+.delta.down { color: #c44; }
+.delta.flat { color: var(--mut); }
 .narrative {
   margin: 0;
   font-size: 12.5px;
