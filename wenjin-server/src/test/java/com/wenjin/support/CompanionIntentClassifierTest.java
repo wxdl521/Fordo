@@ -67,6 +67,8 @@ class CompanionIntentClassifierTest {
                 String firstMessage = root.path("script").get(0).path("user").asText();
                 List<String> mustCall = new ArrayList<>();
                 root.path("hard").path("mustCallTools").forEach(node -> mustCall.add(node.asText()));
+                // mustCallAnyOf group: its first (canonical) tool stands in as the intent hint
+                root.path("hard").path("mustCallAnyOf").forEach(group -> mustCall.add(group.get(0).asText()));
                 rows.add(Arguments.of(entry.getKey(), firstMessage, mustCall, entry.getValue()));
             }
         }

@@ -1,38 +1,14 @@
 {
-  "scenario": "S06",
-  "format": 2,
-  "recordedAt": "2026-10-21T00:00:00Z",
-  "model": "synthetic",
-  "synthetic": true,
-  "turns": [
-    {
-      "rounds": [
-        {
-          "content": "",
-          "toolCalls": [
-            {
-              "name": "start_practice",
-              "arguments": {
-                "nodeCode": "SE-1.1",
-                "count": 3
-              }
-            },
-            {
-              "name": "start_practice",
-              "arguments": {
-                "nodeCode": "SE-1.1",
-                "count": 3
-              }
-            }
-          ],
-          "finishReason": "tool_calls"
-        },
-        {
-          "content": "已为你开启一套软件工程概述（SE-1.1）的练习，可以直接在卡片里作答。本轮的练习次数预算已经用完，第二套暂时开不了；先完成这一套，做完我们一起复盘，再决定下一套练什么。",
-          "toolCalls": [],
-          "finishReason": "stop"
-        }
-      ]
-    }
-  ]
+  "scenario" : "S06",
+  "format" : 2,
+  "recordedAt" : "2026-10-23T03:41:15.432420600Z",
+  "model" : "deepseek-v4-pro",
+  "synthetic" : false,
+  "turns" : [ {
+    "rounds" : [ {
+      "content" : "练习已经准备好了，共 2 道题，你直接作答就行。做完告诉我结果，我再接着给你出下一套。",
+      "toolCalls" : [ ],
+      "finishReason" : "stop"
+    } ]
+  } ]
 }

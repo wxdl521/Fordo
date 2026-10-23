@@ -165,6 +165,15 @@ public final class ReplayCompanionAiClient implements CompanionAiClient, TurnAwa
                         break;
                     }
                 }
+                if ("0".equals(id)) {
+                    // 真实录制的 golden 常引用 RETRIEVAL 直接注入的资料块（不经 search_materials）
+                    for (ToolChunk chunk : injectedChunks(messages)) {
+                        if (key.equals(chunk.title())) {
+                            id = String.valueOf(chunk.id());
+                            break;
+                        }
+                    }
+                }
             }
             m.appendReplacement(sb, Matcher.quoteReplacement(id));
         }
@@ -173,6 +182,26 @@ public final class ReplayCompanionAiClient implements CompanionAiClient, TurnAwa
     }
 
     private record ToolChunk(long id, String title) {
+    }
+
+    /** RETRIEVAL 注入块标签：{@code 【资料 #<chunkId> · <title>】}（见 RetrievalService.formatInjectionBlocks）。 */
+    private static final Pattern INJECTED_LABEL = Pattern.compile("【资料 #(\\d{1,18}) · ([^】\\n]+)】");
+
+    private static List<ToolChunk> injectedChunks(List<Map<String, Object>> messages) {
+        Map<Long, ToolChunk> chunks = new LinkedHashMap<>();
+        if (messages != null) {
+            for (Map<String, Object> message : messages) {
+                if (message == null || !(message.get("content") instanceof String body)) {
+                    continue;
+                }
+                Matcher m = INJECTED_LABEL.matcher(body);
+                while (m.find()) {
+                    long id = Long.parseLong(m.group(1));
+                    chunks.putIfAbsent(id, new ToolChunk(id, m.group(2).trim()));
+                }
+            }
+        }
+        return new ArrayList<>(chunks.values());
     }
 
     private static List<ToolChunk> toolResultChunks(List<Map<String, Object>> messages) {

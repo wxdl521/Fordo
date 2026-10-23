@@ -14,7 +14,7 @@
     {"user": "那我该先补什么？"}
   ],
   "hard": {
-    "mustCallTools": ["query_mastery"],
+    "mustCallAnyOf": [["query_mastery", "trace_prerequisites"]],
     "mustNotCallTools": ["schedule_review"],
     "maxToolCalls": 4,
     "jsonContractValid": true,

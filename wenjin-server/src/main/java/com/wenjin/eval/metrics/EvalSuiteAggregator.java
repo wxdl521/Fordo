@@ -19,21 +19,33 @@ import java.util.TreeMap;
 public final class EvalSuiteAggregator {
 
     /** Expected tool selection of a scenario (mustCall all hit, none of mustNot called). */
-    public record ToolExpectation(List<String> mustCall, List<String> mustNot) {
+    public record ToolExpectation(List<String> mustCall, List<String> mustNot, List<List<String>> mustCallAnyOf) {
         public ToolExpectation {
             mustCall = mustCall == null ? List.of() : List.copyOf(mustCall);
             mustNot = mustNot == null ? List.of() : List.copyOf(mustNot);
+            mustCallAnyOf = mustCallAnyOf == null ? List.of() : List.copyOf(mustCallAnyOf);
+        }
+
+        public ToolExpectation(List<String> mustCall, List<String> mustNot) {
+            this(mustCall, mustNot, null);
         }
 
         public static ToolExpectation fromScenario(EvalScenarioDocument doc) {
+            return fromScenario(doc, false);
+        }
+
+        /** @param live true: expectation of the LIVE view (drops {@code hard.replayOnly} keys) */
+        public static ToolExpectation fromScenario(EvalScenarioDocument doc, boolean live) {
             if (doc == null || doc.hard() == null) {
                 return new ToolExpectation(List.of(), List.of());
             }
-            return new ToolExpectation(doc.hard().mustCallTools(), doc.hard().mustNotCallTools());
+            EvalScenarioDocument.HardAssertions hard = doc.hard().effective(live);
+            return new ToolExpectation(hard.mustCallTools(), hard.mustNotCallTools(), hard.mustCallAnyOf());
         }
 
         boolean satisfiedBy(List<String> called) {
-            return called.containsAll(mustCall) && mustNot.stream().noneMatch(called::contains);
+            return called.containsAll(mustCall) && mustNot.stream().noneMatch(called::contains)
+                    && mustCallAnyOf.stream().allMatch(g -> g.stream().anyMatch(called::contains));
         }
     }
 

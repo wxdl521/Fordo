@@ -662,6 +662,89 @@ class CompanionServiceImplTest {
         assertThat(turnChoices).containsExactly(CompanionAiClient.ToolChoice.NONE);
         assertThat(turnSchemas.get(0)).isNotEmpty();
         verify(aiClient, never()).completeWithTools(any(), any());
+
+        // 强制调用不是模型产生的：不得以 assistant.tool_calls / tool 协议消息回放（思考模式会 400），
+        // 结果只作为普通 system 上下文消息喂给模型。
+        List<Map<String, Object>> sent = turnMessages.get(0);
+        assertThat(sent).noneMatch(m -> m.containsKey("tool_calls"));
+        assertThat(sent).noneMatch(m -> "tool".equals(m.get("role")));
+        Map<String, Object> ctx = sent.get(sent.size() - 1);
+        assertThat(ctx).containsEntry("role", "system");
+        assertThat((String) ctx.get("content"))
+                .contains("系统已代学生调用 start_practice")
+                .contains("{\"sessionId\":901,\"questionCount\":2}");
+    }
+
+    @Test
+    void untargetedPracticeRequestWithoutFocusForcesStartPracticeOnPickedTarget() {
+        Long conversationId = 504L;
+        KgNode seNode = new KgNode();
+        seNode.setId(1L);
+        seNode.setNodeCode("KT01");
+        seNode.setName("软件工程概述");
+        stubConversationAndPrompt(conversationId,
+                List.of(userMessage("连续给我出题练习吧，多来几套")),
+                List.of(seNode), null);
+        conversationMapper.selectById(conversationId).setNodeCode(null);
+        com.wenjin.service.companion.CompanionDegradeService degradeService =
+                org.mockito.Mockito.mock(com.wenjin.service.companion.CompanionDegradeService.class);
+        ReflectionTestUtils.setField(service, "degradeService", degradeService);
+        when(degradeService.pickPracticeTarget(1L, 10L, null)).thenReturn(java.util.Optional.of(
+                new com.wenjin.service.companion.CompanionDegradeService.NodePick(1L, "KT01", "WEAK")));
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "start_practice", "正在生成节点练习…", Map.of("type", "object", "properties", Map.of()))));
+        when(toolGovernor.execute(any(), any(), any(), any())).thenReturn(
+                new ToolExecutionResult("intent-start-practice", "start_practice", true, "{\"sessionId\":1}"));
+        scriptTurns(text("先练这一套"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, new RecordingSink());
+
+        ArgumentCaptor<CompanionAiClient.ToolCall> callCaptor =
+                ArgumentCaptor.forClass(CompanionAiClient.ToolCall.class);
+        verify(toolGovernor).execute(any(ToolContext.class), callCaptor.capture(), any(ToolExecutionState.class), any());
+        assertEquals("intent-start-practice", callCaptor.getValue().id());
+        assertThat(callCaptor.getValue().argumentsJson()).isEqualTo("{\"nodeCode\":\"KT01\",\"size\":2}");
+        assertThat(turnChoices).containsExactly(CompanionAiClient.ToolChoice.NONE);
+    }
+
+    @Test
+    void untargetedNounMentionOfPracticeDoesNotForcePractice() {
+        Long conversationId = 505L;
+        stubConversationAndPrompt(conversationId, List.of(userMessage("我练习了很多次还是不懂")), List.of(), null);
+        conversationMapper.selectById(conversationId).setNodeCode(null);
+        com.wenjin.service.companion.CompanionDegradeService degradeService =
+                org.mockito.Mockito.mock(com.wenjin.service.companion.CompanionDegradeService.class);
+        ReflectionTestUtils.setField(service, "degradeService", degradeService);
+        configureTools(true, 2, 3, List.of(fakeTool(
+                "start_practice", "正在生成节点练习…", Map.of("type", "object", "properties", Map.of()))));
+        scriptTurns(text("别着急"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(conversationId, new RecordingSink());
+
+        verify(toolGovernor, never()).execute(any(), any(), any(), any());
+        verify(degradeService, never()).pickPracticeTarget(any(), any(), any());
+        assertThat(turnChoices).containsExactly(CompanionAiClient.ToolChoice.AUTO);
+    }
+
+    @Test
+    void reviewSessionWithUntargetedPracticePhraseDoesNotForcePractice() {
+        stubConversationAndPrompt(616L, List.of(userMessage("再出两道题吧")), List.of(), null);
+        conversationMapper.selectById(616L).setNodeCode(null);
+        com.wenjin.service.companion.CompanionDegradeService degradeService =
+                org.mockito.Mockito.mock(com.wenjin.service.companion.CompanionDegradeService.class);
+        ReflectionTestUtils.setField(service, "degradeService", degradeService);
+        configureTools(true, 2, 3, List.of(
+                fakeTool("start_practice", "正在生成节点练习…", Map.of("type", "object", "properties", Map.of())),
+                fakeTool("get_recent_mistakes", "正在翻看你的错题…", Map.of("type", "object", "properties", Map.of()))));
+        scriptTurns(text("先把错题复盘完"));
+        when(messageMapper.insert(any(CompanionMessage.class))).thenReturn(1);
+
+        service.streamReply(616L, 79L, new RecordingSink());
+
+        verify(toolGovernor, never()).execute(any(), any(), any(), any());
+        verify(degradeService, never()).pickPracticeTarget(any(), any(), any());
     }
 
     @Test
@@ -1378,6 +1461,46 @@ class CompanionServiceImplTest {
                 List.of(), null, null, null, null, null);
         assertThat(prompt).contains("get_recent_mistakes").contains("## 错因辅导").contains("为什么会选错");
         assertThat(prompt.indexOf("## 错因辅导")).isLessThan(prompt.indexOf("## 课程知识点范围"));
+        String section = prompt.substring(prompt.indexOf("## 错因辅导"), prompt.indexOf("## 课程知识点范围"));
+        // LIVE S22：要点名误区节点并对比所选/正确选项，结尾给下一步
+        assertThat(section).contains("点名误区节点").contains("所选选项").contains("正确选项").contains("下一步");
+    }
+
+    @Test
+    void retrievalInjection_tracesInjectedChunksAsRetrieveStep() {
+        String json = CompanionServiceImpl.retrievalTraceJson(List.of(
+                new com.wenjin.service.rag.RetrievalHit(1L, "用例图描述\"参与者\"与系统功能", "讲义·用例图", null, 0.9),
+                new com.wenjin.service.rag.RetrievalHit(2L, "数据流图由四种元素组成", null, null, 0.5)), 6);
+        assertThat(json).isEqualTo("{\"items\":[{\"chunkId\":1,\"sourceTitle\":\"讲义·用例图\",\"snippet\":\"用例图描述\\\"…\"},"
+                + "{\"chunkId\":2,\"sourceTitle\":\"\",\"snippet\":\"数据流图由四…\"}]}");
+
+        CompanionServiceImpl.RetrievalInjection injection =
+                new CompanionServiceImpl.RetrievalInjection(List.of("b"), java.util.Set.of(1L, 2L), json);
+        com.wenjin.service.trace.StepRecord step = injection.toStep();
+        assertThat(step.stepType()).isEqualTo("RETRIEVE");
+        assertThat(step.name()).isEqualTo("retrieval_inject");
+        assertThat(step.outputJson()).isEqualTo(json);
+        assertThat(CompanionServiceImpl.RetrievalInjection.NONE.toStep()).isNull();
+    }
+
+    @Test
+    void toolPrompt_staticToolRulesCoverExplainSearchPracticeAndEfficiency() {
+        String prompt = CompanionServiceImpl.buildSystemPrompt("软件工程", List.of("用例图（nodeCode: SE-3.2）"),
+                List.of(), null, null, "SE-3.2", "用例图", null);
+        int tools = prompt.indexOf("## 工具使用");
+        String section = prompt.substring(tools, prompt.indexOf("## 错因辅导"));
+        // LIVE S13/S15：讲解（含中途换讲）先 get_node_detail，注入资料不能替代
+        assertThat(section).contains("讲解某个知识点").contains("换讲").contains("先调用 get_node_detail")
+                .contains("注入的资料不能代替");
+        // LIVE S19：要查资料 / 跨节点问资料时调用 search_materials
+        assertThat(section).contains("查资料").contains("调用 search_materials");
+        // LIVE S06：要题直接 start_practice
+        assertThat(section).contains("要求出题或练习时直接调用 start_practice");
+        // LIVE S01：省工具调用
+        assertThat(section).contains("nodeCodes 一次查完").contains("trace_prerequisites 的结果已含");
+        // 全部在静态段（课程知识点范围与学生动态段之前），利于前缀缓存
+        assertThat(prompt.indexOf("## 工具使用")).isLessThan(prompt.indexOf("## 课程知识点范围"));
+        assertThat(prompt.indexOf("先调用 get_node_detail")).isLessThan(prompt.indexOf("## 当前焦点节点"));
     }
 
     @Test
@@ -1915,7 +2038,12 @@ class CompanionServiceImplTest {
         when(pathService.getCurrent(1L, 10L)).thenReturn(path());
         when(diagnosticResultService.getResult(1L, 10L)).thenReturn(null);
         when(courseMapper.selectById(10L)).thenReturn(null);
-        when(nodeMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(focusNode);
+        if (focusNode == null) {
+            // 无焦点用例常把会话 nodeCode 置空，此时不会按焦点查节点
+            org.mockito.Mockito.lenient().when(nodeMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        } else {
+            when(nodeMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(focusNode);
+        }
     }
 
     /**

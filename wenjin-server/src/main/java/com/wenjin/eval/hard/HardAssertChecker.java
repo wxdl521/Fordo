@@ -42,6 +42,7 @@ public final class HardAssertChecker {
 
         checkNonEmptyResponse(response, failures);
         checkMustCallTools(hard, steps, failures);
+        checkMustCallAnyOf(hard, steps, failures);
         checkMustNotCallTools(hard, steps, failures);
         checkMaxToolCalls(hard, steps, failures);
         checkJsonContract(hard, steps, failures);
@@ -76,6 +77,24 @@ public final class HardAssertChecker {
         if (!missing.isEmpty()) {
             failures.add(new HardAssertFailure("mustCallTools",
                     "missing required tools: " + missing + "; called=" + called));
+        }
+    }
+
+    private static void checkMustCallAnyOf(HardAssertions hard,
+                                           List<EvalStepView> steps,
+                                           List<HardAssertFailure> failures) {
+        List<List<String>> groups = hard.mustCallAnyOf();
+        if (groups == null || groups.isEmpty()) {
+            return;
+        }
+        Set<String> called = toolNames(steps, true);
+        List<List<String>> unmet = groups.stream()
+                .filter(g -> g != null && !g.isEmpty())
+                .filter(g -> g.stream().noneMatch(t -> t != null && called.contains(t)))
+                .toList();
+        if (!unmet.isEmpty()) {
+            failures.add(new HardAssertFailure("mustCallAnyOf",
+                    "none of these tool groups was called: " + unmet + "; called=" + called));
         }
     }
 

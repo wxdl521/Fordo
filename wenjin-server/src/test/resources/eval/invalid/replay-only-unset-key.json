@@ -1,0 +1,20 @@
+{
+  "code": "S95",
+  "title": "replayOnly 引用未设置的断言",
+  "persona": {"masteryOverrides": [], "reviewQueue": [], "note": "x"},
+  "script": [{"user": "hi"}],
+  "hard": {
+    "mustCallTools": [],
+    "mustNotCallTools": [],
+    "maxToolCalls": 1,
+    "jsonContractValid": true,
+    "nodeCodesInWhitelist": true,
+    "degradedExpected": false,
+    "replayOnly": ["guardCodesExpected"]
+  },
+  "judge": {
+    "dimensions": [
+      {"key": "expression", "desc": "表达", "threshold": 3}
+    ]
+  }
+}

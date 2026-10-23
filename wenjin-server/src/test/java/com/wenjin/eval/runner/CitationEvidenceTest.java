@@ -41,4 +41,15 @@ class CitationEvidenceTest {
         assertThat(CitationEvidence.from(List.of(search("oops"), search(null)))).isEmpty();
         assertThat(CitationEvidence.from(null)).isEmpty();
     }
+
+    @Test
+    void injectedRetrievalStepIsEvidenceToo() {
+        // LIVE S13/S19：模型引用了系统注入的资料（RETRIEVE 步），judge 也要看得到；同一 chunk 只列一次
+        List<String> lines = CitationEvidence.from(List.of(
+                new EvalStepView("RETRIEVE", "retrieval_inject", 0, "{\"chunks\":2}",
+                        "{\"items\":[{\"chunkId\":1,\"sourceTitle\":\"讲义·用例图\",\"snippet\":\"用例图描述参与者\"},"
+                                + "{\"chunkId\":2,\"sourceTitle\":\"讲义·数据流图\",\"snippet\":\"数据流图\"}]}"),
+                search("{\"items\":[{\"chunkId\":1,\"snippet\":\"用例图描述参与者\",\"sourceTitle\":\"讲义·用例图\"}]}")));
+        assertThat(lines).containsExactly("资料 #1（讲义·用例图）：用例图描述参与者", "资料 #2（讲义·数据流图）：数据流图");
+    }
 }

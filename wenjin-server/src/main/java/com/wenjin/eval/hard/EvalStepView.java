@@ -43,6 +43,11 @@ public record EvalStepView(
         return "CITATION".equals(stepType);
     }
 
+    /** RETRIEVAL 槽注入记录（step_type=RETRIEVE）；不计入工具预算。 */
+    public boolean isRetrieve() {
+        return "RETRIEVE".equals(stepType);
+    }
+
     public boolean isLlmCall() {
         return "LLM_CALL".equals(stepType);
     }

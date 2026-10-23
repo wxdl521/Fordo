@@ -156,6 +156,11 @@ public final class CompanionOrchestrator {
         private final Map<String, String> signals = new LinkedHashMap<>();
         private List<Map<String, Object>> messages;
         private boolean practiceStarted;
+        /** 正在执行 forcedCall：applyResult 不写 tool 协议消息，只暂存结果。 */
+        private boolean forcedExecuting;
+        private ToolExecutionResult forcedResult;
+        /** 已向 messages 追加强制调用的结果上下文（等价于 tool 上下文，供失败重试判定）。 */
+        private boolean forcedContext;
         /** 引用守卫；null = 校验关闭（rag-enabled=false）。 */
         private final CitationGuard citations;
 
@@ -178,10 +183,19 @@ public final class CompanionOrchestrator {
         Outcome execute() {
             boolean forceFinal = false;
             if (req.forcedCall() != null) {
-                messages.add(assistantToolCallMessage("", List.of(req.forcedCall())));
-                if (!executeTools(List.of(req.forcedCall()))) {
-                    return cancelled();
+                // 非模型产生的工具调用不能以 assistant.tool_calls + tool 协议消息回放：思考模式（DeepSeek）
+                // 要求同 turn 内每条 assistant tool_calls 消息回传模型自己的 reasoning_content，合成的没有 → HTTP 400。
+                // 因此照常执行（治理/预算/SSE/trace 不变），结果改以普通 system 上下文消息喂给模型。
+                forcedExecuting = true;
+                try {
+                    if (!executeTools(List.of(req.forcedCall()))) {
+                        return cancelled();
+                    }
+                } finally {
+                    forcedExecuting = false;
                 }
+                messages.add(forcedResultMessage(req.forcedCall(), forcedResult));
+                forcedContext = true;
                 forceFinal = true;
             }
 
@@ -221,7 +235,7 @@ public final class CompanionOrchestrator {
                     if (llmFailures >= 2 || isTimeout(ex)) {
                         return degraded(ex);
                     }
-                    if (hasToolContext(messages)) {
+                    if (forcedContext || hasToolContext(messages)) {
                         messages = withSystemPrompt(messages, shell.fallbackSystemPrompt());
                         forceFinal = true;
                         continue;
@@ -397,7 +411,11 @@ public final class CompanionOrchestrator {
             String name = toolName(call);
             toolsCalled.add(name);
             recordToolStep(call, result, elapsedMs);
-            messages.add(toolMessage(call, result));
+            if (forcedExecuting) {
+                forcedResult = result;
+            } else {
+                messages.add(toolMessage(call, result));
+            }
             boolean ok = result != null && result.ok();
             if (citations != null && ok) {
                 citations.addToolResult(name, result.content());
@@ -752,6 +770,21 @@ public final class CompanionOrchestrator {
                 : call.id() == null ? "" : call.id();
         message.put("tool_call_id", id);
         message.put("content", result == null ? "" : result.content());
+        return message;
+    }
+
+    /** 强制调用（非模型发起）结果的上下文消息：普通 system 文本，不含 tool_calls / tool 协议字段。 */
+    static Map<String, Object> forcedResultMessage(CompanionAiClient.ToolCall call, ToolExecutionResult result) {
+        String name = toolName(call);
+        String body = result == null || result.content() == null ? "" : result.content();
+        boolean ok = result != null && result.ok();
+        String content = "系统已代学生调用 " + name + "（无需你再调用）。"
+                + (ok ? "结果：" : "调用失败，结果：") + body
+                + "。请用一两句话告诉学生"
+                + (ok ? "练习已准备好、如何作答，不要重复题干。" : "这次没能完成，请稍后再试或换个说法。");
+        Map<String, Object> message = new LinkedHashMap<>();
+        message.put("role", "system");
+        message.put("content", content);
         return message;
     }
 

@@ -28,6 +28,12 @@ final class ScenarioDriver {
     private ScenarioDriver() {
     }
 
+    /** LIVE drops the scenario's {@code hard.replayOnly} assertions (REPLAY checks everything). */
+    static EvalScenarioDocument.HardAssertions effectiveHard(EvalMode mode, EvalScenarioDocument scenario) {
+        EvalScenarioDocument.HardAssertions hard = scenario.hard();
+        return hard == null ? null : hard.effective(mode == EvalMode.LIVE);
+    }
+
     static ScenarioRun drive(EvalMode mode,
                              EvalScenarioDocument scenario,
                              CompanionTurnRunner turnRunner,
@@ -103,7 +109,7 @@ final class ScenarioDriver {
             }
 
             HardAssertResult hard = checker.check(new HardAssertInput(
-                    allSteps, lastReply.text(), scenario.hard(), whitelist));
+                    allSteps, lastReply.text(), effectiveHard(mode, scenario), whitelist));
             if (executionError != null) {
                 List<HardAssertFailure> failures = new ArrayList<>();
                 failures.add(new HardAssertFailure(EXECUTION_CHECK, executionError));

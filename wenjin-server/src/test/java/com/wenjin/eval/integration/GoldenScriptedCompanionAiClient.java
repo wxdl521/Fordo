@@ -35,6 +35,22 @@ final class GoldenScriptedCompanionAiClient implements CompanionAiClient {
         }
     }
 
+    /**
+     * Tool calls synthesized by the server's intent routing (id {@code intent-*}, e.g. forced start_practice)
+     * are not model rounds, so they do not advance the golden round.
+     */
+    private static boolean isIntentRouted(Map<String, Object> assistant) {
+        if (!(assistant.get("tool_calls") instanceof List<?> calls) || calls.isEmpty()) {
+            return false;
+        }
+        for (Object call : calls) {
+            if (!(call instanceof Map<?, ?> c) || !String.valueOf(c.get("id")).startsWith("intent-")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Override
     public StreamTurnResult streamTurn(List<Map<String, Object>> messages,
                                        List<Map<String, Object>> toolSchemas,
@@ -61,7 +77,7 @@ final class GoldenScriptedCompanionAiClient implements CompanionAiClient {
         int round = 0;
         for (int i = lastUser + 1; i < messages.size(); i++) {
             Map<String, Object> m = messages.get(i);
-            if ("assistant".equals(m.get("role")) && m.containsKey("tool_calls")) {
+            if ("assistant".equals(m.get("role")) && m.containsKey("tool_calls") && !isIntentRouted(m)) {
                 round++;
             }
         }

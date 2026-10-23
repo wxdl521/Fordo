@@ -133,7 +133,7 @@ class LiveEvalExecutorTest {
         assertThat(outcome.hardPass()).isFalse();
         assertThat(outcome.hardResult().failures())
                 .extracting(f -> f.check())
-                .contains("mustCallTools");
+                .contains("mustCallAnyOf");
     }
 
     @Test
