@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * 评测场景 JSON 文档（classpath {@code eval/scenarios/*.json} 为唯一事实源）。
@@ -144,21 +145,67 @@ public record EvalScenarioDocument(
             /** 最终回复必须包含的子串（如教师场景里被点名的高风险学生）；逐项精确子串匹配 */
             List<String> replyMustContain,
             /** GUARD 步必须出现的拦截码（如 TOOL_NOT_ALLOWED），逐项各至少一个 */
-            List<String> guardCodesExpected
+            List<String> guardCodesExpected,
+            /**
+             * 仅 REPLAY 生效的硬断言键（取值为本记录的字段名，如 {@code mustCallTools}）。用于只能由合成 golden
+             * 确定性构造的行为（如诱导模型越权调用工具以覆盖 GUARD 拦截）：真模型正确地不去尝试时，LIVE 不应判失败。
+             */
+            List<String> replayOnly
     ) {
+        /** {@link #replayOnly} 允许引用的键（= 本记录的断言字段名）。 */
+        public static final Set<String> KEYS = Set.of(
+                "mustCallTools", "mustNotCallTools", "maxToolCalls", "jsonContractValid", "nodeCodesInWhitelist",
+                "degradedExpected", "citationsValid", "replyMustNotContain", "replyMustContain",
+                "guardCodesExpected");
+
+        /** 兼容旧调用方（无 replayOnly）。 */
+        public HardAssertions(List<String> mustCallTools, List<String> mustNotCallTools, Integer maxToolCalls,
+                              Boolean jsonContractValid, Boolean nodeCodesInWhitelist, Boolean degradedExpected,
+                              Boolean citationsValid, List<String> replyMustNotContain,
+                              List<String> replyMustContain, List<String> guardCodesExpected) {
+            this(mustCallTools, mustNotCallTools, maxToolCalls, jsonContractValid, nodeCodesInWhitelist,
+                    degradedExpected, citationsValid, replyMustNotContain, replyMustContain, guardCodesExpected, null);
+        }
+
+        /**
+         * LIVE 视图：去掉 {@link #replayOnly} 列出的断言（置空 = 不检查）；无 replayOnly 时返回自身。
+         */
+        public HardAssertions forLive() {
+            if (replayOnly == null || replayOnly.isEmpty()) {
+                return this;
+            }
+            Set<String> drop = Set.copyOf(replayOnly);
+            return new HardAssertions(
+                    drop.contains("mustCallTools") ? null : mustCallTools,
+                    drop.contains("mustNotCallTools") ? null : mustNotCallTools,
+                    drop.contains("maxToolCalls") ? null : maxToolCalls,
+                    drop.contains("jsonContractValid") ? null : jsonContractValid,
+                    drop.contains("nodeCodesInWhitelist") ? null : nodeCodesInWhitelist,
+                    drop.contains("degradedExpected") ? null : degradedExpected,
+                    drop.contains("citationsValid") ? null : citationsValid,
+                    drop.contains("replyMustNotContain") ? null : replyMustNotContain,
+                    drop.contains("replyMustContain") ? null : replyMustContain,
+                    drop.contains("guardCodesExpected") ? null : guardCodesExpected,
+                    null);
+        }
+
+        /** 按执行模式取生效断言：LIVE 用 {@link #forLive()}，REPLAY 用全部。 */
+        public HardAssertions effective(boolean live) {
+            return live ? forLive() : this;
+        }
         /** 兼容旧调用方（无 replyMustContain / guardCodesExpected）。 */
         public HardAssertions(List<String> mustCallTools, List<String> mustNotCallTools, Integer maxToolCalls,
                               Boolean jsonContractValid, Boolean nodeCodesInWhitelist, Boolean degradedExpected,
                               Boolean citationsValid, List<String> replyMustNotContain) {
             this(mustCallTools, mustNotCallTools, maxToolCalls, jsonContractValid, nodeCodesInWhitelist,
-                    degradedExpected, citationsValid, replyMustNotContain, null, null);
+                    degradedExpected, citationsValid, replyMustNotContain, null, null, null);
         }
 
         /** 兼容旧调用方（无 citationsValid / replyMustNotContain）。 */
         public HardAssertions(List<String> mustCallTools, List<String> mustNotCallTools, Integer maxToolCalls,
                               Boolean jsonContractValid, Boolean nodeCodesInWhitelist, Boolean degradedExpected) {
             this(mustCallTools, mustNotCallTools, maxToolCalls, jsonContractValid, nodeCodesInWhitelist,
-                    degradedExpected, null, null, null, null);
+                    degradedExpected, null, null, null, null, null);
         }
 
         /** 兼容旧调用方（无 replyMustNotContain）。 */
@@ -166,7 +213,7 @@ public record EvalScenarioDocument(
                               Boolean jsonContractValid, Boolean nodeCodesInWhitelist, Boolean degradedExpected,
                               Boolean citationsValid) {
             this(mustCallTools, mustNotCallTools, maxToolCalls, jsonContractValid, nodeCodesInWhitelist,
-                    degradedExpected, citationsValid, null, null, null);
+                    degradedExpected, citationsValid, null, null, null, null);
         }
     }
 

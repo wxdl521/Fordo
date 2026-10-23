@@ -26,10 +26,16 @@ public final class EvalSuiteAggregator {
         }
 
         public static ToolExpectation fromScenario(EvalScenarioDocument doc) {
+            return fromScenario(doc, false);
+        }
+
+        /** @param live true: expectation of the LIVE view (drops {@code hard.replayOnly} keys) */
+        public static ToolExpectation fromScenario(EvalScenarioDocument doc, boolean live) {
             if (doc == null || doc.hard() == null) {
                 return new ToolExpectation(List.of(), List.of());
             }
-            return new ToolExpectation(doc.hard().mustCallTools(), doc.hard().mustNotCallTools());
+            EvalScenarioDocument.HardAssertions hard = doc.hard().effective(live);
+            return new ToolExpectation(hard.mustCallTools(), hard.mustNotCallTools());
         }
 
         boolean satisfiedBy(List<String> called) {

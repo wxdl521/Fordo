@@ -315,7 +315,51 @@ public final class ScenarioSchemaValidator {
         if (hard.maxToolCalls() != null && hard.maxToolCalls() < 0) {
             throw new ScenarioSchemaException("hard.maxToolCalls must be >= 0");
         }
+        validateReplayOnly(hard);
         // Boolean fields may be null (optional); runner treats null as default later.
+    }
+
+    /** replayOnly：每项须是已知断言键、不重复，且该断言在本场景确实设置了（否则标注无意义，多半是笔误）。 */
+    private static void validateReplayOnly(HardAssertions hard) {
+        List<String> keys = hard.replayOnly();
+        if (keys == null) {
+            return;
+        }
+        if (keys.isEmpty()) {
+            throw new ScenarioSchemaException("hard.replayOnly must be non-empty when present");
+        }
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; i < keys.size(); i++) {
+            String key = keys.get(i);
+            String at = "hard.replayOnly[" + i + "]";
+            if (key == null || !HardAssertions.KEYS.contains(key)) {
+                throw new ScenarioSchemaException(at + " must be one of " + new java.util.TreeSet<>(HardAssertions.KEYS)
+                        + ": " + key);
+            }
+            if (!seen.add(key)) {
+                throw new ScenarioSchemaException(at + " is duplicated: " + key);
+            }
+            if (!isSet(hard, key)) {
+                throw new ScenarioSchemaException(at + " refers to hard." + key + " which is not set");
+            }
+        }
+    }
+
+    private static boolean isSet(HardAssertions hard, String key) {
+        Object value = switch (key) {
+            case "mustCallTools" -> hard.mustCallTools();
+            case "mustNotCallTools" -> hard.mustNotCallTools();
+            case "maxToolCalls" -> hard.maxToolCalls();
+            case "jsonContractValid" -> hard.jsonContractValid();
+            case "nodeCodesInWhitelist" -> hard.nodeCodesInWhitelist();
+            case "degradedExpected" -> hard.degradedExpected();
+            case "citationsValid" -> hard.citationsValid();
+            case "replyMustNotContain" -> hard.replyMustNotContain();
+            case "replyMustContain" -> hard.replyMustContain();
+            case "guardCodesExpected" -> hard.guardCodesExpected();
+            default -> null;
+        };
+        return value instanceof List<?> list ? !list.isEmpty() : value != null;
     }
 
     private static void validateJudge(JudgeSpec judge) {

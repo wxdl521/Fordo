@@ -97,6 +97,9 @@ public final class LiveEvalSuite {
             for (int i = 1; i <= options.repeat(); i++) {
                 ScenarioRun run = executor.apply(scenario);
                 EvalCaseOutcome outcome = run.outcome();
+                if (i == 1 && outcome.mode() == EvalMode.LIVE) {
+                    expectations.put(scenario.code(), ToolExpectation.fromScenario(scenario, true));
+                }
                 JudgeResult judged = null;
                 if (options.judge() != null && !outcome.skipped()) {
                     judged = options.judge().judge(new JudgeRequest(
