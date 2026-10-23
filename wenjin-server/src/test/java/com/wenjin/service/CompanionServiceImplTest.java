@@ -662,6 +662,17 @@ class CompanionServiceImplTest {
         assertThat(turnChoices).containsExactly(CompanionAiClient.ToolChoice.NONE);
         assertThat(turnSchemas.get(0)).isNotEmpty();
         verify(aiClient, never()).completeWithTools(any(), any());
+
+        // 强制调用不是模型产生的：不得以 assistant.tool_calls / tool 协议消息回放（思考模式会 400），
+        // 结果只作为普通 system 上下文消息喂给模型。
+        List<Map<String, Object>> sent = turnMessages.get(0);
+        assertThat(sent).noneMatch(m -> m.containsKey("tool_calls"));
+        assertThat(sent).noneMatch(m -> "tool".equals(m.get("role")));
+        Map<String, Object> ctx = sent.get(sent.size() - 1);
+        assertThat(ctx).containsEntry("role", "system");
+        assertThat((String) ctx.get("content"))
+                .contains("系统已代学生调用 start_practice")
+                .contains("{\"sessionId\":901,\"questionCount\":2}");
     }
 
     @Test
