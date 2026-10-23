@@ -67,6 +67,13 @@ public interface LearningDataResetMapper {
     @Delete("DELETE FROM companion_conversation WHERE course_id = #{courseId}")
     int deleteCompanionConversations(@Param("courseId") Long courseId);
 
+    /** 理解探针（V26）：会话与最近结果均按课程清空，否则重置后换策略状态 / 去重记忆仍残留。 */
+    @Delete("DELETE FROM probe_session WHERE course_id = #{courseId}")
+    int deleteProbeSessions(@Param("courseId") Long courseId);
+
+    @Delete("DELETE FROM probe_outcome WHERE course_id = #{courseId}")
+    int deleteProbeOutcomes(@Param("courseId") Long courseId);
+
     @Delete("DELETE FROM student_memory WHERE course_id = #{courseId}")
     int deleteStudentMemory(@Param("courseId") Long courseId);
 

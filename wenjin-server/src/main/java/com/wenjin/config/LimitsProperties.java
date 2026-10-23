@@ -24,6 +24,7 @@ public class LimitsProperties {
     private final Proactive proactive = new Proactive();
     private final Code code = new Code();
     private final TeacherAssistant teacherAssistant = new TeacherAssistant();
+    private final Reflection reflection = new Reflection();
 
     /**
      * 伴侣会话预算（wenjin.limits.companion.*）。前四项每次请求现读，可由管理后台「系统配置」运行时改写，
@@ -258,6 +259,19 @@ public class LimitsProperties {
         /** 回给模型的失败用例条数，以及每条用例每个字段的预览字符数 */
         private int toolMaxFailureCases = 3;
         private int toolCaseFieldChars = 100;
+    }
+
+    /**
+     * 理解探针状态（wenjin.limits.reflection.*，M9 持久化 V26）。
+     */
+    @Data
+    public static class Reflection {
+        /** 探针会话有效期（小时）：超过即视为「不存在」，提交返回 404；每次请求现读 */
+        private int probeSessionTtlHours = 24;
+        /** 探针会话 / 最近结果行的保留天数：超过由定时清理删除（须 ≥ TTL；同时影响「已出过的题库题」去重记忆） */
+        private int probeRetentionDays = 14;
+        /** 清理任务间隔（毫秒），默认 1 小时 */
+        private long cleanupIntervalMs = 3_600_000L;
     }
 
     /**

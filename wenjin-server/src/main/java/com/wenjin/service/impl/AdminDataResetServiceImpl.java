@@ -40,6 +40,7 @@ import java.util.Map;
  *   <li>{@code student_memory}（课程维度长期记忆，逻辑外键）</li>
  *   <li>{@code agent_plan_task} — 逻辑引用 agent_plan（经父表 JOIN）</li>
  *   <li>{@code agent_plan}（学生学习计划）</li>
+ *   <li>{@code probe_session} / {@code probe_outcome}（理解探针会话与最近结果，无 FK，V26）</li>
  *   <li>{@code teacher_message} — 逻辑引用 teacher_conversation（经父表 JOIN）</li>
  *   <li>{@code teacher_conversation}（教师 AI 助教会话，内容含学生姓名与学情）</li>
  * </ol>
@@ -111,6 +112,8 @@ public class AdminDataResetServiceImpl implements AdminDataResetService {
         deleted.put("mastery_snapshot", resetMapper.deleteMasterySnapshots(courseId));
         deleted.put("companion_message", resetMapper.deleteCompanionMessages(courseId));
         deleted.put("companion_conversation", resetMapper.deleteCompanionConversations(courseId));
+        deleted.put("probe_session", resetMapper.deleteProbeSessions(courseId));
+        deleted.put("probe_outcome", resetMapper.deleteProbeOutcomes(courseId));
         deleted.put("student_memory", resetMapper.deleteStudentMemory(courseId));
         deleted.put("agent_plan_task", resetMapper.deleteAgentPlanTasks(courseId));
         deleted.put("agent_plan", resetMapper.deleteAgentPlans(courseId));

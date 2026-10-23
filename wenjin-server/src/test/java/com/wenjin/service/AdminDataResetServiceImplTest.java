@@ -68,6 +68,8 @@ class AdminDataResetServiceImplTest {
         when(resetMapper.deleteMasterySnapshots(COURSE_ID)).thenReturn(80);
         when(resetMapper.deleteCompanionMessages(COURSE_ID)).thenReturn(40);
         when(resetMapper.deleteCompanionConversations(COURSE_ID)).thenReturn(5);
+        when(resetMapper.deleteProbeSessions(COURSE_ID)).thenReturn(12);
+        when(resetMapper.deleteProbeOutcomes(COURSE_ID)).thenReturn(13);
         when(resetMapper.deleteStudentMemory(COURSE_ID)).thenReturn(8);
         when(resetMapper.deleteAgentPlanTasks(COURSE_ID)).thenReturn(9);
         when(resetMapper.deleteAgentPlans(COURSE_ID)).thenReturn(1);
@@ -90,6 +92,8 @@ class AdminDataResetServiceImplTest {
         order.verify(resetMapper).deleteMasterySnapshots(COURSE_ID);
         order.verify(resetMapper).deleteCompanionMessages(COURSE_ID);
         order.verify(resetMapper).deleteCompanionConversations(COURSE_ID);
+        order.verify(resetMapper).deleteProbeSessions(COURSE_ID);
+        order.verify(resetMapper).deleteProbeOutcomes(COURSE_ID);
         order.verify(resetMapper).deleteStudentMemory(COURSE_ID);
         order.verify(resetMapper).deleteAgentPlanTasks(COURSE_ID);
         order.verify(resetMapper).deleteAgentPlans(COURSE_ID);
@@ -111,6 +115,8 @@ class AdminDataResetServiceImplTest {
                 entry("mastery_snapshot", 80),
                 entry("companion_message", 40),
                 entry("companion_conversation", 5),
+                entry("probe_session", 12),
+                entry("probe_outcome", 13),
                 entry("student_memory", 8),
                 entry("agent_plan_task", 9),
                 entry("agent_plan", 1),
@@ -159,7 +165,7 @@ class AdminDataResetServiceImplTest {
         when(courseMapper.selectById(COURSE_ID)).thenReturn(course("软件工程"));
         when(courseAccessMapper.lockCourseIncludingArchived(COURSE_ID)).thenReturn(COURSE_ID);
         AdminDataResetVO vo = service(true).resetCourse(COURSE_ID, "软件工程");
-        assertThat(vo.getDeleted()).hasSize(16);
+        assertThat(vo.getDeleted()).hasSize(18);
     }
 
     @Test
