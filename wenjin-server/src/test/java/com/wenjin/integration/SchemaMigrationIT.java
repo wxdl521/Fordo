@@ -96,8 +96,9 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     private static final List<String> V24_TABLES = List.of("question_code_case");
 
     private static final List<String> V25_TABLES = List.of("teacher_conversation", "teacher_message");
+    private static final List<String> V26_TABLES = List.of("probe_session", "probe_outcome");
 
-    /** 空库跑完 V1…V25 后应有的业务表（V4–V6/V8–V9 为 ALTER；V7 增 ai_job；V10 增 agent_*；V11 增 eval_*；V12 增 student_memory；V13 增 RAG 三表；V14 增 plan 三表；V15 增 agent_report；V16 增 audit_log / login_log；V17 增班级三表；V18 增 sys_config；V19 增 review_pin；V20 为 sys_user.email；V21 为 answer_record 时间索引；V22 增 companion_hint_log；V23 增 doc_chunk_embedding；V24 增 question_code_case 并为 question 加 starter_code/code_language；V25 增 teacher_conversation / teacher_message）。 */
+    /** 空库跑完 V1…V26 后应有的业务表（V4–V6/V8–V9 为 ALTER；V7 增 ai_job；V10 增 agent_*；V11 增 eval_*；V12 增 student_memory；V13 增 RAG 三表；V14 增 plan 三表；V15 增 agent_report；V16 增 audit_log / login_log；V17 增班级三表；V18 增 sys_config；V19 增 review_pin；V20 为 sys_user.email；V21 为 answer_record 时间索引；V22 增 companion_hint_log；V23 增 doc_chunk_embedding；V24 增 question_code_case 并为 question 加 starter_code/code_language；V25 增 teacher_conversation / teacher_message；V26 增 probe_session / probe_outcome）。 */
     private static final List<String> EXPECTED_TABLES_AFTER_ALL;
 
     /** V9 完成后必须存在的完整命名外键矩阵（V9 42 个 + V3 2 个 + V5 1 个）。 */
@@ -178,6 +179,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         all.addAll(V23_TABLES);
         all.addAll(V24_TABLES);
         all.addAll(V25_TABLES);
+        all.addAll(V26_TABLES);
         EXPECTED_TABLES_AFTER_ALL = List.copyOf(all);
 
         List<String> fks = new ArrayList<>(EXPECTED_FKS_AFTER_V9);
@@ -217,18 +219,18 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     }
 
     @Test
-    @DisplayName("空库：V1…V25 建出全部表；二次 migrate 无变更且 checksum 稳定；V9 约束、V10–V25 就绪")
-    void emptyDatabase_appliesV1ThroughV25_idempotent() throws Exception {
+    @DisplayName("空库：V1…V26 建出全部表；二次 migrate 无变更且 checksum 稳定；V9 约束、V10–V26 就绪")
+    void emptyDatabase_appliesV1ThroughV26_idempotent() throws Exception {
         Flyway flyway = createFlyway();
 
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        assertThat(first.migrationsExecuted).isEqualTo(25);
+        assertThat(first.migrationsExecuted).isEqualTo(26);
 
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
         Map<String, Integer> checksumsAfterFirst = successChecksums();
         assertThat(checksumsAfterFirst.keySet())
-                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26");
         assertThat(checksumsAfterFirst.get("1")).isNotNull();
         assertThat(checksumsAfterFirst.get("2")).isNotNull();
         assertThat(checksumsAfterFirst.get("3")).isNotNull();
@@ -314,7 +316,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
 
         Map<String, Integer> checksumsAfterSecond = successChecksums();
         assertThat(checksumsAfterSecond).isEqualTo(checksumsAfterFirst);
-        assertThat(countSuccessHistoryRows()).isEqualTo(25);
+        assertThat(countSuccessHistoryRows()).isEqualTo(26);
     }
 
     @Test
@@ -338,7 +340,7 @@ class SchemaMigrationIT extends MySqlContainerSupport {
     }
 
     @Test
-    @DisplayName("遗留库：V1 结构 + baseline@2 接管，执行 V3…V25；二次 migrate 无变更")
+    @DisplayName("遗留库：V1 结构 + baseline@2 接管，执行 V3…V26；二次 migrate 无变更")
     void legacySchema_baselinesAtVersion2_onlyFutureMigrations() throws Exception {
         applyLegacyBaselineSchema();
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(BASELINE_TABLES);
@@ -346,13 +348,13 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         Flyway flyway = createFlyway();
         MigrateResult first = flyway.migrate();
         assertThat(first.success).isTrue();
-        // baseline@2 后执行 V3…V25
-        assertThat(first.migrationsExecuted).isEqualTo(23);
+        // baseline@2 后执行 V3…V26
+        assertThat(first.migrationsExecuted).isEqualTo(24);
 
         Map<String, Integer> history = successChecksums();
-        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3–V25
+        // baseline 记录 version=2；不得出现 version=1 的 SUCCESS 迁移；应有 V3–V26
         assertThat(history.keySet()).doesNotContain("1");
-        assertThat(history.keySet()).contains("2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25");
+        assertThat(history.keySet()).contains("2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26");
         assertThat(listBusinessTables()).containsExactlyInAnyOrderElementsOf(EXPECTED_TABLES_AFTER_ALL);
         assertThat(indexExists("answer_record", "idx_student_course_time")).isTrue();
         assertThat(columnExists("companion_conversation", "summary_text")).isTrue();
@@ -379,6 +381,8 @@ class SchemaMigrationIT extends MySqlContainerSupport {
         assertThat(columnExists("companion_hint_log", "hint_key")).isTrue();
         assertThat(columnExists("teacher_conversation", "summary_through_message_id")).isTrue();
         assertThat(columnExists("teacher_message", "conversation_id")).isTrue();
+        assertThat(columnExists("probe_session", "submitted_at")).isTrue();
+        assertThat(constraintExists("probe_outcome", "uk_probe_outcome_node")).isTrue();
         assertThat(columnExists("doc_chunk_embedding", "content_sha")).isTrue();
         assertThat(constraintExists("agent_report", "uk_report_period")).isTrue();
         assertThat(columnExists("audit_log", "target_id")).isTrue();

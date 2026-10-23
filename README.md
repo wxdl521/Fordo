@@ -104,7 +104,7 @@ Fordo/
 
 ## 数据与种子
 
-- **生产 / CI schema 演进**：`wenjin-server/src/main/resources/db/migration/`（Flyway，V1–V25）。
+- **生产 / CI schema 演进**：`wenjin-server/src/main/resources/db/migration/`（Flyway，V1–V26）。
   - `V1__baseline_schema.sql`：空库建全部 20 张表（`CREATE TABLE IF NOT EXISTS`，无 DROP / 种子）。
   - `V2__legacy_milestones.sql`：标记 m01/m02 已并入 V1（`SELECT 1;`）；既有库 `baseline-version: 2` 后从 V3 起。
   - `V3–V9`（加固）：固定诊断冻结、软归档、路径并发护栏、题面 SHA-256 指纹、AI 作业表、伴侣摘要列、关系完整性契约（物理 FK + SIGNAL 预检）。
@@ -466,7 +466,7 @@ M9 为伴侣补齐「确认听懂」与「紧急熔断」两个回路。
 ### 能力摘要
 
 - **理解探针**：`probe_understanding` 工具发起单题探针（EWMA 隔离，不写掌握度），经 SSE 推送 `probe_card`；作答未通过时可「换个方式再讲」。
-- **换策略真实生效**：探针提交结果记入进程内 `ProbeOutcomeStore`（不落库，重启即回到默认讲法）；下一 turn 若焦点节点或最近探针节点有 30 分钟内未通过的探针，服务端按 `StrategySwitcher` 顺序（类比→举例→分步→对比→图谱）选下一个讲法，注入 system prompt 动态段「换种讲法」，同一次失败只切换一次；该 turn 视为讲解并再次自动探针。上一讲法无效 / 改用后通过分别写入程序性记忆 `[STRATEGY][无效|有效]`。
+- **换策略真实生效**：探针会话与结果均落库（V26：`probe_session` 每次探针一行、`probe_outcome` 每 学生×课程×节点 最近一次 + 换策略状态），**重启 / 部署后不丢**——学生刷新页面仍可作答，30 分钟换策略窗口与「同一次失败只切换一次」跨重启保持；探针会话 TTL `wenjin.limits.reflection.probe-session-ttl-hours`（默认 24，过期提交按 404 处理）、保留 `probe-retention-days`（默认 14，定时清理）；探针仍与掌握度隔离（不写 `student_mastery` / `answer_record`），且不下发标准答案；下一 turn 若焦点节点或最近探针节点有 30 分钟内未通过的探针，服务端按 `StrategySwitcher` 顺序（类比→举例→分步→对比→图谱）选下一个讲法，注入 system prompt 动态段「换种讲法」，同一次失败只切换一次；该 turn 视为讲解并再次自动探针。上一讲法无效 / 改用后通过分别写入程序性记忆 `[STRATEGY][无效|有效]`。
 - **错因辅导**：`get_recent_mistakes`（只读、可缓存；参数 `nodeCode?`、`practiceSessionId?`、`limit?` 1–5 默认 3）读取近期客观题错题（单选/多选/判断，排除简答），返回所选 vs 正确选项及所选干扰项 `point_node_code` 指向的误区节点与 `topMisconceptions`；system prompt「错因辅导」规则要求先查错题、针对误区讲清为什么会选错、不直接念答案。本 turn 若该工具给出误区节点，自动探针改为探第一误区节点。
 - **代码求助 `run_code_check`**（方向 6 / C3）：参数 `code`（必填，≤ `wenjin.limits.code.source-max-chars`，默认 10000）、`stdin`（≤ `tool-stdin-max-chars`，默认 2000）、`questionId`（有则按编程题用例判分，否则只运行）。`sideEffecting`，每个 run 最多 1 次（`wenjin.limits.code.tool-max-per-run`，超限返回 `TOOL_BUDGET_EXCEEDED`）；仅当 `CodeExecutionService.available()`（含 `code-check-enabled` 开关与沙箱可用性）为真时才下发该工具与 prompt「代码求助」规则。回给模型的只有结构化摘要（verdict、编译错误前几行、非 hidden 失败用例对比、stdout 前 300 字），**不回显源码**；agent trace 的 TOOL_CALL 入参与 ToolGovernor 审计日志里 `code`/`stdin` 一律脱敏为 `<redacted len=N sha256=xxxxxxxx>`（`CompanionTool.redactArgumentsForTrace`）；SSE 在 `tool_result` 之后发 `code_result` 卡（同样不含源码，不进消息正文）。评测场景 S23 在 eval profile 注入确定性假沙箱回放。
 - **复盘错题入口**：`POST /api/companion/chat` 请求体可选 `reviewPracticeSessionId`（正整数）；控制器校验该练习会话属于当前学生与课程（否则 404），仅本 turn 有效，作为 `get_recent_mistakes` 的默认会话并在 prompt 中提示先复盘。
@@ -596,7 +596,7 @@ npm run test -- test/m5-e2e-script-contract.test.js
 ## 后续建议
 
 - **评测补全**：S18（跨会话记忆）与 S20/S21（学习计划）录制 LIVE golden 后转 ENABLED；用真实 LIVE 数据完成 Judge 校准（人机一致率 ≥80%），并把 threshold 判罚落到报告口径。
-- **可靠性**：把 `ProbeSessionStore` / `ReviewScheduleStore`（当前为进程内存态，重启丢失）持久化；多实例部署前完成 AiJob payload 共享存储与分布式协调。
+- **可靠性**：多实例部署前完成 AiJob payload 共享存储与分布式协调。
 - **上线检查**：生产开启任一 feature 前确认对应迁移已跑（V10 轨迹、V12 记忆、V13 RAG（先执行 `ops/sql/preflight-ngram.sql`）、V14 计划、V15 周报）；M4/M5 真机验收（工具预算/降级、教师轨迹学生越权 403）纳入发布清单。
 - **前端**：把依赖后端的 `e2e/*.mjs` 验收脚本逐步并入 CI；继续拆分 ColorMap / Companion / TeacherGraphReview 等大文件。
 - **文档同步**：场景清单、API 表等随里程碑更新（本文件为 M11 截止的现状）。

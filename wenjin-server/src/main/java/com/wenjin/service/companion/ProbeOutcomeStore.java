@@ -8,12 +8,10 @@ import org.springframework.util.StringUtils;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 理解探针结果与讲解策略状态（键：学生 × 课程 × 节点，保留最近一次）。
@@ -22,16 +20,14 @@ import java.util.concurrent.ConcurrentHashMap;
  * 时由 {@link ReflectionCoordinator#resolveStrategyDirective} 读取，30 分钟内未通过且尚未换过策略 →
  * 选下一个策略注入提示。
  *
- * <p><b>刻意不持久化</b>：与 {@link ProbeSessionStore} 一致为进程内状态（探针会话本身也不落库），
- * 重启后丢失只意味着下一次讲解回到默认讲法，不影响掌握度 / 证据；容量超限时淘汰一天前的条目。
+ * <p>状态落库于 {@code probe_outcome}（V26），重启 / 部署后 30 分钟窗口内的「换个方式再讲」不丢；
+ * 仍与掌握度 / 证据隔离（不写 student_mastery / answer_record）。过期行由 {@link ProbeStateCleanup} 清理。
  */
 @Component
 public class ProbeOutcomeStore {
 
     /** 「最近一次未通过的探针」时间窗。 */
     public static final Duration FAILED_PROBE_WINDOW = Duration.ofMinutes(30);
-    static final int PRUNE_THRESHOLD = 10_000;
-    static final Duration RETENTION = Duration.ofDays(1);
 
     /**
      * @param correct         最近一次探针是否通过
@@ -57,18 +53,22 @@ public class ProbeOutcomeStore {
         }
     }
 
-    private record Key(Long studentId, Long courseId, String nodeCode) {
-    }
-
-    private final ConcurrentHashMap<Key, NodeOutcome> outcomes = new ConcurrentHashMap<>();
+    private final ProbeOutcomeRepository repository;
     private final Clock clock;
 
+    /** Memory-only (unit tests without DB). */
     public ProbeOutcomeStore() {
-        this(Clock.systemUTC());
+        this(new InMemoryProbeOutcomeRepository(), Clock.systemUTC());
+    }
+
+    /** Memory-only with explicit clock (unit tests). */
+    public ProbeOutcomeStore(Clock clock) {
+        this(new InMemoryProbeOutcomeRepository(), clock);
     }
 
     @Autowired
-    public ProbeOutcomeStore(Clock clock) {
+    public ProbeOutcomeStore(ProbeOutcomeRepository repository, Clock clock) {
+        this.repository = Objects.requireNonNull(repository, "repository");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -77,13 +77,12 @@ public class ProbeOutcomeStore {
         if (studentId == null || courseId == null || !StringUtils.hasText(nodeCode)) {
             return;
         }
-        Key key = new Key(studentId, courseId, nodeCode.trim());
-        outcomes.compute(key, (k, prev) -> {
-            Strategy used = prev == null ? null : prev.activeStrategy();
-            Set<Strategy> tried = correct || prev == null ? Set.of() : prev.tried();
-            return new NodeOutcome(k.nodeCode(), correct, clock.instant(), used, used, tried, false, false);
-        });
-        prune();
+        String code = nodeCode.trim();
+        NodeOutcome prev = repository.find(studentId, courseId, code).orElse(null);
+        Strategy used = prev == null ? null : prev.activeStrategy();
+        Set<Strategy> tried = correct || prev == null ? Set.of() : prev.tried();
+        repository.save(studentId, courseId,
+                new NodeOutcome(code, correct, clock.instant(), used, used, tried, false, false));
     }
 
     /** 焦点节点有记录优先，否则该学生本课最近一次探针。 */
@@ -92,15 +91,12 @@ public class ProbeOutcomeStore {
             return Optional.empty();
         }
         if (StringUtils.hasText(focusNodeCode)) {
-            NodeOutcome focus = outcomes.get(new Key(studentId, courseId, focusNodeCode.trim()));
-            if (focus != null) {
-                return Optional.of(focus);
+            Optional<NodeOutcome> focus = repository.find(studentId, courseId, focusNodeCode.trim());
+            if (focus.isPresent()) {
+                return focus;
             }
         }
-        return outcomes.entrySet().stream()
-                .filter(e -> studentId.equals(e.getKey().studentId()) && courseId.equals(e.getKey().courseId()))
-                .map(java.util.Map.Entry::getValue)
-                .max(Comparator.comparing(NodeOutcome::at));
+        return repository.findMostRecent(studentId, courseId);
     }
 
     public boolean isWithinWindow(NodeOutcome outcome) {
@@ -126,11 +122,16 @@ public class ProbeOutcomeStore {
     }
 
     public int size() {
-        return outcomes.size();
+        return (int) repository.count();
     }
 
     public void clear() {
-        outcomes.clear();
+        repository.deleteAll();
+    }
+
+    /** Purge outcomes whose probe time is before {@code cutoff}; returns rows removed. */
+    public int purgeBefore(Instant cutoff) {
+        return repository.deleteOlderThan(cutoff);
     }
 
     private void update(Long studentId, Long courseId, String nodeCode,
@@ -138,14 +139,8 @@ public class ProbeOutcomeStore {
         if (studentId == null || courseId == null || !StringUtils.hasText(nodeCode)) {
             return;
         }
-        outcomes.computeIfPresent(new Key(studentId, courseId, nodeCode.trim()), (k, o) -> fn.apply(o));
-    }
-
-    private void prune() {
-        if (outcomes.size() <= PRUNE_THRESHOLD) {
-            return;
-        }
-        Instant cutoff = clock.instant().minus(RETENTION);
-        outcomes.values().removeIf(o -> o.at() == null || o.at().isBefore(cutoff));
+        String code = nodeCode.trim();
+        repository.find(studentId, courseId, code)
+                .ifPresent(o -> repository.save(studentId, courseId, fn.apply(o)));
     }
 }

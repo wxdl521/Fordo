@@ -1,24 +1,29 @@
 package com.wenjin.service.companion;
 
+import com.wenjin.config.LimitsProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
+import java.time.Clock;
+import java.time.Duration;
+import java.util.function.Supplier;
 
 /**
- * In-memory store for companion {@code probe_understanding} sessions (M9).
+ * Store for companion {@code probe_understanding} sessions (M9), persisted in {@code probe_session} (V26)
+ * so a student who reloads after a restart / deploy can still submit.
  *
  * <p>Probe sessions are deliberately <b>not</b> persisted in {@code practice_session}
- * (avoids V14 conflict with M10 plan tables and keeps EWMA isolation simple).
- * Ownership is enforced on submit via studentId/courseId match.
- *
- * <p>Process-local: lost on restart; sufficient for competition-delivery core.
+ * (avoids V14 conflict with M10 plan tables and keeps EWMA isolation simple): this store never touches
+ * {@code student_mastery} / {@code answer_record}.
+ * Ownership is enforced on submit via studentId/courseId match; submit is idempotent (first grade wins).
+ * Sessions older than the TTL ({@code wenjin.limits.reflection.probe-session-ttl-hours}) read as not found;
+ * old rows are purged by {@link ProbeStateCleanup}.
  */
 @Component
 public class ProbeSessionStore {
@@ -61,7 +66,28 @@ public class ProbeSessionStore {
         }
     }
 
-    private final ConcurrentHashMap<String, ProbeSession> sessions = new ConcurrentHashMap<>();
+    public static final Duration DEFAULT_TTL = Duration.ofHours(24);
+
+    private final ProbeSessionRepository repository;
+    private final Clock clock;
+    private final Supplier<Duration> ttl;
+
+    /** Spring: DB-backed; TTL read live from {@code wenjin.limits.reflection}. */
+    @Autowired
+    public ProbeSessionStore(ProbeSessionRepository repository, Clock clock, LimitsProperties limits) {
+        this(repository, clock, () -> Duration.ofHours(Math.max(1, limits.getReflection().getProbeSessionTtlHours())));
+    }
+
+    public ProbeSessionStore(ProbeSessionRepository repository, Clock clock, Supplier<Duration> ttl) {
+        this.repository = Objects.requireNonNull(repository, "repository");
+        this.clock = Objects.requireNonNull(clock, "clock");
+        this.ttl = Objects.requireNonNull(ttl, "ttl");
+    }
+
+    /** Memory-only (unit tests without DB). */
+    public ProbeSessionStore() {
+        this(new InMemoryProbeSessionRepository(), Clock.systemUTC(), () -> DEFAULT_TTL);
+    }
 
     /**
      * Create a new probe session. Returns the stored session (with generated id).
@@ -101,10 +127,10 @@ public class ProbeSessionStore {
                 correctKey,
                 src,
                 bankQuestionId,
-                Instant.now(),
+                clock.instant(),
                 false,
                 null);
-        sessions.put(id, session);
+        repository.insert(session);
         return session;
     }
 
@@ -112,7 +138,7 @@ public class ProbeSessionStore {
         if (!StringUtils.hasText(sessionId)) {
             return Optional.empty();
         }
-        return Optional.ofNullable(sessions.get(sessionId.trim()));
+        return repository.findById(sessionId.trim()).filter(this::alive);
     }
 
     /**
@@ -128,10 +154,11 @@ public class ProbeSessionStore {
             return Optional.empty();
         }
         String id = sessionId.trim();
-        ProbeSession existing = sessions.get(id);
-        if (existing == null) {
+        Optional<ProbeSession> found = find(id);
+        if (found.isEmpty()) {
             return Optional.empty();
         }
+        ProbeSession existing = found.get();
         if (!Objects.equals(existing.studentId(), studentId)
                 || !Objects.equals(existing.courseId(), courseId)) {
             return Optional.empty();
@@ -139,53 +166,33 @@ public class ProbeSessionStore {
         if (existing.submitted()) {
             return Optional.of(existing);
         }
-        ProbeSession updated = new ProbeSession(
-                existing.sessionId(),
-                existing.studentId(),
-                existing.courseId(),
-                existing.nodeCode(),
-                existing.nodeId(),
-                existing.stem(),
-                existing.type(),
-                existing.options(),
-                existing.correctKey(),
-                existing.source(),
-                existing.bankQuestionId(),
-                existing.createdAt(),
-                true,
-                correct);
-        sessions.put(id, updated);
-        return Optional.of(updated);
+        // compare-and-set: concurrent / repeated submit never re-grades; loser reads the stored result
+        repository.markSubmitted(id, clock.instant(), correct);
+        return repository.findById(id);
+    }
+
+    private boolean alive(ProbeSession s) {
+        return s.createdAt() != null && s.createdAt().plus(ttl.get()).isAfter(clock.instant());
     }
 
     /** Bank question ids already used in open or submitted probes for this student×course×node. */
     public java.util.Set<Long> usedBankQuestionIds(Long studentId, Long courseId, String nodeCode) {
-        java.util.Set<Long> used = new java.util.HashSet<>();
         if (studentId == null || courseId == null || !StringUtils.hasText(nodeCode)) {
-            return used;
+            return new java.util.HashSet<>();
         }
-        String code = nodeCode.trim();
-        for (ProbeSession s : sessions.values()) {
-            if (Objects.equals(s.studentId(), studentId)
-                    && Objects.equals(s.courseId(), courseId)
-                    && code.equals(s.nodeCode())
-                    && s.bankQuestionId() != null) {
-                used.add(s.bankQuestionId());
-            }
-        }
-        return used;
+        return new java.util.HashSet<>(repository.usedBankQuestionIds(studentId, courseId, nodeCode.trim()));
+    }
+
+    /** Purge sessions created before {@code cutoff}; returns rows removed. */
+    public int purgeCreatedBefore(Instant cutoff) {
+        return repository.deleteCreatedBefore(cutoff);
     }
 
     public void clear() {
-        sessions.clear();
+        repository.deleteAll();
     }
 
     public int size() {
-        return sessions.size();
-    }
-
-    /** Snapshot for tests. */
-    Map<String, ProbeSession> snapshot() {
-        return Map.copyOf(sessions);
+        return (int) repository.count();
     }
 }

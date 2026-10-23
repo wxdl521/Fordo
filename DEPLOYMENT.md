@@ -445,6 +445,7 @@ npm run build        # 产出 dist/
 | 已迁移 | Flyway `V22__companion_hint_log.sql` | `companion_hint_log`（主动陪伴提示条展示/关闭日志） | 小 |
 | 待部署 | Flyway `V24__code_question.sql` | `question` 增 `starter_code` / `code_language`（可空列，加列即可）+ 新表 `question_code_case`（编程题测试用例，无物理 FK）；纯加法，旧题不受影响；回滚前需无 type=5 题 | 小 |
 | 待部署 | Flyway `V25__teacher_assistant_conversation.sql` | 新表 `teacher_conversation` / `teacher_message`（教师 AI 助教会话，无物理 FK）；纯加法，不动既有表 | 小 |
+| 待部署 | Flyway `V26__probe_persist.sql` | 新表 `probe_session` / `probe_outcome`（M9 理解探针会话与最近结果，无物理 FK）；纯加法。部署后探针状态**重启不丢**；老版本进程内的未提交探针在升级那一刻丢失（学生重新触发即可）。清理任务随应用 `@Scheduled`，TTL/保留见下 | 小 |
 | 已迁移 | Flyway `V23__doc_chunk_embedding.sql` | `doc_chunk_embedding`（RAG 切块向量，float32 LE MEDIUMBLOB；仅建新表，向量由后续嵌入作业回填，无 key 时不受影响） | 小 |
 
 ### 4.1 配置清单（调度与基线）
@@ -607,7 +608,7 @@ wenjin:
   - **超时与冷却**：在线查询嵌入读超时 `query-embed-timeout-ms`（默认 2.5s，批量嵌入作业不受影响）；向量侧一旦失败，`vector-cooldown-seconds`（默认 60s）内检索直接走纯全文，不再每次等超时，到期后下一次检索自动探测恢复。冷却状态是进程内的。
   - **已知限制（有意不修）**：①`VectorIndexCache` 是进程内缓存 → 与现有单副本部署约束一致，多副本下其他实例要等各自的失效事件 / 重启才会感知语料变化；换过模型后旧 `modelId` 的索引会留在内存里直到该课程发生失效事件（有界于课程数 × 用过的模型数）。②`doc_chunk_embedding` 每块只有一行向量（主键 chunk_id）：切换模型会覆盖旧模型向量，回切旧模型须再「重建向量」。③上传去重没有唯一约束：同一教师/多个教师并发上传相同文件，可能两份都通过去重而产生重复来源（可在语料审核里归档多余的一份）。
   - 内存：每课程每模型一份暴力检索索引（1024 维 ≈ 4KB/块），在入库 / 嵌入完成 / 映射审核后失效重载；大语料（数万块）需评估堆内存。
-- **M9 竞赛交付 / 紧急 kill switch**：见下表；**无新 Flyway**（探针会话为进程内 `ProbeSessionStore`，避免占用 M10 的 V14）。
+- **M9 竞赛交付 / 紧急 kill switch**：见下表；探针会话 / 最近结果自 **V26** 起落库（`probe_session` / `probe_outcome`），**重启不丢**（此前为进程内 `ProbeSessionStore` / `ProbeOutcomeStore`，重启后「会话不存在」）。会话 TTL `wenjin.limits.reflection.probe-session-ttl-hours`（默认 24，过期视为不存在）；保留期 `probe-retention-days`（默认 14，且不小于 TTL）由 `ProbeStateCleanup` 每 `cleanup-interval-ms`（默认 1 小时）清理；管理后台「数据维护 → 清空学习数据」同步清空这两张表。启用 `reflection-enabled` 前须先 migrate V26。
 - **M10 计划**：生产默认 `plan-enabled=false`；开启前须完成 **V14 migrate**。关闭时：计划工具下架、re-plan 不跑、daily-brief 隐藏计划段、已有 ACTIVE 冻结不删。DRAFT 永不进 brief / re-plan。
 - **主动陪伴**：生产默认 `proactive-enabled=false`（`WENJIN_FEATURE_PROACTIVE`）；开启前须 **V22 migrate**（`companion_hint_log`）。零 LLM、读时聚合，关闭时三个接口 404、前端回退固定话术；管理后台「系统配置」可热改开关。
 - **M11 多智能体（可选）**：默认 `multi-agent-enabled=false`（开发/生产一致）；开启前须 **V15 migrate** 且建议 `ai-job-dispatch-enabled=true`。关闭时：无周报 cron、报告 API 404、相关 job kind 拒跑；与 M10 基线一致。Teacher 周报只读证据流/掌握度/练习，**不读 student_memory**。
@@ -969,7 +970,7 @@ process.
 | `WENJIN_BOOTSTRAP_ADMIN_USERNAME` | 引导管理员用户名 | 空 | 仅 one-shot 窗口设置 |
 | `WENJIN_BOOTSTRAP_ADMIN_PASSWORD` | 引导管理员明文口令（≥16） | 空 | 仅 one-shot；成功后**立即 unset** |
 | `WENJIN_FEATURE_AGENT_TRACE` | M5 Agent 轨迹埋点与教师查询 | prod 默认 false | 需先 migrate V10；开启后教师可访问 `/api/teacher/agent-runs` |
-| `WENJIN_FEATURE_REFLECTION` | M9 反思探针 | prod 默认 false | 关则无 probe / 自动探针 |
+| `WENJIN_FEATURE_REFLECTION` | M9 反思探针 | prod 默认 false | 需先 migrate V26；关则无 probe / 自动探针 |
 | `WENJIN_FEATURE_COMPANION_LLM` | M9 伴侣 LLM | prod 默认 **true** | 紧急设 `false` → 零 LLM 降级 |
 | `WENJIN_FEATURE_PLAN` | M10 学习计划 | prod 默认 false | 关则计划工具/re-plan/brief 计划段关闭 |
 | `WENJIN_FEATURE_CODE_CHECK` | 方向 6 编程题判分沙箱 | prod 默认 false | 开启前按 §4.3 准备 Judge0（推荐）或 docker + 预拉镜像 |

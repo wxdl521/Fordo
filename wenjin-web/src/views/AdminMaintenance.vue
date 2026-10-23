@@ -133,6 +133,8 @@ const TABLE_LABELS = {
   companion_conversation: 'AI 伴侣对话',
   companion_message: 'AI 伴侣消息',
   student_memory: '学生记忆',
+  probe_session: '理解探针会话',
+  probe_outcome: '理解探针结果',
   agent_plan: '学习计划',
   agent_plan_task: '学习计划任务',
   teacher_conversation: 'AI 助教会话',
