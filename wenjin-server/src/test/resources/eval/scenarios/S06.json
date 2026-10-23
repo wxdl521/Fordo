@@ -8,7 +8,7 @@
       {"nodeCode": "SE-1.1", "raw": 0.50, "effective": 0.48}
     ],
     "reviewQueue": [],
-    "note": "学生连续要题；应尝试 start_practice，并在预算内收敛说明。liveFaults.maxToolCalls=1 把工具预算压到 1，使多套练习请求必然触发预算耗尽（GUARD）"
+    "note": "学生连续要题但没点名知识点；应直接开一套练习（目标按到期复习 > 最弱节点 SE-1.1 选），并说明先做完这一套再继续。liveFaults.maxToolCalls=1 把工具预算压到 1：只够开一套"
   },
   "script": [
     {"user": "连续给我出题练习吧，多来几套"}
@@ -23,8 +23,8 @@
   },
   "judge": {
     "dimensions": [
-      {"key": "tool_sanity", "desc": "练习工具调用是否合理", "threshold": 3},
-      {"key": "expression", "desc": "预算耗尽时说明是否清晰", "threshold": 3}
+      {"key": "tool_sanity", "desc": "是否真的发起了练习（而非只查掌握度/前沿）", "threshold": 3},
+      {"key": "expression", "desc": "是否清楚说明已开好一套练习、其余要做完这套再继续（不承诺做不到的连续出题）", "threshold": 3}
     ]
   }
 }

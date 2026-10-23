@@ -1,34 +1,14 @@
 {
   "scenario": "S06",
   "format": 2,
-  "recordedAt": "2026-10-21T00:00:00Z",
+  "recordedAt": "2026-10-23T00:00:00Z",
   "model": "synthetic",
   "synthetic": true,
   "turns": [
     {
       "rounds": [
         {
-          "content": "",
-          "toolCalls": [
-            {
-              "name": "start_practice",
-              "arguments": {
-                "nodeCode": "SE-1.1",
-                "count": 3
-              }
-            },
-            {
-              "name": "start_practice",
-              "arguments": {
-                "nodeCode": "SE-1.1",
-                "count": 3
-              }
-            }
-          ],
-          "finishReason": "tool_calls"
-        },
-        {
-          "content": "已为你开启一套软件工程概述（SE-1.1）的练习，可以直接在卡片里作答。本轮的练习次数预算已经用完，第二套暂时开不了；先完成这一套，做完我们一起复盘，再决定下一套练什么。",
+          "content": "已为你开好一套「软件工程概述」（SE-1.1）的练习，就在上方卡片里，直接作答就行。一次先练一套：做完这套我们看看错在哪，再接着开下一套。",
           "toolCalls": [],
           "finishReason": "stop"
         }

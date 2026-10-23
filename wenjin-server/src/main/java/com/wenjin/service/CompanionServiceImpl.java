@@ -1,6 +1,8 @@
 package com.wenjin.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenjin.ai.CompanionAiClient;
 import com.wenjin.ai.SinkFailureException;
 import com.wenjin.common.BusinessException;
@@ -12,6 +14,7 @@ import com.wenjin.config.FeatureFlagsProperties;
 import com.wenjin.config.LimitsProperties;
 import com.wenjin.service.memory.MemoryJobEnqueueService;
 import com.wenjin.service.memory.StudentMemoryService;
+import com.wenjin.service.rag.RetrievalHit;
 import com.wenjin.service.rag.RetrievalScopeResolver;
 import com.wenjin.service.rag.RetrievalService;
 import com.wenjin.dto.CompanionChatRequest;
@@ -63,12 +66,14 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -78,6 +83,8 @@ import java.util.stream.Collectors;
 public class CompanionServiceImpl implements CompanionService {
 
     private static final Logger log = LoggerFactory.getLogger(CompanionServiceImpl.class);
+    /** RETRIEVE 步摘要序列化（独立实例，不依赖 Spring 装配）。 */
+    private static final ObjectMapper TRACE_JSON = new ObjectMapper();
     private static final int ROLE_USER = 1;
     private static final int ROLE_AI = 2;
 
@@ -283,6 +290,8 @@ public class CompanionServiceImpl implements CompanionService {
 
         // 一次学生消息的完整编排 = 一个 run；SSE 异常断开也必须 finishRun
         TraceContext traceCtx = startCompanionTrace(conversation, latestUser);
+        // RETRIEVAL 注入也记一步：trace 可见注入了哪些资料（评测 judge 据此核对「资料 #N」，否则只见 search_materials）
+        safeStep(traceCtx, retrieval.toStep());
         int runStatus = AgentRunStatus.SUCCEEDED;
         String errorCode = null;
         try {
@@ -692,7 +701,7 @@ public class CompanionServiceImpl implements CompanionService {
         String focusName = resolveFocusName(focusCode, nodeRefs);
 
         PracticeIntent intent = PracticeIntentDetector.detect(latestUser, nodeRefs, focusCode, focusName)
-                .orElse(null);
+                .orElseGet(() -> untargetedPracticeIntent(conversation, latestUser, nodeRefs));
         if (intent == null) {
             return null;
         }
@@ -700,6 +709,34 @@ public class CompanionServiceImpl implements CompanionService {
                 "intent-start-practice",
                 "start_practice",
                 buildStartPracticeArgsJson(intent));
+    }
+
+    /**
+     * 明确要题但没点名节点、会话也无焦点：按零 LLM 降级同一优先级（到期复习 &gt; 最弱有效掌握度 &gt; 焦点 &gt; 首个节点）
+     * 确定性选目标，避免模型只查掌握度/前沿却不开练习（LIVE S06）。
+     */
+    private PracticeIntent untargetedPracticeIntent(CompanionConversation conversation,
+                                                    String latestUser,
+                                                    List<PracticeIntentDetector.NodeRef> nodeRefs) {
+        if (degradeService == null) {
+            return null;
+        }
+        OptionalInt size = PracticeIntentDetector.untargetedRequestSize(latestUser);
+        if (size.isEmpty()) {
+            return null;
+        }
+        try {
+            return degradeService.pickPracticeTarget(
+                            conversation.getStudentId(), conversation.getCourseId(), conversation.getNodeCode())
+                    .filter(pick -> StringUtils.hasText(pick.nodeCode()))
+                    .map(pick -> new PracticeIntent(pick.nodeCode(),
+                            resolveFocusName(pick.nodeCode(), nodeRefs), size.getAsInt()))
+                    .orElse(null);
+        } catch (Exception e) {
+            log.warn("untargeted practice target pick failed: conversationId={}: {}",
+                    conversation.getId(), e.getMessage());
+            return null;
+        }
     }
 
     private List<PracticeIntentDetector.NodeRef> loadCourseNodeRefs(Long courseId) {
@@ -833,9 +870,44 @@ public class CompanionServiceImpl implements CompanionService {
         }
     }
 
-    /** RETRIEVAL 槽注入内容：文本块 + 对应 chunkId（引用校验的"注入集"）。 */
-    record RetrievalInjection(List<String> blocks, Set<Long> chunkIds) {
-        static final RetrievalInjection NONE = new RetrievalInjection(List.of(), Set.of());
+    /**
+     * RETRIEVAL 槽注入内容：文本块 + 对应 chunkId（引用校验的"注入集"）+ trace 摘要
+     * （{@code {"items":[{chunkId,sourceTitle,snippet}]}}，与 search_materials 结果同形；无注入时为 null）。
+     */
+    record RetrievalInjection(List<String> blocks, Set<Long> chunkIds, String traceJson) {
+        static final RetrievalInjection NONE = new RetrievalInjection(List.of(), Set.of(), null);
+
+        static final String STEP_NAME = "retrieval_inject";
+
+        /** @return RETRIEVE 步；无注入时为 null（safeStep 跳过） */
+        StepRecord toStep() {
+            if (traceJson == null || chunkIds.isEmpty()) {
+                return null;
+            }
+            return new StepRecord(AgentStepType.RETRIEVE, STEP_NAME, AgentStepStatus.OK,
+                    "{\"chunks\":" + chunkIds.size() + "}", traceJson, 0, 0, null, null);
+        }
+    }
+
+    /** RETRIEVE 步输出：每个命中一条 {chunkId, sourceTitle, snippet}；序列化失败返回 null（不记步）。 */
+    static String retrievalTraceJson(List<RetrievalHit> hits, int snippetChars) {
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (RetrievalHit hit : hits) {
+            if (hit == null) {
+                continue;
+            }
+            String content = hit.content() == null ? "" : hit.content();
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("chunkId", hit.chunkId());
+            item.put("sourceTitle", hit.sourceTitle() == null ? "" : hit.sourceTitle());
+            item.put("snippet", content.length() > snippetChars ? content.substring(0, snippetChars) + "…" : content);
+            items.add(item);
+        }
+        try {
+            return TRACE_JSON.writeValueAsString(Map.of("items", items));
+        } catch (JsonProcessingException e) {
+            return null;
+        }
     }
 
     /**
@@ -864,7 +936,11 @@ public class CompanionServiceImpl implements CompanionService {
                 return RetrievalInjection.NONE;
             }
             Set<Long> ids = retrievalService.injectedChunkIds(result);
-            return new RetrievalInjection(blocks, ids == null ? Set.of() : ids);
+            int snippetChars = limits != null && limits.getRag() != null
+                    ? Math.max(40, limits.getRag().getSnippetChars())
+                    : 200;
+            return new RetrievalInjection(blocks, ids == null ? Set.of() : ids,
+                    retrievalTraceJson(result.hits(), snippetChars));
         } catch (Exception e) {
             log.warn("retrieval inject failed: courseId={} nodeCode={}: {}",
                     courseId, nodeCode, e.getMessage());
@@ -1235,8 +1311,10 @@ public class CompanionServiceImpl implements CompanionService {
 
         sb.append("## 工具使用\n");
         sb.append("- 涉及掌握度、薄弱点、证据时间时，先通过工具查询，再回答。\n");
-        sb.append("- 涉及节点详情、前置关系、后继关系时，先通过工具获取节点详情，再组织解释。\n");
-        sb.append("- 需要发起练习、推荐练习或确认练习入口时，先通过工具获取练习信息。\n");
+        sb.append("- 讲解某个知识点（包括学生中途换讲另一个知识点）时，先调用 get_node_detail 取该节点详情与前后继，再组织讲解；系统注入的资料不能代替这一步。\n");
+        sb.append("- 学生要求查资料、教材、讲义，或问题涉及多个知识点的资料时，调用 search_materials 检索；系统自动注入的资料只按当前焦点预取，可能不全。\n");
+        sb.append("- 学生要求出题或练习时直接调用 start_practice（没点名节点就选最该练的节点），不要只查掌握度就结束。\n");
+        sb.append("- 工具要省着用：trace_prerequisites 的结果已含各前置节点掌握度，不必再逐个 query_mastery；多个节点的掌握度用 nodeCodes 一次查完；同一信息不要重复查。\n");
         sb.append("- query_mastery：查掌握度/趋势；get_node_detail：节点详情与前后继；start_practice：发起练习。\n");
         sb.append("- trace_prerequisites：追溯前置链；get_learning_frontier：可学前沿；get_review_queue：今日复习队列；schedule_review：把节点钉入今日复习。\n");
         sb.append("- recall_student_context：按关键词检索学生长期记忆；record_observation：记录 SEMANTIC/PROCEDURAL 观察（每轮有限）。\n");
@@ -1254,9 +1332,9 @@ public class CompanionServiceImpl implements CompanionService {
 
         sb.append("## 错因辅导\n");
         sb.append("- 学生要求复盘错题、说自己做错了或不懂为什么错时，先调用 get_recent_mistakes，再回答。\n");
-        sb.append("- 针对误区节点（misconceptionNodes / topMisconceptions）讲清「为什么会选错」：对比所选选项与正确选项背后的概念差别，指出混淆点。\n");
+        sb.append("- 针对误区节点（misconceptionNodes / topMisconceptions）讲清「为什么会选错」：点名误区节点，说明所选选项其实混入了它的哪些内容，与正确选项的概念差别在哪。\n");
         sb.append("- 不要直接念答案或照搬解析；先让学生说出当时的想法，再引导其自己发现错误。\n");
-        sb.append("- 讲完后系统会自动就误区节点出一道理解探针题，无需你另行出题。\n\n");
+        sb.append("- 讲完后系统会自动就误区节点出一道理解探针题，无需你另行出题；结尾用一句话告诉学生下一步（做这道小题检验）。\n\n");
 
         if (codeCheckEnabled) {
             appendCodeCheckRules(sb);

@@ -84,15 +84,20 @@ class ReplayScenarioIT extends EvalDbSupport {
     }
 
     @Test
-    @DisplayName("S06 budget override: second start_practice is GUARDed, tool budget restored afterwards")
-    void s06_budgetExhausted() {
+    @DisplayName("S06 untargeted practice request: intent routing forces start_practice on the weakest node within the 1-call budget")
+    void s06_untargetedPracticeIsForced() {
         EvalScenarioDocument s06 = harness.scenarioLoader().loadByCode("S06").orElseThrow();
         ScenarioRun run = harness.replayExecutor().runDetailed(s06);
         assertThat(run.outcome().hardPass()).as("%s", run.outcome().hardResult().failures()).isTrue();
-        List<String> guards = jdbc.queryForList(
-                "SELECT error_code FROM agent_step WHERE run_id = ? AND step_type = 'GUARD'", String.class,
+        List<String> practiceInputs = jdbc.queryForList(
+                "SELECT input_json FROM agent_step WHERE run_id = ? AND step_type = 'TOOL_CALL' AND name = 'start_practice'",
+                String.class, run.outcome().runId());
+        assertThat(practiceInputs).hasSize(1);
+        assertThat(practiceInputs.get(0)).contains("SE-1.1");
+        Integer guards = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM agent_step WHERE run_id = ? AND step_type = 'GUARD'", Integer.class,
                 run.outcome().runId());
-        assertThat(guards).contains("TOOL_BUDGET_EXCEEDED");
+        assertThat(guards).isZero();
         Integer practiceSessions = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM practice_session WHERE student_id = ?", Integer.class,
                 harness.fixture().world().studentId());

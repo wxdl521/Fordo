@@ -106,7 +106,7 @@ public class CompanionDegradeService {
     /**
      * Priority: due review &gt; weak mastery &gt; frontier (focus node if set, else first course node).
      */
-    Optional<NodePick> pickPracticeTarget(Long studentId, Long courseId, String focusNodeCode) {
+    public Optional<NodePick> pickPracticeTarget(Long studentId, Long courseId, String focusNodeCode) {
         // 1) due review
         try {
             ReviewTodayVO today = reviewService.getToday(studentId, courseId);
@@ -198,5 +198,5 @@ public class CompanionDegradeService {
         }
     }
 
-    record NodePick(Long nodeId, String nodeCode, String tier) {}
+    public record NodePick(Long nodeId, String nodeCode, String tier) {}
 }

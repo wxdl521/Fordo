@@ -2,6 +2,7 @@ package com.wenjin.support;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -23,7 +24,15 @@ public final class PracticeIntentDetector {
     /** 复盘/错因类请求：即使含「练习」等字样也不是要新出题（交给模型调 get_recent_mistakes）。 */
     private static final Pattern NEGATIVE_CUE = Pattern.compile("复盘|错题|为什么错|做错|错在");
 
-    private static final Pattern CUE_OUT_N = Pattern.compile("出\\s*\\d+\\s*道");
+    /** 祈使/意愿式的「练习」：视为明确要题（untargeted 兜底用）。 */
+    private static final Pattern REQUEST_PRACTICE = Pattern.compile(
+            "(想|要|帮我|给我|带我|陪我|开始|来|做)(点|些|一些|一下|几套|一套)?练习|练习(一下|吧|几套|一套)");
+    /** 讲解/答案类提问（untargeted 兜底时用于排除「给我讲讲这道题」）。 */
+    private static final Pattern EXPLAIN_CUE = Pattern.compile("讲|解释|答案|思路|为什么|怎么");
+    /** 其余单独出现的「练习」视为名词提及（「我练习了很多次」）。 */
+    private static final Pattern BARE_PRACTICE_NOUN = Pattern.compile("练习");
+
+    private static final Pattern CUE_OUT_N =Pattern.compile("出\\s*\\d+\\s*道");
     private static final Pattern CUE_GIVE_ME = Pattern.compile("给我.{0,12}题");
     private static final Pattern CUE_LAI = Pattern.compile("来.{0,8}题");
     private static final Pattern CUE_ZUO = Pattern.compile("做.{0,8}题");
@@ -68,6 +77,29 @@ public final class PracticeIntentDetector {
                     size));
         }
         return Optional.empty();
+    }
+
+    /**
+     * 无节点（文本未点名、会话无焦点）时的明确要题请求：返回题量，由调用方兜底选目标节点
+     * （到期复习 &gt; 最弱 &gt; 焦点 &gt; 首个节点）。比 {@link #detect} 更严：单独出现的名词「练习」
+     * （如「我练习了很多次」）不算请求，须是祈使/意愿式（「练习一下」「想练习」「出题」「考我」等）。
+     *
+     * @return 题量；不是明确要题 / 复盘错题类请求时为 empty
+     */
+    public static OptionalInt untargetedRequestSize(String userText) {
+        if (userText == null || userText.isBlank() || NEGATIVE_CUE.matcher(userText).find()) {
+            return OptionalInt.empty();
+        }
+        String withoutNounPractice = BARE_PRACTICE_NOUN.matcher(
+                REQUEST_PRACTICE.matcher(userText).replaceAll("出题")).replaceAll("");
+        if (!hasPracticeCue(withoutNounPractice)) {
+            return OptionalInt.empty();
+        }
+        // 「给我讲讲这道题」之类：只有宽泛的「给我/来/做…题」而在问讲解时不算要题
+        if (EXPLAIN_CUE.matcher(userText).find() && !CUE_LITERAL.matcher(withoutNounPractice).find()) {
+            return OptionalInt.empty();
+        }
+        return OptionalInt.of(resolveSize(userText));
     }
 
     private static boolean hasPracticeCue(String text) {

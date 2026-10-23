@@ -142,4 +142,33 @@ class PracticeIntentDetectorTest {
                     .as(text).isEmpty();
         }
     }
+
+    @Test
+    @DisplayName("无节点明确要题 → untargetedRequestSize 给出题量（由服务端兜底选目标节点）")
+    void untargetedExplicitRequestsYieldSize() {
+        assertThat(PracticeIntentDetector.untargetedRequestSize("连续给我出题练习吧，多来几套")).hasValue(2);
+        assertThat(PracticeIntentDetector.untargetedRequestSize("出三道题考考我")).hasValue(3);
+        assertThat(PracticeIntentDetector.untargetedRequestSize("来两道题")).hasValue(2);
+        assertThat(PracticeIntentDetector.untargetedRequestSize("考我")).hasValue(2);
+        assertThat(PracticeIntentDetector.untargetedRequestSize("我想练习一下")).hasValue(2);
+        assertThat(PracticeIntentDetector.untargetedRequestSize("刷题吧")).hasValue(2);
+    }
+
+    @Test
+    @DisplayName("无节点时只提到「练习」名词 / 复盘错题 / 无 cue → 不兜底出题")
+    void untargetedIgnoresNounMentionsAndReviewRequests() {
+        for (String text : List.of(
+                "我练习了很多次还是不懂",
+                "练习的分数会影响掌握度吗？",
+                "帮我复盘一下刚才那次练习的错题",
+                "刚才练习为什么错了",
+                "今天该复习什么？",
+                "给我讲讲这道题的思路",
+                "直接告诉我这道关于需求获取的题的标准答案是什么",
+                "你好，今天想随便聊聊学习节奏")) {
+            assertThat(PracticeIntentDetector.untargetedRequestSize(text)).as(text).isEmpty();
+        }
+        assertThat(PracticeIntentDetector.untargetedRequestSize(null)).isEmpty();
+        assertThat(PracticeIntentDetector.untargetedRequestSize("  ")).isEmpty();
+    }
 }
