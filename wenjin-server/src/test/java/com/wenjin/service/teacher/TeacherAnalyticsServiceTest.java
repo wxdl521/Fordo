@@ -214,6 +214,53 @@ class TeacherAnalyticsServiceTest {
     }
 
     @Test
+    void weeklyFactsOnlyCoverEnrolledStudentsAndActiveNodes() {
+        givenClass();
+        StudentMastery before = mastery(1, 100, 100, 8);
+        when(analytics.selectSnapshotsAtOrBefore(eq(COURSE), any())).thenReturn(List.of(before));
+
+        TeacherAnalyticsService.WeeklyFacts f = service.weeklyFacts(COURSE, LocalDateTime.now());
+
+        assertThat(f.rosterSize()).isEqualTo(4);
+        // ghost student 99 is not in the roster -> no mastery row for him
+        assertThat(f.masteryRows()).noneMatch(r -> r.studentId() == 99L);
+        assertThat(f.masteryRows()).hasSize(7);
+        assertThat(f.studentNames()).containsEntry(1L, "张三").containsEntry(3L, "w***1");
+        assertThat(f.nodeNames()).containsEntry("KT1", "变量");
+        // practice days: student 2 last answered 20 days ago, student 4 never
+        assertThat(f.practices()).filteredOn(p -> p.studentId() == 4L).singleElement()
+                .satisfies(p -> assertThat(p.lastPracticeDate()).isNull());
+        assertThat(f.practices()).filteredOn(p -> p.studentId() == 2L).singleElement()
+                .satisfies(p -> assertThat(p.lastPracticeDate()).isEqualTo(LocalDateTime.now().minusDays(20).toLocalDate()));
+        // student 1: 100 a week ago -> now 90 effective; drop is reported as a delta either way
+        assertThat(f.deltas()).singleElement().satisfies(d -> {
+            assertThat(d.studentId()).isEqualTo(1L);
+            assertThat(d.nodeCode()).isEqualTo("KT1");
+            assertThat(d.effectiveBefore()).isGreaterThan(d.effectiveAfter());
+        });
+    }
+
+    @Test
+    void weeklyFactsOfEmptyCourseAreEmpty() {
+        assertThat(service.weeklyFacts(COURSE, LocalDateTime.now()).rosterSize()).isZero();
+    }
+
+    @Test
+    void windowEngagementDefaultsToZeroWhenNothingReturned() {
+        LocalDateTime t = LocalDateTime.now();
+        TeacherAnalyticsService.WindowEngagement e = service.windowEngagement(COURSE, t.minusDays(7), t);
+        assertThat(e).isEqualTo(new TeacherAnalyticsService.WindowEngagement(0, 0, 0));
+
+        WindowAnswerRow row = new WindowAnswerRow();
+        row.setAnswers(12);
+        row.setActiveStudents(3);
+        when(analytics.selectWindowAnswers(eq(COURSE), any(), any())).thenReturn(row);
+        when(analytics.selectWindowCompanion(eq(COURSE), any(), any())).thenReturn(4);
+        assertThat(service.windowEngagement(COURSE, t.minusDays(7), t))
+                .isEqualTo(new TeacherAnalyticsService.WindowEngagement(12, 3, 4));
+    }
+
+    @Test
     void attentionCountsReviewBacklog() {
         givenClass();
         // student 1: three nodes once mastered (raw 95) but untouched for 90 days -> effective < 75

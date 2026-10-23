@@ -492,6 +492,71 @@ public class TeacherAnalyticsService {
         return new ActivityTrend(d, enrolled, daily, total, note);
     }
 
+    // ───────────────────────── 7. 周报输入（M11 TeacherInsight） ─────────────────────────
+
+    /**
+     * 周报聚合输入：只含活跃选课学生（已排除教师/管理员/禁用账号）与未归档节点；effective 为 0–1 口径。
+     *
+     * @param rosterSize   选课学生数
+     * @param masteryRows  学生×节点当前有效掌握度
+     * @param deltas       7 天前→当前有效掌握度
+     * @param practices    每名学生最近一次作答日（null=从未）
+     * @param nodeNames    nodeCode → 节点名
+     * @param studentNames studentId → 展示名（清洗后的 real_name，空则脱敏用户名）
+     */
+    public record WeeklyFacts(int rosterSize,
+                              List<ReportAggregations.NodeStudentEffective> masteryRows,
+                              List<ReportAggregations.EffectiveDelta> deltas,
+                              List<ReportAggregations.StudentLastPractice> practices,
+                              Map<String, String> nodeNames,
+                              Map<Long, String> studentNames) {
+        public static WeeklyFacts empty() {
+            return new WeeklyFacts(0, List.of(), List.of(), List.of(), Map.of(), Map.of());
+        }
+    }
+
+    /** 窗口 [from, to) 内的参与度计数。 */
+    public record WindowEngagement(int answers, int activeStudents, int companionConversations) {
+    }
+
+    /** 周报用事实快照（只读；不读学生记忆与对话正文）。 */
+    public WeeklyFacts weeklyFacts(long courseId, LocalDateTime now) {
+        List<RosterRow> roster = nullSafe(analyticsMapper.selectRoster(courseId));
+        if (roster.isEmpty()) {
+            return WeeklyFacts.empty();
+        }
+        Map<Long, KgNode> nodes = activeNodes(courseId);
+        List<Cell> cells = cells(dashboardMapper.selectEnrolledMastery(courseId), nodes, rosterIds(roster));
+
+        List<ReportAggregations.NodeStudentEffective> rows = new ArrayList<>();
+        Map<String, String> nodeNames = new LinkedHashMap<>();
+        for (Cell c : cells) {
+            rows.add(new ReportAggregations.NodeStudentEffective(c.studentId(), c.node().getNodeCode(),
+                    c.effective() / 100.0));
+            nodeNames.put(c.node().getNodeCode(), c.node().getName());
+        }
+        List<ReportAggregations.EffectiveDelta> deltas = sevenDayDeltas(courseId, now, cells, nodeNames);
+
+        Map<Long, StudentActivityRow> activity = activityByStudent(courseId, now);
+        Map<Long, String> names = new LinkedHashMap<>();
+        List<ReportAggregations.StudentLastPractice> practices = new ArrayList<>();
+        for (RosterRow r : roster) {
+            names.put(r.getStudentId(), displayName(r));
+            StudentActivityRow a = activity.get(r.getStudentId());
+            practices.add(new ReportAggregations.StudentLastPractice(r.getStudentId(),
+                    a == null || a.getLastAnswerAt() == null ? null : a.getLastAnswerAt().toLocalDate()));
+        }
+        return new WeeklyFacts(roster.size(), rows, deltas, practices, nodeNames, names);
+    }
+
+    /** 窗口 [from, to) 的参与度（周报本周/上周环比各调一次）。 */
+    public WindowEngagement windowEngagement(long courseId, LocalDateTime from, LocalDateTime to) {
+        TeacherAnalyticsRows.WindowAnswerRow a = analyticsMapper.selectWindowAnswers(courseId, from, to);
+        Integer conv = analyticsMapper.selectWindowCompanion(courseId, from, to);
+        return new WindowEngagement(a == null ? 0 : nz(a.getAnswers()),
+                a == null ? 0 : nz(a.getActiveStudents()), conv == null ? 0 : conv);
+    }
+
     // ───────────────────────── helpers: 名字解析 / 脱敏 ─────────────────────────
 
     record Resolution<T>(List<T> matches) {
@@ -648,11 +713,29 @@ public class TeacherAnalyticsService {
      */
     private Map<Long, DropInfo> sevenDayDrops(long courseId, LocalDateTime now, List<Cell> current,
                                               Map<Long, KgNode> nodes) {
+        Map<String, String> nameByCode = new HashMap<>();
+        List<ReportAggregations.EffectiveDelta> deltas = sevenDayDeltas(courseId, now, current, nameByCode);
+        Map<Long, DropInfo> out = new HashMap<>();
+        for (ReportAggregations.Anomaly a : ReportAggregations.anomalies(deltas, List.of(), now.toLocalDate())) {
+            if (a.type() != ReportAggregations.AnomalyType.EFFECTIVE_DROP) {
+                continue;
+            }
+            DropInfo prev = out.get(a.studentId());
+            if (prev == null || a.detail() > prev.drop()) {
+                out.put(a.studentId(), new DropInfo(a.detail(), nameByCode.get(a.nodeCode())));
+            }
+        }
+        return out;
+    }
+
+    /** 每个 (学生, 节点) 的 7 天前→当前有效分（0–1 口径）；{@code nameByCode} 收集出现过的节点名。 */
+    private List<ReportAggregations.EffectiveDelta> sevenDayDeltas(long courseId, LocalDateTime now,
+                                                                   List<Cell> current,
+                                                                   Map<String, String> nameByCode) {
         LocalDateTime cutoff = now.minusDays(7);
         Map<String, Cell> currentByKey = new HashMap<>();
         current.forEach(c -> currentByKey.put(c.studentId() + ":" + c.node().getId(), c));
         List<ReportAggregations.EffectiveDelta> deltas = new ArrayList<>();
-        Map<String, String> nameByCode = new HashMap<>();
         for (StudentMastery before : nullSafe(analyticsMapper.selectSnapshotsAtOrBefore(courseId, cutoff))) {
             Cell now0 = currentByKey.get(before.getStudentId() + ":" + before.getNodeId());
             if (now0 == null || before.getMasteryScore() == null) {
@@ -665,17 +748,7 @@ public class TeacherAnalyticsService {
                     effBefore / 100.0, now0.effective() / 100.0));
             nameByCode.put(now0.node().getNodeCode(), now0.node().getName());
         }
-        Map<Long, DropInfo> out = new HashMap<>();
-        for (ReportAggregations.Anomaly a : ReportAggregations.anomalies(deltas, List.of(), now.toLocalDate())) {
-            if (a.type() != ReportAggregations.AnomalyType.EFFECTIVE_DROP) {
-                continue;
-            }
-            DropInfo prev = out.get(a.studentId());
-            if (prev == null || a.detail() > prev.drop()) {
-                out.put(a.studentId(), new DropInfo(a.detail(), nameByCode.get(a.nodeCode())));
-            }
-        }
-        return out;
+        return deltas;
     }
 
     private List<ChapterView> chapterViews(java.util.Collection<KgNode> nodes, List<Cell> cells) {
