@@ -113,7 +113,8 @@ wenjin:
       snippet-chars: 200                         # 工具返回 snippet 上限
       fusion-k: 60                               # R2 RRF 常数：score = Σ 1/(k + rank)
       candidate-multiplier: 3                    # R2 混合检索全文/向量各取 topK × 倍数候选
-      vector-min-score: 0.2                      # R2 向量命中最低余弦
+      vector-min-score: 0.45                     # R2 向量命中最低余弦（按 embedding-3@1024 实测标定，换模型须重标）
+      vector-only-min-score: 0.62                # 仅向量命中（全文未命中）的余弦下限（同上标定；哈希嵌入下基本全挡）
       allow-hashing-embedding: true              # R2 无真实嵌入时允许离线哈希嵌入（生产 false）
       query-cache-size: 512                      # R2 查询向量 LRU 条数（0 关闭）
       expand-prerequisites: true                 # R2 伴侣注入范围 = 焦点节点 + 直接前置

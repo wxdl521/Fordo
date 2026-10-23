@@ -410,7 +410,7 @@ M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `R
 - **NODE_REF 入库**：`DOC_INGEST` 作业解析 Markdown frontmatter + `##` 切块，映射直写 `APPROVED`（样例见 `src/test/resources/rag/node-ref/`）。
 - **文件入库 + 自动初标（R3）**：`POST /api/teacher/rag/sources/upload`（multipart `courseId/file/title?/kind?`，202 返回 `{sourceId,jobId,...}`；同课程同 SHA-256 且非 FAILED/ARCHIVED → 409；INGESTING 超过 `ingest-stale-minutes` 视为卡死不计重复，作业终态失败 / 取消 / 被回收而来源仍 INGESTING 的由 worker tick 兜底置 FAILED）→ `DOC_INGEST` 作业按 `source.kind` 分派：NODE_REF 走原路径，课件/教材抽取文本（pdf/docx 复用 `DocumentTextExtractor` 限额）→ 带标题路径切块 → `ChunkNodeLabeler`（确定性、零 LLM）取前 2 个得分 ≥4 的节点写 `PENDING` 映射（置信度=得分/16，上限 0.99），无命中块不可检索，可用 `batch-approve minConfidence` 一键通过。带 NODE_REF frontmatter 的 `.md` 自动转 NODE_REF。
 - **检索**：`RetrievalService` 两段式（节点圈定 → 圈内零命中时可选全课程放宽，规则不变）；生效的 `RetrieverPort` 是 `HybridRetriever`（`@Primary`，RAG R2）：
-  - `FulltextRetriever`（MATCH AGAINST）与 `VectorRetriever`（内存暴力余弦）各取 `topK × candidate-multiplier` 候选 → **RRF** 融合（`score = Σ 1/(fusion-k + rank)`）→ topK，命中 `score` 为融合分；向量侧低于 `vector-min-score` 的不入候选，且**仅向量命中**（不在全文候选里）的块须 ≥ `vector-only-min-score`（默认 0.5，随模型标定，见 DEPLOYMENT）；节点圈定与「仅 READY 来源 + APPROVED 映射」过滤与全文同语义。
+  - `FulltextRetriever`（MATCH AGAINST）与 `VectorRetriever`（内存暴力余弦）各取 `topK × candidate-multiplier` 候选 → **RRF** 融合（`score = Σ 1/(fusion-k + rank)`）→ topK，命中 `score` 为融合分；向量侧低于 `vector-min-score` 的不入候选，且**仅向量命中**（不在全文候选里）的块须 ≥ `vector-only-min-score`（默认 0.62，按 embedding-3@1024 标定，见 DEPLOYMENT）；节点圈定与「仅 READY 来源 + APPROVED 映射」过滤与全文同语义。
   - **回退纯全文**（直接返回 `fulltext.retrieve(courseId, nodeCodes, query, topK)`，与 M8 逐字节一致）：`rag-vector-enabled=false`、无可用嵌入客户端、该课程当前模型无向量、查询嵌入失败 / 超过 `query-embed-timeout-ms`（默认 2.5s，只 warn 不抛；随后 `vector-cooldown-seconds`（默认 60s）内直接纯全文）。日志 `mode=FULLTEXT|HYBRID` 标明实际路径。
   - **嵌入客户端选择**（`ActiveEmbeddingResolver`，每次现读）：真实 `OpenAiCompatibleEmbeddingClient` `available()`（enabled 且有 key）→ 用它；否则 `limits.rag.allow-hashing-embedding=true`（开发 / e2e）→ 离线 `HashingEmbeddingClient`（`hash-ngram@1024`）；否则向量模式关（生产默认）。
   - **向量索引**：`VectorIndexCache` 按 `(courseId, modelId)` 缓存 `CourseVectorIndex`（chunkIds + 归一化 float[][] + 每块 APPROVED 节点集），切换模型不会混用向量；在入库完成、嵌入作业完成、映射通过 / 驳回 / 批量通过后（事务提交后，`RagCorpusChangedEvent` / `RagSourceIngestedEvent`）失效重载。查询向量 LRU（`query-cache-size`）。
@@ -424,12 +424,15 @@ M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `R
   $env:WENJIN_AI_EMBEDDING_ENABLED = "true"; $env:WENJIN_AI_EMBEDDING_API_KEY = "your-embedding-key"
   .\mvnw.cmd test "-Dtest=RetrievalRecallIT" "-Dwenjin.eval.rag.live=true" "-Dwenjin.eval.jdbc-url=jdbc:mysql://127.0.0.1:3306/wenjin_eval"
   ```
-  最近一次实测（本地 MySQL 8 ngram_token_size=2，topK=5，HYBRID(live) 未跑）：
+  最近一次实测（2026-10-23，本地 MySQL 8 ngram_token_size=2，topK=5，含真实嵌入智谱 `embedding-3@1024`）：
 
   | 方法 | recall@1 | recall@3 | recall@5 | MRR |
   |---|---|---|---|---|
-  | FULLTEXT | 0.743 | 0.900 | 0.900 | 0.848 |
-  | HYBRID(hash)（默认门槛 vector-only-min-score=0.5） | 0.729 | 0.900 | 0.900 | 0.829 |
+  | FULLTEXT | 0.614 | 0.814 | 0.900 | 0.756 |
+  | HYBRID(hash) | 0.643 | 0.843 | 0.900 | 0.783 |
+  | **HYBRID(live, embedding-3)** | **0.686** | **0.957** | **0.957** | **0.843** |
+
+  按查询类型：字面 / 普通改写三种方法 recall@5 均为 1.0；**强改写（hard）全文 0.50 → HYBRID(live) 1.00**。embedding-3 余弦分布：relevant 0.540 / 0.705 / 0.832，irrelevant 0.324 / 0.519 / 0.728（n=41 / 659）。门槛扫描：0.50/0.20 与 **0.62/0.45（现默认）** 结果相同（recall@5 0.957），0.66/0.50 降到 0.929——故取 0.62/0.45，在不损失召回的前提下挡掉余弦 0.5–0.62 的无关块。FULLTEXT 行在不同运行间有波动（InnoDB ngram 评分依赖整表统计），请看区间。
 
   报告另含**余弦分布表**（全部 query × chunk 对，相关 / 无关各自的 min / median / max），用于按嵌入模型标定两个余弦门槛；哈希嵌入实测：relevant 0.000 / 0.324 / 0.560，irrelevant -0.092 / 0.058 / 0.374（n=41 / 659）。注意 FULLTEXT 行在同一库上多次运行也有 ±0.015 的小波动（InnoDB ngram 全文评分），读数请看区间而非单点。
 
@@ -446,7 +449,7 @@ M8 将课程资料切块挂载知识点，经 FULLTEXT（ngram）检索注入 `R
 - **工具**：`search_materials`（读、可缓存；`query`≤50、`nodeCodes`≤5、`topK` 1..5）。
 - 特性开关 **`wenjin.features.rag-enabled`**：开发默认 `true`；生产默认 `false`（`WENJIN_FEATURE_RAG`）。关闭时：空 RETRIEVAL、工具从 schema 下架（向量 / 嵌入作业随之全关）。
 - 特性开关 **`wenjin.features.rag-vector-enabled`**（R2）：开发 / e2e 默认 `true`；生产默认 `false`（`WENJIN_FEATURE_RAG_VECTOR`）；评测 profile 固定 `false`（回放保持纯全文）。关闭时检索纯全文、入库后不派发嵌入作业、重建向量 404；管理后台「系统配置」可热改。
-- 限额 `wenjin.limits.rag.*`（R2）：`fusion-k`(60)、`candidate-multiplier`(3)、`vector-min-score`(0.2)、`vector-only-min-score`(0.5)、`query-embed-timeout-ms`(2500)、`vector-cooldown-seconds`(60)、`ingest-stale-minutes`(60)、`allow-hashing-embedding`(Java 默认 false；开发 / e2e yml 显式 true；生产 false)、`query-cache-size`(512)、`expand-prerequisites`(true)。
+- 限额 `wenjin.limits.rag.*`（R2）：`fusion-k`(60)、`candidate-multiplier`(3)、`vector-min-score`(0.45)、`vector-only-min-score`(0.62)、`query-embed-timeout-ms`(2500)、`vector-cooldown-seconds`(60)、`ingest-stale-minutes`(60)、`allow-hashing-embedding`(Java 默认 false；开发 / e2e yml 显式 true；生产 false)、`query-cache-size`(512)、`expand-prerequisites`(true)。
 - **部署**：上线前执行 `ops/sql/preflight-ngram.sql`，确认 `ngram_token_size=2`。版权：整本出版教材勿部署到公网演示环境。
 
 相关代码：
